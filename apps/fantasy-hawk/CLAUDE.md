@@ -40,7 +40,7 @@ User Browser
     ↓
 Caddy (fantasyhawk.benloe.com)
     ↓
-    ├─→ Static Frontend (/var/apps/fantasy-hawk/frontend/dist)
+    ├─→ Static Frontend (/srv/benloe/apps/fantasy-hawk/frontend/dist)
     └─→ Backend API (localhost:3005)
          ├─→ Artanis Auth (localhost:3002)
          └─→ Yahoo Fantasy API (OAuth authenticated)
@@ -106,14 +106,14 @@ Temporary storage during OAuth flow:
 ## Deployment
 
 ### Backend
-- **Location**: `/var/apps/fantasy-hawk/backend`
+- **Location**: `/srv/benloe/apps/fantasy-hawk/backend`
 - **Port**: 3005
 - **Process Manager**: PM2 (`fantasy-hawk-api`)
-- **Logs**: `/var/apps/logs/fantasy-hawk-api-*.log`
-- **Database**: `/var/apps/data/fantasy-hawk.db`
+- **Logs**: `/srv/benloe/logs/fantasy-hawk-api-*.log`
+- **Database**: `/srv/benloe/data/fantasy-hawk.db`
 
 ### Frontend
-- **Location**: `/var/apps/fantasy-hawk/frontend/dist`
+- **Location**: `/srv/benloe/apps/fantasy-hawk/frontend/dist`
 - **Served by**: Caddy (static files)
 - **Domain**: `https://fantasyhawk.benloe.com`
 
@@ -129,7 +129,7 @@ Temporary storage during OAuth flow:
     YAHOO_CLIENT_SECRET: '<from Yahoo Developer>',
     YAHOO_CALLBACK_URL: 'https://fantasyhawk.benloe.com/api/oauth/callback',
     AUTH_SERVICE_URL: 'http://localhost:3002',
-    DATABASE_PATH: '/var/apps/data/fantasy-hawk.db',
+    DATABASE_PATH: '/srv/benloe/data/fantasy-hawk.db',
     FRONTEND_URL: 'https://fantasyhawk.benloe.com'
   }
 }
@@ -142,7 +142,7 @@ fantasyhawk.benloe.com {
         reverse_proxy localhost:3005
     }
     handle {
-        root * /var/apps/fantasy-hawk/frontend/dist
+        root * /srv/benloe/apps/fantasy-hawk/frontend/dist
         try_files {path} /index.html
         file_server
     }
@@ -153,7 +153,7 @@ fantasyhawk.benloe.com {
 
 ### Backend Development
 ```bash
-cd /var/apps/fantasy-hawk/backend
+cd /srv/benloe/apps/fantasy-hawk/backend
 npm run dev       # Run in development mode
 npm run build     # Build TypeScript
 npm start         # Run production build
@@ -161,7 +161,7 @@ npm start         # Run production build
 
 ### Frontend Development
 ```bash
-cd /var/apps/fantasy-hawk/frontend
+cd /srv/benloe/apps/fantasy-hawk/frontend
 npm run dev       # Start Vite dev server (port 5173)
 npm run build     # Build for production
 npm run preview   # Preview production build
@@ -170,12 +170,12 @@ npm run preview   # Preview production build
 ### Deployment Commands
 ```bash
 # Backend
-cd /var/apps/fantasy-hawk/backend
+cd /srv/benloe/apps/fantasy-hawk/backend
 npm run build
 pm2 restart fantasy-hawk-api
 
 # Frontend
-cd /var/apps/fantasy-hawk/frontend
+cd /srv/benloe/apps/fantasy-hawk/frontend
 npm run build
 # No restart needed - Caddy serves static files
 ```
@@ -220,7 +220,7 @@ See `docs/YAHOO_API_STRUCTURE.md` for detailed documentation on:
 
 ### Backend won't start
 - Check PM2 logs: `pm2 logs fantasy-hawk-api`
-- Verify database path exists: `/var/apps/data/`
+- Verify database path exists: `/srv/benloe/data/`
 - Check port 3005 isn't in use: `ss -tlnp | grep 3005`
 
 ### OAuth fails
@@ -238,4 +238,4 @@ See `docs/YAHOO_API_STRUCTURE.md` for detailed documentation on:
 December 21, 2025 by Claude Code
 
 ## Repository
-Git repository initialized at `/var/apps/fantasy-hawk/.git`
+Part of the benloe-server monorepo at `/srv/benloe/` (github.com/BLoe/benloe-server)
