@@ -1,18 +1,21 @@
 {
-  "name": "benloe-platform",
+  "name": "benloe-server",
   "version": "1.0.0",
   "description": "Monorepo for benloe.com platform applications",
   "private": true,
   "workspaces": [
-    "artanis",
+    "apps/artanis",
+    "apps/dada-api",
+    "apps/fantasy-hawk",
+    "apps/gamenight",
+    "apps/weights-api",
     "homepage",
-    "gamenight",
     "shared"
   ],
   "scripts": {
-    "dev": "npm run dev --workspaces",
-    "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces",
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "prettier": "prettier --check .",
@@ -33,14 +36,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BLoe/benloe-platform.git"
+    "url": "git+https://github.com/BLoe/benloe-server.git"
   },
   "keywords": [
     "monorepo",
     "typescript",
     "authentication",
-    "game-scheduler",
-    "homepage"
+    "fantasy-sports",
+    "weight-tracking"
   ],
   "author": "Ben Loe",
   "license": "MIT",
