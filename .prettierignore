@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+*.lock
+package-lock.json
+.env
+.env.local
+.env.production
+.env.staging
+public/tailwind.css
+*.min.js
+*.min.css

@@ -1,0 +1,45 @@
+{
+  "name": "gamenight-api",
+  "version": "1.0.0",
+  "description": "Game Night Scheduler API",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "type-check": "tsc --noEmit",
+    "db:generate:auth": "prisma generate --schema=prisma/schema.prisma",
+    "db:generate:gamenight": "prisma generate --schema=prisma/gamenight-schema.prisma",
+    "db:generate": "npm run db:generate:auth && npm run db:generate:gamenight",
+    "db:migrate:gamenight": "prisma db push --schema=prisma/gamenight-schema.prisma",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/xml2js": "^0.4.14",
+    "better-sqlite3": "^12.2.0",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "date-fns": "^4.1.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "prisma": "^6.14.0",
+    "xml2js": "^0.6.2",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.6",
+    "@types/cors": "^2.8.15",
+    "@types/express": "^4.17.20",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/node": "^20.8.10",
+    "tsx": "^4.1.2",
+    "typescript": "^5.2.2"
+  }
+}

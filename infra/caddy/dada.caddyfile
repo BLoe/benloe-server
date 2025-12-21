@@ -1,0 +1,23 @@
+# DADA (Defense Against the Dart Arts) - Darts Training App
+
+dada.benloe.com {
+    # API backend (handle /api/* requests first)
+    handle /api/* {
+        reverse_proxy localhost:3004
+    }
+
+    # Static frontend for everything else
+    handle {
+        root * /var/apps/static/dada.benloe.com
+        file_server
+
+        # Cache control for HTML files
+        header *.html {
+            Cache-Control "no-cache, no-store, must-revalidate"
+        }
+    }
+
+    log {
+        output file /var/apps/logs/dada-access.log
+    }
+}

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - benloe.com</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link href="/tailwind.css" rel="stylesheet">
+</head>
+<body class="gradient-bg min-h-screen flex items-center justify-center p-4">
+    <div class="max-w-md w-full space-y-8">
+        <div class="text-center">
+            <div class="text-6xl mb-4">🔐</div>
+            <h1 class="text-3xl font-bold text-white mb-2">Welcome back</h1>
+            <p class="text-white/80">Sign in to your benloe.com account</p>
+        </div>
+        
+        <div class="glass-effect shadow-2xl rounded-2xl p-8">
+            <form id="loginForm" class="space-y-6">
+                <div>
+                    <label for="email" class="block text-sm font-medium text-gray-700 mb-2">
+                        Email address
+                    </label>
+                    <input 
+                        type="email" 
+                        id="email" 
+                        name="email" 
+                        required 
+                        class="auth-input"
+                        placeholder="your.email@example.com"
+                    >
+                </div>
+                
+                <button 
+                    type="submit" 
+                    id="submitBtn"
+                    class="auth-button w-full justify-center disabled:opacity-50"
+                >
+                    Send magic link
+                </button>
+            </form>
+            
+            <div id="message" class="mt-4 p-3 rounded-md hidden"></div>
+        </div>
+        
+        <div class="text-center text-sm text-gray-500">
+            A login link will be sent to your email address
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('loginForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const message = document.getElementById('message');
+        const redirectUrl = '<%= redirectUrl || "" %>';
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Sending...';
+            
+            try {
+                const response = await fetch('/api/auth/magic-link', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email,
+                        redirectUrl: redirectUrl || window.location.origin + '/dashboard'
+                    }),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    message.className = 'mt-4 p-3 rounded-md bg-green-50 border border-green-200 text-green-800';
+                    message.textContent = 'Magic link sent! Check your email and click the link to log in.';
+                } else {
+                    message.className = 'mt-4 p-3 rounded-md bg-red-50 border border-red-200 text-red-800';
+                    message.textContent = data.error || 'Something went wrong. Please try again.';
+                }
+                
+                message.classList.remove('hidden');
+                
+            } catch (error) {
+                message.className = 'mt-4 p-3 rounded-md bg-red-50 border border-red-200 text-red-800';
+                message.textContent = 'Network error. Please try again.';
+                message.classList.remove('hidden');
+            }
+            
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Send magic link';
+        });
+    </script>
+</body>
+</html>

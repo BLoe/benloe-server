@@ -1,0 +1,27 @@
+# Artanis Authentication Service
+auth.benloe.com {
+    reverse_proxy localhost:3002
+    
+    # Security headers
+    header {
+        # Enable HSTS
+        Strict-Transport-Security max-age=31536000; includeSubdomains; preload
+        # Prevent MIME type sniffing
+        X-Content-Type-Options nosniff
+        # Prevent clickjacking
+        X-Frame-Options DENY
+        # XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Referrer policy
+        Referrer-Policy strict-origin-when-cross-origin
+    }
+    
+    # Enable compression
+    encode gzip
+    
+    # Logs for debugging
+    log {
+        output file /var/log/caddy/auth.log
+        format json
+    }
+}

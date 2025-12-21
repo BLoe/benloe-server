@@ -1,0 +1,19 @@
+{
+  "name": "@benloe/shared",
+  "version": "1.0.0",
+  "description": "Shared utilities and types for benloe.com platform",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "exports": {
+    "./types": "./types/index.ts",
+    "./utils": "./utils/index.ts",
+    "./components": "./components/index.ts"
+  }
+}

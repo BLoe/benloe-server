@@ -1,0 +1,148 @@
+// Game Night Application Schema
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Game library with BGG integration
+model Game {
+  id          String  @id @default(cuid())
+  name        String
+  minPlayers  Int
+  maxPlayers  Int
+  duration    Int?    // minutes
+  complexity  Float?  // 1-5 BGG weight
+  bggId       Int?    @unique
+  imageUrl    String?
+  description String?
+  bestWith    String? // "3-4" players recommended
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  events Event[]
+
+  @@index([name])
+  @@map("games")
+}
+
+// Events (one-time and recurring)
+model Event {
+  id          String      @id @default(cuid())
+  title       String?
+  dateTime    DateTime
+  location    String?
+  description String?
+  status      EventStatus @default(OPEN)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  commitmentDeadline DateTime?
+
+  gameId      String
+  game        Game   @relation(fields: [gameId], references: [id])
+  
+  creatorId   String
+  // We'll reference the User from the auth database by ID
+
+  // Recurring events
+  recurringPattern   RecurringPattern?
+  parentEventId      String?
+  parentEvent        Event?  @relation("RecurringSeries", fields: [parentEventId], references: [id])
+  childEvents        Event[] @relation("RecurringSeries")
+
+  commitments Commitment[]
+  reminders   EventReminder[]
+
+  @@index([dateTime])
+  @@index([status])
+  @@index([creatorId])
+  @@map("events")
+}
+
+// Recurring event patterns
+model RecurringPattern {
+  id        String           @id @default(cuid())
+  frequency RecurrenceType   // WEEKLY, BIWEEKLY, MONTHLY
+  interval  Int             @default(1)
+  endDate   DateTime?
+  createdAt DateTime        @default(now())
+
+  eventId String @unique
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@map("recurring_patterns")
+}
+
+// User commitments to events
+model Commitment {
+  id       String           @id @default(cuid())
+  status   CommitmentStatus @default(COMMITTED)
+  joinedAt DateTime         @default(now())
+  notes    String?
+
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  
+  userId  String
+  // We'll reference the User from the auth database by ID
+
+  @@unique([eventId, userId])
+  @@map("commitments")
+}
+
+// Email reminder scheduling
+model EventReminder {
+  id         String   @id @default(cuid())
+  eventId    String
+  userId     String
+  reminderAt DateTime
+  sent       Boolean  @default(false)
+  type       ReminderType @default(BEFORE_EVENT)
+  createdAt  DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  // We'll reference the User from the auth database by ID
+
+  @@unique([eventId, userId, type])
+  @@map("event_reminders")
+}
+
+// Calendar subscription management
+model CalendarSubscription {
+  id        String   @id @default(cuid())
+  userId    String   // References auth database User
+  token     String   @unique @default(cuid())
+  createdAt DateTime @default(now())
+  active    Boolean  @default(true)
+
+  @@map("calendar_subscriptions")
+}
+
+enum EventStatus {
+  OPEN
+  FULL
+  CANCELLED
+  COMPLETED
+}
+
+enum CommitmentStatus {
+  COMMITTED
+  WAITLISTED
+  DECLINED
+}
+
+enum RecurrenceType {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum ReminderType {
+  BEFORE_EVENT    // 24h before
+  WEEKLY_DIGEST   // Sunday evening
+  COMMITMENT_DEADLINE // 2h before deadline
+}

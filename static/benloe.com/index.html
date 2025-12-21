@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ben Loe</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        :root {
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --primary-color: #667eea;
+            --secondary-color: #764ba2;
+            --text-primary: #333;
+            --text-secondary: #666;
+            --text-muted: #888;
+            --bg-white: #ffffff;
+            --bg-light: #f8f9fa;
+            --bg-warning: #fff3cd;
+            --border-light: #e0e0e0;
+            --shadow-light: rgba(0, 0, 0, 0.1);
+            --shadow-medium: rgba(0, 0, 0, 0.15);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-white);
+            min-height: 100vh;
+        }
+
+        /* Header */
+        header {
+            background: var(--primary-gradient);
+            padding: 2rem 0;
+            text-align: center;
+            box-shadow: 0 2px 20px var(--shadow-light);
+            position: relative;
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .auth-section {
+            position: absolute;
+            top: 1rem;
+            right: 2rem;
+        }
+
+        .auth-button {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            cursor: pointer;
+            display: inline-block;
+        }
+
+        .auth-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .user-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+            color: white;
+            font-weight: 700;
+        }
+
+        .tagline {
+            font-size: 1.25rem;
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 2rem;
+        }
+
+        /* Navigation Tabs */
+        .nav-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 1rem;
+        }
+
+        .tab-button {
+            background: transparent;
+            border: none;
+            padding: 12px 4px;
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1rem;
+            font-weight: 500;
+            position: relative;
+        }
+
+        .tab-button::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 3px;
+            background: white;
+            border-radius: 1.5px;
+            transition: var(--transition);
+        }
+
+        .tab-button.active {
+            color: white;
+        }
+
+        .tab-button.active::after {
+            width: 100%;
+        }
+
+        .tab-button:hover:not(.active) {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .tab-button:hover:not(.active)::after {
+            width: 60%;
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        /* Main Content */
+        main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+            min-height: 60vh;
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* About Section */
+        .about-content {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .bio {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            margin-bottom: 3rem;
+            line-height: 1.8;
+        }
+
+        .bio-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+
+        .bio-card {
+            background: var(--bg-light);
+            padding: 2rem;
+            border-radius: 12px;
+            text-align: left;
+        }
+
+        .bio-card h3 {
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+
+        .bio-card p {
+            color: var(--text-secondary);
+        }
+
+        /* Projects Section */
+        .projects-header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .projects-header h2 {
+            font-size: 2rem;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+
+        .projects-header p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+        }
+
+        .project-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .project-card {
+            background: var(--bg-white);
+            border-radius: 12px;
+            padding: 2rem;
+            text-decoration: none;
+            color: var(--text-primary);
+            transition: var(--transition);
+            border: 2px solid var(--border-light);
+            box-shadow: 0 4px 6px var(--shadow-light);
+        }
+
+        .project-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 24px var(--shadow-medium);
+            border-color: var(--primary-color);
+        }
+
+        .project-card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
+            color: var(--primary-color);
+        }
+
+        .project-card p {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .project-tech {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tech-tag {
+            background: var(--bg-light);
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .coming-soon {
+            background: var(--bg-warning);
+            color: #856404;
+            font-size: 0.8rem;
+            padding: 4px 12px;
+            border-radius: 20px;
+            display: inline-block;
+            font-weight: 500;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--bg-light);
+            padding: 2rem 0;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 767px) {
+            .header-content {
+                padding: 0 1rem;
+            }
+
+            .auth-section {
+                right: 1rem;
+            }
+
+            .auth-button {
+                font-size: 0.8rem;
+                padding: 6px 12px;
+            }
+
+            h1 {
+                font-size: 2.5rem;
+            }
+
+            .tagline {
+                font-size: 1.1rem;
+            }
+
+            .tab-button {
+                padding: 10px 20px;
+                font-size: 0.9rem;
+            }
+
+            main {
+                padding: 2rem 1rem;
+            }
+
+            .bio {
+                font-size: 1.1rem;
+            }
+
+            .bio-details {
+                grid-template-columns: 1fr;
+            }
+
+            .project-grid {
+                grid-template-columns: 1fr;
+                gap: 1.5rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .nav-tabs {
+                gap: 0;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                padding: 4px;
+                margin: 1rem 2rem 0;
+            }
+
+            .tab-button {
+                flex: 1;
+                padding: 14px 16px;
+                text-align: center;
+                border-radius: 6px;
+                min-height: 44px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .tab-button::after {
+                display: none;
+            }
+
+            .tab-button.active {
+                background: rgba(255, 255, 255, 0.2);
+            }
+
+            .tab-button:hover:not(.active) {
+                background: rgba(255, 255, 255, 0.1);
+            }
+        }
+
+        @media (max-width: 480px) {
+            .nav-tabs {
+                margin: 1rem 1rem 0;
+            }
+        }
+
+        @media (min-width: 768px) and (max-width: 1023px) {
+            .header-content {
+                padding: 0 3rem;
+            }
+
+            main {
+                padding: 3rem 2rem;
+            }
+
+            .project-grid {
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .header-content {
+                padding: 0 2rem;
+            }
+
+            main {
+                padding: 4rem 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="auth-section">
+            <div id="auth-content">
+                <a href="https://auth.benloe.com/?redirect=https://benloe.com" class="auth-button" id="sign-in-btn">Sign In</a>
+            </div>
+        </div>
+        <div class="header-content">
+            <h1>Ben Loe</h1>
+            <p class="tagline">Building & Learning in Public</p>
+            <nav class="nav-tabs">
+                <button class="tab-button active" data-tab="about">About</button>
+                <button class="tab-button" data-tab="projects">Projects</button>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <div id="about" class="tab-content active">
+            <div class="about-content">
+                <p class="bio">
+                    Experienced developer exploring personal projects for the first time. 
+                    With 15+ years in tech, I'm now experimenting with rapid prototyping, 
+                    LLM-assisted development, and building in public.
+                </p>
+                
+                <div class="bio-details">
+                    <div class="bio-card">
+                        <h3>Experience</h3>
+                        <p>15+ years in software development, now focusing on personal projects and experimental web applications using modern technologies.</p>
+                    </div>
+                    
+                    <div class="bio-card">
+                        <h3>Focus Areas</h3>
+                        <p>Rapid prototyping, full-stack development, LLM integration, and exploring new frameworks through hands-on experimentation.</p>
+                    </div>
+                    
+                    <div class="bio-card">
+                        <h3>Philosophy</h3>
+                        <p>Learning by building, iterating quickly, and sharing the journey. Every project is an opportunity to explore new ideas.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="projects" class="tab-content">
+            <div class="project-grid">
+                <a href="https://weights.benloe.com" class="project-card">
+                    <h3>💪 Weight Tracker</h3>
+                    <p>Track your lifting progress with automatic 1RM calculations and workout history</p>
+                    <div class="project-tech">
+                        <span class="tech-tag">JavaScript</span>
+                        <span class="tech-tag">Local Storage</span>
+                        <span class="tech-tag">Tailwind CSS</span>
+                    </div>
+                </a>
+                
+                <a href="http://gamenight.benloe.com" class="project-card">
+                    <h3>🎲 Game Night Scheduler</h3>
+                    <p>Schedule game nights with friends</p>
+                    <div class="project-tech">
+                        <span class="tech-tag">Planning</span>
+                    </div>
+                    <span class="coming-soon">In Development</span>
+                </a>
+
+                <a href="https://dada.benloe.com" class="project-card">
+                    <h3>🎯 Defense Against the Dart Arts</h3>
+                    <p>Darts training and practice program with structured drills and progress tracking</p>
+                    <div class="project-tech">
+                        <span class="tech-tag">JavaScript</span>
+                        <span class="tech-tag">Tailwind CSS</span>
+                    </div>
+                    <span class="coming-soon">In Development</span>
+                </a>
+
+                <a href="https://fantasyhawk.benloe.com" class="project-card">
+                    <h3>🦅 Fantasy Hawk</h3>
+                    <p>Yahoo Fantasy Basketball analytics with charts, stats, and team/player analysis</p>
+                    <div class="project-tech">
+                        <span class="tech-tag">React</span>
+                        <span class="tech-tag">TypeScript</span>
+                        <span class="tech-tag">Recharts</span>
+                        <span class="tech-tag">Yahoo OAuth</span>
+                    </div>
+                </a>
+
+                <div class="project-card">
+                    <h3>More Projects</h3>
+                    <p>Additional experiments will appear here as they're built and deployed.</p>
+                    <div class="project-tech">
+                        <span class="tech-tag">Various</span>
+                    </div>
+                    <span class="coming-soon">Coming Soon</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>This site is a playground for experiments and learning. Built with curiosity and code.</p>
+    </footer>
+
+    <script>
+        // Tab switching functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const tabButtons = document.querySelectorAll('.tab-button');
+            const tabContents = document.querySelectorAll('.tab-content');
+
+            // Load saved tab from localStorage or default to 'about'
+            const savedTab = localStorage.getItem('activeTab') || 'about';
+            switchTab(savedTab);
+
+            tabButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const tabName = this.dataset.tab;
+                    switchTab(tabName);
+                    localStorage.setItem('activeTab', tabName);
+                });
+            });
+
+            function switchTab(tabName) {
+                // Remove active class from all buttons and contents
+                tabButtons.forEach(btn => btn.classList.remove('active'));
+                tabContents.forEach(content => content.classList.remove('active'));
+
+                // Add active class to selected button and content
+                document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+                document.getElementById(tabName).classList.add('active');
+            }
+
+            // Authentication check
+            console.log('Starting auth check...');
+            checkAuthStatus();
+        });
+
+        async function checkAuthStatus() {
+            try {
+                const response = await fetch('https://auth.benloe.com/api/auth/me', {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Auth data received:', data);
+                    if (data.user) {
+                        showUserInfo(data.user);
+                    } else {
+                        showSignInButton();
+                    }
+                } else {
+                    console.log('Auth check failed with status:', response.status);
+                    showSignInButton();
+                }
+            } catch (error) {
+                console.log('Auth check failed:', error);
+                showSignInButton();
+            }
+        }
+
+        function showUserInfo(user) {
+            const authContent = document.getElementById('auth-content');
+            authContent.innerHTML = `
+                <div style="display: flex; gap: 8px;">
+                    <a href="https://auth.benloe.com/dashboard" class="auth-button">
+                        <div class="user-info">
+                            <div class="user-avatar"></div>
+                            <span>${user.name || user.email}</span>
+                        </div>
+                    </a>
+                    <button onclick="logoutUser()" class="auth-button" style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);">
+                        Sign Out
+                    </button>
+                </div>
+            `;
+        }
+
+        async function logoutUser() {
+            try {
+                const response = await fetch('https://auth.benloe.com/api/auth/logout', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    showSignInButton();
+                } else {
+                    console.log('Logout failed with status:', response.status);
+                    // Show sign in button anyway
+                    showSignInButton();
+                }
+            } catch (error) {
+                console.log('Logout failed:', error);
+                // Show sign in button anyway
+                showSignInButton();
+            }
+        }
+
+        function showSignInButton() {
+            const authContent = document.getElementById('auth-content');
+            authContent.innerHTML = `
+                <a href="https://auth.benloe.com/?redirect=https://benloe.com" class="auth-button" id="sign-in-btn">Sign In</a>
+            `;
+        }
+
+        // Add global function for manual testing
+        window.refreshAuthStatus = function() {
+            console.log('Manually refreshing auth status...');
+            checkAuthStatus();
+        };
+    </script>
+</body>
+</html>

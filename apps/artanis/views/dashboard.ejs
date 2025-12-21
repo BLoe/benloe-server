@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - benloe.com</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link href="/tailwind.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --primary-color: #667eea;
+            --secondary-color: #764ba2;
+            --text-primary: #333;
+            --text-secondary: #666;
+            --text-muted: #888;
+            --bg-white: #ffffff;
+            --bg-light: #f8f9fa;
+            --border-light: #e0e0e0;
+            --shadow-light: rgba(0, 0, 0, 0.1);
+            --shadow-medium: rgba(0, 0, 0, 0.15);
+            --transition: all 0.3s ease;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-white);
+        }
+
+        .header-bg {
+            background: var(--primary-gradient);
+            box-shadow: 0 2px 20px var(--shadow-light);
+        }
+
+        .back-link {
+            color: rgba(255, 255, 255, 0.9);
+            transition: var(--transition);
+        }
+
+        .back-link:hover {
+            color: white;
+            transform: translateX(-2px);
+        }
+
+        .profile-card {
+            background: var(--bg-white);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px var(--shadow-light);
+            border: 2px solid var(--border-light);
+        }
+
+        .info-section {
+            background: var(--bg-light);
+            border-radius: 12px;
+        }
+
+        .edit-button {
+            background: var(--primary-gradient);
+            transition: var(--transition);
+        }
+
+        .edit-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px var(--shadow-medium);
+        }
+
+        .danger-button {
+            transition: var(--transition);
+        }
+
+        .danger-button:hover {
+            transform: translateY(-1px);
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Header -->
+    <header class="header-bg text-white">
+        <div class="max-w-4xl mx-auto px-6 py-8">
+            <a href="https://benloe.com" class="back-link inline-flex items-center text-lg font-medium mb-6 hover:underline">
+                ← Back to Home
+            </a>
+            <div class="text-center">
+                <div class="w-24 h-24 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                    <span class="text-3xl">👤</span>
+                </div>
+                <h1 class="text-3xl font-bold mb-2">Welcome to Your Dashboard</h1>
+                <p class="text-lg opacity-90">Manage your profile and account settings</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto py-12 px-6">
+        <div class="profile-card p-8">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Profile Information -->
+                <div class="space-y-6">
+                    <div class="info-section p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-semibold" style="color: var(--primary-color);">Profile Information</h3>
+                            <button id="editProfileBtn" class="edit-button text-white px-4 py-2 rounded-lg text-sm font-medium">
+                                Edit Profile
+                            </button>
+                        </div>
+                        
+                        <!-- Profile Display -->
+                        <div id="profileDisplay" class="space-y-4">
+                            <div class="flex justify-between items-center py-2 border-b border-gray-200">
+                                <span class="font-medium" style="color: var(--text-secondary);">Name:</span>
+                                <span class="font-semibold" style="color: var(--text-primary);" id="displayName"><%= user.name || 'Not set' %></span>
+                            </div>
+                            <div class="flex justify-between items-center py-2 border-b border-gray-200">
+                                <span class="font-medium" style="color: var(--text-secondary);">Email:</span>
+                                <span class="font-semibold" style="color: var(--text-primary);"><%= user.email %></span>
+                            </div>
+                            <div class="flex justify-between items-center py-2">
+                                <span class="font-medium" style="color: var(--text-secondary);">Member since:</span>
+                                <span class="font-semibold" style="color: var(--text-primary);">
+                                    <%= new Date(user.createdAt).toLocaleDateString('en-US', { 
+                                        year: 'numeric', 
+                                        month: 'long', 
+                                        day: 'numeric' 
+                                    }) %>
+                                </span>
+                            </div>
+                        </div>
+                        
+                        <!-- Profile Edit Form -->
+                        <div id="profileEdit" class="space-y-4 hidden">
+                            <div>
+                                <label for="nameInput" class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Name:</label>
+                                <input type="text" id="nameInput" value="<%= user.name || '' %>" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                            </div>
+                            <div class="flex gap-3 pt-4">
+                                <button id="saveProfileBtn" class="edit-button text-white px-4 py-2 rounded-lg text-sm font-medium flex-1">
+                                    Save Changes
+                                </button>
+                                <button id="cancelEditBtn" class="bg-gray-500 text-white px-4 py-2 rounded-lg text-sm font-medium flex-1 hover:bg-gray-600">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Account Actions -->
+                <div class="space-y-6">
+                    <div class="info-section p-6">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--primary-color);">Account Actions</h3>
+                        <div class="space-y-4">
+                            <div class="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                                <h4 class="font-medium text-yellow-800 mb-2">Security</h4>
+                                <p class="text-sm text-yellow-700 mb-3">Sign out of all active sessions across all devices.</p>
+                                <button id="signOutBtn" class="danger-button bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700">
+                                    Sign Out All Sessions
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Messages -->
+            <div id="message" class="mt-6 p-3 rounded-lg hidden"></div>
+        </div>
+    </main>
+
+    <script>
+        // DOM elements
+        const signOutBtn = document.getElementById('signOutBtn');
+        const message = document.getElementById('message');
+        const editProfileBtn = document.getElementById('editProfileBtn');
+        const saveProfileBtn = document.getElementById('saveProfileBtn');
+        const cancelEditBtn = document.getElementById('cancelEditBtn');
+        const profileDisplay = document.getElementById('profileDisplay');
+        const profileEdit = document.getElementById('profileEdit');
+        const nameInput = document.getElementById('nameInput');
+        const displayName = document.getElementById('displayName');
+        
+        // Profile editing functionality
+        editProfileBtn.addEventListener('click', () => {
+            profileDisplay.classList.add('hidden');
+            profileEdit.classList.remove('hidden');
+            nameInput.focus();
+        });
+        
+        cancelEditBtn.addEventListener('click', () => {
+            profileEdit.classList.add('hidden');
+            profileDisplay.classList.remove('hidden');
+            nameInput.value = '<%= user.name || "" %>';
+        });
+        
+        saveProfileBtn.addEventListener('click', async () => {
+            const name = nameInput.value.trim();
+            
+            if (!name) {
+                showMessage('Name cannot be empty', 'error');
+                return;
+            }
+            
+            saveProfileBtn.disabled = true;
+            saveProfileBtn.textContent = 'Saving...';
+            
+            try {
+                const response = await fetch('/api/users/profile', {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ name }),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    displayName.textContent = data.user.name;
+                    profileEdit.classList.add('hidden');
+                    profileDisplay.classList.remove('hidden');
+                    showMessage('Profile updated successfully!', 'success');
+                } else {
+                    showMessage(data.error || 'Failed to update profile', 'error');
+                }
+            } catch (error) {
+                showMessage('Network error. Please try again.', 'error');
+            } finally {
+                saveProfileBtn.disabled = false;
+                saveProfileBtn.textContent = 'Save Changes';
+            }
+        });
+        
+        // Sign out functionality
+        signOutBtn.addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to sign out of all active sessions?')) {
+                return;
+            }
+            
+            signOutBtn.disabled = true;
+            signOutBtn.textContent = 'Signing out...';
+            
+            try {
+                const response = await fetch('/api/auth/logout', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    window.location.href = '/';
+                } else {
+                    const data = await response.json();
+                    showMessage(data.error || 'Error signing out. Please try again.', 'error');
+                    
+                    signOutBtn.disabled = false;
+                    signOutBtn.textContent = 'Sign Out All Sessions';
+                }
+            } catch (error) {
+                showMessage('Network error. Please try again.', 'error');
+                
+                signOutBtn.disabled = false;
+                signOutBtn.textContent = 'Sign Out All Sessions';
+            }
+        });
+        
+        // Helper function to show messages
+        function showMessage(text, type) {
+            message.className = `mt-6 p-3 rounded-lg ${type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`;
+            message.textContent = text;
+            message.classList.remove('hidden');
+            
+            // Hide message after 5 seconds
+            setTimeout(() => {
+                message.classList.add('hidden');
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

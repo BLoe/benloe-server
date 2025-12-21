@@ -1,0 +1,50 @@
+{
+  "name": "benloe-platform",
+  "version": "1.0.0",
+  "description": "Monorepo for benloe.com platform applications",
+  "private": true,
+  "workspaces": [
+    "artanis",
+    "homepage",
+    "gamenight",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "prettier": "prettier --check .",
+    "prettier:fix": "prettier --write .",
+    "clean-code": "npm run prettier:fix && npm run lint:fix"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.3.1",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BLoe/benloe-platform.git"
+  },
+  "keywords": [
+    "monorepo",
+    "typescript",
+    "authentication",
+    "game-scheduler",
+    "homepage"
+  ],
+  "author": "Ben Loe",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.5.0"
+  }
+}

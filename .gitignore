@@ -1,0 +1,65 @@
+# Environment and secrets
+.env
+.env.local
+.env.production
+.env.test
+*.env
+
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+data/
+
+# Logs
+logs/
+*.log
+
+# Build outputs
+dist/
+build/
+.next/
+.vite/
+*.tsbuildinfo
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# PM2
+ecosystem.config.js.bak
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# API dumps (debug output)
+api-dumps/
+
+# Prisma generated
+apps/*/prisma/*.db
+apps/*/prisma/*.db-shm
+apps/*/prisma/*.db-wal

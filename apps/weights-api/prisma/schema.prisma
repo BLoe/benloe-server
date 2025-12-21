@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Exercise {
+  id        String      @id @default(cuid())
+  name      String
+  userId    String
+  createdAt DateTime    @default(now())
+  workouts  Workout[]
+  prHistory PRHistory[]
+  
+  @@map("exercises")
+}
+
+model Workout {
+  id         String   @id @default(cuid())
+  userId     String
+  exerciseId String
+  weight     Float
+  reps       Int
+  oneRM      Float
+  createdAt  DateTime @default(now())
+  
+  exercise   Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  
+  @@map("workouts")
+}
+
+model PRHistory {
+  id             String   @id @default(cuid())
+  userId         String
+  exerciseId     String
+  weight         Float
+  previousWeight Float?
+  createdAt      DateTime @default(now())
+  
+  exercise       Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  
+  @@map("pr_history")
+}

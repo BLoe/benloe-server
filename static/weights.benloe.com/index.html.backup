@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weight Tracker - Ben's Lifts</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .exercise-card {
+            transition: all 0.2s ease-in-out;
+        }
+        .exercise-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">💪 Weight Tracker</h1>
+            <p class="text-gray-600">Track your lifting progress</p>
+            <div class="mt-4">
+                <button id="toggleExerciseManager" class="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 font-medium">
+                    Manage Exercises
+                </button>
+            </div>
+        </div>
+
+        <!-- Exercise Manager (Hidden by default) -->
+        <div id="exerciseManager" class="bg-white rounded-lg shadow-md p-6 mb-8 hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold text-gray-800">Manage Exercises</h2>
+                <button id="closeExerciseManager" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- Add New Exercise Form -->
+            <div class="mb-6 p-4 bg-gray-50 rounded-md">
+                <h3 class="font-semibold text-gray-800 mb-3">Add New Exercise</h3>
+                <form id="newExerciseForm" class="flex gap-3">
+                    <input type="text" id="newExerciseName" placeholder="Exercise name..." class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 font-medium">
+                        Add Exercise
+                    </button>
+                </form>
+            </div>
+            
+            <!-- Exercise List -->
+            <div>
+                <h3 class="font-semibold text-gray-800 mb-3">Current Exercises</h3>
+                <div id="exerciseList" class="space-y-2">
+                    <!-- Exercise list will be populated here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Add Form -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Log New Lift</h2>
+            <form id="liftForm" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Exercise</label>
+                    <select id="exercise" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <option value="">Select exercise...</option>
+                    </select>
+                </div>
+                
+                <div id="customExerciseDiv" class="hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Custom Exercise</label>
+                    <input type="text" id="customExercise" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter exercise name">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Weight (lbs)</label>
+                    <input type="number" id="weight" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" step="2.5" min="0" required>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Reps</label>
+                    <input type="number" id="reps" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" min="1" required>
+                </div>
+
+                <div class="flex items-end">
+                    <button type="submit" class="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium">
+                        Add Lift
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Today's Workout -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Today's Workout</h2>
+            <div id="todayWorkout" class="space-y-3">
+                <p class="text-gray-500 text-center py-4">No lifts logged today. Start lifting!</p>
+            </div>
+        </div>
+
+        <!-- Exercise History -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Exercise Progress</h2>
+            <div id="exerciseHistory" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <p class="text-gray-500 text-center py-8 col-span-full">No workout history yet. Add your first lift above!</p>
+            </div>
+        </div>
+
+        <!-- Clear Data Button -->
+        <div class="text-center mt-8">
+            <button id="clearData" class="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 font-medium">
+                Clear All Data
+            </button>
+        </div>
+    </div>
+
+    <script>
+        class WeightTracker {
+            constructor() {
+                this.workouts = JSON.parse(localStorage.getItem('weightTracker') || '[]');
+                this.exercises = JSON.parse(localStorage.getItem('weightTrackerExercises') || '[]');
+                this.initializeDefaultExercises();
+                this.initializeEventListeners();
+                this.render();
+            }
+
+            initializeDefaultExercises() {
+                if (this.exercises.length === 0) {
+                    this.exercises = [
+                        'Bench Press', 'Squat', 'Deadlift', 'Overhead Press', 
+                        'Barbell Row', 'Pull-up', 'Dip'
+                    ];
+                    this.saveExercises();
+                }
+            }
+
+            initializeEventListeners() {
+                document.getElementById('liftForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.addLift();
+                });
+
+                document.getElementById('exercise').addEventListener('change', (e) => {
+                    const customDiv = document.getElementById('customExerciseDiv');
+                    if (e.target.value === 'Custom') {
+                        customDiv.classList.remove('hidden');
+                        document.getElementById('customExercise').required = true;
+                    } else {
+                        customDiv.classList.add('hidden');
+                        document.getElementById('customExercise').required = false;
+                    }
+                });
+
+                document.getElementById('clearData').addEventListener('click', () => {
+                    if (confirm('Are you sure you want to clear all workout data? This cannot be undone.')) {
+                        this.clearAllData();
+                    }
+                });
+
+                // Exercise manager event listeners
+                document.getElementById('toggleExerciseManager').addEventListener('click', () => {
+                    this.toggleExerciseManager();
+                });
+
+                document.getElementById('closeExerciseManager').addEventListener('click', () => {
+                    this.toggleExerciseManager();
+                });
+
+                document.getElementById('newExerciseForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.addNewExercise();
+                });
+            }
+
+            addLift() {
+                const exerciseSelect = document.getElementById('exercise');
+                const customExercise = document.getElementById('customExercise');
+                const weight = parseFloat(document.getElementById('weight').value);
+                const reps = parseInt(document.getElementById('reps').value);
+
+                let exerciseName = exerciseSelect.value;
+                if (exerciseName === 'Custom') {
+                    exerciseName = customExercise.value.trim();
+                }
+
+                if (!exerciseName || !weight || !reps) return;
+
+                const lift = {
+                    id: Date.now(),
+                    exercise: exerciseName,
+                    weight: weight,
+                    reps: reps,
+                    date: new Date().toISOString(),
+                    oneRepMax: this.calculateOneRepMax(weight, reps)
+                };
+
+                this.workouts.push(lift);
+                this.saveData();
+                this.render();
+                this.resetForm();
+            }
+
+            calculateOneRepMax(weight, reps) {
+                // Using Brzycki formula: 1RM = weight / (1.0278 - (0.0278 * reps))
+                if (reps === 1) return weight;
+                return Math.round(weight / (1.0278 - (0.0278 * reps)) * 10) / 10;
+            }
+
+            resetForm() {
+                document.getElementById('liftForm').reset();
+                document.getElementById('customExerciseDiv').classList.add('hidden');
+                document.getElementById('customExercise').required = false;
+            }
+
+            getTodayWorkouts() {
+                const today = new Date().toDateString();
+                return this.workouts.filter(workout => 
+                    new Date(workout.date).toDateString() === today
+                );
+            }
+
+            getExerciseHistory() {
+                const exercises = {};
+                this.workouts.forEach(workout => {
+                    if (!exercises[workout.exercise]) {
+                        exercises[workout.exercise] = [];
+                    }
+                    exercises[workout.exercise].push(workout);
+                });
+
+                // Sort each exercise by date
+                Object.keys(exercises).forEach(exercise => {
+                    exercises[exercise].sort((a, b) => new Date(b.date) - new Date(a.date));
+                });
+
+                return exercises;
+            }
+
+            renderTodayWorkout() {
+                const container = document.getElementById('todayWorkout');
+                const todayWorkouts = this.getTodayWorkouts();
+
+                if (todayWorkouts.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-center py-4">No lifts logged today. Start lifting!</p>';
+                    return;
+                }
+
+                container.innerHTML = todayWorkouts.map(workout => `
+                    <div class="flex justify-between items-center bg-gray-50 p-3 rounded-md">
+                        <div>
+                            <span class="font-medium">${workout.exercise}</span>
+                            <span class="text-gray-600 ml-2">${workout.weight} lbs × ${workout.reps} reps</span>
+                        </div>
+                        <div class="text-sm text-gray-500">
+                            1RM: ${workout.oneRepMax} lbs
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            renderExerciseHistory() {
+                const container = document.getElementById('exerciseHistory');
+                const exerciseHistory = this.getExerciseHistory();
+
+                if (Object.keys(exerciseHistory).length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-center py-8 col-span-full">No workout history yet. Add your first lift above!</p>';
+                    return;
+                }
+
+                container.innerHTML = Object.keys(exerciseHistory).map(exercise => {
+                    const workouts = exerciseHistory[exercise];
+                    const recent = workouts.slice(0, 3);
+                    const maxWeight = Math.max(...workouts.map(w => w.weight));
+                    const maxOneRM = Math.max(...workouts.map(w => w.oneRepMax));
+
+                    return `
+                        <div class="exercise-card bg-gray-50 p-4 rounded-md">
+                            <h3 class="font-semibold text-lg text-gray-800 mb-2">${exercise}</h3>
+                            <div class="text-sm text-gray-600 mb-3">
+                                <div>Max Weight: <span class="font-medium">${maxWeight} lbs</span></div>
+                                <div>Est. 1RM: <span class="font-medium">${maxOneRM} lbs</span></div>
+                                <div>Total Sets: <span class="font-medium">${workouts.length}</span></div>
+                            </div>
+                            <div class="text-xs text-gray-500">
+                                <div class="font-medium mb-1">Recent:</div>
+                                ${recent.map(w => `
+                                    <div>${w.weight} lbs × ${w.reps} (${new Date(w.date).toLocaleDateString()})</div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            render() {
+                this.renderTodayWorkout();
+                this.renderExerciseHistory();
+                this.renderExerciseDropdown();
+                this.renderExerciseList();
+            }
+
+            toggleExerciseManager() {
+                const manager = document.getElementById('exerciseManager');
+                manager.classList.toggle('hidden');
+            }
+
+            addNewExercise() {
+                const nameInput = document.getElementById('newExerciseName');
+                const exerciseName = nameInput.value.trim();
+
+                if (!exerciseName) return;
+
+                if (this.exercises.includes(exerciseName)) {
+                    alert('Exercise already exists!');
+                    return;
+                }
+
+                this.exercises.push(exerciseName);
+                this.exercises.sort();
+                this.saveExercises();
+                this.render();
+                nameInput.value = '';
+            }
+
+            editExercise(oldName, newName) {
+                if (!newName.trim()) return;
+                
+                const index = this.exercises.indexOf(oldName);
+                if (index === -1) return;
+
+                if (this.exercises.includes(newName) && newName !== oldName) {
+                    alert('Exercise already exists!');
+                    return;
+                }
+
+                // Update exercise in list
+                this.exercises[index] = newName;
+                this.exercises.sort();
+
+                // Update any existing workouts with the old name
+                this.workouts.forEach(workout => {
+                    if (workout.exercise === oldName) {
+                        workout.exercise = newName;
+                    }
+                });
+
+                this.saveExercises();
+                this.saveData();
+                this.render();
+            }
+
+            deleteExercise(exerciseName) {
+                if (!confirm(`Are you sure you want to delete "${exerciseName}"? This will also remove all workout data for this exercise.`)) {
+                    return;
+                }
+
+                // Remove from exercise list
+                this.exercises = this.exercises.filter(ex => ex !== exerciseName);
+
+                // Remove all workouts for this exercise
+                this.workouts = this.workouts.filter(workout => workout.exercise !== exerciseName);
+
+                this.saveExercises();
+                this.saveData();
+                this.render();
+            }
+
+            renderExerciseDropdown() {
+                const select = document.getElementById('exercise');
+                const currentValue = select.value;
+
+                select.innerHTML = '<option value="">Select exercise...</option>';
+                
+                this.exercises.forEach(exercise => {
+                    const option = document.createElement('option');
+                    option.value = exercise;
+                    option.textContent = exercise;
+                    select.appendChild(option);
+                });
+
+                const customOption = document.createElement('option');
+                customOption.value = 'Custom';
+                customOption.textContent = 'Custom...';
+                select.appendChild(customOption);
+
+                // Restore selected value if it still exists
+                if (currentValue && (this.exercises.includes(currentValue) || currentValue === 'Custom')) {
+                    select.value = currentValue;
+                }
+            }
+
+            renderExerciseList() {
+                const container = document.getElementById('exerciseList');
+                
+                if (this.exercises.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-center py-4">No exercises added yet.</p>';
+                    return;
+                }
+
+                container.innerHTML = this.exercises.map(exercise => `
+                    <div class="flex justify-between items-center bg-gray-100 p-3 rounded-md">
+                        <div class="flex-1">
+                            <span class="font-medium text-gray-800">${exercise}</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="app.editExercisePrompt('${exercise.replace(/'/g, "\\'")}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                Edit
+                            </button>
+                            <button onclick="app.deleteExercise('${exercise.replace(/'/g, "\\'")}')" class="text-red-600 hover:text-red-800 text-sm font-medium">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            editExercisePrompt(oldName) {
+                const newName = prompt(`Edit exercise name:`, oldName);
+                if (newName !== null && newName.trim() !== oldName) {
+                    this.editExercise(oldName, newName.trim());
+                }
+            }
+
+            saveData() {
+                localStorage.setItem('weightTracker', JSON.stringify(this.workouts));
+            }
+
+            saveExercises() {
+                localStorage.setItem('weightTrackerExercises', JSON.stringify(this.exercises));
+            }
+
+            clearAllData() {
+                this.workouts = [];
+                this.saveData();
+                this.render();
+            }
+        }
+
+        // Initialize the app
+        const app = new WeightTracker();
+    </script>
+</body>
+</html>

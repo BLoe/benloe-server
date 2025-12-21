@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PR Tracker - Personal Records</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+    <style>
+        .exercise-card {
+            transition: all 0.2s ease-in-out;
+        }
+        .exercise-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        
+        .pr-celebration {
+            animation: prBounceFlashy 1.2s ease-out;
+            transform-origin: center;
+        }
+        
+        @keyframes prBounceFlashy {
+            0% { 
+                transform: scale(1) rotateZ(0deg); 
+                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                filter: hue-rotate(0deg) brightness(1);
+            }
+            10% { 
+                transform: scale(1.3) rotateZ(-5deg); 
+                box-shadow: 0 8px 25px rgba(34, 197, 94, 0.4);
+                filter: hue-rotate(60deg) brightness(1.2);
+            }
+            25% { 
+                transform: scale(1.4) rotateZ(5deg); 
+                box-shadow: 0 12px 35px rgba(59, 130, 246, 0.5);
+                filter: hue-rotate(120deg) brightness(1.3);
+            }
+            40% { 
+                transform: scale(1.2) rotateZ(-3deg); 
+                box-shadow: 0 10px 30px rgba(168, 85, 247, 0.4);
+                filter: hue-rotate(180deg) brightness(1.1);
+            }
+            60% { 
+                transform: scale(1.1) rotateZ(2deg); 
+                box-shadow: 0 6px 20px rgba(245, 158, 11, 0.3);
+                filter: hue-rotate(240deg) brightness(1.05);
+            }
+            80% { 
+                transform: scale(1.05) rotateZ(-1deg); 
+                box-shadow: 0 4px 15px rgba(239, 68, 68, 0.2);
+                filter: hue-rotate(300deg) brightness(1.02);
+            }
+            100% { 
+                transform: scale(1) rotateZ(0deg); 
+                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                filter: hue-rotate(360deg) brightness(1);
+            }
+        }
+        
+        .pr-number {
+            transition: all 0.3s ease;
+        }
+        
+        .pr-card {
+            transition: all 0.2s ease;
+        }
+        
+        .pr-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        
+        .increment-btn {
+            transition: all 0.2s ease;
+        }
+        
+        .increment-btn:hover {
+            transform: scale(1.05);
+        }
+        
+        .increment-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Collapsible card styles */
+        .pr-card {
+            cursor: pointer;
+            overflow: hidden;
+        }
+        
+        .pr-card.collapsed {
+            height: 60px;
+        }
+        
+        .pr-card.expanded {
+            height: auto;
+        }
+        
+        .pr-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            min-height: 60px;
+        }
+
+        .pr-card-header-left {
+            display: flex;
+            align-items: center;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .pr-card-header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        
+        .pr-card-content {
+            padding: 0 20px 20px 20px;
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: all 0.3s ease;
+        }
+        
+        .pr-card.expanded .pr-card-content {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        .expand-icon {
+            transition: transform 0.3s ease;
+            font-size: 18px;
+            color: #6b7280;
+        }
+        
+        .pr-card.expanded .expand-icon {
+            transform: rotate(180deg);
+        }
+        
+        .pr-card-title {
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .pr-card-title.collapsed {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+
+        .pr-card-title.expanded {
+            white-space: normal;
+            overflow: visible;
+            text-overflow: initial;
+            max-width: none;
+        }
+        
+        .pr-card-value {
+            font-weight: 700;
+            color: #2563eb;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Authentication Check -->
+    <div id="authCheck" class="flex items-center justify-center min-h-screen">
+        <div class="text-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p class="text-gray-600">Checking authentication...</p>
+        </div>
+    </div>
+
+    <!-- Not Authenticated -->
+    <div id="notAuthenticated" class="flex items-center justify-center min-h-screen hidden">
+        <div class="text-center bg-white p-8 rounded-lg shadow-md max-w-md">
+            <h1 class="text-2xl font-bold text-gray-800 mb-4">🔐 Authentication Required</h1>
+            <p class="text-gray-600 mb-6">Please sign in to access your personal weight tracker.</p>
+            <div id="debugInfo" class="text-xs text-left bg-gray-100 p-3 rounded mb-4 font-mono" style="display: none;">
+                <div id="debugMessages"></div>
+            </div>
+            <div class="space-y-4">
+                <a href="https://auth.benloe.com/?redirect=https://weights.benloe.com"
+                   class="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium inline-block w-full">
+                    Sign In
+                </a>
+                <button onclick="window.location.reload()" class="bg-gray-500 text-white px-6 py-3 rounded-md hover:bg-gray-600 font-medium inline-block w-full">
+                    Retry
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Error -->
+    <div id="appError" class="flex items-center justify-center min-h-screen hidden">
+        <div class="text-center bg-white p-8 rounded-lg shadow-md max-w-md">
+            <h1 class="text-2xl font-bold text-red-600 mb-4">⚠️ Application Error</h1>
+            <p class="text-gray-600 mb-4">Something went wrong while loading the app.</p>
+            <div id="errorDetails" class="text-sm text-left bg-red-50 p-4 rounded mb-4 font-mono text-red-800"></div>
+            <div id="errorDebugInfo" class="text-xs text-left bg-gray-100 p-3 rounded mb-4 font-mono" style="display: none;">
+                <div id="errorDebugMessages"></div>
+            </div>
+            <div class="space-y-4">
+                <button onclick="window.location.reload()" class="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 font-medium inline-block w-full">
+                    Reload Page
+                </button>
+                <a href="https://benloe.com" class="bg-gray-500 text-white px-6 py-3 rounded-md hover:bg-gray-600 font-medium inline-block w-full">
+                    Go Home
+                </a>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Main App -->
+    <div id="mainApp" class="container mx-auto px-4 py-8 max-w-4xl hidden">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">🏆 PR Tracker</h1>
+            <p class="text-gray-600">Track your personal records and celebrate your progress</p>
+            <div class="mt-4 flex justify-center items-center gap-4">
+                <span id="userGreeting" class="text-gray-700"></span>
+                <button id="toggleExerciseManager" class="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 font-medium">
+                    Manage Exercises
+                </button>
+                <a href="https://auth.benloe.com/dashboard" class="text-blue-600 hover:text-blue-700">
+                    Account
+                </a>
+            </div>
+        </div>
+
+        <!-- Exercise Manager -->
+        <div id="exerciseManager" class="bg-white rounded-lg shadow-md p-6 mb-8 hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold text-gray-800">Manage Exercises</h2>
+                <button id="closeExerciseManager" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="mb-6 p-4 bg-gray-50 rounded-md">
+                <h3 class="font-semibold text-gray-800 mb-3">Add New Exercise</h3>
+                <form id="newExerciseForm" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <input type="text" id="newExerciseName" placeholder="Exercise name..." class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <input type="number" id="newExerciseWeight" placeholder="Starting PR (lbs)" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" step="2.5" min="0" required>
+                    <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 font-medium">
+                        Add Exercise
+                    </button>
+                </form>
+            </div>
+            
+            <div>
+                <h3 class="font-semibold text-gray-800 mb-3">Your Exercises</h3>
+                <div id="exerciseList" class="space-y-2">
+                    <!-- Exercise list will be populated here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Current PRs -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-800 mb-6">🏆 Your Personal Records</h2>
+            <div id="currentPRs" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <p class="text-gray-500 text-center py-8 col-span-full">Add some exercises to start tracking your PRs!</p>
+            </div>
+        </div>
+
+        <!-- PR History Chart -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">📈 Progress Over Time</h2>
+            <div id="prChart" class="h-64 flex items-center justify-center">
+                <p class="text-gray-500 text-center">Charts will appear here as you track your PRs!</p>
+            </div>
+        </div>
+
+        <!-- PR History -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">📜 PR History</h2>
+            <div id="prHistory" class="space-y-4">
+                <p class="text-gray-500 text-center py-8">No PR history yet. Update some records to see your progress!</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script>
+        class PRTracker {
+            constructor() {
+                this.user = null;
+                this.exercises = [];
+                this.prs = {}; // Store current PRs by exercise ID
+                this.prHistory = []; // Store all PR updates
+                this.chart = null;
+                this.init();
+            }
+
+            async init() {
+                try {
+                    log('Initializing app...');
+                    await this.checkAuth();
+                    log(`Auth check complete. User: ${this.user ? 'SET' : 'NULL'}`);
+                    if (this.user) {
+                        log('User found, loading app data...');
+                        await this.loadData();
+                        this.initializeEventListeners();
+                        this.render();
+                        log('Showing main app...');
+                        this.showMainApp();
+                    } else {
+                        log('No user found, showing auth required...');
+                        this.showNotAuthenticated();
+                    }
+                } catch (error) {
+                    log(`Initialization error: ${error.message}`);
+                    console.error('Initialization error:', error);
+
+                    // Show appropriate error screen based on error type
+                    if (error.message && error.message.includes('auth')) {
+                        this.showNotAuthenticated();
+                    } else {
+                        this.showError(error);
+                    }
+                }
+            }
+
+            async checkAuth() {
+                try {
+                    log('Starting auth check...');
+
+                    // Check authentication using our weights API user endpoint
+                    const userResponse = await fetch('/api/user/me', {
+                        credentials: 'include'
+                    });
+
+                    log(`Auth response status: ${userResponse.status}`);
+
+                    if (userResponse.ok) {
+                        const data = await userResponse.json();
+                        this.user = data.user;
+                        log(`Authentication successful - User: ${this.user.email}`);
+                        return;
+                    } else {
+                        const errorData = await userResponse.text();
+                        log(`Auth failed - Status: ${userResponse.status}, Error: ${errorData}`);
+                    }
+
+                    log('Authentication failed - not logged in');
+                    this.user = null;
+                } catch (error) {
+                    log(`Auth check failed with error: ${error.message}`);
+                    console.error('Full auth error:', error);
+                    this.user = null;
+                }
+            }
+
+            async loadData() {
+                await Promise.all([
+                    this.loadExercises(),
+                    this.loadPRs(),
+                    this.loadPRHistory()
+                ]);
+            }
+
+            async loadExercises() {
+                try {
+                    const response = await fetch('/api/exercises', {
+                        credentials: 'include'
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.exercises = data.exercises || [];
+                    }
+                } catch (error) {
+                    console.error('Failed to load exercises:', error);
+                }
+            }
+
+            async loadPRs() {
+                try {
+                    const response = await fetch('/api/prs', {
+                        credentials: 'include'
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.prs = data.prs || {};
+                    }
+                } catch (error) {
+                    console.error('Failed to load PRs:', error);
+                    this.prs = {};
+                }
+            }
+
+            async loadPRHistory() {
+                try {
+                    const response = await fetch('/api/prs/history', {
+                        credentials: 'include'
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.prHistory = data.history || [];
+                    }
+                } catch (error) {
+                    console.error('Failed to load PR history:', error);
+                    this.prHistory = [];
+                }
+            }
+
+            async addExercise(name, initialWeight) {
+                try {
+                    const response = await fetch('/api/exercises', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        credentials: 'include',
+                        body: JSON.stringify({ name, initialWeight })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.exercises.push(data.exercise);
+                        
+                        // Update local PR data if initial PR was set
+                        if (data.pr) {
+                            this.prs[data.exercise.id] = data.pr;
+                        }
+                        
+                        // Update local PR history if available
+                        if (data.prHistory) {
+                            this.prHistory.unshift(data.prHistory);
+                        }
+
+                        this.renderExerciseList();
+                        this.renderPRs();
+                        this.renderPRHistory();
+                        this.renderChart();
+                        return true;
+                    } else {
+                        const error = await response.json();
+                        alert(error.error || 'Failed to add exercise');
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('Failed to add exercise:', error);
+                    alert('Failed to add exercise');
+                    return false;
+                }
+            }
+
+            async updatePR(exerciseId, newWeight) {
+                try {
+                    const response = await fetch('/api/prs', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        credentials: 'include',
+                        body: JSON.stringify({ exerciseId, weight: newWeight })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.prs[exerciseId] = data.pr;
+                        this.prHistory.unshift(data.history);
+                        this.renderPRs();
+                        this.renderPRHistory();
+                        this.renderChart();
+                        return true;
+                    } else {
+                        const error = await response.json();
+                        alert(error.error || 'Failed to update PR');
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('Failed to update PR:', error);
+                    alert('Failed to update PR');
+                    return false;
+                }
+            }
+
+            async deleteExercise(exerciseId) {
+                try {
+                    const response = await fetch(`/api/exercises/${exerciseId}`, {
+                        method: 'DELETE',
+                        credentials: 'include'
+                    });
+
+                    if (response.ok) {
+                        this.exercises = this.exercises.filter(ex => ex.id !== exerciseId);
+                        delete this.prs[exerciseId];
+                        this.prHistory = this.prHistory.filter(h => h.exerciseId !== exerciseId);
+                        this.renderExerciseList();
+                        this.renderPRs();
+                        this.renderPRHistory();
+                        this.renderChart();
+                        return true;
+                    } else {
+                        const error = await response.json();
+                        alert(error.error || 'Failed to delete exercise');
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('Failed to delete exercise:', error);
+                    alert('Failed to delete exercise');
+                    return false;
+                }
+            }
+
+            initializeEventListeners() {
+                document.getElementById('newExerciseForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    await this.handleAddExercise();
+                });
+
+                document.getElementById('toggleExerciseManager').addEventListener('click', () => {
+                    const manager = document.getElementById('exerciseManager');
+                    manager.classList.toggle('hidden');
+                });
+
+                document.getElementById('closeExerciseManager').addEventListener('click', () => {
+                    document.getElementById('exerciseManager').classList.add('hidden');
+                });
+
+                // PR increment event handlers will be added dynamically in renderPRs
+            }
+
+            async handleIncrementPR(exerciseId, increment) {
+                const currentPR = this.prs[exerciseId]?.weight || 0;
+                const newWeight = currentPR + increment;
+                
+                const success = await this.updatePR(exerciseId, newWeight);
+                if (success) {
+                    this.animatePRUpdate(exerciseId);
+                }
+            }
+
+            animatePRUpdate(exerciseId) {
+                const prCard = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+                if (prCard) {
+                    prCard.classList.add('pr-celebration');
+                    setTimeout(() => {
+                        prCard.classList.remove('pr-celebration');
+                    }, 1200);
+                }
+            }
+
+            toggleCard(exerciseId) {
+                const prCard = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+                if (prCard) {
+                    prCard.classList.toggle('collapsed');
+                    prCard.classList.toggle('expanded');
+
+                    // Toggle title ellipsis classes
+                    const title = prCard.querySelector('.pr-card-title');
+                    if (title) {
+                        title.classList.toggle('collapsed');
+                        title.classList.toggle('expanded');
+                    }
+                }
+            }
+
+            async handleAddExercise() {
+                const form = document.getElementById('newExerciseForm');
+                const name = document.getElementById('newExerciseName').value.trim();
+                const weight = parseFloat(document.getElementById('newExerciseWeight').value);
+
+                if (!name) {
+                    alert('Please enter an exercise name');
+                    return;
+                }
+
+                if (!weight || weight <= 0) {
+                    alert('Please enter a starting PR weight');
+                    return;
+                }
+
+                form.classList.add('loading');
+
+                const success = await this.addExercise(name, weight);
+                if (success) {
+                    form.reset();
+                }
+
+                form.classList.remove('loading');
+            }
+
+            render() {
+                if (this.user) {
+                    document.getElementById('userGreeting').textContent = 
+                        `Hello, ${this.user.name || this.user.email}!`;
+                }
+                
+                this.renderExerciseList();
+                this.renderPRs();
+                this.renderPRHistory();
+                this.renderChart();
+            }
+
+            renderPRs() {
+                const container = document.getElementById('currentPRs');
+                
+                if (this.exercises.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-center py-8 col-span-full">Add some exercises to start tracking your PRs!</p>';
+                    return;
+                }
+
+                container.innerHTML = this.exercises
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map(exercise => {
+                    const currentPR = this.prs[exercise.id]?.weight || 0;
+                    return `
+                        <div class="pr-card collapsed bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-200 transition-all duration-300" data-exercise-id="${exercise.id}">
+                            <div class="pr-card-header" onclick="app.toggleCard('${exercise.id}')">
+                                <div class="pr-card-header-left">
+                                    <span class="pr-card-title collapsed">${exercise.name}</span>
+                                </div>
+                                <div class="pr-card-header-right">
+                                    <span class="pr-card-value">${currentPR} lbs</span>
+                                    <div class="expand-icon">▼</div>
+                                </div>
+                            </div>
+                            <div class="pr-card-content">
+                                <div class="text-center mb-4">
+                                    <div class="text-xl font-semibold text-gray-800 mb-2">${exercise.name}</div>
+                                    <div class="text-3xl font-bold text-blue-600 pr-number">${currentPR} lbs</div>
+                                    <div class="text-sm text-gray-500">Current PR</div>
+                                </div>
+                                <div class="flex gap-2 justify-center">
+                                    <button onclick="app.handleIncrementPR('${exercise.id}', 2.5)" 
+                                            class="increment-btn bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm font-medium">
+                                        +2.5
+                                    </button>
+                                    <button onclick="app.handleIncrementPR('${exercise.id}', 5)" 
+                                            class="increment-btn bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm font-medium">
+                                        +5
+                                    </button>
+                                    <button onclick="app.handleIncrementPR('${exercise.id}', 10)" 
+                                            class="increment-btn bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded text-sm font-medium">
+                                        +10
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            renderExerciseList() {
+                const list = document.getElementById('exerciseList');
+                
+                if (this.exercises.length === 0) {
+                    list.innerHTML = '<p class="text-gray-500 text-center py-4">No exercises yet. Add your first exercise above!</p>';
+                    return;
+                }
+
+                list.innerHTML = this.exercises
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map(exercise => `
+                    <div class="flex justify-between items-center p-3 bg-white border rounded-md">
+                        <div>
+                            <span class="font-medium">${exercise.name}</span>
+                            <div class="text-sm text-gray-500">
+                                PR: ${this.prs[exercise.id]?.weight || 0} lbs
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs text-gray-400">
+                                Added ${new Date(exercise.createdAt).toLocaleDateString()}
+                            </span>
+                            <button onclick="app.deleteExercise('${exercise.id}')" 
+                                    class="text-red-500 hover:text-red-700 text-sm font-medium">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            renderPRHistory() {
+                const container = document.getElementById('prHistory');
+                
+                if (!this.prHistory || this.prHistory.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-center py-8">No PR history yet. Update some records to see your progress!</p>';
+                    return;
+                }
+
+                container.innerHTML = this.prHistory.slice(0, 10).map(history => {
+                    const exercise = this.exercises.find(ex => ex.id === history.exerciseId);
+                    const exerciseName = exercise?.name || 'Unknown Exercise';
+                    const increase = history.previousWeight ? ` (+${history.weight - history.previousWeight})` : '';
+                    
+                    return `
+                        <div class="flex justify-between items-center p-4 border rounded-md">
+                            <div>
+                                <span class="font-medium">${exerciseName}</span>
+                                <span class="text-gray-600 ml-2">New PR: ${history.weight} lbs${increase}</span>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-sm font-medium text-green-600">🎉 PR!</div>
+                                <div class="text-xs text-gray-500">${new Date(history.createdAt).toLocaleDateString()}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            renderChart() {
+                const chartContainer = document.getElementById('prChart');
+                
+                if (!this.prHistory || this.prHistory.length === 0) {
+                    chartContainer.innerHTML = '<p class="text-gray-500 text-center">Charts will appear here as you track your PRs!</p>';
+                    return;
+                }
+
+                // Destroy existing chart
+                if (this.chart) {
+                    this.chart.destroy();
+                }
+
+                // Create canvas if it doesn't exist
+                let canvas = chartContainer.querySelector('canvas');
+                if (!canvas) {
+                    chartContainer.innerHTML = '<canvas id="prChartCanvas"></canvas>';
+                    canvas = document.getElementById('prChartCanvas');
+                }
+
+                // Prepare data for chart
+                const exerciseData = {};
+                
+                this.prHistory.forEach(history => {
+                    const exercise = this.exercises.find(ex => ex.id === history.exerciseId);
+                    const exerciseName = exercise?.name || 'Unknown';
+                    
+                    if (!exerciseData[exerciseName]) {
+                        exerciseData[exerciseName] = [];
+                    }
+                    
+                    exerciseData[exerciseName].push({
+                        x: new Date(history.createdAt),
+                        y: history.weight
+                    });
+                });
+
+                // Create datasets
+                const colors = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'];
+                const datasets = Object.keys(exerciseData).map((exerciseName, index) => ({
+                    label: exerciseName,
+                    data: exerciseData[exerciseName].sort((a, b) => a.x - b.x),
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length] + '20',
+                    tension: 0.3,
+                    fill: false
+                }));
+
+                // Create chart
+                this.chart = new Chart(canvas, {
+                    type: 'line',
+                    data: { datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    displayFormats: {
+                                        day: 'MMM dd',
+                                        week: 'MMM dd',
+                                        month: 'MMM yyyy'
+                                    }
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Weight (lbs)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'PR Progression Over Time'
+                            },
+                            legend: {
+                                position: 'top'
+                            }
+                        }
+                    }
+                });
+            }
+
+            showMainApp() {
+                document.getElementById('authCheck').classList.add('hidden');
+                document.getElementById('notAuthenticated').classList.add('hidden');
+                document.getElementById('appError').classList.add('hidden');
+                document.getElementById('mainApp').classList.remove('hidden');
+            }
+
+            showNotAuthenticated() {
+                document.getElementById('authCheck').classList.add('hidden');
+                document.getElementById('mainApp').classList.add('hidden');
+                document.getElementById('appError').classList.add('hidden');
+                document.getElementById('notAuthenticated').classList.remove('hidden');
+            }
+
+            showError(error) {
+                document.getElementById('authCheck').classList.add('hidden');
+                document.getElementById('mainApp').classList.add('hidden');
+                document.getElementById('notAuthenticated').classList.add('hidden');
+                document.getElementById('appError').classList.remove('hidden');
+
+                // Show error details
+                const errorDetails = document.getElementById('errorDetails');
+                errorDetails.textContent = error.message || 'Unknown error occurred';
+
+                // Copy debug messages to error screen
+                const debugMessages = document.getElementById('debugMessages');
+                const errorDebugMessages = document.getElementById('errorDebugMessages');
+                const errorDebugInfo = document.getElementById('errorDebugInfo');
+                if (debugMessages && debugMessages.children.length > 0) {
+                    errorDebugInfo.style.display = 'block';
+                    errorDebugMessages.innerHTML = debugMessages.innerHTML;
+                }
+            }
+        }
+
+        // Simple console logging with visible debug
+        function log(message) {
+            console.log(`WeightsApp: ${message}`);
+
+            // Also show in debug panel for mobile users
+            const debugInfo = document.getElementById('debugInfo');
+            const debugMessages = document.getElementById('debugMessages');
+            if (debugInfo && debugMessages) {
+                debugInfo.style.display = 'block';
+                const msgDiv = document.createElement('div');
+                msgDiv.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+                msgDiv.style.marginBottom = '4px';
+                debugMessages.appendChild(msgDiv);
+
+                // Keep only last 10 messages
+                while (debugMessages.children.length > 10) {
+                    debugMessages.removeChild(debugMessages.firstChild);
+                }
+            }
+        }
+
+
+        // Initialize the app
+        let app;
+        document.addEventListener('DOMContentLoaded', () => {
+            app = new PRTracker();
+
+        });
+    </script>
+</body>
+</html>
