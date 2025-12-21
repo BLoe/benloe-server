@@ -205,20 +205,29 @@ export function CategoryStatsTable({ categoryStatsData, categories, timespan }: 
   }
 
   // Helper to parse stat value (handles percentages and fractions)
-  function parseStatValue(value: string): number {
-    if (!value) return 0;
+  function parseStatValue(value: string | number): number {
+    if (value === null || value === undefined) return 0;
+
+    // If it's already a number, return it directly
+    if (typeof value === 'number') {
+      return value;
+    }
+
+    // Convert to string for string operations
+    const strValue = String(value);
+    if (!strValue) return 0;
 
     // Handle percentage values like ".485"
-    if (value.startsWith('.')) {
-      return parseFloat(value);
+    if (strValue.startsWith('.')) {
+      return parseFloat(strValue);
     }
 
     // Handle fraction format like "56/66" (FTM/FTA display stat)
-    if (value.includes('/')) {
+    if (strValue.includes('/')) {
       return 0; // Skip display-only fraction stats
     }
 
-    return parseFloat(value) || 0;
+    return parseFloat(strValue) || 0;
   }
 
   // Format rank as ordinal

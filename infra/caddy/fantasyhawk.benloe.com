@@ -6,7 +6,7 @@ fantasyhawk.benloe.com {
 
     # Serve static frontend
     handle {
-        root * /var/apps/fantasy-hawk/frontend/dist
+        root * /srv/benloe/apps/fantasy-hawk/frontend/dist
         try_files {path} /index.html
         file_server
     }
