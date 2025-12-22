@@ -1,8 +1,8 @@
 import path from 'path';
 import { YahooTokens } from '../types';
 
-// Import better-sqlite3 from parent node_modules
-const Database = require('/var/apps/node_modules/better-sqlite3');
+// Import better-sqlite3
+const Database = require('better-sqlite3');
 
 const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '../../fantasy-hawk.db');
 const db = new Database(dbPath);
