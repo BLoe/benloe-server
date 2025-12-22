@@ -4,12 +4,13 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { ErrorMessage } from './ErrorMessage';
 import { StandingsChart } from './StandingsChart';
 import { CategoryStatsTable } from './CategoryStatsTable';
+import { StrategyCorner } from './StrategyCorner';
 
 interface DashboardProps {
   selectedLeague: string | null;
 }
 
-type TabType = 'standings' | 'categories';
+type TabType = 'standings' | 'categories' | 'strategy';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 
 export function Dashboard({ selectedLeague }: DashboardProps) {
@@ -214,6 +215,7 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
   const tabs: { id: TabType; label: string }[] = [
     { id: 'standings', label: 'League Standings' },
     { id: 'categories', label: 'Categories' },
+    { id: 'strategy', label: 'Strategy Corner' },
   ];
 
   const categories = getStatCategories();
@@ -363,6 +365,8 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
           </div>
         </div>
       )}
+
+      {activeTab === 'strategy' && <StrategyCorner selectedLeague={selectedLeague} />}
     </div>
   );
 }

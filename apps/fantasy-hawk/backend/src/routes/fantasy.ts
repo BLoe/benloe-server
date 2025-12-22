@@ -449,6 +449,163 @@ router.get('/debug/teams', authenticate, async (req: Request, res: Response) => 
 });
 
 /**
+ * AI Strategy Analysis endpoint
+ * Uses Claude to analyze fantasy data and provide recommendations
+ */
+router.post('/leagues/:league_key/analyze', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { analysisType = 'matchup' } = req.body;
+
+    // Fetch relevant Yahoo data based on analysis type
+    const [standingsData, scoreboardData, leagueData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/standings`),
+      makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+    ]);
+
+    // Build context for Claude
+    const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
+    const currentWeek = leagueInfo.current_week || '1';
+
+    // Extract standings
+    const standings = standingsData?.fantasy_content?.league?.[1]?.standings?.['0']?.teams || {};
+
+    // Extract scoreboard matchups
+    const matchups = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard?.['0']?.matchups || {};
+
+    // Build the prompt based on analysis type
+    let systemPrompt = `You are an expert fantasy basketball analyst. You're analyzing data from a Yahoo Fantasy Basketball league.
+
+Current Week: ${currentWeek}
+League: ${leagueInfo.name || 'Unknown'}
+
+Provide concise, actionable insights. Use bullet points for recommendations.`;
+
+    let userPrompt = '';
+
+    switch (analysisType) {
+      case 'matchup':
+        userPrompt = `Analyze this week's matchup data and provide strategic recommendations.
+
+Standings Overview:
+${JSON.stringify(standings, null, 2).slice(0, 3000)}
+
+Current Week Matchups:
+${JSON.stringify(matchups, null, 2).slice(0, 3000)}
+
+Please provide:
+1. Key matchup insights for this week
+2. Category battles to focus on
+3. Potential punting strategies if behind
+4. Quick tips for maximizing chances this week`;
+        break;
+
+      case 'categories':
+        userPrompt = `Analyze the category stats across the league.
+
+Standings with Stats:
+${JSON.stringify(standings, null, 2).slice(0, 4000)}
+
+Please provide:
+1. Strongest categories across teams
+2. Weakest categories (opportunity areas)
+3. Category correlations to exploit
+4. Trade targets based on category needs`;
+        break;
+
+      case 'streaming':
+        userPrompt = `Analyze the current week's matchups and provide streaming recommendations.
+
+Current Week Matchups:
+${JSON.stringify(matchups, null, 2).slice(0, 3000)}
+
+Standings:
+${JSON.stringify(standings, null, 2).slice(0, 2000)}
+
+Please provide:
+1. Categories most likely to be close this week
+2. Types of players to target for streaming
+3. Schedule considerations (teams with many games)
+4. General streaming strategy for the week`;
+        break;
+
+      default:
+        userPrompt = `Provide a general overview of the league standings and any notable insights.
+
+Data:
+${JSON.stringify(standings, null, 2).slice(0, 4000)}`;
+    }
+
+    // Call Artanis Claude proxy with streaming
+    const AUTH_URL = process.env.AUTH_URL || 'https://auth.benloe.com';
+
+    // Get the user's auth cookie to forward to Artanis
+    const cookies = req.headers.cookie || '';
+
+    const claudeResponse = await fetch(`${AUTH_URL}/api/claude/messages/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookies,
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+        max_tokens: 1500,
+      }),
+    });
+
+    if (!claudeResponse.ok) {
+      const errorData = await claudeResponse.json();
+      return res.status(claudeResponse.status).json(errorData);
+    }
+
+    // Stream the response back
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    if (claudeResponse.body) {
+      const reader = claudeResponse.body.getReader();
+
+      const processStream = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              res.end();
+              break;
+            }
+            const chunk = new TextDecoder().decode(value);
+            res.write(chunk);
+          }
+        } catch (error) {
+          console.error('Stream error:', error);
+          res.end();
+        }
+      };
+
+      req.on('close', () => {
+        reader.cancel();
+      });
+
+      processStream();
+    } else {
+      res.status(500).json({ error: 'No response body from Claude' });
+    }
+  } catch (error: any) {
+    console.error('Analysis error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to run analysis',
+    });
+  }
+});
+
+/**
  * Generic proxy endpoint for any Yahoo Fantasy API request
  * Useful for testing and custom queries
  */
