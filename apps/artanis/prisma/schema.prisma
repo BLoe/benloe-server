@@ -18,12 +18,14 @@ model User {
   timezone    String    @default("UTC")
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?
-  
+
   // Sessions for tracking active logins
   sessions    Session[]
   // Magic link tokens
   magicTokens MagicLinkToken[]
-  
+  // API keys for external services (Claude, etc.)
+  apiKeys     ApiKey[]
+
   @@map("users")
 }
 
@@ -49,9 +51,26 @@ model MagicLinkToken {
   expiresAt DateTime
   used      Boolean  @default(false)
   createdAt DateTime @default(now())
-  
+
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId String?
-  
+
   @@map("magic_link_tokens")
+}
+
+model ApiKey {
+  id           String    @id @default(cuid())
+  userId       String
+  provider     String    @default("anthropic") // anthropic, openai, etc.
+  encryptedKey String    // AES-256-GCM encrypted
+  keyHint      String    // Last 4 chars for display: "...ABCD"
+  label        String?   // User-friendly name
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider]) // One key per provider per user
+  @@index([userId])
+  @@map("api_keys")
 }

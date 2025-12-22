@@ -143,8 +143,38 @@
                     </div>
                 </div>
                 
-                <!-- Account Actions -->
+                <!-- API Keys & Account Actions -->
                 <div class="space-y-6">
+                    <!-- API Keys Section -->
+                    <div class="info-section p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-semibold" style="color: var(--primary-color);">API Keys</h3>
+                        </div>
+                        <p class="text-sm mb-4" style="color: var(--text-muted);">
+                            Connect your API keys to enable AI features across benloe.com apps.
+                        </p>
+
+                        <!-- API Keys List -->
+                        <div id="apiKeysList" class="space-y-3 mb-4">
+                            <div class="text-center py-4 text-gray-400">Loading...</div>
+                        </div>
+
+                        <!-- Add Key Form -->
+                        <div id="addKeySection" class="border-t border-gray-200 pt-4 mt-4">
+                            <h4 class="font-medium mb-3" style="color: var(--text-secondary);">Add Anthropic API Key</h4>
+                            <div class="space-y-3">
+                                <input type="password" id="newApiKey" placeholder="sk-ant-..."
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm font-mono">
+                                <input type="text" id="keyLabel" placeholder="Label (optional)"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm">
+                                <button id="saveKeyBtn" class="edit-button text-white px-4 py-2 rounded-lg text-sm font-medium w-full">
+                                    Save API Key
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Account Actions -->
                     <div class="info-section p-6">
                         <h3 class="text-xl font-semibold mb-4" style="color: var(--primary-color);">Account Actions</h3>
                         <div class="space-y-4">
@@ -266,12 +296,177 @@
             message.className = `mt-6 p-3 rounded-lg ${type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`;
             message.textContent = text;
             message.classList.remove('hidden');
-            
+
             // Hide message after 5 seconds
             setTimeout(() => {
                 message.classList.add('hidden');
             }, 5000);
         }
+
+        // ========== API Keys Management ==========
+        const apiKeysList = document.getElementById('apiKeysList');
+        const newApiKeyInput = document.getElementById('newApiKey');
+        const keyLabelInput = document.getElementById('keyLabel');
+        const saveKeyBtn = document.getElementById('saveKeyBtn');
+        const addKeySection = document.getElementById('addKeySection');
+
+        // Load API keys on page load
+        async function loadApiKeys() {
+            try {
+                const response = await fetch('/api/keys', { credentials: 'include' });
+                const data = await response.json();
+
+                if (response.ok && data.keys) {
+                    renderApiKeys(data.keys);
+                } else {
+                    apiKeysList.innerHTML = '<div class="text-center py-4 text-red-500">Failed to load keys</div>';
+                }
+            } catch (error) {
+                apiKeysList.innerHTML = '<div class="text-center py-4 text-red-500">Network error</div>';
+            }
+        }
+
+        function renderApiKeys(keys) {
+            if (keys.length === 0) {
+                apiKeysList.innerHTML = '<div class="text-center py-4 text-gray-400">No API keys configured</div>';
+                addKeySection.style.display = 'block';
+                return;
+            }
+
+            apiKeysList.innerHTML = keys.map(key => `
+                <div class="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200" data-provider="${key.provider}">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                            <span class="font-medium text-sm" style="color: var(--text-primary);">
+                                ${key.provider.charAt(0).toUpperCase() + key.provider.slice(1)}
+                            </span>
+                            <span class="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">Connected</span>
+                        </div>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span class="font-mono text-xs" style="color: var(--text-muted);">${key.keyHint}</span>
+                            ${key.label ? `<span class="text-xs" style="color: var(--text-secondary);">• ${key.label}</span>` : ''}
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="testApiKey('${key.provider}')" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors">
+                            Test
+                        </button>
+                        <button onclick="deleteApiKey('${key.provider}')" class="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            // Check if anthropic key exists to toggle add form
+            const hasAnthropicKey = keys.some(k => k.provider === 'anthropic');
+            if (hasAnthropicKey) {
+                addKeySection.innerHTML = `
+                    <p class="text-sm text-center" style="color: var(--text-muted);">
+                        To update your key, delete the existing one first.
+                    </p>
+                `;
+            }
+        }
+
+        // Save new API key
+        saveKeyBtn.addEventListener('click', async () => {
+            const key = newApiKeyInput.value.trim();
+            const label = keyLabelInput.value.trim() || null;
+
+            if (!key) {
+                showMessage('Please enter an API key', 'error');
+                return;
+            }
+
+            if (!key.startsWith('sk-ant-')) {
+                showMessage('Invalid API key format. Should start with sk-ant-', 'error');
+                return;
+            }
+
+            saveKeyBtn.disabled = true;
+            saveKeyBtn.textContent = 'Saving...';
+
+            try {
+                const response = await fetch('/api/keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ key, provider: 'anthropic', label }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showMessage('API key saved successfully!', 'success');
+                    newApiKeyInput.value = '';
+                    keyLabelInput.value = '';
+                    loadApiKeys();
+                } else {
+                    showMessage(data.error || 'Failed to save API key', 'error');
+                }
+            } catch (error) {
+                showMessage('Network error. Please try again.', 'error');
+            } finally {
+                saveKeyBtn.disabled = false;
+                saveKeyBtn.textContent = 'Save API Key';
+            }
+        });
+
+        // Test API key
+        async function testApiKey(provider) {
+            const keyCard = document.querySelector(`[data-provider="${provider}"]`);
+            const testBtn = keyCard.querySelector('button');
+            testBtn.disabled = true;
+            testBtn.textContent = 'Testing...';
+
+            try {
+                const response = await fetch(`/api/keys/${provider}/test`, {
+                    method: 'POST',
+                    credentials: 'include',
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.valid) {
+                    showMessage('API key is valid!', 'success');
+                } else {
+                    showMessage(data.error || 'API key validation failed', 'error');
+                }
+            } catch (error) {
+                showMessage('Network error. Please try again.', 'error');
+            } finally {
+                testBtn.disabled = false;
+                testBtn.textContent = 'Test';
+            }
+        }
+
+        // Delete API key
+        async function deleteApiKey(provider) {
+            if (!confirm(`Are you sure you want to delete your ${provider} API key?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/keys/${provider}`, {
+                    method: 'DELETE',
+                    credentials: 'include',
+                });
+
+                if (response.ok) {
+                    showMessage('API key deleted successfully', 'success');
+                    loadApiKeys();
+                } else {
+                    const data = await response.json();
+                    showMessage(data.error || 'Failed to delete API key', 'error');
+                }
+            } catch (error) {
+                showMessage('Network error. Please try again.', 'error');
+            }
+        }
+
+        // Load keys on page load
+        loadApiKeys();
     </script>
 </body>
 </html>

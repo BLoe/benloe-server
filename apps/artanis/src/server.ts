@@ -8,6 +8,8 @@ import dotenv from 'dotenv';
 
 import { authRoutes } from './routes/auth';
 import { userRoutes } from './routes/user';
+import { apiKeysRouter } from './routes/apikeys';
+import { claudeRouter } from './routes/claude';
 import { authenticate } from './middleware/auth';
 import { authService } from './services/auth';
 
@@ -87,6 +89,8 @@ app.set('views', path.join(__dirname, '../views'));
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', authenticate, userRoutes);
+app.use('/api/keys', authenticate, apiKeysRouter);
+app.use('/api/claude', authenticate, claudeRouter);
 
 // Frontend routes
 app.get('/', async (req, res) => {

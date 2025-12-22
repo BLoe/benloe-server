@@ -29,6 +29,7 @@ module.exports = {
         DOMAIN: 'benloe.com',
         RATE_LIMIT_WINDOW_MS: '900000',
         RATE_LIMIT_MAX_REQUESTS: '10',
+        ENCRYPTION_SECRET: env.ENCRYPTION_SECRET,
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       error_file: '/srv/benloe/logs/artanis-err.log',
