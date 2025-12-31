@@ -108,8 +108,31 @@ const DUMP_ENDPOINTS = [
   },
 ];
 
+// Schedule endpoints (Ball Don't Lie API)
+const SCHEDULE_ENDPOINTS = [
+  {
+    id: 'schedule_status',
+    label: 'Schedule API Status',
+    description: 'Check if NBA schedule API is configured',
+    directEndpoint: '/api/fantasy/schedule/status',
+  },
+  {
+    id: 'league_schedule',
+    label: 'This Week\'s NBA Schedule',
+    description: 'Games for current fantasy week with team game counts',
+    directEndpoint: (leagueKey: string) => `/api/fantasy/leagues/${leagueKey}/schedule`,
+  },
+  {
+    id: 'streaming_analysis',
+    label: 'Streaming Analysis',
+    description: 'Your roster + free agents with games this week',
+    directEndpoint: (leagueKey: string) => `/api/fantasy/leagues/${leagueKey}/streaming`,
+  },
+];
+
 export function DebugPanel({ selectedLeague }: DebugPanelProps) {
   const [results, setResults] = useState<Record<string, DumpResult>>({});
+  const [scheduleResults, setScheduleResults] = useState<Record<string, DumpResult>>({});
   const [expandedResult, setExpandedResult] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -170,6 +193,32 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
       setTimeout(() => setCopied(null), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
+    }
+  }
+
+  async function testScheduleEndpoint(id: string, endpoint: string) {
+    setScheduleResults(prev => ({
+      ...prev,
+      [id]: { endpoint, status: 'loading' },
+    }));
+
+    try {
+      const response = await fetch(endpoint, { credentials: 'include' });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Request failed');
+      }
+
+      setScheduleResults(prev => ({
+        ...prev,
+        [id]: { endpoint, status: 'success', data },
+      }));
+    } catch (err: any) {
+      setScheduleResults(prev => ({
+        ...prev,
+        [id]: { endpoint, status: 'error', error: err.message },
+      }));
     }
   }
 
@@ -265,6 +314,86 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
                 {result?.file && (
                   <div className="mt-2 text-xs text-green-600 bg-green-50 p-2 rounded font-mono">
                     Saved: {result.file}
+                  </div>
+                )}
+
+                {expandedResult === ep.id && result?.data && (
+                  <div className="mt-3">
+                    <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto">
+                      {JSON.stringify(result.data, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* NBA Schedule Section */}
+      <div className="card">
+        <div className="mb-4">
+          <h2 className="text-xl font-bold text-gray-900">NBA Schedule (Ball Don't Lie API)</h2>
+          <p className="text-sm text-gray-600 mt-1">
+            Real NBA game schedule data for streaming analysis.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          {SCHEDULE_ENDPOINTS.map(ep => {
+            const result = scheduleResults[ep.id];
+            const endpoint = typeof ep.directEndpoint === 'function'
+              ? ep.directEndpoint(selectedLeague)
+              : ep.directEndpoint;
+
+            return (
+              <div key={ep.id} className="border rounded-lg p-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-900">{ep.label}</span>
+                      {result?.status === 'loading' && (
+                        <span className="text-xs text-blue-600">Loading...</span>
+                      )}
+                      {result?.status === 'success' && (
+                        <span className="text-xs text-green-600">Done</span>
+                      )}
+                      {result?.status === 'error' && (
+                        <span className="text-xs text-red-600">Error</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">{ep.description}</p>
+                  </div>
+                  <div className="flex items-center gap-2 ml-4">
+                    {result?.data && (
+                      <>
+                        <button
+                          onClick={() => setExpandedResult(expandedResult === ep.id ? null : ep.id)}
+                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded border border-gray-300 transition-colors"
+                        >
+                          {expandedResult === ep.id ? 'Hide' : 'View'}
+                        </button>
+                        <button
+                          onClick={() => copyToClipboard(ep.id, result.data)}
+                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded border border-gray-300 transition-colors"
+                        >
+                          {copied === ep.id ? 'Copied!' : 'Copy'}
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => testScheduleEndpoint(ep.id, endpoint)}
+                      disabled={result?.status === 'loading'}
+                      className="px-3 py-1 text-xs bg-green-100 hover:bg-green-200 text-green-700 rounded border border-green-300 transition-colors disabled:opacity-50"
+                    >
+                      Test
+                    </button>
+                  </div>
+                </div>
+
+                {result?.status === 'error' && (
+                  <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
+                    {result.error}
                   </div>
                 )}
 

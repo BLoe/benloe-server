@@ -7,7 +7,8 @@ import { initDatabase } from './services/database';
 import { oauthRoutes } from './routes/oauth';
 import { fantasyRoutes } from './routes/fantasy';
 
-dotenv.config();
+// Load secrets from monorepo root
+dotenv.config({ path: '/srv/benloe/.env' });
 
 const app = express();
 const PORT = process.env.PORT || 3005;

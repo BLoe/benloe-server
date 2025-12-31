@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { authenticate } from '../middleware/auth';
 import { yahooOAuthService } from '../services/yahoo-oauth';
 import { getYahooTokens, saveYahooTokens } from '../services/database';
+import { ballDontLieService } from '../services/balldontlie';
 
 const router = Router();
 
@@ -665,6 +666,253 @@ router.get('/proxy', authenticate, async (req: Request, res: Response) => {
     console.error('Fantasy proxy error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to fetch data',
+    });
+  }
+});
+
+// ============================================================
+// NBA Schedule Endpoints (Ball Don't Lie API)
+// ============================================================
+
+/**
+ * Check if NBA schedule service is available
+ */
+router.get('/schedule/status', authenticate, async (_req: Request, res: Response) => {
+  res.json({
+    available: ballDontLieService.isConfigured(),
+    message: ballDontLieService.isConfigured()
+      ? 'NBA schedule data available'
+      : 'Ball Don\'t Lie API key not configured',
+  });
+});
+
+/**
+ * Get NBA games for a date range
+ * Query params: start_date, end_date (YYYY-MM-DD)
+ */
+router.get('/schedule/games', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { start_date, end_date } = req.query;
+
+    if (!start_date || !end_date) {
+      return res.status(400).json({ error: 'start_date and end_date required' });
+    }
+
+    const games = await ballDontLieService.getGames(
+      start_date as string,
+      end_date as string
+    );
+
+    res.json({ games, count: games.length });
+  } catch (error: any) {
+    console.error('Schedule games error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get schedule analysis for a fantasy week
+ * Includes games per team and games by date
+ * Query params: start_date, end_date (YYYY-MM-DD)
+ */
+router.get('/schedule/analysis', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { start_date, end_date } = req.query;
+
+    if (!start_date || !end_date) {
+      return res.status(400).json({ error: 'start_date and end_date required' });
+    }
+
+    const analysis = await ballDontLieService.getScheduleAnalysis(
+      start_date as string,
+      end_date as string
+    );
+
+    res.json(analysis);
+  } catch (error: any) {
+    console.error('Schedule analysis error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get schedule analysis for a league's current week
+ * Automatically uses the week dates from the Yahoo scoreboard
+ */
+router.get('/leagues/:league_key/schedule', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Get scoreboard to find current week dates
+    const scoreboardData = await makeYahooRequest(user.id, `/league/${league_key}/scoreboard`);
+    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+
+    if (!scoreboard) {
+      return res.status(404).json({ error: 'Could not find scoreboard data' });
+    }
+
+    // Get week dates from first matchup
+    const firstMatchup = scoreboard['0']?.matchups?.['0']?.matchup;
+    const weekStart = firstMatchup?.week_start;
+    const weekEnd = firstMatchup?.week_end;
+    const week = firstMatchup?.week;
+
+    if (!weekStart || !weekEnd) {
+      return res.status(404).json({ error: 'Could not determine week dates' });
+    }
+
+    // Get NBA schedule for the week
+    const analysis = await ballDontLieService.getScheduleAnalysis(weekStart, weekEnd);
+
+    res.json({
+      week: parseInt(week, 10),
+      ...analysis,
+    });
+  } catch (error: any) {
+    console.error('League schedule error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch schedule',
+    });
+  }
+});
+
+/**
+ * Get streaming analysis for a league
+ * Combines roster data with NBA schedule to identify streaming opportunities
+ */
+router.get('/leagues/:league_key/streaming', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Fetch Yahoo data in parallel
+    const [scoreboardData, rostersData, faData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams/roster`),
+      makeYahooRequest(user.id, `/league/${league_key}/players;status=FA;count=50`),
+    ]);
+
+    // Get week dates
+    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+    const firstMatchup = scoreboard?.['0']?.matchups?.['0']?.matchup;
+    const weekStart = firstMatchup?.week_start;
+    const weekEnd = firstMatchup?.week_end;
+    const week = firstMatchup?.week;
+
+    if (!weekStart || !weekEnd) {
+      return res.status(404).json({ error: 'Could not determine week dates' });
+    }
+
+    // Get NBA schedule
+    const scheduleAnalysis = await ballDontLieService.getScheduleAnalysis(weekStart, weekEnd);
+
+    // Parse rosters to get player teams
+    const teams = rostersData?.fantasy_content?.league?.[1]?.teams;
+    const userRoster: any[] = [];
+    const teamCount = teams?.count || 0;
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teams?.[i]?.team;
+      if (!team) continue;
+
+      // Check if this is the user's team
+      const teamProps = team[0] || [];
+      let isUserTeam = false;
+      for (const prop of teamProps) {
+        if (prop?.is_owned_by_current_login === 1) {
+          isUserTeam = true;
+          break;
+        }
+      }
+
+      if (isUserTeam) {
+        const roster = team[1]?.roster?.['0']?.players;
+        if (roster) {
+          const playerCount = roster.count || 0;
+          for (let p = 0; p < playerCount; p++) {
+            const player = roster[p]?.player;
+            if (player) {
+              // Parse player data
+              const playerProps = player[0] || [];
+              const playerData: any = {};
+              for (const prop of playerProps) {
+                if (prop && typeof prop === 'object') {
+                  Object.assign(playerData, prop);
+                }
+              }
+              // Get selected position
+              const selectedPos = player[1]?.selected_position;
+              if (selectedPos) {
+                for (const pos of selectedPos) {
+                  if (pos?.position) {
+                    playerData.selected_position = pos.position;
+                  }
+                }
+              }
+              userRoster.push(playerData);
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    // Parse free agents
+    const freeAgents: any[] = [];
+    const faPlayers = faData?.fantasy_content?.league?.[1]?.players;
+    const faCount = faPlayers?.count || 0;
+    for (let i = 0; i < faCount; i++) {
+      const player = faPlayers?.[i]?.player;
+      if (player) {
+        const playerProps = player[0] || [];
+        const playerData: any = {};
+        for (const prop of playerProps) {
+          if (prop && typeof prop === 'object') {
+            Object.assign(playerData, prop);
+          }
+        }
+        freeAgents.push(playerData);
+      }
+    }
+
+    // Enhance with schedule data
+    const gamesPerTeam = scheduleAnalysis.gamesPerTeam;
+
+    const rosterWithSchedule = userRoster.map((player) => {
+      const teamAbbr = player.editorial_team_abbr;
+      const schedule = gamesPerTeam[teamAbbr] || { total: 0, dates: [] };
+      return {
+        ...player,
+        games_this_week: schedule.total,
+        game_dates: schedule.dates,
+      };
+    });
+
+    const freeAgentsWithSchedule = freeAgents
+      .map((player) => {
+        const teamAbbr = player.editorial_team_abbr;
+        const schedule = gamesPerTeam[teamAbbr] || { total: 0, dates: [] };
+        return {
+          ...player,
+          games_this_week: schedule.total,
+          game_dates: schedule.dates,
+        };
+      })
+      .sort((a, b) => b.games_this_week - a.games_this_week); // Sort by most games
+
+    res.json({
+      week: parseInt(week, 10),
+      weekStart,
+      weekEnd,
+      schedule: scheduleAnalysis,
+      userRoster: rosterWithSchedule,
+      freeAgents: freeAgentsWithSchedule,
+    });
+  } catch (error: any) {
+    console.error('Streaming analysis error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch streaming analysis',
     });
   }
 });
