@@ -374,10 +374,10 @@ GET /league/{league_key}
   "fantasy_content": {
     "league": [
       {
-        "league_key": "466.l.15701",
-        "league_id": "15701",
-        "name": "NWF Keeper Lge Jamboree",
-        "url": "https://basketball.fantasysports.yahoo.com/nba/15701",
+        "league_key": "{game_key}.l.{league_id}",
+        "league_id": "{league_id}",
+        "name": "Your League Name",
+        "url": "https://basketball.fantasysports.yahoo.com/nba/{league_id}",
         "logo_url": "https://s.yimg.com/ep/cx/blendr/v2/image-y-png_1721252122724.png",
         "draft_status": "postdraft",
         "num_teams": 12,
@@ -518,11 +518,10 @@ Located at `settings[0].stat_categories.stats[]`:
 - If `is_only_display_stat` is present and `"1"` → Display only (like FGA, FTM/FTA)
 - If `is_only_display_stat` is absent → **This is a scoring category**
 
-**This League's 9 Scoring Categories:**
+**Example 9-Category Scoring Setup:**
 
 | stat_id | Name | Abbr | Notes |
 |---------|------|------|-------|
-| 4 | Field Goals Made | FGM | Counting stat |
 | 5 | Field Goal Percentage | FG% | Percentage (0.000-1.000) |
 | 8 | Free Throw Percentage | FT% | Percentage (0.000-1.000) |
 | 10 | 3-point Shots Made | 3PTM | Counting stat |
@@ -531,10 +530,13 @@ Located at `settings[0].stat_categories.stats[]`:
 | 16 | Assists | AST | Counting stat |
 | 17 | Steals | ST | Counting stat |
 | 18 | Blocked Shots | BLK | Counting stat |
+| 19 | Turnovers | TO | Counting stat (lower is better) |
+
+*Note: Leagues may vary - some use FGM instead of TO, or other variations.*
 
 **Display-Only Stats (not scored):**
-- stat_id 3: FGA (Field Goals Attempted)
-- stat_id 9007006: FTM/FTA (composite display stat)
+- stat_id 3: FGA (Field Goals Attempted) - often included for context
+- stat_id 9007006: FTM/FTA (composite display stat showing attempts)
 
 **AI Analysis Usage:**
 - Parse `stat_categories.stats[]` to know which categories to analyze
@@ -577,11 +579,11 @@ The first element is an array of objects, each containing different properties:
 
 ```json
 [
-  { "team_key": "466.l.15701.t.2" },
-  { "team_id": "2" },
-  { "name": "Cheeks Squad" },
+  { "team_key": "{game_key}.l.{league_id}.t.{team_id}" },
+  { "team_id": "{team_id}" },
+  { "name": "Team Name" },
   [],
-  { "url": "https://basketball.fantasysports.yahoo.com/nba/15701/2" },
+  { "url": "https://basketball.fantasysports.yahoo.com/nba/{league_id}/{team_id}" },
   { "team_logos": [...] },
   { "previous_season_team_rank": 1 },
   [],
@@ -666,13 +668,13 @@ The first element is an array of objects, each containing different properties:
 {
   "manager": {
     "manager_id": "5",
-    "nickname": "Ben",
-    "guid": "FMAHAVPYBK7JVVGIJQ6HRDFKQE",
+    "nickname": "ManagerName",
+    "guid": "XXXXXXXXXXXXXXXXXXXXXXXX",
     "is_current_login": "1",
     "is_commissioner": "1",
-    "is_comanager": "1",
-    "email": "user@example.com",
-    "felo_score": "615",
+    "is_comanager": "0",
+    "email": "manager@example.com",
+    "felo_score": "600",
     "felo_tier": "silver"
   }
 }
@@ -814,7 +816,7 @@ Shows which team is winning each category:
 {
   "stat_winner": {
     "stat_id": "4",
-    "winner_team_key": "466.l.15701.t.2"
+    "winner_team_key": "{game_key}.l.{league_id}.t.{team_id}"
   }
 }
 
@@ -922,7 +924,7 @@ player[1] = { selected_position: [...] }
 
 | Field | Type | Example | Description |
 |-------|------|---------|-------------|
-| `player_key` | string | `"466.p.6418"` | Unique player key |
+| `player_key` | string | `"{game_key}.p.{player_id}"` | Unique player key |
 | `player_id` | string | `"6418"` | Player ID |
 | `name.full` | string | `"Payton Pritchard"` | Full name |
 | `name.first` / `name.last` | string | | First/last name |
@@ -1107,7 +1109,7 @@ player[0] = Array of player metadata objects (must be merged)
 
 | Field | Type | Example | Description |
 |-------|------|---------|-------------|
-| `player_key` | string | `"466.p.3704"` | Unique player key |
+| `player_key` | string | `"{game_key}.p.{player_id}"` | Unique player key |
 | `name.full` | string | `"LeBron James"` | Full name |
 | `editorial_team_abbr` | string | `"LAL"` | NBA team |
 | `display_position` | string | `"SF,PF"` | Eligible positions |
@@ -1156,8 +1158,8 @@ transaction[1].players = players involved in transaction
 
 ```json
 {
-  "transaction_key": "466.l.15701.tr.358",
-  "transaction_id": "358",
+  "transaction_key": "{game_key}.l.{league_id}.tr.{transaction_id}",
+  "transaction_id": "{transaction_id}",
   "type": "add/drop",
   "status": "successful",
   "timestamp": "1767102768"
@@ -1177,17 +1179,17 @@ Trades have additional metadata:
 ```json
 {
   "type": "trade",
-  "trader_team_key": "466.l.15701.t.6",
-  "trader_team_name": "KATegories",
-  "tradee_team_key": "466.l.15701.t.12",
-  "tradee_team_name": "Big Vic Energy",
+  "trader_team_key": "{game_key}.l.{league_id}.t.1",
+  "trader_team_name": "Team A",
+  "tradee_team_key": "{game_key}.l.{league_id}.t.2",
+  "tradee_team_name": "Team B",
   "picks": [
     {
       "pick": {
-        "source_team_key": "466.l.15701.t.6",
-        "destination_team_key": "466.l.15701.t.12",
+        "source_team_key": "{game_key}.l.{league_id}.t.1",
+        "destination_team_key": "{game_key}.l.{league_id}.t.2",
         "round": "3",
-        "original_team_key": "466.l.15701.t.6"
+        "original_team_key": "{game_key}.l.{league_id}.t.1"
       }
     }
   ]
@@ -1204,8 +1206,8 @@ Each player has a `transaction_data` object:
   "type": "add",
   "source_type": "freeagents",
   "destination_type": "team",
-  "destination_team_key": "466.l.15701.t.3",
-  "destination_team_name": "Cats That Can Ball"
+  "destination_team_key": "{game_key}.l.{league_id}.t.{team_id}",
+  "destination_team_name": "Team Name"
 }
 
 // Add from waivers:
@@ -1213,14 +1215,14 @@ Each player has a `transaction_data` object:
   "type": "add",
   "source_type": "waivers",
   "destination_type": "team",
-  "destination_team_key": "466.l.15701.t.2"
+  "destination_team_key": "{game_key}.l.{league_id}.t.{team_id}"
 }
 
 // Drop to waivers:
 {
   "type": "drop",
   "source_type": "team",
-  "source_team_key": "466.l.15701.t.3",
+  "source_team_key": "{game_key}.l.{league_id}.t.{team_id}",
   "destination_type": "waivers"
 }
 
@@ -1228,9 +1230,9 @@ Each player has a `transaction_data` object:
 {
   "type": "trade",
   "source_type": "team",
-  "source_team_key": "466.l.15701.t.6",
+  "source_team_key": "{game_key}.l.{league_id}.t.{team_id_1}",
   "destination_type": "team",
-  "destination_team_key": "466.l.15701.t.12"
+  "destination_team_key": "{game_key}.l.{league_id}.t.{team_id_2}"
 }
 ```
 
@@ -1273,8 +1275,8 @@ fantasy_content.league[1].draft_results = draft picks collection
   "draft_result": {
     "pick": 1,
     "round": 1,
-    "team_key": "466.l.15701.t.9",
-    "player_key": "466.p.5352"
+    "team_key": "{game_key}.l.{league_id}.t.{team_id}",
+    "player_key": "{game_key}.p.{player_id}"
   }
 }
 ```
@@ -1431,8 +1433,10 @@ fantasy_content.game[1].stat_categories.stats = array of stat definitions
 | 27 | Double-Doubles | DD | ↑ | |
 | 28 | Triple-Doubles | TD | ↑ | |
 
-**Your League's 9 Scoring Categories:**
-Based on league settings: FGM (4), FG% (5), FT% (8), 3PTM (10), PTS (12), REB (15), AST (16), ST (17), BLK (18)
+**Common 9-Category League Setup:**
+Typical categories: FG% (5), FT% (8), 3PTM (10), PTS (12), REB (15), AST (16), ST (17), BLK (18), TO (19)
+
+*Note: Always check `/league/{key}/settings` for your specific league's scoring categories.*
 
 **AI Analysis Usage:**
 - Use stat IDs to map between settings and actual values
