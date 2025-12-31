@@ -5,12 +5,13 @@ import { ErrorMessage } from './ErrorMessage';
 import { StandingsChart } from './StandingsChart';
 import { CategoryStatsTable } from './CategoryStatsTable';
 import { StrategyCorner } from './StrategyCorner';
+import { DebugPanel } from './DebugPanel';
 
 interface DashboardProps {
   selectedLeague: string | null;
 }
 
-type TabType = 'standings' | 'categories' | 'strategy';
+type TabType = 'standings' | 'categories' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 
 export function Dashboard({ selectedLeague }: DashboardProps) {
@@ -18,11 +19,7 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
   const [error, setError] = useState<string | null>(null);
   const [standings, setStandings] = useState<any[]>([]);
   const [settings, setSettings] = useState<any>(null);
-  const [rawSettingsData, setRawSettingsData] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<TabType>('standings');
-  const [showDebug, setShowDebug] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [dumpStatus, setDumpStatus] = useState<string | null>(null);
 
   // Category stats state
   const [timespan, setTimespan] = useState<TimespanType>('thisWeek');
@@ -52,17 +49,10 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
         api.fantasy.getLeagueSettings(leagueKey),
       ]);
 
-      console.log('Standings data:', standingsData);
-      console.log('Settings data:', settingsData);
-
       const standingsList = parseStandingsFromResponse(standingsData);
       setStandings(standingsList);
 
-      // Store raw data for debugging
-      setRawSettingsData(settingsData);
-
       const parsedSettings = parseSettingsFromResponse(settingsData);
-      console.log('Parsed settings:', parsedSettings);
       setSettings(parsedSettings);
     } catch (err: any) {
       console.error('Failed to load league data:', err);
@@ -174,28 +164,6 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
     return stats.map((s: any) => s.stat).filter((stat: any) => stat);
   }
 
-  async function copyToClipboard(data: any) {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-  }
-
-  async function dumpToServer(type: string, week?: number) {
-    if (!selectedLeague) return;
-    try {
-      setDumpStatus(`Dumping ${type}...`);
-      const result = (await api.fantasy.dump(type, selectedLeague, week)) as { file: string };
-      setDumpStatus(`Saved to: ${result.file}`);
-      setTimeout(() => setDumpStatus(null), 5000);
-    } catch (err: any) {
-      setDumpStatus(`Error: ${err.message}`);
-    }
-  }
-
   if (!selectedLeague) {
     return (
       <div className="card text-center py-12">
@@ -216,13 +184,41 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
     { id: 'standings', label: 'League Standings' },
     { id: 'categories', label: 'Categories' },
     { id: 'strategy', label: 'Strategy Corner' },
+    { id: 'debug', label: 'Debug' },
   ];
 
   const categories = getStatCategories();
 
+  // Build dynamic timespan labels with week numbers
+  const currentWeek = categoryStatsData?.currentWeek;
+  const weeksIncluded = categoryStatsData?.weeksIncluded || [];
+
+  const getTimespanLabel = (value: TimespanType): string => {
+    switch (value) {
+      case 'thisWeek':
+        return currentWeek ? `This Week (${currentWeek})` : 'This Week';
+      case 'last3Weeks':
+        if (weeksIncluded.length > 0 && timespan === 'last3Weeks') {
+          const start = Math.min(...weeksIncluded);
+          const end = Math.max(...weeksIncluded);
+          return `Last 3 Weeks (${start}-${end})`;
+        }
+        // Estimate based on current week
+        if (currentWeek) {
+          const start = Math.max(1, currentWeek - 2);
+          return `Last 3 Weeks (${start}-${currentWeek})`;
+        }
+        return 'Last 3 Weeks';
+      case 'season':
+        return 'Season';
+      default:
+        return value;
+    }
+  };
+
   const timespanOptions: { value: TimespanType; label: string }[] = [
-    { value: 'thisWeek', label: 'This Week' },
-    { value: 'last3Weeks', label: 'Last 3 Weeks' },
+    { value: 'thisWeek', label: getTimespanLabel('thisWeek') },
+    { value: 'last3Weeks', label: getTimespanLabel('last3Weeks') },
     { value: 'season', label: 'Season' },
   ];
 
@@ -287,86 +283,12 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
           ) : (
             <p className="text-gray-600">No category stats available</p>
           )}
-
-          {/* Debug Section */}
-          <div className="mt-8 pt-6 border-t border-gray-200">
-            <div className="flex items-center gap-4 flex-wrap">
-              <button
-                onClick={() => setShowDebug(!showDebug)}
-                className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-2"
-              >
-                <span>{showDebug ? '[-]' : '[+]'}</span>
-                Debug: Raw API Response
-              </button>
-
-              <button
-                onClick={() => dumpToServer('settings')}
-                className="px-3 py-1 text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 rounded border border-blue-300 transition-colors"
-              >
-                Dump Settings
-              </button>
-              <button
-                onClick={() => dumpToServer('standings')}
-                className="px-3 py-1 text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 rounded border border-blue-300 transition-colors"
-              >
-                Dump Standings
-              </button>
-              <button
-                onClick={() => dumpToServer('scoreboard')}
-                className="px-3 py-1 text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 rounded border border-blue-300 transition-colors"
-              >
-                Dump Scoreboard (Current Week)
-              </button>
-
-              {dumpStatus && <span className="text-sm text-green-600">{dumpStatus}</span>}
-            </div>
-
-            {showDebug && rawSettingsData && (
-              <div className="mt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">
-                    Raw Settings Response from Yahoo API
-                  </span>
-                  <button
-                    onClick={() => copyToClipboard(rawSettingsData)}
-                    className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded border border-gray-300 transition-colors"
-                  >
-                    {copied ? 'Copied!' : 'Copy JSON'}
-                  </button>
-                </div>
-                <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto">
-                  {JSON.stringify(rawSettingsData, null, 2)}
-                </pre>
-              </div>
-            )}
-
-            {showDebug && categoryStatsData && (
-              <div className="mt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">
-                    Category Stats Data ({timespan})
-                  </span>
-                  <button
-                    onClick={() => copyToClipboard(categoryStatsData)}
-                    className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded border border-gray-300 transition-colors"
-                  >
-                    {copied ? 'Copied!' : 'Copy JSON'}
-                  </button>
-                </div>
-                <pre className="bg-gray-800 text-blue-400 p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto">
-                  {JSON.stringify(categoryStatsData, null, 2)}
-                </pre>
-              </div>
-            )}
-
-            {showDebug && !rawSettingsData && (
-              <p className="mt-4 text-sm text-gray-500">No raw data available</p>
-            )}
-          </div>
         </div>
       )}
 
       {activeTab === 'strategy' && <StrategyCorner selectedLeague={selectedLeague} />}
+
+      {activeTab === 'debug' && <DebugPanel selectedLeague={selectedLeague} />}
     </div>
   );
 }

@@ -336,7 +336,47 @@ router.get('/leagues/:league_key/category-stats', authenticate, async (req: Requ
 });
 
 /**
- * Debug endpoint to dump any endpoint response to a file for analysis
+ * Debug endpoint to dump any raw Yahoo API endpoint to a file
+ * Query param: endpoint (the Yahoo API path, e.g., /league/428.l.12345/standings)
+ */
+router.get('/debug/dump-raw', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { endpoint } = req.query;
+    const fs = await import('fs/promises');
+    const path = await import('path');
+
+    if (!endpoint || typeof endpoint !== 'string') {
+      return res.status(400).json({ error: 'endpoint query parameter required' });
+    }
+
+    const data = await makeYahooRequest(user.id, endpoint);
+
+    // Create a filename from the endpoint
+    const sanitizedEndpoint = endpoint
+      .replace(/^\//, '')
+      .replace(/[\/;=]/g, '-')
+      .replace(/\./g, '_')
+      .slice(0, 100);
+
+    const dumpPath = path.join('/srv/benloe/apps/fantasy-hawk', 'api-dumps');
+    await fs.mkdir(dumpPath, { recursive: true });
+
+    const filename = `${sanitizedEndpoint}-${Date.now()}.json`;
+    const filePath = path.join(dumpPath, filename);
+
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+
+    console.log(`Dumped ${endpoint} to ${filePath}`);
+    res.json({ success: true, file: filePath, endpoint, data });
+  } catch (error: any) {
+    console.error('Debug dump-raw error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Debug endpoint to dump any endpoint response to a file for analysis (legacy)
  */
 router.get('/debug/dump/:type/:league_key', authenticate, async (req: Request, res: Response) => {
   try {
@@ -363,7 +403,7 @@ router.get('/debug/dump/:type/:league_key', authenticate, async (req: Request, r
 
     const data = await makeYahooRequest(user.id, endpoint);
 
-    const dumpPath = path.join('/var/apps/fantasy-hawk', 'api-dumps');
+    const dumpPath = path.join('/srv/benloe/apps/fantasy-hawk', 'api-dumps');
     await fs.mkdir(dumpPath, { recursive: true });
 
     const filename = `${type}-${league_key.replace(/\./g, '-')}${week ? `-week${week}` : ''}-${Date.now()}.json`;
@@ -392,7 +432,7 @@ router.get('/debug/dump-settings/:league_key', authenticate, async (req: Request
     const endpoint = `/league/${league_key}/settings`;
     const data = await makeYahooRequest(user.id, endpoint);
 
-    const dumpPath = path.join('/var/apps/fantasy-hawk', 'api-dumps');
+    const dumpPath = path.join('/srv/benloe/apps/fantasy-hawk', 'api-dumps');
     await fs.mkdir(dumpPath, { recursive: true });
 
     const filename = `settings-${league_key.replace(/\./g, '-')}-${Date.now()}.json`;

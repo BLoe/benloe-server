@@ -395,20 +395,6 @@ export function CategoryStatsTable({ categoryStatsData, categories, timespan }: 
           ))}
         </tbody>
       </table>
-      <div className="mt-4 text-xs text-gray-500">
-        {timespan === 'season' && (
-          <span>Showing season totals ({numWeeks} weeks). Percentages are season averages.</span>
-        )}
-        {timespan === 'last3Weeks' && (
-          <span>
-            Showing weekly averages for last {numWeeks} weeks (weeks{' '}
-            {categoryStatsData?.weeksIncluded?.join(', ')}).
-          </span>
-        )}
-        {timespan === 'thisWeek' && (
-          <span>Showing current week (week {categoryStatsData?.currentWeek}) totals.</span>
-        )}
-      </div>
     </div>
   );
 }
