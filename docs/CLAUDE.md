@@ -47,8 +47,7 @@ All applications are managed in a single monorepo at `/srv/benloe/` connected to
 ├── docs/                         # Documentation
 │   └── CLAUDE.md                 # This file
 ├── shared/                       # Shared utilities and types
-├── tests/                        # Playwright tests
-└── homepage/                     # Main homepage
+└── tests/                        # Playwright tests
 
 /etc/caddy/Caddyfile.d/          # Symlink → /srv/benloe/infra/caddy/
 /root/CLAUDE.md                   # Symlink → /srv/benloe/docs/CLAUDE.md

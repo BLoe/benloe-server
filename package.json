@@ -9,7 +9,6 @@
     "apps/fantasy-hawk",
     "apps/gamenight",
     "apps/weights-api",
-    "homepage",
     "shared"
   ],
   "scripts": {

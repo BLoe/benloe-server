@@ -25,7 +25,6 @@ This monorepo contains all the applications, infrastructure configs, and shared 
 ├── logs/                    # Application logs (gitignored)
 ├── docs/                    # Documentation
 ├── shared/                  # Shared utilities and types
-├── homepage/                # Main benloe.com homepage
 └── tests/                   # Playwright tests
 ```
 
