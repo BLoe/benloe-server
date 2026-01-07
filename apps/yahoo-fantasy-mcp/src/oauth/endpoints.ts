@@ -37,6 +37,19 @@ router.get('/.well-known/oauth-authorization-server', (req: Request, res: Respon
 });
 
 /**
+ * OAuth 2.0 Protected Resource Metadata
+ * RFC 9728 - Tells clients where the MCP resource endpoint is
+ */
+router.get('/.well-known/oauth-protected-resource', (req: Request, res: Response) => {
+  res.json({
+    resource: `${config.mcpServerUrl}/mcp`,
+    authorization_servers: [config.mcpServerUrl],
+    scopes_supported: ['fantasy'],
+    bearer_methods_supported: ['header'],
+  });
+});
+
+/**
  * Dynamic Client Registration
  * RFC 7591
  */

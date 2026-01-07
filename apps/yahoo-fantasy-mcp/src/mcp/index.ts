@@ -46,9 +46,9 @@ function extractBearerToken(req: Request): string | null {
 }
 
 /**
- * MCP endpoint - Streamable HTTP transport
+ * MCP endpoint handler - shared logic
  */
-router.post('/mcp', async (req: Request, res: Response) => {
+async function handleMcpRequest(req: Request, res: Response) {
   // Authenticate
   const token = extractBearerToken(req);
   if (!token) {
@@ -120,7 +120,11 @@ router.post('/mcp', async (req: Request, res: Response) => {
       },
     });
   }
-});
+}
+
+// Mount MCP endpoint at multiple paths for compatibility
+router.post('/mcp', handleMcpRequest);
+router.post('/', handleMcpRequest);
 
 /**
  * Handle MCP methods
