@@ -97,6 +97,7 @@ router.get('/status', authenticate, async (req: Request, res: Response) => {
     res.json({
       connected: !!tokens,
       expiresAt: tokens?.tokenExpires,
+      role: user.role,
     });
   } catch (error) {
     console.error('OAuth status error:', error);

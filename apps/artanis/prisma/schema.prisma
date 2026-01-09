@@ -15,6 +15,7 @@ model User {
   email       String    @unique
   name        String?
   avatar      String?
+  role        String    @default("user")  // "user" or "admin"
   timezone    String    @default("UTC")
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?

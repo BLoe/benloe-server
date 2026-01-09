@@ -9,6 +9,7 @@ export function useAuth() {
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
 
   const checkStatus = async () => {
     try {
@@ -18,12 +19,14 @@ export function useAuth() {
       // If we get a response, we're authenticated with Artanis
       setIsAuthenticated(true);
       setIsConnected(status.connected);
+      setRole(status.role || null);
     } catch (err: any) {
       console.error('Auth status check failed:', err);
       // 401 means not authenticated with Artanis
       if (err instanceof ApiError && err.status === 401) {
         setIsAuthenticated(false);
         setIsConnected(false);
+        setRole(null);
       } else {
         setError(err.message || 'Failed to check authentication status');
       }
@@ -69,6 +72,7 @@ export function useAuth() {
     isConnected,
     isLoading,
     error,
+    role,
     login,
     connect,
     disconnect,

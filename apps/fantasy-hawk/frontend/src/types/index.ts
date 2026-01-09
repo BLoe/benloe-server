@@ -4,9 +4,12 @@ export interface AuthUser {
   name?: string;
 }
 
+export type UserRole = 'user' | 'admin';
+
 export interface OAuthStatus {
   connected: boolean;
   expiresAt?: number;
+  role?: UserRole;
 }
 
 export interface FantasyLeague {

@@ -46,7 +46,7 @@ function parseLeaguesFromResponse(data: any): any[] {
 }
 
 function App() {
-  const { isAuthenticated, isConnected, isLoading: authLoading } = useAuth();
+  const { isAuthenticated, isConnected, isLoading: authLoading, role } = useAuth();
   const [leagues, setLeagues] = useState<any[]>([]);
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [leaguesLoading, setLeaguesLoading] = useState(false);
@@ -120,7 +120,7 @@ function App() {
             </p>
           </div>
         ) : (
-          <Dashboard selectedLeague={selectedLeague} />
+          <Dashboard selectedLeague={selectedLeague} userRole={role} />
         )}
       </main>
     </div>

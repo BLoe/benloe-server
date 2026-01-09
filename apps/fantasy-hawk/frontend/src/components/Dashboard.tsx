@@ -9,12 +9,13 @@ import { DebugPanel } from './DebugPanel';
 
 interface DashboardProps {
   selectedLeague: string | null;
+  userRole?: string | null;
 }
 
 type TabType = 'standings' | 'categories' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 
-export function Dashboard({ selectedLeague }: DashboardProps) {
+export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [standings, setStandings] = useState<any[]>([]);
@@ -180,10 +181,12 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
     return <ErrorMessage message={error} />;
   }
 
+  const isAdmin = userRole === 'admin';
+
   const tabs: { id: TabType; label: string }[] = [
     { id: 'standings', label: 'League Standings' },
     { id: 'categories', label: 'Categories' },
-    { id: 'strategy', label: 'Strategy Corner' },
+    ...(isAdmin ? [{ id: 'strategy' as TabType, label: 'Strategy Corner' }] : []),
     { id: 'debug', label: 'Debug' },
   ];
 
@@ -286,7 +289,7 @@ export function Dashboard({ selectedLeague }: DashboardProps) {
         </div>
       )}
 
-      {activeTab === 'strategy' && <StrategyCorner selectedLeague={selectedLeague} />}
+      {activeTab === 'strategy' && isAdmin && <StrategyCorner selectedLeague={selectedLeague} />}
 
       {activeTab === 'debug' && <DebugPanel selectedLeague={selectedLeague} />}
     </div>

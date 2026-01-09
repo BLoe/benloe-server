@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 
-import { JWTPayload } from '../types';
+import { JWTPayload, UserRole } from '../types';
 
 import { sendMagicLink } from './email';
 
@@ -50,6 +50,7 @@ export class AuthService {
       email: string;
       name: string | null;
       avatar: string | null;
+      role: string;
       timezone: string;
       createdAt: Date;
       lastLoginAt: Date | null;
@@ -95,6 +96,7 @@ export class AuthService {
     const jwtPayload: JWTPayload = {
       userId: user.id,
       email: user.email,
+      role: user.role as UserRole,
     };
 
     const jwtToken = jwt.sign(jwtPayload, this.jwtSecret, {
