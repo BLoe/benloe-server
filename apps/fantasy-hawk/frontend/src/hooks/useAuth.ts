@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
-import { api } from '../services/api';
+import { api, ApiError } from '../services/api';
+
+const AUTH_URL = 'https://auth.benloe.com';
+const CURRENT_URL = window.location.origin;
 
 export function useAuth() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -11,11 +15,18 @@ export function useAuth() {
       setIsLoading(true);
       setError(null);
       const status = await api.oauth.getStatus();
+      // If we get a response, we're authenticated with Artanis
+      setIsAuthenticated(true);
       setIsConnected(status.connected);
     } catch (err: any) {
       console.error('Auth status check failed:', err);
-      setError(err.message || 'Failed to check authentication status');
-      setIsConnected(false);
+      // 401 means not authenticated with Artanis
+      if (err instanceof ApiError && err.status === 401) {
+        setIsAuthenticated(false);
+        setIsConnected(false);
+      } else {
+        setError(err.message || 'Failed to check authentication status');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -34,6 +45,11 @@ export function useAuth() {
     }
   }, []);
 
+  const login = () => {
+    const redirectUrl = encodeURIComponent(CURRENT_URL);
+    window.location.href = `${AUTH_URL}/?redirect=${redirectUrl}`;
+  };
+
   const connect = () => {
     api.oauth.connect();
   };
@@ -49,9 +65,11 @@ export function useAuth() {
   };
 
   return {
+    isAuthenticated,
     isConnected,
     isLoading,
     error,
+    login,
     connect,
     disconnect,
     refresh: checkStatus,

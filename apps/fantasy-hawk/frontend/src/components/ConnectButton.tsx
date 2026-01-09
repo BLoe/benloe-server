@@ -1,7 +1,7 @@
 import { useAuth } from '../hooks/useAuth';
 
 export function ConnectButton() {
-  const { isConnected, isLoading, connect, disconnect } = useAuth();
+  const { isAuthenticated, isConnected, isLoading, login, connect, disconnect } = useAuth();
 
   if (isLoading) {
     return (
@@ -12,6 +12,24 @@ export function ConnectButton() {
     );
   }
 
+  // Not logged into Artanis - show sign in button
+  if (!isAuthenticated) {
+    return (
+      <button onClick={login} className="btn-primary flex items-center gap-2">
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
+          />
+        </svg>
+        Sign in to benloe.com
+      </button>
+    );
+  }
+
+  // Logged into Artanis and Yahoo connected
   if (isConnected) {
     return (
       <div className="flex items-center gap-3">
@@ -32,6 +50,7 @@ export function ConnectButton() {
     );
   }
 
+  // Logged into Artanis but Yahoo not connected
   return (
     <button onClick={connect} className="btn-primary flex items-center gap-2">
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

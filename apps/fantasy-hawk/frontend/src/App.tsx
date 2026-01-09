@@ -46,7 +46,7 @@ function parseLeaguesFromResponse(data: any): any[] {
 }
 
 function App() {
-  const { isConnected, isLoading: authLoading } = useAuth();
+  const { isAuthenticated, isConnected, isLoading: authLoading } = useAuth();
   const [leagues, setLeagues] = useState<any[]>([]);
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [leaguesLoading, setLeaguesLoading] = useState(false);
@@ -87,16 +87,28 @@ function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {isLoading ? (
           <LoadingSpinner message="Loading Fantasy Hawk..." />
-        ) : !isConnected ? (
+        ) : !isAuthenticated ? (
           <div className="card text-center py-12">
             <div className="text-6xl mb-4">🦅</div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">Welcome to Fantasy Hawk</h2>
             <p className="text-gray-600 mb-6 max-w-md mx-auto">
-              Connect your Yahoo Fantasy Basketball account to start analyzing your teams, players,
-              and league statistics with powerful visualizations.
+              Analyze your Yahoo Fantasy Basketball teams, players, and league statistics with
+              powerful visualizations.
             </p>
             <div className="text-sm text-gray-500">
-              Click "Connect Yahoo Account" above to get started
+              Click "Sign in to benloe.com" above to get started
+            </div>
+          </div>
+        ) : !isConnected ? (
+          <div className="card text-center py-12">
+            <div className="text-6xl mb-4">🏀</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Connect Your Yahoo Account</h2>
+            <p className="text-gray-600 mb-6 max-w-md mx-auto">
+              You're signed in! Now connect your Yahoo Fantasy Basketball account to start analyzing
+              your teams, players, and league statistics.
+            </p>
+            <div className="text-sm text-gray-500">
+              Click "Connect Yahoo Account" above to continue
             </div>
           </div>
         ) : leagues.length === 0 ? (
