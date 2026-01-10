@@ -3,6 +3,7 @@ import { api } from '../services/api';
 import { LoadingSpinner } from './LoadingSpinner';
 import { Zap, Calendar, Users, TrendingUp } from 'lucide-react';
 import { ScheduleGrid, ScheduleGridSkeleton } from './streaming/ScheduleGrid';
+import { CandidatesTable, CandidatesTableSkeleton } from './streaming/CandidatesTable';
 
 interface StreamingOptimizerProps {
   selectedLeague: string | null;
@@ -135,18 +136,27 @@ export function StreamingOptimizer({ selectedLeague }: StreamingOptimizerProps) 
 
         {/* Center Panel: Candidates Table */}
         <div className="col-span-12 lg:col-span-5">
-          <div className="card h-full" data-testid="streaming-candidates">
+          <div className="card h-full" data-testid="streaming-candidates-panel">
             <div className="flex items-center gap-2 mb-4">
               <Users className="w-5 h-5 text-hawk-orange" />
               <h3 className="font-semibold text-gray-100">Streaming Candidates</h3>
             </div>
-            <div className="min-h-[300px] flex items-center justify-center border-2 border-dashed border-gray-700 rounded-lg">
-              <div className="text-center text-gray-500">
-                <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">Candidates Table Component</p>
-                <p className="text-xs text-gray-600 mt-1">Task 104</p>
+            {loading ? (
+              <CandidatesTableSkeleton />
+            ) : scheduleData ? (
+              <CandidatesTable
+                freeAgents={scheduleData.freeAgents}
+                dateRange={scheduleData.schedule.dateRange}
+                selectedTeam={selectedTeam}
+              />
+            ) : (
+              <div className="min-h-[300px] flex items-center justify-center border-2 border-dashed border-gray-700 rounded-lg">
+                <div className="text-center text-gray-500">
+                  <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No candidates data</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 

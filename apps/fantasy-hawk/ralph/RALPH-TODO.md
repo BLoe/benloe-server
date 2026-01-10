@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 3
+- **Completed:** 4
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 48
+- **Remaining:** 47
 
 ---
 
@@ -26,7 +26,7 @@
 | 101 | Streaming Optimizer - BDL client & schedule API | COMPLETE | [101-streaming-api.md](tasks/101-streaming-api.md) |
 | 102 | Streaming Optimizer - Navigation & page shell | COMPLETE | [102-streaming-navigation.md](tasks/102-streaming-navigation.md) |
 | 103 | Streaming Optimizer - Schedule grid component | COMPLETE | [103-streaming-schedule-grid.md](tasks/103-streaming-schedule-grid.md) |
-| 104 | Streaming Optimizer - Candidates table | NOT_STARTED | [104-streaming-candidates.md](tasks/104-streaming-candidates.md) |
+| 104 | Streaming Optimizer - Candidates table | COMPLETE | [104-streaming-candidates.md](tasks/104-streaming-candidates.md) |
 | 105 | Streaming Optimizer - Recommendations panel | NOT_STARTED | [105-streaming-recommendations.md](tasks/105-streaming-recommendations.md) |
 | 106 | Streaming Optimizer - Integration & E2E tests | NOT_STARTED | [106-streaming-tests.md](tasks/106-streaming-tests.md) |
 
