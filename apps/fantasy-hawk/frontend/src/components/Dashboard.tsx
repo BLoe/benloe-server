@@ -6,13 +6,14 @@ import { StandingsChart } from './StandingsChart';
 import { CategoryStatsTable } from './CategoryStatsTable';
 import { StrategyCorner } from './StrategyCorner';
 import { DebugPanel } from './DebugPanel';
+import { StreamingOptimizer } from './StreamingOptimizer';
 
 interface DashboardProps {
   selectedLeague: string | null;
   userRole?: string | null;
 }
 
-type TabType = 'standings' | 'categories' | 'strategy' | 'debug';
+type TabType = 'standings' | 'categories' | 'streaming' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 
 export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
@@ -183,9 +184,10 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
 
   const isAdmin = userRole === 'admin';
 
-  const tabs: { id: TabType; label: string }[] = [
+  const tabs: { id: TabType; label: string; testId?: string }[] = [
     { id: 'standings', label: 'Standings' },
     { id: 'categories', label: 'Categories' },
+    { id: 'streaming', label: 'Streaming', testId: 'streaming-tab' },
     ...(isAdmin ? [{ id: 'strategy' as TabType, label: 'Strategy' }] : []),
     { id: 'debug', label: 'Debug' },
   ];
@@ -233,6 +235,7 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`tab ${activeTab === tab.id ? 'tab-active' : ''}`}
+            data-testid={tab.testId}
           >
             {tab.label}
           </button>
@@ -285,6 +288,8 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
           )}
         </div>
       )}
+
+      {activeTab === 'streaming' && <StreamingOptimizer selectedLeague={selectedLeague} />}
 
       {activeTab === 'strategy' && isAdmin && <StrategyCorner selectedLeague={selectedLeague} />}
 

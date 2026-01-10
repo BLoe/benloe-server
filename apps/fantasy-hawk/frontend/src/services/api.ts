@@ -57,6 +57,8 @@ export const api = {
       fetchApi(`/fantasy/leagues/${leagueKey}/scoreboard${week ? `?week=${week}` : ''}`),
     getCategoryStats: (leagueKey: string, timespan: 'thisWeek' | 'last3Weeks' | 'season') =>
       fetchApi(`/fantasy/leagues/${leagueKey}/category-stats?timespan=${timespan}`),
+    getStreaming: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/streaming`),
+    getSchedule: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/schedule`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>
