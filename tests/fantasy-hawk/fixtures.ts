@@ -52,6 +52,24 @@ export const SELECTORS = {
     recommendationsError: '[data-testid="recommendations-error"]',
   },
 
+  // Matchup center
+  matchup: {
+    tab: '[data-testid="matchup-tab"]',
+    page: '[data-testid="matchup-page"]',
+    noLeague: '[data-testid="matchup-no-league"]',
+    error: '[data-testid="matchup-error"]',
+    scoreboard: '[data-testid="matchup-scoreboard"]',
+    scoreboardLoading: '[data-testid="matchup-scoreboard-loading"]',
+    byeWeek: '[data-testid="matchup-bye-week"]',
+    refresh: '[data-testid="matchup-refresh"]',
+    toggleCategoryBreakdown: '[data-testid="toggle-category-breakdown"]',
+    categoryBreakdown: '[data-testid="category-breakdown"]',
+    projectionsPanel: '[data-testid="projections-panel"]',
+    projectionsLoading: '[data-testid="projections-loading"]',
+    projectionsError: '[data-testid="projections-error"]',
+    projectionsEmpty: '[data-testid="projections-empty"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
