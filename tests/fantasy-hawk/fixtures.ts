@@ -70,6 +70,17 @@ export const SELECTORS = {
     projectionsEmpty: '[data-testid="projections-empty"]',
   },
 
+  // AI Chat
+  chat: {
+    tab: '[data-testid="chat-tab"]',
+    page: '[data-testid="chat-page"]',
+    noLeague: '[data-testid="chat-no-league"]',
+    noKey: '[data-testid="chat-no-key"]',
+    panel: '[data-testid="chat-panel"]',
+    input: '[data-testid="chat-input"]',
+    send: '[data-testid="chat-send"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
