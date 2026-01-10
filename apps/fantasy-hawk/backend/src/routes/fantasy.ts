@@ -646,6 +646,180 @@ ${JSON.stringify(standings, null, 2).slice(0, 4000)}`;
   }
 });
 
+// Rate limiting for chat endpoint (simple in-memory implementation)
+const chatRateLimits = new Map<string, { count: number; resetTime: number }>();
+const CHAT_RATE_LIMIT = 10; // messages per minute
+const CHAT_RATE_WINDOW = 60 * 1000; // 1 minute
+
+/**
+ * AI Strategy Chat endpoint
+ * Streaming chat interface with fantasy basketball context
+ */
+router.post('/leagues/:league_key/chat', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { messages = [], model = 'claude-3-5-haiku-20241022' } = req.body;
+
+    // Rate limiting check
+    const now = Date.now();
+    const userLimit = chatRateLimits.get(user.id);
+    if (userLimit) {
+      if (now < userLimit.resetTime) {
+        if (userLimit.count >= CHAT_RATE_LIMIT) {
+          return res.status(429).json({
+            error: 'Rate limit exceeded. Please wait before sending more messages.',
+            retryAfter: Math.ceil((userLimit.resetTime - now) / 1000),
+          });
+        }
+        userLimit.count++;
+      } else {
+        chatRateLimits.set(user.id, { count: 1, resetTime: now + CHAT_RATE_WINDOW });
+      }
+    } else {
+      chatRateLimits.set(user.id, { count: 1, resetTime: now + CHAT_RATE_WINDOW });
+    }
+
+    if (!messages.length || !messages[messages.length - 1]?.content) {
+      return res.status(400).json({ error: 'Message content required' });
+    }
+
+    // Fetch fantasy context data (concise version)
+    const [leagueData, scoreboardData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
+    ]);
+
+    // Build concise fantasy context
+    const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
+    const settings = leagueData?.fantasy_content?.league?.[1]?.settings?.[0] || {};
+    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+
+    // Extract stat categories
+    const statCategories = settings?.stat_categories?.stats
+      ?.map((s: any) => s.stat?.display_name || s.stat?.name)
+      .filter(Boolean)
+      .join(', ') || 'Standard categories';
+
+    // Find user's current matchup
+    let matchupContext = '';
+    const matchups = scoreboard?.['0']?.matchups;
+    const matchupCount = matchups?.count || 0;
+
+    for (let i = 0; i < matchupCount; i++) {
+      const matchup = matchups?.[i]?.matchup;
+      if (!matchup) continue;
+
+      const teams = matchup['0']?.teams;
+      if (!teams) continue;
+
+      for (let t = 0; t < 2; t++) {
+        const team = teams?.[t]?.team;
+        if (!team) continue;
+
+        const teamProps = team[0] || [];
+        const isUserTeam = teamProps.some((p: any) => p?.is_owned_by_current_login === 1);
+
+        if (isUserTeam) {
+          const userTeamName = teamProps.find((p: any) => p?.name)?.name || 'Your Team';
+          const oppTeam = teams[t === 0 ? 1 : 0]?.team;
+          const oppName = oppTeam?.[0]?.find((p: any) => p?.name)?.name || 'Opponent';
+
+          matchupContext = `Current matchup: ${userTeamName} vs ${oppName} (Week ${matchup.week || scoreboard?.week || '?'})`;
+          break;
+        }
+      }
+      if (matchupContext) break;
+    }
+
+    // Build system prompt with fantasy context
+    const systemPrompt = `You are an expert fantasy basketball assistant helping a user with their Yahoo Fantasy Basketball team.
+
+CONTEXT:
+- League: ${leagueInfo.name || 'Unknown'}
+- Scoring Categories: ${statCategories}
+${matchupContext ? `- ${matchupContext}` : ''}
+- Current Week: ${leagueInfo.current_week || 'Unknown'}
+
+INSTRUCTIONS:
+- Provide concise, actionable fantasy basketball advice
+- When discussing players, mention their impact on relevant categories
+- Consider weekly matchup strategy when applicable
+- Be conversational but focused on helping the user win their matchup
+- If you don't have specific data, give general strategic advice
+- Keep responses focused and to the point`;
+
+    // Prepare messages for Claude (keep last 10 messages for context)
+    const recentMessages = messages.slice(-10).map((m: any) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    // Call Artanis Claude proxy with streaming
+    const AUTH_URL = process.env.AUTH_URL || 'https://auth.benloe.com';
+    const cookies = req.headers.cookie || '';
+
+    const claudeResponse = await fetch(`${AUTH_URL}/api/claude/messages/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookies,
+      },
+      body: JSON.stringify({
+        model,
+        system: systemPrompt,
+        messages: recentMessages,
+        max_tokens: 1024,
+      }),
+    });
+
+    if (!claudeResponse.ok) {
+      const errorData = await claudeResponse.json().catch(() => ({ error: 'Unknown error' }));
+      return res.status(claudeResponse.status).json(errorData);
+    }
+
+    // Stream the response back
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    if (claudeResponse.body) {
+      const reader = claudeResponse.body.getReader();
+
+      const processStream = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              res.end();
+              break;
+            }
+            const chunk = new TextDecoder().decode(value);
+            res.write(chunk);
+          }
+        } catch (error) {
+          console.error('Chat stream error:', error);
+          res.end();
+        }
+      };
+
+      req.on('close', () => {
+        reader.cancel();
+      });
+
+      processStream();
+    } else {
+      res.status(500).json({ error: 'No response body from Claude' });
+    }
+  } catch (error: any) {
+    console.error('Chat error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to process chat message',
+    });
+  }
+});
+
 /**
  * Generic proxy endpoint for any Yahoo Fantasy API request
  * Useful for testing and custom queries
