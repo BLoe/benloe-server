@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 6
+- **Completed:** 7
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 45
+- **Remaining:** 44
 
 ---
 
@@ -34,7 +34,7 @@
 
 | ID | Task | Status | Ticket |
 |----|------|--------|--------|
-| 201 | Matchup Center - API endpoints | NOT_STARTED | [201-matchup-api.md](tasks/201-matchup-api.md) |
+| 201 | Matchup Center - API endpoints | COMPLETE | [201-matchup-api.md](tasks/201-matchup-api.md) |
 | 202 | Matchup Center - Live scoreboard UI | NOT_STARTED | [202-matchup-scoreboard.md](tasks/202-matchup-scoreboard.md) |
 | 203 | Matchup Center - Category breakdown | NOT_STARTED | [203-matchup-categories.md](tasks/203-matchup-categories.md) |
 | 204 | Matchup Center - Games remaining & projections | NOT_STARTED | [204-matchup-projections.md](tasks/204-matchup-projections.md) |

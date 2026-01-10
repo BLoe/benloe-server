@@ -1094,4 +1094,359 @@ router.get('/leagues/:league_key/streaming/recommendations', authenticate, async
   }
 });
 
+// ============================================================
+// Matchup Center Endpoints
+// ============================================================
+
+/**
+ * Get current matchup data for user's team
+ * Returns structured category comparison with win/loss/tie status
+ */
+router.get('/leagues/:league_key/matchup/current', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Fetch scoreboard and settings in parallel
+    const [scoreboardData, settingsData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+    ]);
+
+    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+
+    if (!scoreboard) {
+      return res.status(404).json({ error: 'No scoreboard data available' });
+    }
+
+    // Get stat categories from settings
+    const statCategories = settings?.stat_categories?.stats?.map((s: any) => s.stat) || [];
+
+    // Find user's matchup
+    const matchups = scoreboard['0']?.matchups;
+    let userMatchup: any = null;
+    let userTeam: any = null;
+    let opponentTeam: any = null;
+    const matchupCount = matchups?.count || 0;
+
+    for (let i = 0; i < matchupCount; i++) {
+      const matchup = matchups?.[i]?.matchup;
+      if (!matchup) continue;
+
+      const teams = matchup['0']?.teams;
+      if (!teams) continue;
+
+      for (let t = 0; t < 2; t++) {
+        const team = teams?.[t]?.team;
+        if (!team) continue;
+
+        const teamProps = team[0] || [];
+        let isUserTeam = false;
+        for (const prop of teamProps) {
+          if (prop?.is_owned_by_current_login === 1) {
+            isUserTeam = true;
+            break;
+          }
+        }
+
+        if (isUserTeam) {
+          userMatchup = matchup;
+          userTeam = team;
+          opponentTeam = teams[t === 0 ? 1 : 0]?.team;
+          break;
+        }
+      }
+      if (userMatchup) break;
+    }
+
+    if (!userMatchup || !userTeam || !opponentTeam) {
+      return res.json({
+        matchup: null,
+        message: 'No active matchup found (bye week or season ended)',
+      });
+    }
+
+    // Parse team data
+    const parseTeamData = (team: any[]) => {
+      const props = team[0] || [];
+      const stats = team[1]?.team_stats?.stats || [];
+
+      const merged: any = {};
+      for (const prop of props) {
+        if (prop && typeof prop === 'object') {
+          Object.assign(merged, prop);
+        }
+      }
+
+      const categoryStats: Record<string, { value: string | number }> = {};
+      for (const stat of stats) {
+        if (stat?.stat) {
+          categoryStats[stat.stat.stat_id] = { value: stat.stat.value };
+        }
+      }
+
+      return { ...merged, categoryStats };
+    };
+
+    const userTeamData = parseTeamData(userTeam);
+    const opponentTeamData = parseTeamData(opponentTeam);
+
+    // Build category comparison
+    const categories: any[] = [];
+    for (const cat of statCategories) {
+      if (!cat?.stat_id) continue;
+
+      const userValue = parseFloat(userTeamData.categoryStats[cat.stat_id]?.value || '0');
+      const oppValue = parseFloat(opponentTeamData.categoryStats[cat.stat_id]?.value || '0');
+
+      // Determine if higher or lower is better (TOs are typically negative)
+      const isNegative = cat.name?.toLowerCase().includes('turnover') || cat.abbr === 'TO';
+      let status: 'win' | 'loss' | 'tie' = 'tie';
+
+      if (userValue !== oppValue) {
+        if (isNegative) {
+          status = userValue < oppValue ? 'win' : 'loss';
+        } else {
+          status = userValue > oppValue ? 'win' : 'loss';
+        }
+      }
+
+      const diff = isNegative ? oppValue - userValue : userValue - oppValue;
+
+      categories.push({
+        statId: cat.stat_id,
+        name: cat.name,
+        abbr: cat.abbr || cat.display_name,
+        userValue,
+        opponentValue: oppValue,
+        status,
+        difference: diff,
+        isNegative,
+      });
+    }
+
+    // Calculate overall score
+    const wins = categories.filter(c => c.status === 'win').length;
+    const losses = categories.filter(c => c.status === 'loss').length;
+    const ties = categories.filter(c => c.status === 'tie').length;
+
+    res.json({
+      week: userMatchup.week,
+      weekStart: userMatchup.week_start,
+      weekEnd: userMatchup.week_end,
+      userTeam: {
+        name: userTeamData.name,
+        teamKey: userTeamData.team_key,
+        logoUrl: userTeamData.team_logos?.[0]?.team_logo?.url,
+        score: { wins, losses, ties },
+      },
+      opponent: {
+        name: opponentTeamData.name,
+        teamKey: opponentTeamData.team_key,
+        logoUrl: opponentTeamData.team_logos?.[0]?.team_logo?.url,
+        score: { wins: losses, losses: wins, ties },
+      },
+      categories,
+      status: wins > losses ? 'winning' : wins < losses ? 'losing' : 'tied',
+    });
+  } catch (error: any) {
+    console.error('Matchup current error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch matchup',
+    });
+  }
+});
+
+/**
+ * Get matchup projections
+ * Projects final category outcomes based on current pace
+ */
+router.get('/leagues/:league_key/matchup/projections', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Fetch scoreboard, settings, and rosters
+    const [scoreboardData, settingsData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+    ]);
+
+    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const weekStart = scoreboard?.['0']?.matchups?.['0']?.matchup?.week_start;
+    const weekEnd = scoreboard?.['0']?.matchups?.['0']?.matchup?.week_end;
+
+    if (!scoreboard || !weekStart || !weekEnd) {
+      return res.status(404).json({ error: 'No scoreboard data available' });
+    }
+
+    // Get schedule data for games remaining
+    const scheduleAnalysis = await ballDontLieService.getScheduleAnalysis(weekStart, weekEnd);
+
+    // Calculate days elapsed and remaining
+    const now = new Date();
+    const start = new Date(weekStart + 'T00:00:00');
+    const end = new Date(weekEnd + 'T23:59:59');
+    const totalDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+    const daysElapsed = Math.max(0, Math.ceil((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+    const daysRemaining = Math.max(0, totalDays - daysElapsed);
+    const percentComplete = totalDays > 0 ? (daysElapsed / totalDays) * 100 : 0;
+
+    // Get stat categories
+    const statCategories = settings?.stat_categories?.stats?.map((s: any) => s.stat) || [];
+
+    // Find user's matchup
+    const matchups = scoreboard['0']?.matchups;
+    let userMatchup: any = null;
+    let userTeam: any = null;
+    let opponentTeam: any = null;
+    const matchupCount = matchups?.count || 0;
+
+    for (let i = 0; i < matchupCount; i++) {
+      const matchup = matchups?.[i]?.matchup;
+      if (!matchup) continue;
+
+      const teams = matchup['0']?.teams;
+      if (!teams) continue;
+
+      for (let t = 0; t < 2; t++) {
+        const team = teams?.[t]?.team;
+        if (!team) continue;
+
+        const teamProps = team[0] || [];
+        let isUserTeam = false;
+        for (const prop of teamProps) {
+          if (prop?.is_owned_by_current_login === 1) {
+            isUserTeam = true;
+            break;
+          }
+        }
+
+        if (isUserTeam) {
+          userMatchup = matchup;
+          userTeam = team;
+          opponentTeam = teams[t === 0 ? 1 : 0]?.team;
+          break;
+        }
+      }
+      if (userMatchup) break;
+    }
+
+    if (!userMatchup || !userTeam || !opponentTeam) {
+      return res.json({
+        projections: null,
+        message: 'No active matchup found',
+      });
+    }
+
+    // Parse team stats
+    const parseTeamStats = (team: any[]) => {
+      const stats = team[1]?.team_stats?.stats || [];
+      const categoryStats: Record<string, number> = {};
+      for (const stat of stats) {
+        if (stat?.stat) {
+          categoryStats[stat.stat.stat_id] = parseFloat(stat.stat.value || '0');
+        }
+      }
+      return categoryStats;
+    };
+
+    const userStats = parseTeamStats(userTeam);
+    const oppStats = parseTeamStats(opponentTeam);
+
+    // Calculate projections for each category
+    const projections: any[] = [];
+
+    for (const cat of statCategories) {
+      if (!cat?.stat_id) continue;
+
+      const userCurrent = userStats[cat.stat_id] || 0;
+      const oppCurrent = oppStats[cat.stat_id] || 0;
+
+      // Simple linear projection based on pace
+      const projectionMultiplier = percentComplete > 0 ? 100 / percentComplete : 1;
+      const userProjected = userCurrent * projectionMultiplier;
+      const oppProjected = oppCurrent * projectionMultiplier;
+
+      const isNegative = cat.name?.toLowerCase().includes('turnover') || cat.abbr === 'TO';
+
+      // Determine projected outcome
+      let projectedStatus: 'win' | 'loss' | 'tie' = 'tie';
+      if (userProjected !== oppProjected) {
+        if (isNegative) {
+          projectedStatus = userProjected < oppProjected ? 'win' : 'loss';
+        } else {
+          projectedStatus = userProjected > oppProjected ? 'win' : 'loss';
+        }
+      }
+
+      // Calculate current status
+      let currentStatus: 'win' | 'loss' | 'tie' = 'tie';
+      if (userCurrent !== oppCurrent) {
+        if (isNegative) {
+          currentStatus = userCurrent < oppCurrent ? 'win' : 'loss';
+        } else {
+          currentStatus = userCurrent > oppCurrent ? 'win' : 'loss';
+        }
+      }
+
+      // Determine if this is a swing category
+      const margin = Math.abs(userProjected - oppProjected);
+      const relativeMargin = oppProjected > 0 ? margin / oppProjected : margin;
+      const isSwing = relativeMargin < 0.1 && daysRemaining > 1; // Within 10% and time remains
+
+      // Confidence based on margin and time remaining
+      let confidence: 'high' | 'medium' | 'low' = 'medium';
+      if (relativeMargin > 0.2) confidence = 'high';
+      else if (isSwing) confidence = 'low';
+
+      projections.push({
+        statId: cat.stat_id,
+        name: cat.name,
+        abbr: cat.abbr || cat.display_name,
+        current: { user: userCurrent, opponent: oppCurrent, status: currentStatus },
+        projected: { user: Math.round(userProjected * 10) / 10, opponent: Math.round(oppProjected * 10) / 10, status: projectedStatus },
+        isSwing,
+        confidence,
+        couldFlip: currentStatus !== projectedStatus || isSwing,
+      });
+    }
+
+    // Summary
+    const projectedWins = projections.filter(p => p.projected.status === 'win').length;
+    const projectedLosses = projections.filter(p => p.projected.status === 'loss').length;
+    const swingCategories = projections.filter(p => p.isSwing).length;
+
+    res.json({
+      week: userMatchup.week,
+      weekProgress: {
+        daysElapsed,
+        daysRemaining,
+        percentComplete: Math.round(percentComplete),
+      },
+      projectedScore: {
+        wins: projectedWins,
+        losses: projectedLosses,
+        ties: projections.length - projectedWins - projectedLosses,
+      },
+      projectedOutcome: projectedWins > projectedLosses ? 'win' : projectedWins < projectedLosses ? 'loss' : 'tie',
+      swingCategories,
+      projections,
+      gamesRemaining: {
+        totalGamesInWeek: Object.keys(scheduleAnalysis.gamesByDate).reduce(
+          (sum, date) => sum + scheduleAnalysis.gamesByDate[date].length, 0
+        ),
+        datesRemaining: Object.keys(scheduleAnalysis.gamesByDate).filter(date => new Date(date) > now),
+      },
+    });
+  } catch (error: any) {
+    console.error('Matchup projections error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to generate projections',
+    });
+  }
+});
+
 export const fantasyRoutes = router;
