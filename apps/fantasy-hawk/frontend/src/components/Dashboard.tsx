@@ -8,13 +8,14 @@ import { StrategyCorner } from './StrategyCorner';
 import { DebugPanel } from './DebugPanel';
 import { StreamingOptimizer } from './StreamingOptimizer';
 import { MatchupCenter } from './MatchupCenter';
+import { AIChat } from './AIChat';
 
 interface DashboardProps {
   selectedLeague: string | null;
   userRole?: string | null;
 }
 
-type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'strategy' | 'debug';
+type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'chat' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 
 export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
@@ -190,6 +191,7 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
     { id: 'categories', label: 'Categories' },
     { id: 'matchup', label: 'Matchup', testId: 'matchup-tab' },
     { id: 'streaming', label: 'Streaming', testId: 'streaming-tab' },
+    { id: 'chat', label: 'AI Chat', testId: 'chat-tab' },
     ...(isAdmin ? [{ id: 'strategy' as TabType, label: 'Strategy' }] : []),
     { id: 'debug', label: 'Debug' },
   ];
@@ -294,6 +296,8 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
       {activeTab === 'matchup' && <MatchupCenter selectedLeague={selectedLeague} />}
 
       {activeTab === 'streaming' && <StreamingOptimizer selectedLeague={selectedLeague} />}
+
+      {activeTab === 'chat' && <AIChat selectedLeague={selectedLeague} />}
 
       {activeTab === 'strategy' && isAdmin && <StrategyCorner selectedLeague={selectedLeague} />}
 
