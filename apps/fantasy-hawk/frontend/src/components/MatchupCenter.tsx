@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { Scoreboard, ScoreboardSkeleton } from './matchup/Scoreboard';
 import { CategoryBreakdown } from './matchup/CategoryBreakdown';
-import { Swords, ChevronDown, ChevronUp } from 'lucide-react';
+import { ProjectionsPanel } from './matchup/ProjectionsPanel';
+import { Swords, ChevronDown, ChevronUp, TrendingUp } from 'lucide-react';
 
 interface MatchupCenterProps {
   selectedLeague: string | null;
@@ -157,31 +158,45 @@ export function MatchupCenter({ selectedLeague }: MatchupCenterProps) {
         )}
       </div>
 
-      {/* Detailed Category Breakdown */}
-      {matchupData && matchupData.categories.length > 0 && (
-        <div className="card">
-          <button
-            onClick={() => setShowDetailedBreakdown(!showDetailedBreakdown)}
-            className="w-full flex items-center justify-between py-2"
-            data-testid="toggle-category-breakdown"
-          >
-            <h3 className="font-semibold text-gray-100">Detailed Category Analysis</h3>
-            {showDetailedBreakdown ? (
-              <ChevronUp className="w-5 h-5 text-gray-400" />
-            ) : (
-              <ChevronDown className="w-5 h-5 text-gray-400" />
-            )}
-          </button>
+      {/* Two-column layout for analysis panels */}
+      {matchupData && selectedLeague && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Detailed Category Breakdown */}
+          {matchupData.categories.length > 0 && (
+            <div className="card">
+              <button
+                onClick={() => setShowDetailedBreakdown(!showDetailedBreakdown)}
+                className="w-full flex items-center justify-between py-2"
+                data-testid="toggle-category-breakdown"
+              >
+                <h3 className="font-semibold text-gray-100">Detailed Category Analysis</h3>
+                {showDetailedBreakdown ? (
+                  <ChevronUp className="w-5 h-5 text-gray-400" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-gray-400" />
+                )}
+              </button>
 
-          {showDetailedBreakdown && (
-            <div className="mt-4">
-              <CategoryBreakdown
-                categories={matchupData.categories}
-                expanded={expandedCategory}
-                onToggle={setExpandedCategory}
-              />
+              {showDetailedBreakdown && (
+                <div className="mt-4">
+                  <CategoryBreakdown
+                    categories={matchupData.categories}
+                    expanded={expandedCategory}
+                    onToggle={setExpandedCategory}
+                  />
+                </div>
+              )}
             </div>
           )}
+
+          {/* Projections Panel */}
+          <div className="card">
+            <div className="flex items-center gap-2 mb-4">
+              <TrendingUp className="w-5 h-5 text-hawk-orange" />
+              <h3 className="font-semibold text-gray-100">Week Projections</h3>
+            </div>
+            <ProjectionsPanel leagueKey={selectedLeague} />
+          </div>
         </div>
       )}
     </div>
