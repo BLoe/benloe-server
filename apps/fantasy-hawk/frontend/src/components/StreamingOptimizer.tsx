@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { LoadingSpinner } from './LoadingSpinner';
 import { Zap, Calendar, Users, TrendingUp } from 'lucide-react';
+import { ScheduleGrid, ScheduleGridSkeleton } from './streaming/ScheduleGrid';
 
 interface StreamingOptimizerProps {
   selectedLeague: string | null;
@@ -24,6 +25,7 @@ export function StreamingOptimizer({ selectedLeague }: StreamingOptimizerProps) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scheduleData, setScheduleData] = useState<ScheduleData | null>(null);
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
 
   useEffect(() => {
     if (selectedLeague) {
@@ -97,18 +99,37 @@ export function StreamingOptimizer({ selectedLeague }: StreamingOptimizerProps) 
       <div className="grid grid-cols-12 gap-6">
         {/* Left Panel: Schedule Grid */}
         <div className="col-span-12 lg:col-span-4">
-          <div className="card h-full" data-testid="streaming-schedule-grid">
+          <div className="card h-full" data-testid="streaming-schedule-grid-panel">
             <div className="flex items-center gap-2 mb-4">
               <Calendar className="w-5 h-5 text-hawk-teal" />
               <h3 className="font-semibold text-gray-100">Schedule Grid</h3>
+              {selectedTeam && (
+                <button
+                  onClick={() => setSelectedTeam(null)}
+                  className="ml-auto text-xs px-2 py-1 rounded bg-hawk-orange text-white hover:bg-hawk-orange/80"
+                >
+                  Clear: {selectedTeam}
+                </button>
+              )}
             </div>
-            <div className="min-h-[300px] flex items-center justify-center border-2 border-dashed border-gray-700 rounded-lg">
-              <div className="text-center text-gray-500">
-                <Calendar className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">Schedule Grid Component</p>
-                <p className="text-xs text-gray-600 mt-1">Task 103</p>
+            {loading ? (
+              <ScheduleGridSkeleton />
+            ) : scheduleData ? (
+              <ScheduleGrid
+                gamesByDate={scheduleData.schedule.gamesByDate}
+                gamesPerTeam={scheduleData.schedule.gamesPerTeam}
+                dateRange={scheduleData.schedule.dateRange}
+                onTeamClick={setSelectedTeam}
+                selectedTeam={selectedTeam}
+              />
+            ) : (
+              <div className="min-h-[300px] flex items-center justify-center border-2 border-dashed border-gray-700 rounded-lg">
+                <div className="text-center text-gray-500">
+                  <Calendar className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No schedule data</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 
