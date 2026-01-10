@@ -58,6 +58,7 @@ export const api = {
     getCategoryStats: (leagueKey: string, timespan: 'thisWeek' | 'last3Weeks' | 'season') =>
       fetchApi(`/fantasy/leagues/${leagueKey}/category-stats?timespan=${timespan}`),
     getStreaming: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/streaming`),
+    getStreamingRecommendations: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/streaming/recommendations`),
     getSchedule: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/schedule`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),

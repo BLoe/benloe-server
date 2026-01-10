@@ -4,6 +4,7 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { Zap, Calendar, Users, TrendingUp } from 'lucide-react';
 import { ScheduleGrid, ScheduleGridSkeleton } from './streaming/ScheduleGrid';
 import { CandidatesTable, CandidatesTableSkeleton } from './streaming/CandidatesTable';
+import { RecommendationsPanel } from './streaming/RecommendationsPanel';
 
 interface StreamingOptimizerProps {
   selectedLeague: string | null;
@@ -162,18 +163,21 @@ export function StreamingOptimizer({ selectedLeague }: StreamingOptimizerProps) 
 
         {/* Right Panel: Recommendations */}
         <div className="col-span-12 lg:col-span-3">
-          <div className="card h-full" data-testid="streaming-recommendations">
+          <div className="card h-full" data-testid="streaming-recommendations-panel">
             <div className="flex items-center gap-2 mb-4">
               <TrendingUp className="w-5 h-5 text-hawk-indigo" />
               <h3 className="font-semibold text-gray-100">Recommendations</h3>
             </div>
-            <div className="min-h-[300px] flex items-center justify-center border-2 border-dashed border-gray-700 rounded-lg">
-              <div className="text-center text-gray-500">
-                <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">Recommendations Panel</p>
-                <p className="text-xs text-gray-600 mt-1">Task 105</p>
+            {selectedLeague ? (
+              <RecommendationsPanel leagueKey={selectedLeague} />
+            ) : (
+              <div className="min-h-[300px] flex items-center justify-center border-2 border-dashed border-gray-700 rounded-lg">
+                <div className="text-center text-gray-500">
+                  <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Select a league</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

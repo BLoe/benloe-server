@@ -917,4 +917,181 @@ router.get('/leagues/:league_key/streaming', authenticate, async (req: Request, 
   }
 });
 
+/**
+ * Get streaming recommendations for a league
+ * Analyzes roster and suggests drop/add moves to maximize games played
+ */
+router.get('/leagues/:league_key/streaming/recommendations', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Fetch Yahoo data in parallel
+    const [scoreboardData, rostersData, faData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams/roster`),
+      makeYahooRequest(user.id, `/league/${league_key}/players;status=FA;count=50`),
+    ]);
+
+    // Get week dates
+    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+    const firstMatchup = scoreboard?.['0']?.matchups?.['0']?.matchup;
+    const weekStart = firstMatchup?.week_start;
+    const weekEnd = firstMatchup?.week_end;
+
+    if (!weekStart || !weekEnd) {
+      return res.status(404).json({ error: 'Could not determine week dates' });
+    }
+
+    // Get NBA schedule
+    const scheduleAnalysis = await ballDontLieService.getScheduleAnalysis(weekStart, weekEnd);
+    const gamesPerTeam = scheduleAnalysis.gamesPerTeam;
+
+    // Parse user's roster
+    const teams = rostersData?.fantasy_content?.league?.[1]?.teams;
+    const userRoster: any[] = [];
+    const teamCount = teams?.count || 0;
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teams?.[i]?.team;
+      if (!team) continue;
+
+      const teamProps = team[0] || [];
+      let isUserTeam = false;
+      for (const prop of teamProps) {
+        if (prop?.is_owned_by_current_login === 1) {
+          isUserTeam = true;
+          break;
+        }
+      }
+
+      if (isUserTeam) {
+        const roster = team[1]?.roster?.['0']?.players;
+        if (roster) {
+          const playerCount = roster.count || 0;
+          for (let p = 0; p < playerCount; p++) {
+            const player = roster[p]?.player;
+            if (player) {
+              const playerProps = player[0] || [];
+              const playerData: any = {};
+              for (const prop of playerProps) {
+                if (prop && typeof prop === 'object') {
+                  Object.assign(playerData, prop);
+                }
+              }
+              const selectedPos = player[1]?.selected_position;
+              if (selectedPos) {
+                for (const pos of selectedPos) {
+                  if (pos?.position) {
+                    playerData.selected_position = pos.position;
+                  }
+                }
+              }
+              const teamAbbr = playerData.editorial_team_abbr;
+              const schedule = gamesPerTeam[teamAbbr] || { total: 0, dates: [] };
+              playerData.games_this_week = schedule.total;
+              playerData.game_dates = schedule.dates;
+              userRoster.push(playerData);
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    // Parse free agents with schedule
+    const freeAgents: any[] = [];
+    const faPlayers = faData?.fantasy_content?.league?.[1]?.players;
+    const faCount = faPlayers?.count || 0;
+    for (let i = 0; i < faCount; i++) {
+      const player = faPlayers?.[i]?.player;
+      if (player) {
+        const playerProps = player[0] || [];
+        const playerData: any = {};
+        for (const prop of playerProps) {
+          if (prop && typeof prop === 'object') {
+            Object.assign(playerData, prop);
+          }
+        }
+        const teamAbbr = playerData.editorial_team_abbr;
+        const schedule = gamesPerTeam[teamAbbr] || { total: 0, dates: [] };
+        playerData.games_this_week = schedule.total;
+        playerData.game_dates = schedule.dates;
+        freeAgents.push(playerData);
+      }
+    }
+
+    // Find droppable players: low games remaining, not on IL
+    const droppablePlayers = userRoster
+      .filter(p => p.selected_position !== 'IL' && p.selected_position !== 'IL+')
+      .filter(p => p.games_this_week <= 2)
+      .sort((a, b) => a.games_this_week - b.games_this_week);
+
+    // Find top streaming candidates
+    const streamingTargets = freeAgents
+      .filter(p => p.games_this_week >= 3)
+      .sort((a, b) => b.games_this_week - a.games_this_week)
+      .slice(0, 10);
+
+    // Generate recommendations
+    const recommendations: any[] = [];
+
+    for (const dropPlayer of droppablePlayers.slice(0, 3)) {
+      for (const addPlayer of streamingTargets) {
+        const gamesGained = addPlayer.games_this_week - dropPlayer.games_this_week;
+        if (gamesGained > 0) {
+          let confidence: 'high' | 'medium' | 'low' = 'medium';
+          if (gamesGained >= 3) confidence = 'high';
+          else if (gamesGained <= 1) confidence = 'low';
+
+          recommendations.push({
+            id: `${dropPlayer.player_key}-${addPlayer.player_key}`,
+            drop: {
+              player_key: dropPlayer.player_key,
+              name: dropPlayer.name?.full || 'Unknown',
+              team: dropPlayer.editorial_team_abbr,
+              position: dropPlayer.display_position || '',
+              games_this_week: dropPlayer.games_this_week,
+              game_dates: dropPlayer.game_dates,
+            },
+            add: {
+              player_key: addPlayer.player_key,
+              name: addPlayer.name?.full || 'Unknown',
+              team: addPlayer.editorial_team_abbr,
+              position: addPlayer.display_position || '',
+              games_this_week: addPlayer.games_this_week,
+              game_dates: addPlayer.game_dates,
+              percent_owned: addPlayer.percent_owned?.value || '0',
+            },
+            gamesGained,
+            confidence,
+            reasoning: `${addPlayer.name?.full} has ${addPlayer.games_this_week} games vs ${dropPlayer.name?.full}'s ${dropPlayer.games_this_week}. Gain ${gamesGained} game${gamesGained > 1 ? 's' : ''}.`,
+          });
+          break;
+        }
+      }
+    }
+
+    recommendations.sort((a, b) => b.gamesGained - a.gamesGained);
+
+    res.json({
+      recommendations: recommendations.slice(0, 5),
+      rosterAnalysis: {
+        totalPlayers: userRoster.length,
+        lowGamePlayers: droppablePlayers.length,
+        averageGames: userRoster.length > 0
+          ? (userRoster.reduce((sum, p) => sum + (p.games_this_week || 0), 0) / userRoster.length).toFixed(1)
+          : 0,
+      },
+      weekStart,
+      weekEnd,
+    });
+  } catch (error: any) {
+    console.error('Streaming recommendations error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to generate recommendations',
+    });
+  }
+});
+
 export const fantasyRoutes = router;
