@@ -3,6 +3,13 @@ import { authenticate } from '../middleware/auth';
 import { yahooOAuthService } from '../services/yahoo-oauth';
 import { getYahooTokens, saveYahooTokens } from '../services/database';
 import { ballDontLieService } from '../services/balldontlie';
+import {
+  detectTopic,
+  buildSystemPrompt,
+  buildMatchupContext,
+  buildStreamingContext,
+  type ContextInputs,
+} from '../services/chatContext';
 
 const router = Router();
 
@@ -684,7 +691,10 @@ router.post('/leagues/:league_key/chat', authenticate, async (req: Request, res:
       return res.status(400).json({ error: 'Message content required' });
     }
 
-    // Fetch fantasy context data (concise version)
+    // Detect topic from conversation
+    const topic = detectTopic(messages);
+
+    // Fetch fantasy context data based on topic
     const [leagueData, scoreboardData] = await Promise.all([
       makeYahooRequest(user.id, `/league/${league_key}/settings`),
       makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
@@ -693,7 +703,6 @@ router.post('/leagues/:league_key/chat', authenticate, async (req: Request, res:
     // Build concise fantasy context
     const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
     const settings = leagueData?.fantasy_content?.league?.[1]?.settings?.[0] || {};
-    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
 
     // Extract stat categories
     const statCategories = settings?.stat_categories?.stats
@@ -701,53 +710,31 @@ router.post('/leagues/:league_key/chat', authenticate, async (req: Request, res:
       .filter(Boolean)
       .join(', ') || 'Standard categories';
 
-    // Find user's current matchup
-    let matchupContext = '';
-    const matchups = scoreboard?.['0']?.matchups;
-    const matchupCount = matchups?.count || 0;
+    // Build context inputs
+    const contextInputs: ContextInputs = {
+      leagueName: leagueInfo.name || 'Unknown',
+      currentWeek: leagueInfo.current_week || 'Unknown',
+      statCategories,
+      matchupSummary: buildMatchupContext(scoreboardData, settings),
+    };
 
-    for (let i = 0; i < matchupCount; i++) {
-      const matchup = matchups?.[i]?.matchup;
-      if (!matchup) continue;
-
-      const teams = matchup['0']?.teams;
-      if (!teams) continue;
-
-      for (let t = 0; t < 2; t++) {
-        const team = teams?.[t]?.team;
-        if (!team) continue;
-
-        const teamProps = team[0] || [];
-        const isUserTeam = teamProps.some((p: any) => p?.is_owned_by_current_login === 1);
-
-        if (isUserTeam) {
-          const userTeamName = teamProps.find((p: any) => p?.name)?.name || 'Your Team';
-          const oppTeam = teams[t === 0 ? 1 : 0]?.team;
-          const oppName = oppTeam?.[0]?.find((p: any) => p?.name)?.name || 'Opponent';
-
-          matchupContext = `Current matchup: ${userTeamName} vs ${oppName} (Week ${matchup.week || scoreboard?.week || '?'})`;
-          break;
+    // Add topic-specific context
+    if (topic === 'streaming') {
+      try {
+        const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+        const weekStart = scoreboard?.['0']?.matchups?.['0']?.matchup?.week_start;
+        const weekEnd = scoreboard?.['0']?.matchups?.['0']?.matchup?.week_end;
+        if (weekStart && weekEnd) {
+          const scheduleData = await ballDontLieService.getScheduleAnalysis(weekStart, weekEnd);
+          contextInputs.scheduleSummary = buildStreamingContext({ schedule: scheduleData });
         }
+      } catch (err) {
+        console.log('Could not fetch schedule for streaming context');
       }
-      if (matchupContext) break;
     }
 
-    // Build system prompt with fantasy context
-    const systemPrompt = `You are an expert fantasy basketball assistant helping a user with their Yahoo Fantasy Basketball team.
-
-CONTEXT:
-- League: ${leagueInfo.name || 'Unknown'}
-- Scoring Categories: ${statCategories}
-${matchupContext ? `- ${matchupContext}` : ''}
-- Current Week: ${leagueInfo.current_week || 'Unknown'}
-
-INSTRUCTIONS:
-- Provide concise, actionable fantasy basketball advice
-- When discussing players, mention their impact on relevant categories
-- Consider weekly matchup strategy when applicable
-- Be conversational but focused on helping the user win their matchup
-- If you don't have specific data, give general strategic advice
-- Keep responses focused and to the point`;
+    // Build system prompt using context service
+    const systemPrompt = buildSystemPrompt(contextInputs, topic);
 
     // Prepare messages for Claude (keep last 10 messages for context)
     const recentMessages = messages.slice(-10).map((m: any) => ({

@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 13
+- **Completed:** 14
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 38
+- **Remaining:** 37
 
 ---
 
@@ -46,7 +46,7 @@
 |----|------|--------|--------|
 | 301 | AI Chat - Streaming API endpoint | COMPLETE | [301-chat-api.md](tasks/301-chat-api.md) |
 | 302 | AI Chat - Chat UI component | COMPLETE | [302-chat-ui.md](tasks/302-chat-ui.md) |
-| 303 | AI Chat - Context injection system | NOT_STARTED | [303-chat-context.md](tasks/303-chat-context.md) |
+| 303 | AI Chat - Context injection system | COMPLETE | [303-chat-context.md](tasks/303-chat-context.md) |
 | 304 | AI Chat - E2E tests | NOT_STARTED | [304-chat-tests.md](tasks/304-chat-tests.md) |
 
 ---
