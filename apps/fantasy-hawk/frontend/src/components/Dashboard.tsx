@@ -7,13 +7,14 @@ import { CategoryStatsTable } from './CategoryStatsTable';
 import { StrategyCorner } from './StrategyCorner';
 import { DebugPanel } from './DebugPanel';
 import { StreamingOptimizer } from './StreamingOptimizer';
+import { MatchupCenter } from './MatchupCenter';
 
 interface DashboardProps {
   selectedLeague: string | null;
   userRole?: string | null;
 }
 
-type TabType = 'standings' | 'categories' | 'streaming' | 'strategy' | 'debug';
+type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 
 export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
@@ -187,6 +188,7 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   const tabs: { id: TabType; label: string; testId?: string }[] = [
     { id: 'standings', label: 'Standings' },
     { id: 'categories', label: 'Categories' },
+    { id: 'matchup', label: 'Matchup', testId: 'matchup-tab' },
     { id: 'streaming', label: 'Streaming', testId: 'streaming-tab' },
     ...(isAdmin ? [{ id: 'strategy' as TabType, label: 'Strategy' }] : []),
     { id: 'debug', label: 'Debug' },
@@ -288,6 +290,8 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
           )}
         </div>
       )}
+
+      {activeTab === 'matchup' && <MatchupCenter selectedLeague={selectedLeague} />}
 
       {activeTab === 'streaming' && <StreamingOptimizer selectedLeague={selectedLeague} />}
 

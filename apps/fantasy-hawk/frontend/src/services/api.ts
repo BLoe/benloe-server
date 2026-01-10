@@ -60,6 +60,8 @@ export const api = {
     getStreaming: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/streaming`),
     getStreamingRecommendations: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/streaming/recommendations`),
     getSchedule: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/schedule`),
+    getMatchupCurrent: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/matchup/current`),
+    getMatchupProjections: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/matchup/projections`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>
