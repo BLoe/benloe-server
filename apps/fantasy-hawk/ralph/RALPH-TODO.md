@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 15
+- **Completed:** 16
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 36
+- **Remaining:** 35
 
 ---
 
@@ -57,7 +57,7 @@
 
 | ID | Task | Status | Ticket |
 |----|------|--------|--------|
-| 401 | Trade Analyzer - Analysis API | NOT_STARTED | [401-trade-api.md](tasks/401-trade-api.md) |
+| 401 | Trade Analyzer - Analysis API | COMPLETE | [401-trade-api.md](tasks/401-trade-api.md) |
 | 402 | Trade Analyzer - Trade builder UI | NOT_STARTED | [402-trade-builder.md](tasks/402-trade-builder.md) |
 | 403 | Trade Analyzer - Impact visualization | NOT_STARTED | [403-trade-impact.md](tasks/403-trade-impact.md) |
 | 404 | Trade Analyzer - E2E tests | NOT_STARTED | [404-trade-tests.md](tasks/404-trade-tests.md) |

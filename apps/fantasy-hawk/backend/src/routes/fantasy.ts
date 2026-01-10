@@ -1610,4 +1610,241 @@ router.get('/leagues/:league_key/matchup/projections', authenticate, async (req:
   }
 });
 
+/**
+ * Get another team's roster for trade partner selection
+ */
+router.get('/leagues/:league_key/teams/:team_key/roster', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key, team_key } = req.params;
+
+    const rosterData = await makeYahooRequest(
+      user.id,
+      `/team/${team_key}/roster/players`
+    );
+
+    const players = rosterData?.fantasy_content?.team?.[1]?.roster?.['0']?.players || {};
+    const playerCount = players.count || 0;
+
+    const roster: any[] = [];
+    for (let i = 0; i < playerCount; i++) {
+      const player = players[i]?.player;
+      if (player) {
+        const playerInfo = player[0] || [];
+        const stats = player[1]?.player_stats?.stats || [];
+
+        const merged: any = {};
+        for (const prop of playerInfo) {
+          if (prop && typeof prop === 'object') {
+            Object.assign(merged, prop);
+          }
+        }
+
+        // Extract season stats
+        const seasonStats: Record<string, number> = {};
+        for (const stat of stats) {
+          if (stat?.stat) {
+            seasonStats[stat.stat.stat_id] = parseFloat(stat.stat.value || '0');
+          }
+        }
+
+        roster.push({
+          playerKey: merged.player_key,
+          name: merged.name?.full || 'Unknown',
+          position: merged.display_position || '',
+          team: merged.editorial_team_abbr || '',
+          imageUrl: merged.headshot?.url,
+          stats: seasonStats,
+        });
+      }
+    }
+
+    res.json({ roster, teamKey: team_key });
+  } catch (error: any) {
+    console.error('Team roster error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch roster',
+    });
+  }
+});
+
+/**
+ * Analyze a potential trade
+ */
+router.post('/leagues/:league_key/trade/analyze', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { playersToGive = [], playersToReceive = [], partnerTeamKey } = req.body;
+
+    if (!playersToGive.length && !playersToReceive.length) {
+      return res.status(400).json({ error: 'At least one player must be included in the trade' });
+    }
+
+    // Fetch league settings for stat categories
+    const settingsData = await makeYahooRequest(user.id, `/league/${league_key}/settings`);
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0] || {};
+    const statCategories = settings?.stat_categories?.stats?.map((s: any) => s.stat) || [];
+
+    // Helper function to calculate per-game averages
+    const calculatePerGameAvg = (stats: Record<string, number>, gamesPlayed: number) => {
+      const perGame: Record<string, number> = {};
+      for (const [statId, value] of Object.entries(stats)) {
+        perGame[statId] = gamesPlayed > 0 ? value / gamesPlayed : 0;
+      }
+      return perGame;
+    };
+
+    // Calculate impact for each category
+    const categoryImpact: any[] = [];
+    let categoriesGained = 0;
+    let categoriesLost = 0;
+
+    // Aggregate stats from players to give and receive
+    const giveStats: Record<string, number> = {};
+    const receiveStats: Record<string, number> = {};
+
+    for (const player of playersToGive) {
+      if (player.stats) {
+        for (const [statId, value] of Object.entries(player.stats)) {
+          giveStats[statId] = (giveStats[statId] || 0) + (value as number);
+        }
+      }
+    }
+
+    for (const player of playersToReceive) {
+      if (player.stats) {
+        for (const [statId, value] of Object.entries(player.stats)) {
+          receiveStats[statId] = (receiveStats[statId] || 0) + (value as number);
+        }
+      }
+    }
+
+    // Calculate impact per category
+    for (const cat of statCategories) {
+      if (!cat?.stat_id) continue;
+
+      const statId = cat.stat_id.toString();
+      const giving = giveStats[statId] || 0;
+      const receiving = receiveStats[statId] || 0;
+      const netChange = receiving - giving;
+
+      const isNegative = cat.name?.toLowerCase().includes('turnover') || cat.abbr === 'TO';
+      const isPositiveChange = isNegative ? netChange < 0 : netChange > 0;
+
+      if (Math.abs(netChange) > 0.01) {
+        if (isPositiveChange) {
+          categoriesGained++;
+        } else {
+          categoriesLost++;
+        }
+      }
+
+      categoryImpact.push({
+        statId: cat.stat_id,
+        name: cat.name,
+        displayName: cat.display_name || cat.abbr,
+        giving,
+        receiving,
+        netChange,
+        isNegative,
+        impact: isPositiveChange ? 'positive' : Math.abs(netChange) < 0.01 ? 'neutral' : 'negative',
+      });
+    }
+
+    // Generate trade grade
+    const netCategories = categoriesGained - categoriesLost;
+    let grade: string;
+    let recommendation: string;
+
+    if (netCategories >= 3) {
+      grade = 'A';
+      recommendation = 'Strongly recommended - significant category improvement';
+    } else if (netCategories >= 1) {
+      grade = 'B';
+      recommendation = 'Good trade - net positive impact';
+    } else if (netCategories === 0) {
+      grade = 'C';
+      recommendation = 'Even trade - consider team needs';
+    } else if (netCategories >= -2) {
+      grade = 'D';
+      recommendation = 'Below average - losing ground in categories';
+    } else {
+      grade = 'F';
+      recommendation = 'Not recommended - significant category decline';
+    }
+
+    res.json({
+      playersGiving: playersToGive.map((p: any) => ({
+        playerKey: p.playerKey,
+        name: p.name,
+        position: p.position,
+        team: p.team,
+      })),
+      playersReceiving: playersToReceive.map((p: any) => ({
+        playerKey: p.playerKey,
+        name: p.name,
+        position: p.position,
+        team: p.team,
+      })),
+      categoryImpact,
+      summary: {
+        categoriesGained,
+        categoriesLost,
+        netCategories,
+        grade,
+        recommendation,
+      },
+    });
+  } catch (error: any) {
+    console.error('Trade analysis error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to analyze trade',
+    });
+  }
+});
+
+/**
+ * Get all teams in a league for trade partner selection
+ */
+router.get('/leagues/:league_key/teams', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    const teamsData = await makeYahooRequest(user.id, `/league/${league_key}/teams`);
+    const teams = teamsData?.fantasy_content?.league?.[1]?.teams || {};
+    const teamCount = teams.count || 0;
+
+    const teamList: any[] = [];
+    for (let i = 0; i < teamCount; i++) {
+      const team = teams[i]?.team;
+      if (team) {
+        const teamInfo = team[0] || [];
+        const merged: any = {};
+        for (const prop of teamInfo) {
+          if (prop && typeof prop === 'object') {
+            Object.assign(merged, prop);
+          }
+        }
+
+        teamList.push({
+          teamKey: merged.team_key,
+          name: merged.name,
+          logoUrl: merged.team_logos?.[0]?.team_logo?.url,
+          isOwnedByCurrentLogin: merged.is_owned_by_current_login === 1,
+          managerName: merged.managers?.[0]?.manager?.nickname,
+        });
+      }
+    }
+
+    res.json({ teams: teamList });
+  } catch (error: any) {
+    console.error('League teams error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch teams',
+    });
+  }
+});
+
 export const fantasyRoutes = router;
