@@ -78,44 +78,56 @@ function App() {
   const isLoading = authLoading || leaguesLoading;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-court-deep">
       <Header
         leagues={leagues}
         selectedLeague={selectedLeague}
         onLeagueChange={setSelectedLeague}
       />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {isLoading ? (
           <LoadingSpinner message="Loading Fantasy Hawk..." />
         ) : !isAuthenticated ? (
-          <div className="card text-center py-12">
-            <div className="text-6xl mb-4">🦅</div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Welcome to Fantasy Hawk</h2>
-            <p className="text-gray-600 mb-6 max-w-md mx-auto">
-              Analyze your Yahoo Fantasy Basketball teams, players, and league statistics with
-              powerful visualizations.
+          <div className="card text-center py-16">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-hawk-orange/20 flex items-center justify-center">
+              <span className="text-5xl">🦅</span>
+            </div>
+            <h2 className="font-display text-3xl font-semibold text-gray-100 mb-3">
+              Welcome to Fantasy Hawk
+            </h2>
+            <p className="text-gray-400 mb-8 max-w-md mx-auto">
+              Analyze your Yahoo Fantasy Basketball teams with powerful visualizations
+              and AI-powered insights.
             </p>
             <div className="text-sm text-gray-500">
-              Click "Sign in to benloe.com" above to get started
+              Click <span className="text-hawk-orange">"Sign In"</span> above to get started
             </div>
           </div>
         ) : !isConnected ? (
-          <div className="card text-center py-12">
-            <div className="text-6xl mb-4">🏀</div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Connect Your Yahoo Account</h2>
-            <p className="text-gray-600 mb-6 max-w-md mx-auto">
-              You're signed in! Now connect your Yahoo Fantasy Basketball account to start analyzing
-              your teams, players, and league statistics.
+          <div className="card text-center py-16">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-hawk-indigo/20 flex items-center justify-center">
+              <span className="text-5xl">🏀</span>
+            </div>
+            <h2 className="font-display text-3xl font-semibold text-gray-100 mb-3">
+              Connect Your Yahoo Account
+            </h2>
+            <p className="text-gray-400 mb-8 max-w-md mx-auto">
+              You're signed in! Now connect your Yahoo Fantasy account to start
+              analyzing your teams and leagues.
             </p>
             <div className="text-sm text-gray-500">
-              Click "Connect Yahoo Account" above to continue
+              Click <span className="text-hawk-orange">"Connect Yahoo"</span> above to continue
             </div>
           </div>
         ) : leagues.length === 0 ? (
-          <div className="card text-center py-12">
-            <div className="text-6xl mb-4">🏀</div>
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">No Leagues Found</h2>
-            <p className="text-gray-600">
+          <div className="card text-center py-16">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-court-surface flex items-center justify-center">
+              <span className="text-5xl">🏀</span>
+            </div>
+            <h2 className="font-display text-2xl font-semibold text-gray-100 mb-3">
+              No Leagues Found
+            </h2>
+            <p className="text-gray-400">
               You don't appear to be in any Yahoo Fantasy Basketball leagues this season.
             </p>
           </div>

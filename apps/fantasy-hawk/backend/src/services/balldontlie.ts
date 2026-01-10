@@ -5,6 +5,44 @@
 
 const BALLDONTLIE_API_URL = 'https://api.balldontlie.io';
 
+// Cache configuration
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes - schedule data rarely changes mid-day
+const TEAMS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours - teams don't change
+
+interface CacheEntry<T> {
+  data: T;
+  expiry: number;
+}
+
+// Simple in-memory cache
+const cache = new Map<string, CacheEntry<unknown>>();
+
+function getCached<T>(key: string): T | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiry) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data as T;
+}
+
+function setCache<T>(key: string, data: T, ttlMs: number): void {
+  cache.set(key, {
+    data,
+    expiry: Date.now() + ttlMs,
+  });
+}
+
+// Export for testing
+export function clearCache(): void {
+  cache.clear();
+}
+
+export function getCacheSize(): number {
+  return cache.size;
+}
+
 interface NBATeam {
   id: number;
   conference: string;
@@ -73,17 +111,30 @@ class BallDontLieService {
   }
 
   /**
-   * Get all NBA teams
+   * Get all NBA teams (cached for 24 hours)
    */
   async getTeams(): Promise<NBATeam[]> {
+    const cacheKey = 'teams';
+    const cached = getCached<NBATeam[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const response = await this.fetch<TeamsResponse>('/nba/v1/teams');
+    setCache(cacheKey, response.data, TEAMS_CACHE_TTL_MS);
     return response.data;
   }
 
   /**
-   * Get games for a date range
+   * Get games for a date range (cached for 30 minutes)
    */
   async getGames(startDate: string, endDate: string): Promise<NBAGame[]> {
+    const cacheKey = `games:${startDate}:${endDate}`;
+    const cached = getCached<NBAGame[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const allGames: NBAGame[] = [];
     let cursor: number | undefined;
 
@@ -103,6 +154,7 @@ class BallDontLieService {
       cursor = response.meta.next_cursor;
     } while (cursor);
 
+    setCache(cacheKey, allGames, CACHE_TTL_MS);
     return allGames;
   }
 

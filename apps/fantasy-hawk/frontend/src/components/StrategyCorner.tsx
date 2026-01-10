@@ -132,9 +132,9 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
   if (!claudeStatus?.hasKey) {
     return (
       <div className="card text-center py-12">
-        <div className="mb-6">
+        <div className="w-16 h-16 mx-auto mb-6 rounded-xl bg-hawk-indigo/20 flex items-center justify-center">
           <svg
-            className="w-16 h-16 mx-auto text-gray-400"
+            className="w-8 h-8 text-hawk-indigo"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -147,10 +147,10 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
             />
           </svg>
         </div>
-        <h3 className="text-xl font-semibold text-gray-900 mb-2">
+        <h3 className="font-display text-xl font-semibold text-gray-100 mb-2">
           AI-Powered Strategy Coming Soon
         </h3>
-        <p className="text-gray-600 mb-6 max-w-md mx-auto">
+        <p className="text-gray-400 mb-6 max-w-md mx-auto">
           Get personalized fantasy basketball strategy, matchup analysis, and streaming
           recommendations powered by Claude AI.
         </p>
@@ -162,7 +162,7 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
             href={`${AUTH_URL}/dashboard`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors"
+            className="btn-primary inline-flex items-center gap-2"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -206,8 +206,8 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
   return (
     <div className="space-y-6">
       <div className="card">
-        <h2 className="text-xl font-bold text-gray-900 mb-2">AI Strategy Corner</h2>
-        <p className="text-gray-600 mb-6">
+        <h2 className="font-display text-xl font-semibold text-gray-100 mb-2">AI Strategy Corner</h2>
+        <p className="text-gray-400 mb-6">
           Get AI-powered insights and recommendations for your fantasy basketball team.
         </p>
 
@@ -218,8 +218,8 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
               key={option.value}
               className={`flex items-start p-4 border rounded-lg cursor-pointer transition-colors ${
                 analysisType === option.value
-                  ? 'border-primary-500 bg-primary-50'
-                  : 'border-gray-200 hover:border-gray-300'
+                  ? 'border-hawk-orange bg-hawk-orange/10'
+                  : 'border-white/10 hover:border-white/20'
               }`}
             >
               <input
@@ -228,11 +228,11 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
                 value={option.value}
                 checked={analysisType === option.value}
                 onChange={(e) => setAnalysisType(e.target.value as AnalysisType)}
-                className="mt-1 text-primary-600 focus:ring-primary-500"
+                className="mt-1 text-hawk-orange focus:ring-hawk-orange"
               />
               <div className="ml-3">
-                <div className="font-medium text-gray-900">{option.label}</div>
-                <div className="text-sm text-gray-500">{option.description}</div>
+                <div className="font-medium text-gray-100">{option.label}</div>
+                <div className="text-sm text-gray-400">{option.description}</div>
               </div>
             </label>
           ))}
@@ -241,7 +241,7 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
         <button
           onClick={runAnalysis}
           disabled={analyzing || !selectedLeague}
-          className="w-full py-3 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="btn-primary w-full flex items-center justify-center gap-2"
         >
           {analyzing ? (
             <>
@@ -285,8 +285,8 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
       {/* Analysis Result */}
       {analysisResult && (
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <h3 className="font-display text-lg font-semibold text-gray-100 mb-4 flex items-center gap-2">
+            <svg className="w-5 h-5 text-hawk-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -298,9 +298,9 @@ export function StrategyCorner({ selectedLeague }: StrategyCornerProps) {
           </h3>
           <div
             ref={resultRef}
-            className="prose prose-sm max-w-none bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto"
+            className="bg-court-base rounded-lg p-4 max-h-96 overflow-y-auto border border-white/10"
           >
-            <pre className="whitespace-pre-wrap font-sans text-gray-800">{analysisResult}</pre>
+            <pre className="whitespace-pre-wrap font-mono text-sm text-gray-300">{analysisResult}</pre>
           </div>
         </div>
       )}

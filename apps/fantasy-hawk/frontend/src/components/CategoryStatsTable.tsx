@@ -258,29 +258,29 @@ export function CategoryStatsTable({ categoryStatsData, categories, timespan }: 
 
   // Get color class based on percent diff
   function getPercentDiffClass(percentDiff: number): string {
-    if (percentDiff > 5) return 'text-green-600';
-    if (percentDiff > 0) return 'text-green-500';
-    if (percentDiff < -5) return 'text-red-600';
-    if (percentDiff < 0) return 'text-red-500';
+    if (percentDiff > 5) return 'text-stat-excellent';
+    if (percentDiff > 0) return 'text-stat-good';
+    if (percentDiff < -5) return 'text-hawk-red';
+    if (percentDiff < 0) return 'text-stat-below';
     return 'text-gray-500';
   }
 
   // Get background color style based on percent difference
   // Returns an inline style with rgba color - darker for larger differences
   function getCellBgStyle(percentDiff: number): React.CSSProperties {
-    // Scale intensity: min 0.08 (very light tint) to max 0.5 (strong color)
+    // Scale intensity: min 0.05 to max 0.35 for dark theme
     // Reaches max at ±25% difference
     const maxDiff = 25;
-    const minOpacity = 0.08;
-    const maxOpacity = 0.5;
+    const minOpacity = 0.05;
+    const maxOpacity = 0.35;
     const scaledIntensity = Math.min(Math.abs(percentDiff) / maxDiff, 1);
     const opacity = minOpacity + scaledIntensity * (maxOpacity - minOpacity);
 
     if (percentDiff >= 0) {
-      // Green for positive - rgb(34, 197, 94) is Tailwind green-500
-      return { backgroundColor: `rgba(34, 197, 94, ${opacity})` };
+      // Teal for positive - rgb(0, 212, 170) is hawk-teal
+      return { backgroundColor: `rgba(0, 212, 170, ${opacity})` };
     } else {
-      // Red for negative - rgb(239, 68, 68) is Tailwind red-500
+      // Red for negative - rgb(239, 68, 68) is hawk-red
       return { backgroundColor: `rgba(239, 68, 68, ${opacity})` };
     }
   }
@@ -331,16 +331,16 @@ export function CategoryStatsTable({ categoryStatsData, categories, timespan }: 
   }, [teamStats, categoryData, sortConfig]);
 
   if (teamStats.length === 0) {
-    return <p className="text-gray-600">No category stats available</p>;
+    return <p className="text-gray-400">No category stats available</p>;
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200 text-sm">
-        <thead className="bg-gray-50">
-          <tr>
+      <table className="min-w-full text-sm">
+        <thead>
+          <tr className="border-b border-white/10">
             <th
-              className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10 cursor-pointer hover:bg-gray-100 select-none"
+              className="table-header sticky left-0 bg-court-elevated z-10 cursor-pointer hover:bg-white/10 select-none"
               onClick={() => handleSort('team')}
             >
               Team{getSortIndicator('team')}
@@ -348,7 +348,7 @@ export function CategoryStatsTable({ categoryStatsData, categories, timespan }: 
             {scoringCategories.map((cat) => (
               <th
                 key={cat.stat_id}
-                className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px] cursor-pointer hover:bg-gray-100 select-none"
+                className="table-header text-center min-w-[100px] cursor-pointer hover:bg-white/10 select-none"
                 onClick={() => handleSort(cat.stat_id)}
               >
                 {cat.display_name || cat.abbr || cat.name}{getSortIndicator(cat.stat_id)}
@@ -356,17 +356,17 @@ export function CategoryStatsTable({ categoryStatsData, categories, timespan }: 
             ))}
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
+        <tbody className="divide-y divide-white/5">
           {sortedTeams.map((team) => (
-            <tr key={team.teamKey} className="hover:bg-gray-50">
-              <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 sticky left-0 bg-white z-10">
+            <tr key={team.teamKey} className="table-row">
+              <td className="table-cell whitespace-nowrap font-medium text-gray-100 sticky left-0 bg-court-elevated z-10">
                 {team.teamName}
               </td>
               {scoringCategories.map((cat) => {
                 const data = categoryData[team.teamKey]?.[cat.stat_id];
                 if (!data) {
                   return (
-                    <td key={cat.stat_id} className="px-3 py-3 text-center text-gray-400">
+                    <td key={cat.stat_id} className="table-cell text-center text-gray-500">
                       -
                     </td>
                   );
@@ -380,14 +380,14 @@ export function CategoryStatsTable({ categoryStatsData, categories, timespan }: 
                     className="px-3 py-2 text-center"
                     style={getCellBgStyle(data.percentDiff)}
                   >
-                    <div className="font-medium text-gray-900">
+                    <div className="font-mono font-medium text-gray-100">
                       {formatValue(data.value, cat.stat_id, !isPercentageStat)}
                     </div>
-                    <div className={`text-xs ${getPercentDiffClass(data.percentDiff)}`}>
+                    <div className={`text-xs font-mono ${getPercentDiffClass(data.percentDiff)}`}>
                       {data.percentDiff >= 0 ? '+' : ''}
                       {data.percentDiff.toFixed(1)}%
                     </div>
-                    <div className="text-xs text-gray-400">{formatRank(data.rank)}</div>
+                    <div className="text-xs text-gray-500">{formatRank(data.rank)}</div>
                   </td>
                 );
               })}

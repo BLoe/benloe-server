@@ -168,7 +168,7 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   if (!selectedLeague) {
     return (
       <div className="card text-center py-12">
-        <p className="text-gray-600">Select a league to view data</p>
+        <p className="text-gray-400">Select a league to view data</p>
       </div>
     );
   }
@@ -184,9 +184,9 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   const isAdmin = userRole === 'admin';
 
   const tabs: { id: TabType; label: string }[] = [
-    { id: 'standings', label: 'League Standings' },
+    { id: 'standings', label: 'Standings' },
     { id: 'categories', label: 'Categories' },
-    ...(isAdmin ? [{ id: 'strategy' as TabType, label: 'Strategy Corner' }] : []),
+    ...(isAdmin ? [{ id: 'strategy' as TabType, label: 'Strategy' }] : []),
     { id: 'debug', label: 'Debug' },
   ];
 
@@ -199,21 +199,20 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   const getTimespanLabel = (value: TimespanType): string => {
     switch (value) {
       case 'thisWeek':
-        return currentWeek ? `This Week (${currentWeek})` : 'This Week';
+        return currentWeek ? `Week ${currentWeek}` : 'This Week';
       case 'last3Weeks':
         if (weeksIncluded.length > 0 && timespan === 'last3Weeks') {
           const start = Math.min(...weeksIncluded);
           const end = Math.max(...weeksIncluded);
-          return `Last 3 Weeks (${start}-${end})`;
+          return `Weeks ${start}-${end}`;
         }
-        // Estimate based on current week
         if (currentWeek) {
           const start = Math.max(1, currentWeek - 2);
-          return `Last 3 Weeks (${start}-${currentWeek})`;
+          return `Weeks ${start}-${currentWeek}`;
         }
         return 'Last 3 Weeks';
       case 'season':
-        return 'Season';
+        return 'Full Season';
       default:
         return value;
     }
@@ -222,38 +221,34 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   const timespanOptions: { value: TimespanType; label: string }[] = [
     { value: 'thisWeek', label: getTimespanLabel('thisWeek') },
     { value: 'last3Weeks', label: getTimespanLabel('last3Weeks') },
-    { value: 'season', label: 'Season' },
+    { value: 'season', label: 'Full Season' },
   ];
 
   return (
     <div className="space-y-6">
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === tab.id
-                  ? 'border-primary-500 text-primary-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
+      <div className="flex items-center gap-1 p-1 bg-court-base rounded-lg w-fit">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`tab ${activeTab === tab.id ? 'tab-active' : ''}`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Tab Content */}
       {activeTab === 'standings' && (
         <div className="card">
-          <h2 className="text-xl font-bold text-gray-900 mb-6">League Standings</h2>
+          <h2 className="font-display text-xl font-semibold text-gray-100 mb-6">
+            League Standings
+          </h2>
           {standings.length > 0 ? (
             <StandingsChart standings={standings} />
           ) : (
-            <p className="text-gray-600">No standings data available</p>
+            <p className="text-gray-400">No standings data available</p>
           )}
         </div>
       )}
@@ -261,11 +256,13 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
       {activeTab === 'categories' && (
         <div className="card">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold text-gray-900">Category Stats</h2>
+            <h2 className="font-display text-xl font-semibold text-gray-100">
+              Category Stats
+            </h2>
             <select
               value={timespan}
               onChange={(e) => setTimespan(e.target.value as TimespanType)}
-              className="text-sm border-gray-300 rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2 pl-3 pr-8"
+              className="select text-sm"
             >
               {timespanOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -284,7 +281,7 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
               timespan={timespan}
             />
           ) : (
-            <p className="text-gray-600">No category stats available</p>
+            <p className="text-gray-400">No category stats available</p>
           )}
         </div>
       )}

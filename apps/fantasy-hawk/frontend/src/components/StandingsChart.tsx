@@ -21,40 +21,44 @@ export function StandingsChart({ standings }: StandingsChartProps) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
-          <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Rank
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Team
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              W-L-T
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Win %
-            </th>
+      <table className="min-w-full">
+        <thead>
+          <tr className="border-b border-white/10">
+            <th className="table-header">Rank</th>
+            <th className="table-header">Team</th>
+            <th className="table-header">W-L-T</th>
+            <th className="table-header">Win %</th>
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
+        <tbody className="divide-y divide-white/5">
           {tableData.map((team, idx) => {
             const totalGames = team.wins + team.losses + team.ties;
             const winPct = totalGames > 0 ? (team.wins / totalGames) * 100 : 0;
+            const isTopHalf = team.rank <= Math.ceil(tableData.length / 2);
 
             return (
-              <tr key={idx} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                  {team.rank}
+              <tr key={idx} className="table-row">
+                <td className="table-cell">
+                  <span className={`font-mono font-semibold ${isTopHalf ? 'text-hawk-teal' : 'text-gray-400'}`}>
+                    {team.rank}
+                  </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{team.name}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {team.wins}-{team.losses}
-                  {team.ties > 0 ? `-${team.ties}` : ''}
+                <td className="table-cell font-medium">{team.name}</td>
+                <td className="table-cell font-mono">
+                  <span className="text-hawk-teal">{team.wins}</span>
+                  <span className="text-gray-500">-</span>
+                  <span className="text-hawk-red">{team.losses}</span>
+                  {team.ties > 0 && (
+                    <>
+                      <span className="text-gray-500">-</span>
+                      <span className="text-hawk-amber">{team.ties}</span>
+                    </>
+                  )}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {winPct.toFixed(1)}%
+                <td className="table-cell font-mono">
+                  <span className={winPct >= 50 ? 'text-hawk-teal' : 'text-gray-400'}>
+                    {winPct.toFixed(1)}%
+                  </span>
                 </td>
               </tr>
             );

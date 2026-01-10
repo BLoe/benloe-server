@@ -225,7 +225,7 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
   if (!selectedLeague) {
     return (
       <div className="card text-center py-12">
-        <p className="text-gray-600">Select a league to access debug tools</p>
+        <p className="text-gray-400">Select a league to access debug tools</p>
       </div>
     );
   }
@@ -235,20 +235,20 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Yahoo API Debug Panel</h2>
-            <p className="text-sm text-gray-600 mt-1">
+            <h2 className="font-display text-xl font-semibold text-gray-100">Yahoo API Debug Panel</h2>
+            <p className="text-sm text-gray-400 mt-1">
               Dump raw Yahoo API responses to files for analysis. Files are saved to the server.
             </p>
           </div>
           <button
             onClick={dumpAll}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors"
+            className="btn-primary"
           >
             Dump All Endpoints
           </button>
         </div>
 
-        <div className="text-xs text-gray-500 mb-4 font-mono bg-gray-50 p-2 rounded">
+        <div className="text-xs text-gray-400 mb-4 font-mono bg-court-base p-2 rounded border border-white/10">
           League Key: {selectedLeague}
         </div>
 
@@ -258,23 +258,23 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
             const yahooEndpoint = ep.endpoint(selectedLeague);
 
             return (
-              <div key={ep.id} className="border rounded-lg p-3">
+              <div key={ep.id} className="border border-white/10 rounded-lg p-3 bg-court-base">
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-900">{ep.label}</span>
+                      <span className="font-medium text-gray-100">{ep.label}</span>
                       {result?.status === 'loading' && (
-                        <span className="text-xs text-blue-600">Loading...</span>
+                        <span className="text-xs text-hawk-indigo">Loading...</span>
                       )}
                       {result?.status === 'success' && (
-                        <span className="text-xs text-green-600">Done</span>
+                        <span className="text-xs text-hawk-teal">Done</span>
                       )}
                       {result?.status === 'error' && (
-                        <span className="text-xs text-red-600">Error</span>
+                        <span className="text-xs text-hawk-red">Error</span>
                       )}
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5">{ep.description}</p>
-                    <code className="text-xs text-gray-400 block mt-1 truncate">
+                    <code className="text-xs text-gray-500 block mt-1 truncate">
                       {yahooEndpoint}
                     </code>
                   </div>
@@ -283,13 +283,13 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
                       <>
                         <button
                           onClick={() => setExpandedResult(expandedResult === ep.id ? null : ep.id)}
-                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded border border-gray-300 transition-colors"
+                          className="btn-secondary text-xs py-1 px-2"
                         >
                           {expandedResult === ep.id ? 'Hide' : 'View'}
                         </button>
                         <button
                           onClick={() => copyToClipboard(ep.id, result.data)}
-                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded border border-gray-300 transition-colors"
+                          className="btn-secondary text-xs py-1 px-2"
                         >
                           {copied === ep.id ? 'Copied!' : 'Copy'}
                         </button>
@@ -298,7 +298,7 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
                     <button
                       onClick={() => dumpEndpoint(ep.id, yahooEndpoint)}
                       disabled={result?.status === 'loading'}
-                      className="px-3 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 rounded border border-blue-300 transition-colors disabled:opacity-50"
+                      className="px-3 py-1 text-xs bg-hawk-indigo/20 hover:bg-hawk-indigo/30 text-hawk-indigo rounded border border-hawk-indigo/30 transition-colors disabled:opacity-50"
                     >
                       Dump
                     </button>
@@ -306,20 +306,20 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
                 </div>
 
                 {result?.status === 'error' && (
-                  <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
+                  <div className="mt-2 text-xs text-hawk-red bg-hawk-red/10 p-2 rounded border border-hawk-red/20">
                     {result.error}
                   </div>
                 )}
 
                 {result?.file && (
-                  <div className="mt-2 text-xs text-green-600 bg-green-50 p-2 rounded font-mono">
+                  <div className="mt-2 text-xs text-hawk-teal bg-hawk-teal/10 p-2 rounded font-mono border border-hawk-teal/20">
                     Saved: {result.file}
                   </div>
                 )}
 
                 {expandedResult === ep.id && result?.data && (
                   <div className="mt-3">
-                    <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto">
+                    <pre className="bg-court-deep text-hawk-teal p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto border border-white/10">
                       {JSON.stringify(result.data, null, 2)}
                     </pre>
                   </div>
@@ -333,8 +333,8 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
       {/* NBA Schedule Section */}
       <div className="card">
         <div className="mb-4">
-          <h2 className="text-xl font-bold text-gray-900">NBA Schedule (Ball Don't Lie API)</h2>
-          <p className="text-sm text-gray-600 mt-1">
+          <h2 className="font-display text-xl font-semibold text-gray-100">NBA Schedule (Ball Don't Lie API)</h2>
+          <p className="text-sm text-gray-400 mt-1">
             Real NBA game schedule data for streaming analysis.
           </p>
         </div>
@@ -347,19 +347,19 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
               : ep.directEndpoint;
 
             return (
-              <div key={ep.id} className="border rounded-lg p-3">
+              <div key={ep.id} className="border border-white/10 rounded-lg p-3 bg-court-base">
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-900">{ep.label}</span>
+                      <span className="font-medium text-gray-100">{ep.label}</span>
                       {result?.status === 'loading' && (
-                        <span className="text-xs text-blue-600">Loading...</span>
+                        <span className="text-xs text-hawk-indigo">Loading...</span>
                       )}
                       {result?.status === 'success' && (
-                        <span className="text-xs text-green-600">Done</span>
+                        <span className="text-xs text-hawk-teal">Done</span>
                       )}
                       {result?.status === 'error' && (
-                        <span className="text-xs text-red-600">Error</span>
+                        <span className="text-xs text-hawk-red">Error</span>
                       )}
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5">{ep.description}</p>
@@ -369,13 +369,13 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
                       <>
                         <button
                           onClick={() => setExpandedResult(expandedResult === ep.id ? null : ep.id)}
-                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded border border-gray-300 transition-colors"
+                          className="btn-secondary text-xs py-1 px-2"
                         >
                           {expandedResult === ep.id ? 'Hide' : 'View'}
                         </button>
                         <button
                           onClick={() => copyToClipboard(ep.id, result.data)}
-                          className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded border border-gray-300 transition-colors"
+                          className="btn-secondary text-xs py-1 px-2"
                         >
                           {copied === ep.id ? 'Copied!' : 'Copy'}
                         </button>
@@ -384,7 +384,7 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
                     <button
                       onClick={() => testScheduleEndpoint(ep.id, endpoint)}
                       disabled={result?.status === 'loading'}
-                      className="px-3 py-1 text-xs bg-green-100 hover:bg-green-200 text-green-700 rounded border border-green-300 transition-colors disabled:opacity-50"
+                      className="px-3 py-1 text-xs bg-hawk-teal/20 hover:bg-hawk-teal/30 text-hawk-teal rounded border border-hawk-teal/30 transition-colors disabled:opacity-50"
                     >
                       Test
                     </button>
@@ -392,14 +392,14 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
                 </div>
 
                 {result?.status === 'error' && (
-                  <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
+                  <div className="mt-2 text-xs text-hawk-red bg-hawk-red/10 p-2 rounded border border-hawk-red/20">
                     {result.error}
                   </div>
                 )}
 
                 {expandedResult === ep.id && result?.data && (
                   <div className="mt-3">
-                    <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto">
+                    <pre className="bg-court-deep text-hawk-teal p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto border border-white/10">
                       {JSON.stringify(result.data, null, 2)}
                     </pre>
                   </div>
@@ -411,8 +411,8 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
       </div>
 
       <div className="card">
-        <h3 className="font-semibold text-gray-900 mb-3">Custom Endpoint</h3>
-        <p className="text-sm text-gray-600 mb-4">
+        <h3 className="font-display font-semibold text-gray-100 mb-3">Custom Endpoint</h3>
+        <p className="text-sm text-gray-400 mb-4">
           Test any Yahoo Fantasy API endpoint. Use the proxy to fetch raw data.
         </p>
         <CustomEndpointTester />
@@ -462,26 +462,26 @@ function CustomEndpointTester() {
           value={endpoint}
           onChange={e => setEndpoint(e.target.value)}
           placeholder="/league/428.l.12345/standings"
-          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono"
+          className="input flex-1 font-mono text-sm"
         />
         <button
           onClick={testEndpoint}
           disabled={loading || !endpoint.trim()}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+          className="btn-primary"
         >
           {loading ? 'Loading...' : 'Test'}
         </button>
       </div>
 
       {error && (
-        <div className="mt-3 text-sm text-red-600 bg-red-50 p-3 rounded">
+        <div className="mt-3 text-sm text-hawk-red bg-hawk-red/10 p-3 rounded border border-hawk-red/20">
           {error}
         </div>
       )}
 
       {result && (
         <div className="mt-3">
-          <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto">
+          <pre className="bg-court-deep text-hawk-teal p-4 rounded-lg overflow-x-auto text-xs max-h-96 overflow-y-auto border border-white/10">
             {JSON.stringify(result, null, 2)}
           </pre>
         </div>
