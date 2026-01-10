@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { Scoreboard, ScoreboardSkeleton } from './matchup/Scoreboard';
-import { Swords } from 'lucide-react';
+import { CategoryBreakdown } from './matchup/CategoryBreakdown';
+import { Swords, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface MatchupCenterProps {
   selectedLeague: string | null;
@@ -47,6 +48,8 @@ export function MatchupCenter({ selectedLeague }: MatchupCenterProps) {
   const [error, setError] = useState<string | null>(null);
   const [matchupData, setMatchupData] = useState<MatchupData | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [expandedCategory, setExpandedCategory] = useState<number | null>(null);
+  const [showDetailedBreakdown, setShowDetailedBreakdown] = useState(false);
 
   useEffect(() => {
     if (selectedLeague) {
@@ -153,6 +156,34 @@ export function MatchupCenter({ selectedLeague }: MatchupCenterProps) {
           </div>
         )}
       </div>
+
+      {/* Detailed Category Breakdown */}
+      {matchupData && matchupData.categories.length > 0 && (
+        <div className="card">
+          <button
+            onClick={() => setShowDetailedBreakdown(!showDetailedBreakdown)}
+            className="w-full flex items-center justify-between py-2"
+            data-testid="toggle-category-breakdown"
+          >
+            <h3 className="font-semibold text-gray-100">Detailed Category Analysis</h3>
+            {showDetailedBreakdown ? (
+              <ChevronUp className="w-5 h-5 text-gray-400" />
+            ) : (
+              <ChevronDown className="w-5 h-5 text-gray-400" />
+            )}
+          </button>
+
+          {showDetailedBreakdown && (
+            <div className="mt-4">
+              <CategoryBreakdown
+                categories={matchupData.categories}
+                expanded={expandedCategory}
+                onToggle={setExpandedCategory}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
