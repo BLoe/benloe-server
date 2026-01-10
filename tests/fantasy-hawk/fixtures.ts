@@ -30,6 +30,28 @@ export const SELECTORS = {
   categoryTable: '[data-testid="category-table"]',
   categoryRow: '[data-testid="category-row"]',
 
+  // Streaming optimizer
+  streaming: {
+    tab: '[data-testid="streaming-tab"]',
+    page: '[data-testid="streaming-page"]',
+    noLeague: '[data-testid="streaming-no-league"]',
+    error: '[data-testid="streaming-error"]',
+    scheduleGridPanel: '[data-testid="streaming-schedule-grid-panel"]',
+    scheduleGrid: '[data-testid="schedule-grid"]',
+    scheduleGridEmpty: '[data-testid="schedule-grid-empty"]',
+    scheduleGridLoading: '[data-testid="schedule-grid-loading"]',
+    candidatesPanel: '[data-testid="streaming-candidates-panel"]',
+    candidatesTable: '[data-testid="candidates-table"]',
+    candidatesEmpty: '[data-testid="candidates-empty"]',
+    candidatesLoading: '[data-testid="candidates-loading"]',
+    candidatesPositionFilter: '[data-testid="candidates-position-filter"]',
+    recommendationsPanel: '[data-testid="streaming-recommendations-panel"]',
+    recommendations: '[data-testid="recommendations-panel"]',
+    recommendationsEmpty: '[data-testid="recommendations-empty"]',
+    recommendationsLoading: '[data-testid="recommendations-loading"]',
+    recommendationsError: '[data-testid="recommendations-error"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
