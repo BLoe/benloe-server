@@ -73,6 +73,9 @@ export const api = {
     // Punt Strategy endpoints
     getPuntAnalysis: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/punt/analysis`),
     getPuntStrategies: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/punt/strategies`),
+    // League Insights endpoints
+    getLeagueInsightsSettings: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/insights/settings`),
+    getLeagueInsightsAnalysis: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/insights/analysis`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>
