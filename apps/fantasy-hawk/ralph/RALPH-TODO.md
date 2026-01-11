@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 37
+- **Completed:** 38
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 14
+- **Remaining:** 13
 
 ---
 
@@ -107,7 +107,7 @@
 | ID | Task | Status | Ticket |
 |----|------|--------|--------|
 | 901 | Learning Mode - Tooltip system | COMPLETE | [901-learning-tooltips.md](tasks/901-learning-tooltips.md) |
-| 902 | Learning Mode - Glossary panel | NOT_STARTED | [902-learning-glossary.md](tasks/902-learning-glossary.md) |
+| 902 | Learning Mode - Glossary panel | COMPLETE | [902-learning-glossary.md](tasks/902-learning-glossary.md) |
 | 903 | Learning Mode - E2E tests | NOT_STARTED | [903-learning-tests.md](tasks/903-learning-tests.md) |
 
 ---

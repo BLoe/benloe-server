@@ -1,5 +1,8 @@
+import { useState } from 'react';
+import { Book } from 'lucide-react';
 import { ConnectButton } from './ConnectButton';
 import { LearningModeToggle } from './learning/LearningModeToggle';
+import { Glossary } from './learning/Glossary';
 
 interface HeaderProps {
   leagues?: any[];
@@ -8,7 +11,10 @@ interface HeaderProps {
 }
 
 export function Header({ leagues = [], selectedLeague, onLeagueChange }: HeaderProps) {
+  const [isGlossaryOpen, setIsGlossaryOpen] = useState(false);
+
   return (
+    <>
     <header className="bg-court-base border-b border-white/10">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center justify-between">
@@ -47,6 +53,14 @@ export function Header({ leagues = [], selectedLeague, onLeagueChange }: HeaderP
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsGlossaryOpen(true)}
+              className="p-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-court-surface transition-colors"
+              title="Open Glossary"
+              data-testid="glossary-button"
+            >
+              <Book className="w-5 h-5" />
+            </button>
             <LearningModeToggle compact />
             <ConnectButton />
           </div>
@@ -70,5 +84,8 @@ export function Header({ leagues = [], selectedLeague, onLeagueChange }: HeaderP
         )}
       </div>
     </header>
+
+    <Glossary isOpen={isGlossaryOpen} onClose={() => setIsGlossaryOpen(false)} />
+    </>
   );
 }
