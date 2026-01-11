@@ -92,6 +92,14 @@ export const api = {
       fetchApi(`/fantasy/leagues/${leagueKey}/outlook/standings`),
     getOutlookPlayoffs: (leagueKey: string) =>
       fetchApi(`/fantasy/leagues/${leagueKey}/outlook/playoffs`),
+    // Player Comparison endpoints
+    searchPlayers: (leagueKey: string, query: string, status?: string) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/players/search?q=${encodeURIComponent(query)}${status ? `&status=${status}` : ''}`),
+    comparePlayers: (leagueKey: string, playerKeys: string[]) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/players/compare`, {
+        method: 'POST',
+        body: JSON.stringify({ playerKeys }),
+      }),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>

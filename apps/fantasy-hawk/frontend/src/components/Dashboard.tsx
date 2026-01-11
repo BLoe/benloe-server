@@ -14,13 +14,14 @@ import { PuntEngine } from './PuntEngine';
 import { LeagueInsights } from './LeagueInsights';
 import { SchedulePlanner } from './SchedulePlanner';
 import { SeasonOutlook } from './SeasonOutlook';
+import { PlayerComparison } from './PlayerComparison';
 
 interface DashboardProps {
   selectedLeague: string | null;
   userRole?: string | null;
 }
 
-type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'trade' | 'punt' | 'insights' | 'schedule' | 'outlook' | 'chat' | 'strategy' | 'debug';
+type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'trade' | 'compare' | 'punt' | 'insights' | 'schedule' | 'outlook' | 'chat' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 
 export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
@@ -197,6 +198,7 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
     { id: 'matchup', label: 'Matchup', testId: 'matchup-tab' },
     { id: 'streaming', label: 'Streaming', testId: 'streaming-tab' },
     { id: 'trade', label: 'Trade', testId: 'trade-tab' },
+    { id: 'compare', label: 'Compare', testId: 'compare-tab' },
     { id: 'punt', label: 'Punt', testId: 'punt-tab' },
     { id: 'insights', label: 'Insights', testId: 'insights-tab' },
     { id: 'schedule', label: 'Schedule', testId: 'schedule-tab' },
@@ -308,6 +310,8 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
       {activeTab === 'streaming' && <StreamingOptimizer selectedLeague={selectedLeague} />}
 
       {activeTab === 'trade' && <TradeAnalyzer selectedLeague={selectedLeague} />}
+
+      {activeTab === 'compare' && <PlayerComparison selectedLeague={selectedLeague} />}
 
       {activeTab === 'punt' && <PuntEngine selectedLeague={selectedLeague} />}
 

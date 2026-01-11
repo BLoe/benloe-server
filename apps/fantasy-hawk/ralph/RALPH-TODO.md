@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 40
+- **Completed:** 41
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 11
+- **Remaining:** 10
 
 ---
 
@@ -119,7 +119,7 @@
 | ID | Task | Status | Ticket |
 |----|------|--------|--------|
 | 1001 | Player Comparison - Comparison API | COMPLETE | [1001-comparison-api.md](tasks/1001-comparison-api.md) |
-| 1002 | Player Comparison - Comparison UI | NOT_STARTED | [1002-comparison-ui.md](tasks/1002-comparison-ui.md) |
+| 1002 | Player Comparison - Comparison UI | COMPLETE | [1002-comparison-ui.md](tasks/1002-comparison-ui.md) |
 | 1003 | Player Comparison - E2E tests | NOT_STARTED | [1003-comparison-tests.md](tasks/1003-comparison-tests.md) |
 
 ### Feature 5: Waiver Advisor
