@@ -2486,4 +2486,438 @@ router.get('/leagues/:league_key/schedule/playoffs', authenticate, async (req: R
   }
 });
 
+/**
+ * ===== SEASON OUTLOOK ENDPOINTS =====
+ */
+
+interface TeamStanding {
+  teamKey: string;
+  teamName: string;
+  rank: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  pointsFor: number;
+  pointsAgainst: number;
+  isCurrentUser: boolean;
+}
+
+interface StandingsProjection {
+  teamKey: string;
+  teamName: string;
+  currentRank: number;
+  projectedRank: number;
+  currentWins: number;
+  currentLosses: number;
+  currentTies: number;
+  projectedWins: number;
+  projectedLosses: number;
+  projectedTies: number;
+  winPace: number; // Wins per week pace
+  gamesPlayed: number;
+  gamesRemaining: number;
+  isCurrentUser: boolean;
+  trend: 'improving' | 'stable' | 'declining'; // Based on recent performance
+}
+
+interface PlayoffOdds {
+  teamKey: string;
+  teamName: string;
+  currentRank: number;
+  playoffOdds: number; // 0-100 percentage
+  byeOdds: number; // For top seeds
+  magicNumber: number | null; // Wins needed to clinch
+  eliminationNumber: number | null; // Losses before elimination
+  isCurrentUser: boolean;
+  clinched: boolean;
+  eliminated: boolean;
+}
+
+/**
+ * Parse Yahoo standings data into structured team standings
+ */
+function parseStandingsData(standingsData: any): {
+  teams: TeamStanding[];
+  currentWeek: number;
+  totalWeeks: number;
+  playoffStartWeek: number;
+  playoffSpots: number;
+} {
+  const leagueData = standingsData?.fantasy_content?.league?.[0] || {};
+  const standingsContent = standingsData?.fantasy_content?.league?.[1]?.standings?.['0']?.teams;
+  const teamCount = standingsContent?.count || 0;
+
+  const currentWeek = parseInt(leagueData.current_week) || 1;
+  const startWeek = parseInt(leagueData.start_week) || 1;
+  const endWeek = parseInt(leagueData.end_week) || 22;
+  const playoffStartWeek = parseInt(leagueData.playoff_start_week) || Math.ceil(endWeek * 0.8);
+  const playoffSpots = parseInt(leagueData.num_playoff_teams) || Math.ceil(teamCount / 2);
+
+  const totalWeeks = playoffStartWeek - startWeek;
+
+  const teams: TeamStanding[] = [];
+
+  for (let i = 0; i < teamCount; i++) {
+    const teamArray = standingsContent?.[i]?.team;
+    if (!teamArray) continue;
+
+    // Extract team info from Yahoo's nested structure
+    const teamInfo: any = {};
+    if (Array.isArray(teamArray[0])) {
+      for (const prop of teamArray[0]) {
+        if (prop && typeof prop === 'object') {
+          Object.assign(teamInfo, prop);
+        }
+      }
+    }
+
+    const teamStandings = teamArray[2]?.team_standings || teamArray[1]?.team_standings || {};
+    const outcomeTotals = teamStandings.outcome_totals || {};
+
+    teams.push({
+      teamKey: teamInfo.team_key || '',
+      teamName: teamInfo.name || 'Unknown Team',
+      rank: parseInt(teamStandings.rank) || i + 1,
+      wins: parseInt(outcomeTotals.wins) || 0,
+      losses: parseInt(outcomeTotals.losses) || 0,
+      ties: parseInt(outcomeTotals.ties) || 0,
+      pointsFor: parseFloat(teamStandings.points_for) || 0,
+      pointsAgainst: parseFloat(teamStandings.points_against) || 0,
+      isCurrentUser: teamInfo.is_owned_by_current_login === 1,
+    });
+  }
+
+  // Sort by rank
+  teams.sort((a, b) => a.rank - b.rank);
+
+  return {
+    teams,
+    currentWeek,
+    totalWeeks,
+    playoffStartWeek,
+    playoffSpots,
+  };
+}
+
+/**
+ * Project standings based on current pace
+ */
+function projectStandings(
+  teams: TeamStanding[],
+  currentWeek: number,
+  totalWeeks: number
+): StandingsProjection[] {
+  const weeksPlayed = currentWeek - 1; // Assuming current week hasn't finished
+  const weeksRemaining = totalWeeks - weeksPlayed;
+
+  // Calculate projections for each team
+  const projections: StandingsProjection[] = teams.map(team => {
+    const gamesPlayed = team.wins + team.losses + team.ties;
+    const gamesPerWeek = gamesPlayed > 0 ? gamesPlayed / weeksPlayed : 0;
+
+    // Win rate (count ties as half wins)
+    const winRate = gamesPlayed > 0
+      ? (team.wins + team.ties * 0.5) / gamesPlayed
+      : 0.5;
+
+    // Projected remaining games (categories per matchup varies by league, estimate)
+    const gamesRemaining = Math.round(gamesPerWeek * weeksRemaining);
+
+    // Project wins/losses based on current pace
+    const projectedAdditionalWins = Math.round(gamesRemaining * winRate);
+    const projectedAdditionalLosses = Math.round(gamesRemaining * (1 - winRate));
+
+    // Calculate win pace (wins per week)
+    const winPace = weeksPlayed > 0 ? team.wins / weeksPlayed : 0;
+
+    // Determine trend - simplified (would need historical data for real trend)
+    // For now, use win rate relative to league average
+    const avgWinRate = teams.reduce((sum, t) => {
+      const g = t.wins + t.losses + t.ties;
+      return sum + (g > 0 ? t.wins / g : 0.5);
+    }, 0) / teams.length;
+
+    let trend: 'improving' | 'stable' | 'declining' = 'stable';
+    if (winRate > avgWinRate + 0.05) trend = 'improving';
+    if (winRate < avgWinRate - 0.05) trend = 'declining';
+
+    return {
+      teamKey: team.teamKey,
+      teamName: team.teamName,
+      currentRank: team.rank,
+      projectedRank: 0, // Will be calculated after sorting
+      currentWins: team.wins,
+      currentLosses: team.losses,
+      currentTies: team.ties,
+      projectedWins: team.wins + projectedAdditionalWins,
+      projectedLosses: team.losses + projectedAdditionalLosses,
+      projectedTies: team.ties, // Keep ties constant
+      winPace: Math.round(winPace * 100) / 100,
+      gamesPlayed,
+      gamesRemaining,
+      isCurrentUser: team.isCurrentUser,
+      trend,
+    };
+  });
+
+  // Calculate projected ranks based on projected wins
+  const sortedByProjectedWins = [...projections].sort((a, b) => {
+    // Sort by projected wins descending, then by current rank as tiebreaker
+    if (b.projectedWins !== a.projectedWins) {
+      return b.projectedWins - a.projectedWins;
+    }
+    return a.currentRank - b.currentRank;
+  });
+
+  // Assign projected ranks
+  sortedByProjectedWins.forEach((p, index) => {
+    const original = projections.find(proj => proj.teamKey === p.teamKey);
+    if (original) {
+      original.projectedRank = index + 1;
+    }
+  });
+
+  return projections;
+}
+
+/**
+ * Calculate playoff odds and magic/elimination numbers
+ */
+function calculatePlayoffOdds(
+  projections: StandingsProjection[],
+  playoffSpots: number,
+  totalWeeks: number,
+  currentWeek: number
+): PlayoffOdds[] {
+  const weeksRemaining = totalWeeks - (currentWeek - 1);
+  const sortedByWins = [...projections].sort((a, b) => b.currentWins - a.currentWins);
+
+  // Estimate max remaining wins (varies by league format)
+  // Assuming average 9 categories per matchup
+  const avgCatsPerMatchup = 9;
+  const maxRemainingWins = weeksRemaining * avgCatsPerMatchup;
+
+  return projections.map(team => {
+    // Find the team currently at the playoff cutoff
+    const cutoffTeam = sortedByWins[playoffSpots - 1];
+    const firstOutTeam = sortedByWins[playoffSpots];
+
+    // Magic number: wins needed + cutoff team's losses remaining
+    // Simplified: wins above cutoff + buffer
+    let magicNumber: number | null = null;
+    let eliminationNumber: number | null = null;
+    let clinched = false;
+    let eliminated = false;
+
+    if (team.currentRank <= playoffSpots) {
+      // In playoff position
+      // Magic number = wins needed so that last playoff team can't catch up
+      if (firstOutTeam && weeksRemaining > 0) {
+        const winGap = team.currentWins - firstOutTeam.currentWins;
+        magicNumber = Math.max(0, maxRemainingWins - winGap);
+        if (magicNumber <= 0) {
+          clinched = true;
+          magicNumber = null;
+        }
+      }
+    } else {
+      // Outside playoff position
+      // Elimination number = losses before we can't catch cutoff
+      if (cutoffTeam && weeksRemaining > 0) {
+        const winsNeeded = cutoffTeam.currentWins - team.currentWins + 1;
+        eliminationNumber = Math.max(0, maxRemainingWins - winsNeeded + 1);
+        if (team.currentWins + maxRemainingWins < cutoffTeam.currentWins) {
+          eliminated = true;
+          eliminationNumber = null;
+        }
+      }
+    }
+
+    // Calculate playoff odds (simplified probability model)
+    // Based on projected rank and variance
+    let playoffOdds = 0;
+
+    if (clinched) {
+      playoffOdds = 100;
+    } else if (eliminated) {
+      playoffOdds = 0;
+    } else {
+      // Use projected rank with some uncertainty
+      const rankDiff = playoffSpots - team.projectedRank;
+      const seasonProgress = (currentWeek - 1) / totalWeeks;
+
+      // More certain as season progresses
+      const uncertainty = Math.max(0.1, 1 - seasonProgress);
+
+      if (team.projectedRank <= playoffSpots) {
+        // Projected in playoffs
+        playoffOdds = Math.min(95, 50 + (rankDiff + 1) * 15 * (1 + seasonProgress));
+      } else {
+        // Projected out
+        playoffOdds = Math.max(5, 50 - Math.abs(rankDiff) * 15 * (1 + seasonProgress));
+      }
+
+      // Adjust based on how close they are to cutoff
+      if (team.currentRank === playoffSpots) {
+        playoffOdds = 50 + (team.projectedRank <= playoffSpots ? 10 : -10);
+      }
+      if (team.currentRank === playoffSpots + 1) {
+        playoffOdds = 40;
+      }
+    }
+
+    // Bye odds (top 2 get byes typically)
+    const byeSpots = Math.floor(playoffSpots / 4) || 1;
+    let byeOdds = 0;
+    if (team.projectedRank <= byeSpots) {
+      byeOdds = Math.min(80, playoffOdds * 0.6);
+    }
+
+    return {
+      teamKey: team.teamKey,
+      teamName: team.teamName,
+      currentRank: team.currentRank,
+      playoffOdds: Math.round(playoffOdds),
+      byeOdds: Math.round(byeOdds),
+      magicNumber,
+      eliminationNumber,
+      isCurrentUser: team.isCurrentUser,
+      clinched,
+      eliminated,
+    };
+  });
+}
+
+/**
+ * Get season standings projections
+ */
+router.get('/leagues/:league_key/outlook/standings', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Get current standings
+    const standingsData = await makeYahooRequest(user.id, `/league/${league_key}/standings`);
+
+    const { teams, currentWeek, totalWeeks, playoffStartWeek, playoffSpots } =
+      parseStandingsData(standingsData);
+
+    // Project standings
+    const projections = projectStandings(teams, currentWeek, totalWeeks);
+
+    // Sort by current rank for display
+    projections.sort((a, b) => a.currentRank - b.currentRank);
+
+    // Find user's team
+    const userTeam = projections.find(p => p.isCurrentUser);
+
+    res.json({
+      season: {
+        currentWeek,
+        totalWeeks,
+        playoffStartWeek,
+        weeksRemaining: totalWeeks - (currentWeek - 1),
+        playoffSpots,
+        teamCount: teams.length,
+      },
+      projections,
+      userTeam: userTeam ? {
+        currentRank: userTeam.currentRank,
+        projectedRank: userTeam.projectedRank,
+        projectedWins: userTeam.projectedWins,
+        trend: userTeam.trend,
+        rankChange: userTeam.currentRank - userTeam.projectedRank,
+      } : null,
+      insights: {
+        earlySeasonWarning: currentWeek <= 4,
+        message: currentWeek <= 4
+          ? 'Early season projections have high variance. Results will become more accurate as the season progresses.'
+          : currentWeek >= totalWeeks - 2
+          ? 'Late season - projections are highly accurate.'
+          : null,
+      },
+    });
+  } catch (error: any) {
+    console.error('Outlook standings error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch standings outlook',
+    });
+  }
+});
+
+/**
+ * Get playoff odds and scenarios
+ */
+router.get('/leagues/:league_key/outlook/playoffs', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Get current standings
+    const standingsData = await makeYahooRequest(user.id, `/league/${league_key}/standings`);
+
+    const { teams, currentWeek, totalWeeks, playoffStartWeek, playoffSpots } =
+      parseStandingsData(standingsData);
+
+    // Get projections first
+    const projections = projectStandings(teams, currentWeek, totalWeeks);
+
+    // Calculate playoff odds
+    const playoffOdds = calculatePlayoffOdds(projections, playoffSpots, totalWeeks, currentWeek);
+
+    // Sort by playoff odds descending
+    playoffOdds.sort((a, b) => b.playoffOdds - a.playoffOdds);
+
+    // Find user's team
+    const userTeam = playoffOdds.find(p => p.isCurrentUser);
+
+    // Calculate some derived insights
+    const teamsCliched = playoffOdds.filter(t => t.clinched).length;
+    const teamsEliminated = playoffOdds.filter(t => t.eliminated).length;
+    const raceTeams = playoffOdds.filter(t => !t.clinched && !t.eliminated && t.playoffOdds >= 10 && t.playoffOdds <= 90);
+
+    res.json({
+      season: {
+        currentWeek,
+        totalWeeks,
+        playoffStartWeek,
+        weeksRemaining: totalWeeks - (currentWeek - 1),
+        playoffSpots,
+        teamCount: teams.length,
+      },
+      playoffOdds,
+      userTeam: userTeam ? {
+        playoffOdds: userTeam.playoffOdds,
+        byeOdds: userTeam.byeOdds,
+        magicNumber: userTeam.magicNumber,
+        eliminationNumber: userTeam.eliminationNumber,
+        clinched: userTeam.clinched,
+        eliminated: userTeam.eliminated,
+        currentRank: userTeam.currentRank,
+      } : null,
+      raceStatus: {
+        clinched: teamsCliched,
+        eliminated: teamsEliminated,
+        inTheRace: raceTeams.length,
+        tightRaces: raceTeams.filter(t => t.playoffOdds >= 40 && t.playoffOdds <= 60).length,
+      },
+      insights: {
+        earlySeasonWarning: currentWeek <= 4,
+        message: currentWeek <= 4
+          ? 'Playoff odds are volatile early in the season. Focus on building your roster.'
+          : teamsCliched === playoffSpots
+          ? 'All playoff spots have been clinched!'
+          : raceTeams.length > 2
+          ? `${raceTeams.length} teams are still fighting for playoff spots.`
+          : null,
+      },
+    });
+  } catch (error: any) {
+    console.error('Outlook playoffs error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch playoff outlook',
+    });
+  }
+});
+
 export const fantasyRoutes = router;
