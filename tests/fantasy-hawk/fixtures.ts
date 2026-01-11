@@ -192,6 +192,26 @@ export const SELECTORS = {
     table: '[data-testid="comparison-table"]',
   },
 
+  // Waiver Advisor
+  waiver: {
+    tab: '[data-testid="waiver-tab"]',
+    page: '[data-testid="waiver-dashboard"]',
+    noLeague: '[data-testid="waiver-no-league"]',
+    recommendations: '[data-testid="recommendations-panel"]',
+    recommendationsLoading: '[data-testid="recommendations-loading"]',
+    recommendationsError: '[data-testid="recommendations-error"]',
+    recommendationsEmpty: '[data-testid="recommendations-empty"]',
+    drops: '[data-testid="drops-panel"]',
+    dropsLoading: '[data-testid="drops-loading"]',
+    dropsError: '[data-testid="drops-error"]',
+    dropsEmpty: '[data-testid="drops-empty"]',
+    faab: '[data-testid="faab-suggestions"]',
+    faabLoading: '[data-testid="faab-loading"]',
+    faabError: '[data-testid="faab-error"]',
+    faabNotAvailable: '[data-testid="faab-not-available"]',
+    positionFilter: (pos: string) => `[data-testid="position-filter-${pos.toLowerCase()}"]`,
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
