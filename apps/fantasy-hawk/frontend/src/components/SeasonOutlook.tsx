@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { LoadingSpinner } from './LoadingSpinner';
 import { OutlookDashboard } from './outlook/Dashboard';
-import { TrendingUp, Trophy, AlertTriangle } from 'lucide-react';
+import { PlayoffOdds } from './outlook/PlayoffOdds';
+import { TrendingUp, Trophy, AlertTriangle, Target } from 'lucide-react';
+
+type OutlookTab = 'overview' | 'playoffs';
 
 interface SeasonOutlookProps {
   selectedLeague: string | null;
@@ -99,6 +102,7 @@ export function SeasonOutlook({ selectedLeague }: SeasonOutlookProps) {
   const [error, setError] = useState<string | null>(null);
   const [standingsData, setStandingsData] = useState<OutlookStandingsData | null>(null);
   const [playoffsData, setPlayoffsData] = useState<OutlookPlayoffsData | null>(null);
+  const [activeTab, setActiveTab] = useState<OutlookTab>('overview');
 
   useEffect(() => {
     if (selectedLeague) {
@@ -166,12 +170,52 @@ export function SeasonOutlook({ selectedLeague }: SeasonOutlookProps) {
   }
 
   return (
-    <div data-testid="season-outlook-page">
-      <OutlookDashboard
-        standingsData={standingsData}
-        playoffsData={playoffsData}
-        onRefresh={loadOutlookData}
-      />
+    <div data-testid="season-outlook-page" className="space-y-6">
+      {/* Tab Navigation */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-colors ${
+            activeTab === 'overview'
+              ? 'bg-hawk-teal text-gray-900'
+              : 'bg-court-base text-gray-300 hover:bg-court-surface'
+          }`}
+          data-testid="outlook-overview-tab"
+        >
+          <TrendingUp className="w-4 h-4" />
+          Overview
+        </button>
+        <button
+          onClick={() => setActiveTab('playoffs')}
+          className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-colors ${
+            activeTab === 'playoffs'
+              ? 'bg-hawk-orange text-gray-900'
+              : 'bg-court-base text-gray-300 hover:bg-court-surface'
+          }`}
+          data-testid="outlook-playoffs-tab"
+        >
+          <Target className="w-4 h-4" />
+          Playoff Odds
+        </button>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'overview' && (
+        <OutlookDashboard
+          standingsData={standingsData}
+          playoffsData={playoffsData}
+          onRefresh={loadOutlookData}
+        />
+      )}
+
+      {activeTab === 'playoffs' && (
+        <PlayoffOdds
+          playoffOdds={playoffsData.playoffOdds}
+          userTeam={playoffsData.userTeam}
+          raceStatus={playoffsData.raceStatus}
+          season={playoffsData.season}
+        />
+      )}
     </div>
   );
 }
