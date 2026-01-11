@@ -10,13 +10,14 @@ import { StreamingOptimizer } from './StreamingOptimizer';
 import { MatchupCenter } from './MatchupCenter';
 import { AIChat } from './AIChat';
 import { TradeAnalyzer } from './TradeAnalyzer';
+import { PuntEngine } from './PuntEngine';
 
 interface DashboardProps {
   selectedLeague: string | null;
   userRole?: string | null;
 }
 
-type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'trade' | 'chat' | 'strategy' | 'debug';
+type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'trade' | 'punt' | 'chat' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 
 export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
@@ -193,6 +194,7 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
     { id: 'matchup', label: 'Matchup', testId: 'matchup-tab' },
     { id: 'streaming', label: 'Streaming', testId: 'streaming-tab' },
     { id: 'trade', label: 'Trade', testId: 'trade-tab' },
+    { id: 'punt', label: 'Punt', testId: 'punt-tab' },
     { id: 'chat', label: 'AI Chat', testId: 'chat-tab' },
     ...(isAdmin ? [{ id: 'strategy' as TabType, label: 'Strategy' }] : []),
     { id: 'debug', label: 'Debug' },
@@ -300,6 +302,8 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
       {activeTab === 'streaming' && <StreamingOptimizer selectedLeague={selectedLeague} />}
 
       {activeTab === 'trade' && <TradeAnalyzer selectedLeague={selectedLeague} />}
+
+      {activeTab === 'punt' && <PuntEngine selectedLeague={selectedLeague} />}
 
       {activeTab === 'chat' && <AIChat selectedLeague={selectedLeague} />}
 

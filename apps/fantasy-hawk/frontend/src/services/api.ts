@@ -70,6 +70,9 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+    // Punt Strategy endpoints
+    getPuntAnalysis: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/punt/analysis`),
+    getPuntStrategies: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/punt/strategies`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>
