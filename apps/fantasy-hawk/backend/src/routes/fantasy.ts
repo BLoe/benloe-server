@@ -41,6 +41,7 @@ import {
   buildTeamProfile,
   buildComparison,
   parseTeamStats,
+  determineTrend,
   type StatCategory as CategoryStatCategory,
 } from '../services/categoryAnalysis';
 
@@ -526,6 +527,161 @@ router.get('/leagues/:league_key/category/comparison', authenticate, async (req:
     console.error('Category comparison error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to get category comparison',
+    });
+  }
+});
+
+/**
+ * Get category performance trends over recent weeks
+ */
+router.get('/leagues/:league_key/category/trends', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { weeks = '4' } = req.query;
+    const numWeeks = Math.min(Math.max(parseInt(weeks as string, 10) || 4, 2), 12);
+
+    // Fetch league info to get current week
+    const leagueData = await makeYahooRequest(user.id, `/league/${league_key}`);
+    const leagueInfo = leagueData?.fantasy_content?.league?.[0];
+    const currentWeek = parseInt(leagueInfo?.current_week || '1', 10);
+
+    // Calculate which weeks to fetch
+    const startWeek = Math.max(1, currentWeek - numWeeks + 1);
+    const weeksToFetch: number[] = [];
+    for (let w = startWeek; w <= currentWeek; w++) {
+      weeksToFetch.push(w);
+    }
+
+    // Fetch settings for stat categories
+    const settingsData = await makeYahooRequest(user.id, `/league/${league_key}/settings`);
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const statCategories: CategoryStatCategory[] = (settings?.stat_categories?.stats || [])
+      .map((s: any) => s.stat)
+      .filter((stat: any) => stat && !stat.is_only_display_stat);
+
+    // Fetch scoreboard for each week in parallel
+    const weeklyData = await Promise.all(
+      weeksToFetch.map(async (week) => {
+        const scoreboard = await makeYahooRequest(user.id, `/league/${league_key}/scoreboard;week=${week}`);
+        return { week, data: scoreboard };
+      })
+    );
+
+    // Parse weekly stats for all teams
+    // Structure: weeklyTeamStats[week][teamKey][statId] = value
+    const weeklyTeamStats: Record<number, Record<string, Record<string, number>>> = {};
+    let userTeamKey = '';
+
+    for (const { week, data } of weeklyData) {
+      weeklyTeamStats[week] = {};
+
+      const scoreboard = data?.fantasy_content?.league?.[1]?.scoreboard;
+      const matchups = scoreboard?.['0']?.matchups;
+      const matchupCount = matchups?.count || 0;
+
+      for (let m = 0; m < matchupCount; m++) {
+        const matchup = matchups?.[m]?.matchup?.['0'];
+        const teams = matchup?.teams;
+        const teamCount = teams?.count || 0;
+
+        for (let t = 0; t < teamCount; t++) {
+          const team = teams?.[t]?.team;
+          if (!team) continue;
+
+          const parsed = parseTeamStats(team);
+          if (!parsed) continue;
+
+          weeklyTeamStats[week][parsed.teamKey] = parsed.stats;
+
+          // Identify user's team
+          if (!userTeamKey) {
+            const props = team[0] || [];
+            for (const prop of props) {
+              if (prop?.is_owned_by_current_login === 1) {
+                userTeamKey = parsed.teamKey;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!userTeamKey) {
+      return res.status(404).json({ error: 'User team not found in league' });
+    }
+
+    // Calculate weekly ranks for user's team in each category
+    const trends: {
+      statId: string;
+      name: string;
+      abbr: string;
+      weeklyData: { week: number; value: number; rank: number; leagueAvg: number }[];
+      trend: 'improving' | 'declining' | 'stable';
+      rankChange: number;
+      latestRank: number;
+      latestValue: number;
+    }[] = [];
+
+    for (const cat of statCategories) {
+      const statId = cat.stat_id.toString();
+      const isNegative = cat.name?.toLowerCase().includes('turnover') || cat.abbr?.toUpperCase() === 'TO';
+
+      const weeklyDataPoints: { week: number; value: number; rank: number; leagueAvg: number }[] = [];
+      const weeklyRanks: number[] = [];
+
+      for (const week of weeksToFetch) {
+        const teamStatsForWeek = weeklyTeamStats[week] || {};
+        const userValue = teamStatsForWeek[userTeamKey]?.[statId] || 0;
+
+        // Calculate ranks for this week
+        const allValues: { teamKey: string; value: number }[] = [];
+        for (const [teamKey, stats] of Object.entries(teamStatsForWeek)) {
+          allValues.push({ teamKey, value: stats[statId] || 0 });
+        }
+
+        // Sort (descending for positive cats, ascending for negative)
+        allValues.sort((a, b) => {
+          if (isNegative) return a.value - b.value;
+          return b.value - a.value;
+        });
+
+        const rank = allValues.findIndex(v => v.teamKey === userTeamKey) + 1;
+        const leagueAvg = allValues.length > 0
+          ? allValues.reduce((sum, v) => sum + v.value, 0) / allValues.length
+          : 0;
+
+        weeklyDataPoints.push({ week, value: userValue, rank, leagueAvg });
+        weeklyRanks.push(rank);
+      }
+
+      // Determine trend
+      const { trend, change } = determineTrend(weeklyRanks);
+
+      trends.push({
+        statId,
+        name: cat.name || statId,
+        abbr: cat.abbr || cat.display_name || statId,
+        weeklyData: weeklyDataPoints,
+        trend,
+        rankChange: change,
+        latestRank: weeklyRanks[weeklyRanks.length - 1] || 0,
+        latestValue: weeklyDataPoints[weeklyDataPoints.length - 1]?.value || 0,
+      });
+    }
+
+    res.json({
+      userTeamKey,
+      currentWeek,
+      weeksAnalyzed: weeksToFetch,
+      trends,
+      totalTeams: Object.keys(weeklyTeamStats[currentWeek] || {}).length,
+    });
+  } catch (error: any) {
+    console.error('Category trends error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get category trends',
     });
   }
 });

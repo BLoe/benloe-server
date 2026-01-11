@@ -16,7 +16,7 @@ import { SchedulePlanner } from './SchedulePlanner';
 import { SeasonOutlook } from './SeasonOutlook';
 import { PlayerComparison } from './PlayerComparison';
 import { WaiverAdvisor } from './WaiverAdvisor';
-import { TeamProfile, EnhancedCategoryTable } from './category';
+import { TeamProfile, EnhancedCategoryTable, TrendCharts } from './category';
 
 interface DashboardProps {
   selectedLeague: string | null;
@@ -25,7 +25,7 @@ interface DashboardProps {
 
 type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'trade' | 'compare' | 'waiver' | 'punt' | 'insights' | 'schedule' | 'outlook' | 'chat' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
-type CategoryViewType = 'raw' | 'profile' | 'enhanced';
+type CategoryViewType = 'raw' | 'profile' | 'enhanced' | 'trends';
 
 export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   const [loading, setLoading] = useState(true);
@@ -311,6 +311,17 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
                     League Table
                   </button>
                   <button
+                    onClick={() => setCategoryView('trends')}
+                    className={`px-3 py-1.5 text-xs rounded transition-colors ${
+                      categoryView === 'trends'
+                        ? 'bg-hawk-orange text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                    data-testid="category-view-trends"
+                  >
+                    Trends
+                  </button>
+                  <button
                     onClick={() => setCategoryView('raw')}
                     className={`px-3 py-1.5 text-xs rounded transition-colors ${
                       categoryView === 'raw'
@@ -351,6 +362,11 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
             <div className="card">
               <EnhancedCategoryTable leagueKey={selectedLeague} />
             </div>
+          )}
+
+          {/* Trends View */}
+          {categoryView === 'trends' && (
+            <TrendCharts leagueKey={selectedLeague} />
           )}
 
           {/* Raw Stats View (existing) */}
