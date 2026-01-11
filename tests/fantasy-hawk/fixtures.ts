@@ -181,6 +181,17 @@ export const SELECTORS = {
     glossaryDefinition: '[data-testid="glossary-definition"]',
   },
 
+  // Player Comparison
+  comparison: {
+    tab: '[data-testid="compare-tab"]',
+    page: '[data-testid="player-comparison"]',
+    noLeague: '[data-testid="comparison-no-league"]',
+    selector: '[data-testid="player-selector"]',
+    searchInput: '[data-testid="player-search-input"]',
+    compareBtn: '[data-testid="compare-button"]',
+    table: '[data-testid="comparison-table"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
