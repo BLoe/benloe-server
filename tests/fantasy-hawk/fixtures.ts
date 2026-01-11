@@ -112,6 +112,30 @@ export const SELECTORS = {
     archetypesPanel: '[data-testid="archetypes-panel"]',
   },
 
+  // League Insights
+  insights: {
+    tab: '[data-testid="insights-tab"]',
+    page: '[data-testid="league-insights-page"]',
+    noLeague: '[data-testid="insights-no-league"]',
+    error: '[data-testid="insights-error"]',
+    empty: '[data-testid="insights-empty"]',
+    settings: '[data-testid="league-settings"]',
+    settingsOverview: '[data-testid="league-settings-overview"]',
+    categoriesTable: '[data-testid="league-categories-table"]',
+    settingsInsights: '[data-testid="league-settings-insights"]',
+    missingCategories: '[data-testid="league-missing-categories"]',
+    standardReference: '[data-testid="league-standard-reference"]',
+    recommendation: '[data-testid="league-recommendation"]',
+    categoryImportance: '[data-testid="category-importance"]',
+    positionalValue: '[data-testid="positional-value"]',
+    exploitableEdges: '[data-testid="exploitable-edges"]',
+    customRankings: '[data-testid="custom-rankings"]',
+    valueShifts: '[data-testid="league-value-shifts"]',
+    adjustedRankings: '[data-testid="league-adjusted-rankings"]',
+    rankingsSearch: '[data-testid="league-rankings-search"]',
+    rankingsPositionFilter: '[data-testid="league-rankings-position-filter"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
