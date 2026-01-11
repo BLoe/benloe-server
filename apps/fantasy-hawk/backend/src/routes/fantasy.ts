@@ -37,6 +37,12 @@ import {
   type PlayerStats as WaiverPlayerStats,
   type FaabContext,
 } from '../services/waiverAnalysis';
+import {
+  buildTeamProfile,
+  buildComparison,
+  parseTeamStats,
+  type StatCategory as CategoryStatCategory,
+} from '../services/categoryAnalysis';
 
 const router = Router();
 
@@ -366,6 +372,160 @@ router.get('/leagues/:league_key/category-stats', authenticate, async (req: Requ
     console.error('Category stats error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to fetch category stats',
+    });
+  }
+});
+
+// ============================================================
+// Category Analysis Endpoints (Enhanced)
+// ============================================================
+
+/**
+ * Get detailed team category profile with Z-scores, rankings, and archetype detection
+ */
+router.get('/leagues/:league_key/category/profile', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Fetch data in parallel
+    const [settingsData, standingsData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}/standings`),
+    ]);
+
+    // Get stat categories
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const statCategories: CategoryStatCategory[] = (settings?.stat_categories?.stats || [])
+      .map((s: any) => s.stat)
+      .filter((stat: any) => stat && !stat.is_only_display_stat);
+
+    // Parse all teams' stats
+    const teamsData = standingsData?.fantasy_content?.league?.[1]?.standings?.['0']?.teams;
+    const teamCount = teamsData?.count || 0;
+
+    const allTeamStats: Record<string, Record<string, number>> = {};
+    let userTeamKey = '';
+    let userTeamName = '';
+    let userTeamStats: Record<string, number> = {};
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teamsData?.[i]?.team;
+      if (!team) continue;
+
+      const parsed = parseTeamStats(team);
+      if (!parsed) continue;
+
+      allTeamStats[parsed.teamKey] = parsed.stats;
+
+      // Check if this is user's team
+      const props = team[0] || [];
+      for (const prop of props) {
+        if (prop?.is_owned_by_current_login === 1) {
+          userTeamKey = parsed.teamKey;
+          userTeamName = parsed.teamName;
+          userTeamStats = parsed.stats;
+          break;
+        }
+      }
+    }
+
+    if (!userTeamKey) {
+      return res.status(404).json({ error: 'User team not found in league' });
+    }
+
+    // Build profile
+    const profile = buildTeamProfile(
+      userTeamKey,
+      userTeamName,
+      userTeamStats,
+      allTeamStats,
+      statCategories
+    );
+
+    res.json({
+      profile,
+      totalTeams: teamCount,
+    });
+  } catch (error: any) {
+    console.error('Category profile error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get category profile',
+    });
+  }
+});
+
+/**
+ * Get team comparison against league averages
+ */
+router.get('/leagues/:league_key/category/comparison', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Fetch data in parallel
+    const [settingsData, standingsData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}/standings`),
+    ]);
+
+    // Get stat categories
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const statCategories: CategoryStatCategory[] = (settings?.stat_categories?.stats || [])
+      .map((s: any) => s.stat)
+      .filter((stat: any) => stat && !stat.is_only_display_stat);
+
+    // Parse all teams' stats
+    const teamsData = standingsData?.fantasy_content?.league?.[1]?.standings?.['0']?.teams;
+    const teamCount = teamsData?.count || 0;
+
+    const allTeamStats: Record<string, Record<string, number>> = {};
+    let userTeamKey = '';
+    let userTeamName = '';
+    let userTeamStats: Record<string, number> = {};
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teamsData?.[i]?.team;
+      if (!team) continue;
+
+      const parsed = parseTeamStats(team);
+      if (!parsed) continue;
+
+      allTeamStats[parsed.teamKey] = parsed.stats;
+
+      // Check if this is user's team
+      const props = team[0] || [];
+      for (const prop of props) {
+        if (prop?.is_owned_by_current_login === 1) {
+          userTeamKey = parsed.teamKey;
+          userTeamName = parsed.teamName;
+          userTeamStats = parsed.stats;
+          break;
+        }
+      }
+    }
+
+    if (!userTeamKey) {
+      return res.status(404).json({ error: 'User team not found in league' });
+    }
+
+    // Build comparison
+    const comparison = buildComparison(
+      userTeamKey,
+      userTeamName,
+      userTeamStats,
+      allTeamStats,
+      statCategories
+    );
+
+    res.json({
+      comparison,
+      totalTeams: teamCount,
+    });
+  } catch (error: any) {
+    console.error('Category comparison error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get category comparison',
     });
   }
 });

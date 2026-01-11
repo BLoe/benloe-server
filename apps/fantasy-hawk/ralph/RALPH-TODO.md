@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 46
+- **Completed:** 47
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 5
+- **Remaining:** 4
 
 ---
 
@@ -135,7 +135,7 @@
 
 | ID | Task | Status | Ticket |
 |----|------|--------|--------|
-| 1201 | Category Analysis - Team profile API | NOT_STARTED | [1201-category-api.md](tasks/1201-category-api.md) |
+| 1201 | Category Analysis - Team profile API | COMPLETE | [1201-category-api.md](tasks/1201-category-api.md) |
 | 1202 | Category Analysis - Enhanced table UI | NOT_STARTED | [1202-category-table.md](tasks/1202-category-table.md) |
 | 1203 | Category Analysis - Trend charts | NOT_STARTED | [1203-category-trends.md](tasks/1203-category-trends.md) |
 | 1204 | Category Analysis - E2E tests | NOT_STARTED | [1204-category-tests.md](tasks/1204-category-tests.md) |
