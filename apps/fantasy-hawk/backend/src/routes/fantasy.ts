@@ -10,6 +10,10 @@ import {
   buildStreamingContext,
   type ContextInputs,
 } from '../services/chatContext';
+import {
+  analyzePuntStrategy,
+  getLeaguePuntStrategies,
+} from '../services/puntAnalysis';
 
 const router = Router();
 
@@ -1843,6 +1847,135 @@ router.get('/leagues/:league_key/teams', authenticate, async (req: Request, res:
     console.error('League teams error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to fetch teams',
+    });
+  }
+});
+
+/**
+ * ===== PUNT STRATEGY ENDPOINTS =====
+ */
+
+/**
+ * Get punt strategy analysis for user's team
+ */
+router.get('/leagues/:league_key/punt/analysis', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Get league settings to know the scoring categories
+    const settingsData = await makeYahooRequest(user.id, `/league/${league_key}/settings`);
+    const settingsContent = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const statCategories = settingsContent?.stat_categories?.stats || [];
+
+    // Get standings to get all team stats
+    const standingsData = await makeYahooRequest(user.id, `/league/${league_key}/standings`);
+    const standingsContent = standingsData?.fantasy_content?.league?.[1]?.standings?.['0']?.teams;
+    const teamCount = standingsContent?.count || 0;
+
+    // Parse all team stats
+    const leagueStats: Array<{ teamKey: string; stats: Record<string, number>; isCurrentUser: boolean }> = [];
+    let myTeamStats: Record<string, number> = {};
+
+    for (let i = 0; i < teamCount; i++) {
+      const teamArray = standingsContent?.[i]?.team;
+      if (!teamArray) continue;
+
+      // Extract team info from Yahoo's nested structure
+      const teamInfo: any = {};
+      if (Array.isArray(teamArray[0])) {
+        for (const prop of teamArray[0]) {
+          if (prop && typeof prop === 'object') {
+            Object.assign(teamInfo, prop);
+          }
+        }
+      }
+
+      const teamKey = teamInfo.team_key || '';
+      const isCurrentUser = teamInfo.is_owned_by_current_login === 1;
+
+      // Extract stats from standings
+      const teamStandings = teamArray[2]?.team_standings || teamArray[1]?.team_standings;
+      const teamStatsData = teamStandings?.outcome_totals?.wins !== undefined
+        ? {} // Category wins/losses format
+        : {};
+
+      // Get actual stat values if available
+      const statsArray = teamArray[1]?.team_stats?.stats || [];
+      const stats: Record<string, number> = {};
+      for (const statObj of statsArray) {
+        if (statObj?.stat?.stat_id && statObj?.stat?.value !== undefined) {
+          stats[statObj.stat.stat_id.toString()] = parseFloat(statObj.stat.value) || 0;
+        }
+      }
+
+      leagueStats.push({
+        teamKey,
+        stats,
+        isCurrentUser,
+      });
+
+      if (isCurrentUser) {
+        myTeamStats = stats;
+      }
+    }
+
+    // Parse categories
+    const categories = statCategories.map((s: any) => ({
+      statId: s.stat?.stat_id?.toString() || '',
+      name: s.stat?.name || '',
+      displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
+      abbr: s.stat?.abbr || '',
+    })).filter((c: any) => c.statId);
+
+    // Run punt analysis
+    const analysis = analyzePuntStrategy(myTeamStats, leagueStats, categories);
+
+    res.json(analysis);
+  } catch (error: any) {
+    console.error('Punt analysis error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to analyze punt strategy',
+    });
+  }
+});
+
+/**
+ * Get available punt strategies for a league
+ */
+router.get('/leagues/:league_key/punt/strategies', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Get league settings to know the scoring categories
+    const settingsData = await makeYahooRequest(user.id, `/league/${league_key}/settings`);
+    const settingsContent = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const statCategories = settingsContent?.stat_categories?.stats || [];
+
+    // Parse categories
+    const categories = statCategories.map((s: any) => ({
+      statId: s.stat?.stat_id?.toString() || '',
+      name: s.stat?.name || '',
+      displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
+      abbr: s.stat?.abbr || '',
+    })).filter((c: any) => c.statId);
+
+    // Get available strategies for this league's categories
+    const strategies = getLeaguePuntStrategies(categories);
+
+    res.json({
+      categories: categories.map((c: any) => ({
+        statId: c.statId,
+        name: c.name,
+        displayName: c.displayName,
+      })),
+      strategies,
+    });
+  } catch (error: any) {
+    console.error('Punt strategies error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get punt strategies',
     });
   }
 });
