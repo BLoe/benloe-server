@@ -8,6 +8,7 @@ const BALLDONTLIE_API_URL = 'https://api.balldontlie.io';
 // Cache configuration
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes - schedule data rarely changes mid-day
 const TEAMS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours - teams don't change
+const SEASON_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours - season schedule rarely changes
 
 interface CacheEntry<T> {
   data: T;
@@ -72,6 +73,22 @@ interface GamesResponse {
     per_page: number;
     next_cursor?: number;
   };
+}
+
+interface WeekSchedule {
+  weekNumber: number;
+  startDate: string;
+  endDate: string;
+  games: NBAGame[];
+  gamesPerTeam: Record<string, number>;
+}
+
+interface SeasonSchedule {
+  season: number;
+  weeks: WeekSchedule[];
+  teams: NBATeam[];
+  playoffWeeks: number[]; // Week numbers typically 20-22
+  allStarBreak?: { start: string; end: string };
 }
 
 interface TeamsResponse {
@@ -253,7 +270,256 @@ class BallDontLieService {
   isConfigured(): boolean {
     return !!this.getApiKey();
   }
+
+  /**
+   * Get full season schedule grouped by fantasy weeks
+   * Fantasy weeks are Monday-Sunday
+   */
+  async getSeasonSchedule(season?: number): Promise<SeasonSchedule> {
+    const seasonYear = season || this.getCurrentSeason();
+    const cacheKey = `season:${seasonYear}`;
+    const cached = getCached<SeasonSchedule>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    // NBA regular season typically runs Oct-April
+    // For 2024-25 season, starts in October 2024
+    const seasonStart = `${seasonYear}-10-01`;
+    const seasonEnd = `${seasonYear + 1}-04-30`;
+
+    const [games, teams] = await Promise.all([
+      this.getGames(seasonStart, seasonEnd),
+      this.getTeams(),
+    ]);
+
+    // Group games by fantasy week (Monday-Sunday)
+    const weeks = this.groupGamesByFantasyWeek(games, seasonYear);
+
+    // Identify playoff weeks (typically the last 3-4 weeks of regular season)
+    // For fantasy basketball, playoffs are usually weeks 20-22 or 21-23
+    const playoffWeeks = weeks.length >= 3
+      ? [weeks.length - 2, weeks.length - 1, weeks.length]
+      : [];
+
+    const result: SeasonSchedule = {
+      season: seasonYear,
+      weeks,
+      teams,
+      playoffWeeks,
+      allStarBreak: this.getEstimatedAllStarBreak(seasonYear),
+    };
+
+    setCache(cacheKey, result, SEASON_CACHE_TTL_MS);
+    return result;
+  }
+
+  /**
+   * Get schedule for a specific NBA team
+   */
+  async getTeamSchedule(teamAbbr: string, season?: number): Promise<{
+    team: string;
+    season: number;
+    games: Array<{
+      date: string;
+      opponent: string;
+      isHome: boolean;
+      weekNumber: number;
+    }>;
+    gamesByWeek: Record<number, number>;
+  }> {
+    const seasonSchedule = await this.getSeasonSchedule(season);
+    const teamUpper = teamAbbr.toUpperCase();
+
+    const teamGames: Array<{
+      date: string;
+      opponent: string;
+      isHome: boolean;
+      weekNumber: number;
+    }> = [];
+    const gamesByWeek: Record<number, number> = {};
+
+    for (const week of seasonSchedule.weeks) {
+      gamesByWeek[week.weekNumber] = 0;
+
+      for (const game of week.games) {
+        const isHome = game.home_team.abbreviation === teamUpper;
+        const isAway = game.visitor_team.abbreviation === teamUpper;
+
+        if (isHome || isAway) {
+          teamGames.push({
+            date: game.date,
+            opponent: isHome
+              ? game.visitor_team.abbreviation
+              : game.home_team.abbreviation,
+            isHome,
+            weekNumber: week.weekNumber,
+          });
+          gamesByWeek[week.weekNumber]++;
+        }
+      }
+    }
+
+    return {
+      team: teamUpper,
+      season: seasonSchedule.season,
+      games: teamGames,
+      gamesByWeek,
+    };
+  }
+
+  /**
+   * Get schedule for multiple teams (useful for roster analysis)
+   */
+  async getTeamsSchedule(teamAbbrs: string[], season?: number): Promise<{
+    season: number;
+    weeks: Array<{
+      weekNumber: number;
+      startDate: string;
+      endDate: string;
+      totalGames: number;
+      gamesByTeam: Record<string, number>;
+    }>;
+    playoffWeeks: number[];
+    playoffGamesTotal: number;
+  }> {
+    const seasonSchedule = await this.getSeasonSchedule(season);
+    const teamsUpper = teamAbbrs.map(t => t.toUpperCase());
+
+    const weeks = seasonSchedule.weeks.map(week => {
+      const gamesByTeam: Record<string, number> = {};
+      let totalGames = 0;
+
+      for (const team of teamsUpper) {
+        const count = week.gamesPerTeam[team] || 0;
+        gamesByTeam[team] = count;
+        totalGames += count;
+      }
+
+      return {
+        weekNumber: week.weekNumber,
+        startDate: week.startDate,
+        endDate: week.endDate,
+        totalGames,
+        gamesByTeam,
+      };
+    });
+
+    // Calculate playoff games total
+    let playoffGamesTotal = 0;
+    for (const weekNum of seasonSchedule.playoffWeeks) {
+      const week = weeks.find(w => w.weekNumber === weekNum);
+      if (week) {
+        playoffGamesTotal += week.totalGames;
+      }
+    }
+
+    return {
+      season: seasonSchedule.season,
+      weeks,
+      playoffWeeks: seasonSchedule.playoffWeeks,
+      playoffGamesTotal,
+    };
+  }
+
+  /**
+   * Get current NBA season year (e.g., 2024 for 2024-25 season)
+   */
+  private getCurrentSeason(): number {
+    const now = new Date();
+    const month = now.getMonth() + 1; // 0-indexed
+    const year = now.getFullYear();
+
+    // NBA season starts in October
+    // If we're in Jan-Sept, we're in the previous year's season
+    return month >= 10 ? year : year - 1;
+  }
+
+  /**
+   * Group games by fantasy week (Monday-Sunday)
+   */
+  private groupGamesByFantasyWeek(games: NBAGame[], season: number): WeekSchedule[] {
+    if (games.length === 0) return [];
+
+    // Sort games by date
+    const sortedGames = [...games].sort((a, b) =>
+      new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    // Find the first Monday of the season (or the Monday before the first game)
+    const firstGame = new Date(sortedGames[0].date);
+    const firstMonday = this.getPreviousMonday(firstGame);
+
+    const weeks: WeekSchedule[] = [];
+    let currentWeekStart = new Date(firstMonday);
+    let weekNumber = 1;
+
+    while (currentWeekStart < new Date(sortedGames[sortedGames.length - 1].date)) {
+      const weekEnd = new Date(currentWeekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6); // Sunday
+
+      const weekGames = sortedGames.filter(game => {
+        const gameDate = new Date(game.date);
+        return gameDate >= currentWeekStart && gameDate <= weekEnd;
+      });
+
+      if (weekGames.length > 0) {
+        const gamesPerTeam: Record<string, number> = {};
+
+        for (const game of weekGames) {
+          const home = game.home_team.abbreviation;
+          const away = game.visitor_team.abbreviation;
+          gamesPerTeam[home] = (gamesPerTeam[home] || 0) + 1;
+          gamesPerTeam[away] = (gamesPerTeam[away] || 0) + 1;
+        }
+
+        weeks.push({
+          weekNumber,
+          startDate: this.formatDate(currentWeekStart),
+          endDate: this.formatDate(weekEnd),
+          games: weekGames,
+          gamesPerTeam,
+        });
+      }
+
+      weekNumber++;
+      currentWeekStart.setDate(currentWeekStart.getDate() + 7);
+    }
+
+    return weeks;
+  }
+
+  /**
+   * Get the previous Monday for a given date
+   */
+  private getPreviousMonday(date: Date): Date {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = day === 0 ? 6 : day - 1; // 0 = Sunday, 1 = Monday
+    d.setDate(d.getDate() - diff);
+    return d;
+  }
+
+  /**
+   * Format date as YYYY-MM-DD
+   */
+  private formatDate(date: Date): string {
+    return date.toISOString().split('T')[0];
+  }
+
+  /**
+   * Get estimated All-Star break dates
+   * Typically around mid-February
+   */
+  private getEstimatedAllStarBreak(season: number): { start: string; end: string } | undefined {
+    // All-Star weekend is typically the third weekend of February
+    // This is an estimate - actual dates vary
+    return {
+      start: `${season + 1}-02-14`,
+      end: `${season + 1}-02-18`,
+    };
+  }
 }
 
 export const ballDontLieService = new BallDontLieService();
-export type { NBAGame, NBATeam };
+export type { NBAGame, NBATeam, SeasonSchedule, WeekSchedule };

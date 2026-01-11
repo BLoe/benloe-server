@@ -2190,4 +2190,161 @@ router.get('/leagues/:league_key/insights/rankings', authenticate, async (req: R
   }
 });
 
+// ============================================================
+// Season Schedule Planner Endpoints
+// ============================================================
+
+/**
+ * Get full season schedule grouped by fantasy weeks
+ * Query params: season (optional, defaults to current season)
+ */
+router.get('/schedule/season', authenticate, async (req: Request, res: Response) => {
+  try {
+    const seasonParam = req.query.season as string | undefined;
+    const season = seasonParam ? parseInt(seasonParam, 10) : undefined;
+
+    const schedule = await ballDontLieService.getSeasonSchedule(season);
+
+    // Return a lighter version without full game objects to reduce payload
+    const lightWeeks = schedule.weeks.map(week => ({
+      weekNumber: week.weekNumber,
+      startDate: week.startDate,
+      endDate: week.endDate,
+      gameCount: week.games.length,
+      gamesPerTeam: week.gamesPerTeam,
+    }));
+
+    res.json({
+      season: schedule.season,
+      weeks: lightWeeks,
+      teams: schedule.teams.map(t => ({ abbreviation: t.abbreviation, name: t.full_name })),
+      playoffWeeks: schedule.playoffWeeks,
+      allStarBreak: schedule.allStarBreak,
+      totalWeeks: schedule.weeks.length,
+    });
+  } catch (error: any) {
+    console.error('Season schedule error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get schedule for a specific NBA team
+ * Includes all games and games per week breakdown
+ */
+router.get('/schedule/team/:teamAbbr', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { teamAbbr } = req.params;
+    const seasonParam = req.query.season as string | undefined;
+    const season = seasonParam ? parseInt(seasonParam, 10) : undefined;
+
+    const teamSchedule = await ballDontLieService.getTeamSchedule(teamAbbr, season);
+
+    res.json(teamSchedule);
+  } catch (error: any) {
+    console.error('Team schedule error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Get schedule for a league's rostered players
+ * Shows games per week aggregated for all players on the user's roster
+ */
+router.get('/leagues/:league_key/schedule/roster', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const seasonParam = req.query.season as string | undefined;
+    const season = seasonParam ? parseInt(seasonParam, 10) : undefined;
+
+    // Get user's roster
+    const rostersData = await makeYahooRequest(user.id, `/league/${league_key}/teams/roster`);
+    const teams = rostersData?.fantasy_content?.league?.[1]?.teams;
+
+    // Find user's team and extract player NBA teams
+    const rosterTeams: string[] = [];
+    const playerInfo: Array<{ name: string; team: string }> = [];
+    const teamCount = teams?.count || 0;
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teams?.[i]?.team;
+      if (!team) continue;
+
+      // Check if this is the user's team
+      const teamProps = team[0] || [];
+      let isUserTeam = false;
+      for (const prop of teamProps) {
+        if (prop?.is_owned_by_current_login === 1) {
+          isUserTeam = true;
+          break;
+        }
+      }
+
+      if (isUserTeam) {
+        const roster = team[1]?.roster?.['0']?.players;
+        if (roster) {
+          const playerCount = roster.count || 0;
+          for (let p = 0; p < playerCount; p++) {
+            const player = roster[p]?.player;
+            if (player) {
+              const playerProps = player[0] || [];
+              let playerName = '';
+              let nbaTeam = '';
+
+              for (const prop of playerProps) {
+                if (prop?.name?.full) playerName = prop.name.full;
+                if (prop?.editorial_team_abbr) nbaTeam = prop.editorial_team_abbr;
+              }
+
+              if (nbaTeam) {
+                rosterTeams.push(nbaTeam.toUpperCase());
+                playerInfo.push({ name: playerName, team: nbaTeam.toUpperCase() });
+              }
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    if (rosterTeams.length === 0) {
+      return res.status(404).json({ error: 'No roster found or no NBA teams detected' });
+    }
+
+    // Get unique teams only
+    const uniqueTeams = [...new Set(rosterTeams)];
+
+    // Get schedule for roster teams
+    const schedule = await ballDontLieService.getTeamsSchedule(uniqueTeams, season);
+
+    // Calculate per-player game counts for playoffs
+    const playerPlayoffGames: Record<string, number> = {};
+    for (const player of playerInfo) {
+      playerPlayoffGames[player.name] = 0;
+      for (const weekNum of schedule.playoffWeeks) {
+        const week = schedule.weeks.find(w => w.weekNumber === weekNum);
+        if (week) {
+          playerPlayoffGames[player.name] += week.gamesByTeam[player.team] || 0;
+        }
+      }
+    }
+
+    res.json({
+      season: schedule.season,
+      rosterTeams: uniqueTeams,
+      players: playerInfo,
+      weeks: schedule.weeks,
+      playoffWeeks: schedule.playoffWeeks,
+      playoffGamesTotal: schedule.playoffGamesTotal,
+      playerPlayoffGames,
+    });
+  } catch (error: any) {
+    console.error('Roster schedule error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch roster schedule',
+    });
+  }
+});
+
 export const fantasyRoutes = router;

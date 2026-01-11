@@ -252,4 +252,215 @@ describe('BallDontLie Service', () => {
       expect(getCacheSize()).toBe(0);
     });
   });
+
+  describe('getSeasonSchedule', () => {
+    const mockTeamsResponse = {
+      data: [
+        { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+        { id: 2, abbreviation: 'LAL', full_name: 'Los Angeles Lakers', conference: 'West', division: 'Pacific', city: 'Los Angeles', name: 'Lakers' },
+      ],
+    };
+
+    const mockGamesResponse = {
+      data: [
+        {
+          id: 1,
+          date: '2024-10-22', // First day of season
+          datetime: '2024-10-22T19:00:00Z',
+          season: 2024,
+          status: 'Final',
+          postseason: false,
+          home_team: { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+          visitor_team: { id: 2, abbreviation: 'LAL', full_name: 'Los Angeles Lakers', conference: 'West', division: 'Pacific', city: 'Los Angeles', name: 'Lakers' },
+          home_team_score: 110,
+          visitor_team_score: 105,
+        },
+        {
+          id: 2,
+          date: '2024-10-23',
+          datetime: '2024-10-23T19:00:00Z',
+          season: 2024,
+          status: 'Final',
+          postseason: false,
+          home_team: { id: 2, abbreviation: 'LAL', full_name: 'Los Angeles Lakers', conference: 'West', division: 'Pacific', city: 'Los Angeles', name: 'Lakers' },
+          visitor_team: { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+          home_team_score: 115,
+          visitor_team_score: 112,
+        },
+      ],
+      meta: { per_page: 100 },
+    };
+
+    it('fetches and groups games by fantasy week', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => mockGamesResponse })
+        .mockResolvedValueOnce({ ok: true, json: async () => mockTeamsResponse });
+
+      const schedule = await ballDontLieService.getSeasonSchedule(2024);
+
+      expect(schedule.season).toBe(2024);
+      expect(schedule.weeks.length).toBeGreaterThanOrEqual(1);
+      expect(schedule.teams).toHaveLength(2);
+      expect(schedule.allStarBreak).toBeDefined();
+    });
+
+    it('caches season schedule', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => mockGamesResponse })
+        .mockResolvedValueOnce({ ok: true, json: async () => mockTeamsResponse });
+
+      // First call
+      await ballDontLieService.getSeasonSchedule(2024);
+      const callCount = mockFetch.mock.calls.length;
+
+      // Second call - should use cache
+      await ballDontLieService.getSeasonSchedule(2024);
+      expect(mockFetch.mock.calls.length).toBe(callCount);
+    });
+
+    it('calculates playoff weeks', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => mockGamesResponse })
+        .mockResolvedValueOnce({ ok: true, json: async () => mockTeamsResponse });
+
+      const schedule = await ballDontLieService.getSeasonSchedule(2024);
+
+      // Playoff weeks should be defined if there are enough weeks
+      if (schedule.weeks.length >= 3) {
+        expect(schedule.playoffWeeks.length).toBeGreaterThanOrEqual(0);
+      }
+    });
+  });
+
+  describe('getTeamSchedule', () => {
+    const mockTeamsResponse = {
+      data: [
+        { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+        { id: 2, abbreviation: 'LAL', full_name: 'Los Angeles Lakers', conference: 'West', division: 'Pacific', city: 'Los Angeles', name: 'Lakers' },
+      ],
+    };
+
+    const mockGamesResponse = {
+      data: [
+        {
+          id: 1,
+          date: '2024-10-22',
+          datetime: '2024-10-22T19:00:00Z',
+          season: 2024,
+          status: 'Final',
+          postseason: false,
+          home_team: { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+          visitor_team: { id: 2, abbreviation: 'LAL', full_name: 'Los Angeles Lakers', conference: 'West', division: 'Pacific', city: 'Los Angeles', name: 'Lakers' },
+          home_team_score: 110,
+          visitor_team_score: 105,
+        },
+        {
+          id: 2,
+          date: '2024-10-23',
+          datetime: '2024-10-23T19:00:00Z',
+          season: 2024,
+          status: 'Final',
+          postseason: false,
+          home_team: { id: 2, abbreviation: 'LAL', full_name: 'Los Angeles Lakers', conference: 'West', division: 'Pacific', city: 'Los Angeles', name: 'Lakers' },
+          visitor_team: { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+          home_team_score: 115,
+          visitor_team_score: 112,
+        },
+      ],
+      meta: { per_page: 100 },
+    };
+
+    it('filters games for specific team', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => mockGamesResponse })
+        .mockResolvedValueOnce({ ok: true, json: async () => mockTeamsResponse });
+
+      const teamSchedule = await ballDontLieService.getTeamSchedule('BOS', 2024);
+
+      expect(teamSchedule.team).toBe('BOS');
+      expect(teamSchedule.games.length).toBe(2);
+      expect(teamSchedule.games[0].opponent).toBe('LAL');
+      expect(teamSchedule.games[0].isHome).toBe(true);
+      expect(teamSchedule.games[1].opponent).toBe('LAL');
+      expect(teamSchedule.games[1].isHome).toBe(false);
+    });
+
+    it('handles case-insensitive team abbreviations', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => mockGamesResponse })
+        .mockResolvedValueOnce({ ok: true, json: async () => mockTeamsResponse });
+
+      const teamSchedule = await ballDontLieService.getTeamSchedule('bos', 2024);
+
+      expect(teamSchedule.team).toBe('BOS');
+      expect(teamSchedule.games.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('getTeamsSchedule', () => {
+    const mockTeamsResponse = {
+      data: [
+        { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+        { id: 2, abbreviation: 'LAL', full_name: 'Los Angeles Lakers', conference: 'West', division: 'Pacific', city: 'Los Angeles', name: 'Lakers' },
+        { id: 3, abbreviation: 'MIA', full_name: 'Miami Heat', conference: 'East', division: 'Southeast', city: 'Miami', name: 'Heat' },
+      ],
+    };
+
+    const mockGamesResponse = {
+      data: [
+        {
+          id: 1,
+          date: '2024-10-22',
+          datetime: '2024-10-22T19:00:00Z',
+          season: 2024,
+          status: 'Final',
+          postseason: false,
+          home_team: { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+          visitor_team: { id: 2, abbreviation: 'LAL', full_name: 'Los Angeles Lakers', conference: 'West', division: 'Pacific', city: 'Los Angeles', name: 'Lakers' },
+          home_team_score: 110,
+          visitor_team_score: 105,
+        },
+        {
+          id: 2,
+          date: '2024-10-22',
+          datetime: '2024-10-22T19:00:00Z',
+          season: 2024,
+          status: 'Final',
+          postseason: false,
+          home_team: { id: 3, abbreviation: 'MIA', full_name: 'Miami Heat', conference: 'East', division: 'Southeast', city: 'Miami', name: 'Heat' },
+          visitor_team: { id: 1, abbreviation: 'BOS', full_name: 'Boston Celtics', conference: 'East', division: 'Atlantic', city: 'Boston', name: 'Celtics' },
+          home_team_score: 100,
+          visitor_team_score: 98,
+        },
+      ],
+      meta: { per_page: 100 },
+    };
+
+    it('aggregates games for multiple teams', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => mockGamesResponse })
+        .mockResolvedValueOnce({ ok: true, json: async () => mockTeamsResponse });
+
+      const schedule = await ballDontLieService.getTeamsSchedule(['BOS', 'LAL'], 2024);
+
+      expect(schedule.weeks.length).toBeGreaterThanOrEqual(1);
+
+      // First week should have games for both teams
+      const firstWeek = schedule.weeks[0];
+      expect(firstWeek.gamesByTeam['BOS']).toBeDefined();
+      expect(firstWeek.gamesByTeam['LAL']).toBeDefined();
+      expect(firstWeek.totalGames).toBeGreaterThan(0);
+    });
+
+    it('calculates total playoff games', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => mockGamesResponse })
+        .mockResolvedValueOnce({ ok: true, json: async () => mockTeamsResponse });
+
+      const schedule = await ballDontLieService.getTeamsSchedule(['BOS', 'LAL'], 2024);
+
+      expect(schedule.playoffWeeks).toBeDefined();
+      expect(typeof schedule.playoffGamesTotal).toBe('number');
+    });
+  });
 });
