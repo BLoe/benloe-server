@@ -1,10 +1,14 @@
-# Fantasy Hawk Ralph Loop Prompt
+# Fantasy Hawk React Router Migration
 
-You are implementing features for Fantasy Hawk, a fantasy basketball analytics application. This prompt will be fed to you repeatedly until all tasks are complete.
+You are migrating Fantasy Hawk from tab-based navigation to proper React Router with hash routing. This enables URL persistence across page refreshes and proper browser history navigation.
 
 ## Your Mission
 
-Build all 12 features defined in the Fantasy Hawk roadmap by completing tasks sequentially from the TODO list.
+Convert the existing tab-based Dashboard navigation to React Router, implementing:
+- Hash-based routing (`/#/standings`, `/#/matchup`, etc.)
+- League selection in URL (`/#/league/:leagueKey/standings`)
+- Lazy loading for all route components
+- Nested routes for sub-views (e.g., Categories with profile/enhanced/trends/raw)
 
 ## Each Iteration
 
@@ -16,7 +20,6 @@ cat /srv/benloe/apps/fantasy-hawk/ralph/RALPH-TODO.md
 Find the first task with status `NOT_STARTED` or `IN_PROGRESS`.
 
 ### Step 2: Read Task Details
-Read the task ticket file indicated in the TODO:
 ```bash
 cat /srv/benloe/apps/fantasy-hawk/ralph/tasks/[TASK-ID].md
 ```
@@ -26,22 +29,19 @@ cat /srv/benloe/apps/fantasy-hawk/ralph/tasks/[TASK-ID].md
 Follow the task ticket exactly:
 1. Read any files mentioned in "Files to Modify"
 2. Implement the changes as specified
-3. Follow the patterns in "Implementation Notes"
-4. Add data-testid attributes as specified for testing
+3. Follow existing code patterns
+4. Preserve all existing functionality
 
 ### Step 4: Run Verification
 
-Execute the verification steps from the task ticket. Common patterns:
-
-**For API tasks:**
-```bash
-cd /srv/benloe/apps/fantasy-hawk/backend && npm run build && npm test
-```
-
-**For UI tasks:**
+**Build verification:**
 ```bash
 cd /srv/benloe/apps/fantasy-hawk/frontend && npm run build
-cd /srv/benloe && npx playwright test --project=fantasy-hawk --grep "[test pattern]"
+```
+
+**E2E test verification:**
+```bash
+cd /srv/benloe && npx playwright test --project=fantasy-hawk
 ```
 
 ### Step 5: Update Status
@@ -50,7 +50,7 @@ If verification passes:
 1. Update `RALPH-TODO.md` - change task status to `COMPLETE`
 2. Commit the changes:
 ```bash
-cd /srv/benloe && git add -A && git commit -m "feat(fantasy-hawk): [TASK-ID] <description>"
+cd /srv/benloe && git add -A && git commit -m "refactor(fantasy-hawk): [TASK-ID] <description>"
 ```
 
 If verification fails:
@@ -74,34 +74,53 @@ If tasks remain, continue to next task.
 
 ## Critical Rules
 
-1. **One task at a time** - Complete current task before moving to next
-2. **Verify before marking complete** - Never mark a task COMPLETE without passing verification
-3. **Follow the design specs** - UI implementations must match designs in `/ralph/designs/`
-4. **Use data-testid** - All interactive elements need testable selectors
-5. **Don't skip tests** - Every task has verification steps; run them
-6. **Commit after each task** - Atomic commits enable rollback
-7. **Read before writing** - Always read existing code before modifying
+1. **Preserve functionality** - This is a refactor, not a rewrite. All features must continue working.
+2. **One task at a time** - Complete current task before moving to next
+3. **Verify before marking complete** - Never mark a task COMPLETE without passing verification
+4. **Commit after each task** - Atomic commits enable rollback
+5. **Read before writing** - Always read existing code before modifying
+6. **No breaking changes** - Every commit should leave the app in a working state
 
 ## Project Context
 
 **Tech Stack:**
-- Backend: Node.js, Express, TypeScript
-- Frontend: React 19, Vite, Tailwind CSS, Recharts
-- Testing: Vitest (backend), Playwright (e2e)
-- Database: SQLite for OAuth tokens
-- External APIs: Yahoo Fantasy Sports, Ball Don't Lie (NBA data)
+- Frontend: React 19, Vite, Tailwind CSS
+- New: react-router-dom v7 (HashRouter)
+- Testing: Playwright (e2e)
 
-**Key Directories:**
-- Backend: `/srv/benloe/apps/fantasy-hawk/backend/src/`
-- Frontend: `/srv/benloe/apps/fantasy-hawk/frontend/src/`
-- Tests: `/srv/benloe/tests/fantasy-hawk/`
-- Designs: `/srv/benloe/apps/fantasy-hawk/ralph/designs/`
+**Key Files:**
+- `frontend/src/App.tsx` - Main app component, currently handles league selection
+- `frontend/src/components/Dashboard.tsx` - Tab navigation, will become route outlet
+- `frontend/src/components/*.tsx` - Individual feature components to become routes
+- `tests/fantasy-hawk/*.spec.ts` - E2E tests that may need URL updates
 
-**Existing Patterns:**
-- API routes in `backend/src/routes/`
-- React components in `frontend/src/components/`
-- API service in `frontend/src/services/api.ts`
-- Yahoo data parsing helpers exist - reuse them
+**Current Architecture:**
+```
+App.tsx
+  └── Dashboard.tsx (activeTab state)
+        ├── StandingsChart (tab === 'standings')
+        ├── CategoryStatsTable (tab === 'categories')
+        ├── MatchupCenter (tab === 'matchup')
+        └── ... (14 total tabs)
+```
+
+**Target Architecture:**
+```
+App.tsx (HashRouter)
+  └── Routes
+        ├── / → Redirect to /standings or league selector
+        ├── /league/:leagueKey → LeagueLayout (Outlet)
+        │     ├── /standings → StandingsPage
+        │     ├── /categories → CategoriesLayout (Outlet)
+        │     │     ├── /profile → TeamProfile
+        │     │     ├── /enhanced → EnhancedCategoryTable
+        │     │     ├── /trends → TrendCharts
+        │     │     └── / → CategoryStatsTable (default)
+        │     ├── /matchup → MatchupCenter
+        │     ├── /streaming → StreamingOptimizer
+        │     └── ... (all other features)
+        └── /* → NotFound
+```
 
 ## When Stuck
 
@@ -116,5 +135,6 @@ If you cannot complete a task after 3 attempts:
 - The same prompt is fed every iteration
 - Your progress persists in files
 - Read your previous work to understand context
-- The goal is working features, not perfect code
+- The goal is working routing, not perfect code
 - Test early, test often
+- This is a refactor - all existing features must keep working

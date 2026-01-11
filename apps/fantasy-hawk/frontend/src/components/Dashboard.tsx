@@ -4,7 +4,6 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { ErrorMessage } from './ErrorMessage';
 import { StandingsChart } from './StandingsChart';
 import { CategoryStatsTable } from './CategoryStatsTable';
-import { StrategyCorner } from './StrategyCorner';
 import { DebugPanel } from './DebugPanel';
 import { StreamingOptimizer } from './StreamingOptimizer';
 import { MatchupCenter } from './MatchupCenter';
@@ -20,25 +19,46 @@ import { TeamProfile, EnhancedCategoryTable, TrendCharts } from './category';
 
 interface DashboardProps {
   selectedLeague: string | null;
-  userRole?: string | null;
 }
 
-type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'trade' | 'compare' | 'waiver' | 'punt' | 'insights' | 'schedule' | 'outlook' | 'chat' | 'strategy' | 'debug';
+type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'trade' | 'compare' | 'waiver' | 'punt' | 'insights' | 'schedule' | 'outlook' | 'chat' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
 type CategoryViewType = 'raw' | 'profile' | 'enhanced' | 'trends';
 
-export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
+// Valid tab types for hash routing
+const VALID_TABS: TabType[] = ['standings', 'categories', 'matchup', 'streaming', 'trade', 'compare', 'waiver', 'punt', 'insights', 'schedule', 'outlook', 'chat', 'debug'];
+
+function getTabFromHash(): TabType {
+  const hash = window.location.hash.replace('#', '');
+  return VALID_TABS.includes(hash as TabType) ? (hash as TabType) : 'standings';
+}
+
+export function Dashboard({ selectedLeague }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [standings, setStandings] = useState<any[]>([]);
   const [settings, setSettings] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<TabType>('standings');
+  const [activeTab, setActiveTab] = useState<TabType>(getTabFromHash);
 
   // Category stats state
   const [timespan, setTimespan] = useState<TimespanType>('thisWeek');
   const [categoryStatsData, setCategoryStatsData] = useState<any>(null);
   const [categoryStatsLoading, setCategoryStatsLoading] = useState(false);
   const [categoryView, setCategoryView] = useState<CategoryViewType>('raw');
+
+  // Hash routing: update URL when tab changes
+  useEffect(() => {
+    window.location.hash = activeTab;
+  }, [activeTab]);
+
+  // Hash routing: listen for browser back/forward
+  useEffect(() => {
+    const handleHashChange = () => {
+      setActiveTab(getTabFromHash());
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   useEffect(() => {
     if (selectedLeague) {
@@ -194,8 +214,6 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
     return <ErrorMessage message={error} />;
   }
 
-  const isAdmin = userRole === 'admin';
-
   const tabs: { id: TabType; label: string; testId?: string }[] = [
     { id: 'standings', label: 'Standings' },
     { id: 'categories', label: 'Categories' },
@@ -209,7 +227,6 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
     { id: 'schedule', label: 'Schedule', testId: 'schedule-tab' },
     { id: 'outlook', label: 'Outlook', testId: 'outlook-tab' },
     { id: 'chat', label: 'AI Chat', testId: 'chat-tab' },
-    ...(isAdmin ? [{ id: 'strategy' as TabType, label: 'Strategy' }] : []),
     { id: 'debug', label: 'Debug' },
   ];
 
@@ -407,8 +424,6 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
       {activeTab === 'outlook' && <SeasonOutlook selectedLeague={selectedLeague} />}
 
       {activeTab === 'chat' && <AIChat selectedLeague={selectedLeague} />}
-
-      {activeTab === 'strategy' && isAdmin && <StrategyCorner selectedLeague={selectedLeague} />}
 
       {activeTab === 'debug' && <DebugPanel selectedLeague={selectedLeague} />}
     </div>

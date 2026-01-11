@@ -38,6 +38,7 @@ export function Header({ leagues = [], selectedLeague, onLeagueChange }: HeaderP
                 <span className="text-xs text-gray-500 uppercase tracking-wider">League</span>
                 <select
                   id="league-select"
+                  data-testid="league-selector"
                   value={selectedLeague || ''}
                   onChange={(e) => onLeagueChange?.(e.target.value)}
                   className="select text-sm py-1.5"

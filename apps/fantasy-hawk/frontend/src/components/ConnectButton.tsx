@@ -15,7 +15,7 @@ export function ConnectButton() {
   // Not logged into Artanis - show sign in button
   if (!isAuthenticated) {
     return (
-      <button onClick={login} className="btn-primary flex items-center gap-2">
+      <button onClick={login} className="btn-primary flex items-center gap-2" data-testid="sign-in">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
@@ -37,7 +37,7 @@ export function ConnectButton() {
           <div className="w-2 h-2 rounded-full bg-hawk-teal animate-pulse-live"></div>
           <span className="text-sm font-medium">Yahoo Connected</span>
         </div>
-        <button onClick={disconnect} className="btn-ghost text-sm">
+        <button onClick={disconnect} className="btn-ghost text-sm" data-testid="disconnect-yahoo">
           Disconnect
         </button>
       </div>
@@ -46,7 +46,7 @@ export function ConnectButton() {
 
   // Logged into Artanis but Yahoo not connected
   return (
-    <button onClick={connect} className="btn-primary flex items-center gap-2">
+    <button onClick={connect} className="btn-primary flex items-center gap-2" data-testid="connect-yahoo">
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
           strokeLinecap="round"

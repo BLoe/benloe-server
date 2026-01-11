@@ -1,10 +1,26 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense, lazy } from 'react';
+import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Header } from './components/Header';
-import { Dashboard } from './components/Dashboard';
 import { useAuth } from './hooks/useAuth';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { api } from './services/api';
 import { LearningModeProvider } from './contexts/LearningModeContext';
+
+// Lazy load the LeagueLayout and pages
+const LeagueLayout = lazy(() => import('./components/LeagueLayout').then(m => ({ default: m.LeagueLayout })));
+const StandingsPage = lazy(() => import('./pages').then(m => ({ default: m.StandingsPage })));
+const CategoriesPage = lazy(() => import('./pages').then(m => ({ default: m.CategoriesPage })));
+const MatchupPage = lazy(() => import('./pages').then(m => ({ default: m.MatchupPage })));
+const StreamingPage = lazy(() => import('./pages').then(m => ({ default: m.StreamingPage })));
+const TradePage = lazy(() => import('./pages').then(m => ({ default: m.TradePage })));
+const ComparePage = lazy(() => import('./pages').then(m => ({ default: m.ComparePage })));
+const WaiverPage = lazy(() => import('./pages').then(m => ({ default: m.WaiverPage })));
+const PuntPage = lazy(() => import('./pages').then(m => ({ default: m.PuntPage })));
+const InsightsPage = lazy(() => import('./pages').then(m => ({ default: m.InsightsPage })));
+const SchedulePage = lazy(() => import('./pages').then(m => ({ default: m.SchedulePage })));
+const OutlookPage = lazy(() => import('./pages').then(m => ({ default: m.OutlookPage })));
+const ChatPage = lazy(() => import('./pages').then(m => ({ default: m.ChatPage })));
+const DebugPage = lazy(() => import('./pages').then(m => ({ default: m.DebugPage })));
 
 // Helper to parse Yahoo's complex JSON structure for leagues
 function parseLeaguesFromResponse(data: any): any[] {
@@ -46,11 +62,13 @@ function parseLeaguesFromResponse(data: any): any[] {
   }
 }
 
-function App() {
-  const { isAuthenticated, isConnected, isLoading: authLoading, role } = useAuth();
+// Main app content with routing
+function AppContent() {
+  const { isAuthenticated, isConnected, isLoading: authLoading } = useAuth();
   const [leagues, setLeagues] = useState<any[]>([]);
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [leaguesLoading, setLeaguesLoading] = useState(false);
+  const navigate = useNavigate();
 
   // Load leagues when connected
   useEffect(() => {
@@ -59,16 +77,22 @@ function App() {
     }
   }, [isConnected]);
 
+  // Navigate to first league when leagues are loaded
+  useEffect(() => {
+    if (leagues.length > 0 && !selectedLeague) {
+      const firstLeagueKey = leagues[0].league_key;
+      setSelectedLeague(firstLeagueKey);
+      // Navigate to the first league's standings
+      navigate(`/league/${firstLeagueKey}/standings`, { replace: true });
+    }
+  }, [leagues, selectedLeague, navigate]);
+
   async function loadLeagues() {
     try {
       setLeaguesLoading(true);
       const leaguesData = await api.fantasy.getLeagues('nba');
       const leaguesList = parseLeaguesFromResponse(leaguesData);
       setLeagues(leaguesList);
-
-      if (leaguesList.length > 0 && !selectedLeague) {
-        setSelectedLeague(leaguesList[0].league_key);
-      }
     } catch (err) {
       console.error('Failed to load leagues:', err);
     } finally {
@@ -76,15 +100,22 @@ function App() {
     }
   }
 
+  // Handle league change from header dropdown
+  function handleLeagueChange(leagueKey: string | null) {
+    setSelectedLeague(leagueKey);
+    if (leagueKey) {
+      navigate(`/league/${leagueKey}/standings`);
+    }
+  }
+
   const isLoading = authLoading || leaguesLoading;
 
   return (
-    <LearningModeProvider>
     <div className="min-h-screen bg-court-deep">
       <Header
         leagues={leagues}
         selectedLeague={selectedLeague}
-        onLeagueChange={setSelectedLeague}
+        onLeagueChange={handleLeagueChange}
       />
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {isLoading ? (
@@ -134,11 +165,48 @@ function App() {
             </p>
           </div>
         ) : (
-          <Dashboard selectedLeague={selectedLeague} userRole={role} />
+          <Suspense fallback={<LoadingSpinner message="Loading..." />}>
+            <Routes>
+              {/* Root redirect to first league */}
+              <Route path="/" element={
+                selectedLeague ? <Navigate to={`/league/${selectedLeague}/standings`} replace /> : null
+              } />
+
+              {/* League routes with LeagueLayout */}
+              <Route path="/league/:leagueKey" element={<LeagueLayout />}>
+                <Route index element={<Navigate to="standings" replace />} />
+                <Route path="standings" element={<StandingsPage />} />
+                <Route path="categories" element={<CategoriesPage />} />
+                <Route path="matchup" element={<MatchupPage />} />
+                <Route path="streaming" element={<StreamingPage />} />
+                <Route path="trade" element={<TradePage />} />
+                <Route path="compare" element={<ComparePage />} />
+                <Route path="waiver" element={<WaiverPage />} />
+                <Route path="punt" element={<PuntPage />} />
+                <Route path="insights" element={<InsightsPage />} />
+                <Route path="schedule" element={<SchedulePage />} />
+                <Route path="outlook" element={<OutlookPage />} />
+                <Route path="chat" element={<ChatPage />} />
+                <Route path="debug" element={<DebugPage />} />
+              </Route>
+
+              {/* 404 fallback */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         )}
       </main>
     </div>
-    </LearningModeProvider>
+  );
+}
+
+function App() {
+  return (
+    <HashRouter>
+      <LearningModeProvider>
+        <AppContent />
+      </LearningModeProvider>
+    </HashRouter>
   );
 }
 

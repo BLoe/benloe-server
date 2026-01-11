@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { URLS, SELECTORS, TEST_TIMEOUTS } from '../fixtures';
+import { setupMocks } from '../mocks/setup';
+import { TEST_LEAGUE_KEY } from '../fixtures/index';
+import { URLS, SELECTORS } from '../fixtures/index';
 
 test.describe('Fantasy Hawk Smoke Tests', () => {
   test('homepage loads successfully', async ({ page }) => {
+    await setupMocks(page);
     const response = await page.goto(URLS.home);
 
     // Page should load with 200 status
@@ -12,17 +15,6 @@ test.describe('Fantasy Hawk Smoke Tests', () => {
     await expect(page).toHaveTitle(/Fantasy Hawk|fantasyhawk/i);
   });
 
-  test('API health check - oauth status endpoint responds', async ({ page }) => {
-    const response = await page.goto(URLS.api.status);
-
-    // API should respond (even if not authenticated)
-    expect(response?.status()).toBeLessThan(500);
-
-    // Should return JSON
-    const contentType = response?.headers()['content-type'];
-    expect(contentType).toContain('application/json');
-  });
-
   test('page renders without JavaScript errors', async ({ page }) => {
     const errors: string[] = [];
 
@@ -30,6 +22,7 @@ test.describe('Fantasy Hawk Smoke Tests', () => {
       errors.push(error.message);
     });
 
+    await setupMocks(page);
     await page.goto(URLS.home);
     await page.waitForLoadState('networkidle');
 
@@ -44,6 +37,7 @@ test.describe('Fantasy Hawk Smoke Tests', () => {
       failedRequests.push(request.url());
     });
 
+    await setupMocks(page);
     await page.goto(URLS.home);
     await page.waitForLoadState('networkidle');
 
@@ -52,5 +46,58 @@ test.describe('Fantasy Hawk Smoke Tests', () => {
       url => url.includes('.js') || url.includes('.css')
     );
     expect(criticalFailures).toHaveLength(0);
+  });
+
+  test('league selector appears when authenticated', async ({ page }) => {
+    await setupMocks(page);
+    await page.goto(URLS.home);
+
+    // Should show league selector
+    await expect(page.locator(SELECTORS.leagueSelector)).toBeVisible();
+  });
+
+  test('shows sign in button when not authenticated', async ({ page }) => {
+    await setupMocks(page, { auth: 'notAuthenticated' });
+    await page.goto(URLS.home);
+
+    // Should show sign in button
+    await expect(page.locator('[data-testid="sign-in"]')).toBeVisible();
+  });
+
+  test('shows connect yahoo button when authenticated but Yahoo not linked', async ({ page }) => {
+    await setupMocks(page, { auth: 'noYahoo' });
+    await page.goto(URLS.home);
+
+    // Should show connect Yahoo button
+    await expect(page.locator(SELECTORS.connectButton)).toBeVisible();
+  });
+
+  test('dashboard loads with league selected', async ({ page }) => {
+    await setupMocks(page);
+    await page.goto(`/#/league/${TEST_LEAGUE_KEY}/standings`);
+
+    // Wait for data to load
+    await page.waitForLoadState('networkidle');
+
+    // Should show standings content
+    await expect(page.getByText('League Standings')).toBeVisible();
+  });
+
+  test('tab navigation works', async ({ page }) => {
+    await setupMocks(page);
+    await page.goto(`/#/league/${TEST_LEAGUE_KEY}/standings`);
+    await page.waitForLoadState('networkidle');
+
+    // Wait for the tab bar to appear
+    await expect(page.locator(SELECTORS.matchup.tab)).toBeVisible({ timeout: 15000 });
+
+    // Click matchup tab
+    await page.locator(SELECTORS.matchup.tab).click();
+
+    // Wait for navigation and content to load
+    await page.waitForLoadState('networkidle');
+
+    // Should navigate to matchup
+    await expect(page.locator(SELECTORS.matchup.page)).toBeVisible({ timeout: 15000 });
   });
 });
