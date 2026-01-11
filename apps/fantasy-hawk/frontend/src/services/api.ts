@@ -100,6 +100,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ playerKeys }),
       }),
+    // Waiver Advisor endpoints
+    getWaiverRecommendations: (leagueKey: string, position?: string, limit?: number) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/waiver/recommendations${position ? `?position=${position}` : ''}${limit ? `${position ? '&' : '?'}limit=${limit}` : ''}`),
+    getWaiverDrops: (leagueKey: string, limit?: number) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/waiver/drops${limit ? `?limit=${limit}` : ''}`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>
