@@ -62,6 +62,14 @@ export const api = {
     getSchedule: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/schedule`),
     getMatchupCurrent: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/matchup/current`),
     getMatchupProjections: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/matchup/projections`),
+    // Trade endpoints
+    getLeagueTeams: (leagueKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/teams`),
+    getTeamRoster: (leagueKey: string, teamKey: string) => fetchApi(`/fantasy/leagues/${leagueKey}/teams/${teamKey}/roster`),
+    analyzeTrade: (leagueKey: string, payload: { playersToGive: any[]; playersToReceive: any[]; partnerTeamKey?: string }) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/trade/analyze`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>
