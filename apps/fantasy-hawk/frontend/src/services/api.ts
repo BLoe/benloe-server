@@ -107,6 +107,11 @@ export const api = {
       fetchApi(`/fantasy/leagues/${leagueKey}/waiver/drops${limit ? `?limit=${limit}` : ''}`),
     getWaiverFaab: (leagueKey: string, limit?: number) =>
       fetchApi(`/fantasy/leagues/${leagueKey}/waiver/faab${limit ? `?limit=${limit}` : ''}`),
+    // Category Analysis endpoints
+    getCategoryProfile: (leagueKey: string) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/category/profile`),
+    getCategoryComparison: (leagueKey: string) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/category/comparison`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>

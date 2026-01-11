@@ -16,6 +16,7 @@ import { SchedulePlanner } from './SchedulePlanner';
 import { SeasonOutlook } from './SeasonOutlook';
 import { PlayerComparison } from './PlayerComparison';
 import { WaiverAdvisor } from './WaiverAdvisor';
+import { TeamProfile, EnhancedCategoryTable } from './category';
 
 interface DashboardProps {
   selectedLeague: string | null;
@@ -24,6 +25,7 @@ interface DashboardProps {
 
 type TabType = 'standings' | 'categories' | 'matchup' | 'streaming' | 'trade' | 'compare' | 'waiver' | 'punt' | 'insights' | 'schedule' | 'outlook' | 'chat' | 'strategy' | 'debug';
 type TimespanType = 'thisWeek' | 'last3Weeks' | 'season';
+type CategoryViewType = 'raw' | 'profile' | 'enhanced';
 
 export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   const [loading, setLoading] = useState(true);
@@ -36,6 +38,7 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
   const [timespan, setTimespan] = useState<TimespanType>('thisWeek');
   const [categoryStatsData, setCategoryStatsData] = useState<any>(null);
   const [categoryStatsLoading, setCategoryStatsLoading] = useState(false);
+  const [categoryView, setCategoryView] = useState<CategoryViewType>('raw');
 
   useEffect(() => {
     if (selectedLeague) {
@@ -275,34 +278,96 @@ export function Dashboard({ selectedLeague, userRole }: DashboardProps) {
       )}
 
       {activeTab === 'categories' && (
-        <div className="card">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="font-display text-xl font-semibold text-gray-100">
-              Category Stats
-            </h2>
-            <select
-              value={timespan}
-              onChange={(e) => setTimespan(e.target.value as TimespanType)}
-              className="select text-sm"
-            >
-              {timespanOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+        <div className="space-y-6">
+          {/* View Toggle */}
+          <div className="card">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-xl font-semibold text-gray-100">
+                Category Analysis
+              </h2>
+              <div className="flex items-center gap-4">
+                {/* View Toggle */}
+                <div className="flex gap-1 bg-court-base rounded-lg p-1" data-testid="category-view-toggle">
+                  <button
+                    onClick={() => setCategoryView('profile')}
+                    className={`px-3 py-1.5 text-xs rounded transition-colors ${
+                      categoryView === 'profile'
+                        ? 'bg-hawk-orange text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                    data-testid="category-view-profile"
+                  >
+                    My Profile
+                  </button>
+                  <button
+                    onClick={() => setCategoryView('enhanced')}
+                    className={`px-3 py-1.5 text-xs rounded transition-colors ${
+                      categoryView === 'enhanced'
+                        ? 'bg-hawk-orange text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                    data-testid="category-view-enhanced"
+                  >
+                    League Table
+                  </button>
+                  <button
+                    onClick={() => setCategoryView('raw')}
+                    className={`px-3 py-1.5 text-xs rounded transition-colors ${
+                      categoryView === 'raw'
+                        ? 'bg-hawk-orange text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                    data-testid="category-view-raw"
+                  >
+                    Raw Stats
+                  </button>
+                </div>
+
+                {/* Timespan selector - only for raw view */}
+                {categoryView === 'raw' && (
+                  <select
+                    value={timespan}
+                    onChange={(e) => setTimespan(e.target.value as TimespanType)}
+                    className="select text-sm"
+                  >
+                    {timespanOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </div>
           </div>
 
-          {categoryStatsLoading ? (
-            <LoadingSpinner message="Loading category stats..." />
-          ) : categoryStatsData && categories.length > 0 ? (
-            <CategoryStatsTable
-              categoryStatsData={categoryStatsData}
-              categories={categories}
-              timespan={timespan}
-            />
-          ) : (
-            <p className="text-gray-400">No category stats available</p>
+          {/* Profile View */}
+          {categoryView === 'profile' && (
+            <TeamProfile leagueKey={selectedLeague} />
+          )}
+
+          {/* Enhanced Table View */}
+          {categoryView === 'enhanced' && (
+            <div className="card">
+              <EnhancedCategoryTable leagueKey={selectedLeague} />
+            </div>
+          )}
+
+          {/* Raw Stats View (existing) */}
+          {categoryView === 'raw' && (
+            <div className="card">
+              {categoryStatsLoading ? (
+                <LoadingSpinner message="Loading category stats..." />
+              ) : categoryStatsData && categories.length > 0 ? (
+                <CategoryStatsTable
+                  categoryStatsData={categoryStatsData}
+                  categories={categories}
+                  timespan={timespan}
+                />
+              ) : (
+                <p className="text-gray-400">No category stats available</p>
+              )}
+            </div>
           )}
         </div>
       )}

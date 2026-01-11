@@ -1,0 +1,2 @@
+export { TeamProfile } from './TeamProfile';
+export { EnhancedCategoryTable } from './EnhancedCategoryTable';
