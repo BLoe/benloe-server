@@ -212,6 +212,47 @@ export const SELECTORS = {
     positionFilter: (pos: string) => `[data-testid="position-filter-${pos.toLowerCase()}"]`,
   },
 
+  // Category Analysis (Enhanced)
+  category: {
+    viewToggle: '[data-testid="category-view-toggle"]',
+    viewProfile: '[data-testid="category-view-profile"]',
+    viewEnhanced: '[data-testid="category-view-enhanced"]',
+    viewTrends: '[data-testid="category-view-trends"]',
+    viewRaw: '[data-testid="category-view-raw"]',
+    // Team Profile
+    profile: '[data-testid="team-profile"]',
+    profileLoading: '[data-testid="profile-loading"]',
+    profileError: '[data-testid="profile-error"]',
+    profileEmpty: '[data-testid="profile-empty"]',
+    profileRadarChart: '[data-testid="profile-radar-chart"]',
+    profileStrengths: '[data-testid="profile-strengths"]',
+    profileWeaknesses: '[data-testid="profile-weaknesses"]',
+    profileCategories: '[data-testid="profile-categories"]',
+    // Enhanced Table
+    enhancedTable: '[data-testid="enhanced-category-table"]',
+    enhancedTableLoading: '[data-testid="enhanced-table-loading"]',
+    enhancedTableError: '[data-testid="enhanced-table-error"]',
+    enhancedTableEmpty: '[data-testid="enhanced-table-empty"]',
+    enhancedViewToggle: '[data-testid="view-toggle"]',
+    viewValues: '[data-testid="view-values"]',
+    viewZscores: '[data-testid="view-zscores"]',
+    viewPercentiles: '[data-testid="view-percentiles"]',
+    userTeamRow: '[data-testid="user-team-row"]',
+    // Trend Charts
+    trendCharts: '[data-testid="trend-charts"]',
+    trendsLoading: '[data-testid="trends-loading"]',
+    trendsError: '[data-testid="trends-error"]',
+    trendsEmpty: '[data-testid="trends-empty"]',
+    trendLineChart: '[data-testid="trend-line-chart"]',
+    categorySelector: '[data-testid="category-selector"]',
+    showRanks: '[data-testid="show-ranks"]',
+    showValues: '[data-testid="show-values"]',
+    weeksSelector: (weeks: number) => `[data-testid="weeks-${weeks}"]`,
+    trendCard: (abbr: string) => `[data-testid="trend-card-${abbr.toLowerCase()}"]`,
+    improvingCategories: '[data-testid="improving-categories"]',
+    decliningCategories: '[data-testid="declining-categories"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
