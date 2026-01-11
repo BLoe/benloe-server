@@ -20,6 +20,12 @@ import {
   generateCustomRankings,
   LeagueCategory,
 } from '../services/leagueInsights';
+import {
+  comparePlayers,
+  parseYahooPlayerData,
+  filterPlayersByName,
+  type PlayerStats,
+} from '../services/playerComparison';
 
 const router = Router();
 
@@ -2916,6 +2922,134 @@ router.get('/leagues/:league_key/outlook/playoffs', authenticate, async (req: Re
     console.error('Outlook playoffs error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to fetch playoff outlook',
+    });
+  }
+});
+
+// ============================================================
+// Player Comparison Endpoints
+// ============================================================
+
+/**
+ * Search for players by name in a league
+ * Returns basic player info for selection UI
+ */
+router.get('/leagues/:league_key/players/search', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { q, status = 'ALL' } = req.query;
+
+    if (!q || typeof q !== 'string' || q.trim().length < 2) {
+      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    }
+
+    // Search players - Yahoo requires search parameter
+    const endpoint = `/league/${league_key}/players;search=${encodeURIComponent(q)};status=${status};count=25`;
+    const data = await makeYahooRequest(user.id, endpoint);
+
+    const playersData = data?.fantasy_content?.league?.[1]?.players;
+    const playerCount = playersData?.count || 0;
+    const players: any[] = [];
+
+    for (let i = 0; i < playerCount; i++) {
+      const playerArray = playersData?.[i]?.player;
+      if (!playerArray) continue;
+
+      // Parse player props
+      const props = playerArray[0] || [];
+      const merged: Record<string, any> = {};
+
+      for (const prop of props) {
+        if (prop && typeof prop === 'object') {
+          Object.assign(merged, prop);
+        }
+      }
+
+      players.push({
+        playerKey: merged.player_key || '',
+        name: merged.name?.full || 'Unknown',
+        firstName: merged.name?.first || '',
+        lastName: merged.name?.last || '',
+        position: merged.display_position || merged.primary_position || '',
+        team: merged.editorial_team_abbr || '',
+        teamFull: merged.editorial_team_full_name || '',
+        imageUrl: merged.image_url || merged.headshot?.url || '',
+        status: merged.status || '',
+        percentOwned: parseFloat(merged.percent_owned?.value) || 0,
+        isUndroppable: merged.is_undroppable === '1',
+      });
+    }
+
+    res.json({
+      query: q,
+      players,
+      count: players.length,
+    });
+  } catch (error: any) {
+    console.error('Player search error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to search players',
+    });
+  }
+});
+
+/**
+ * Compare multiple players side-by-side
+ * Accepts 2-4 player keys, returns detailed stat comparison
+ */
+router.post('/leagues/:league_key/players/compare', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { playerKeys } = req.body;
+
+    // Validate input
+    if (!Array.isArray(playerKeys) || playerKeys.length < 2 || playerKeys.length > 4) {
+      return res.status(400).json({ error: 'Must provide 2-4 player keys for comparison' });
+    }
+
+    // Get league settings to know which categories to compare
+    const settingsData = await makeYahooRequest(user.id, `/league/${league_key}/settings`);
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+
+    // Get scoring categories (filter out display-only stats)
+    const statCategories = (settings?.stat_categories?.stats || [])
+      .map((s: any) => s.stat)
+      .filter((stat: any) => !stat?.is_only_display_stat);
+
+    // Fetch all player stats in parallel
+    const playerPromises = playerKeys.map((playerKey: string) =>
+      makeYahooRequest(user.id, `/player/${playerKey}/stats`)
+    );
+
+    const playerResults = await Promise.all(playerPromises);
+
+    // Parse player data
+    const players: PlayerStats[] = [];
+
+    for (const result of playerResults) {
+      const playerArray = result?.fantasy_content?.player;
+      if (!playerArray) continue;
+
+      const parsed = parseYahooPlayerData(playerArray);
+      if (parsed) {
+        players.push(parsed);
+      }
+    }
+
+    if (players.length < 2) {
+      return res.status(400).json({ error: 'Could not retrieve data for enough players' });
+    }
+
+    // Compare players
+    const comparison = comparePlayers(players, statCategories);
+
+    res.json(comparison);
+  } catch (error: any) {
+    console.error('Player comparison error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to compare players',
     });
   }
 });
