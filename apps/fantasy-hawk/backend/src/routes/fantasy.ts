@@ -26,6 +26,14 @@ import {
   filterPlayersByName,
   type PlayerStats,
 } from '../services/playerComparison';
+import {
+  parseYahooPlayer,
+  analyzeTeamNeeds,
+  generateRecommendations,
+  identifyDropCandidates,
+  calculateLeagueAverages,
+  type PlayerStats as WaiverPlayerStats,
+} from '../services/waiverAnalysis';
 
 const router = Router();
 
@@ -3050,6 +3058,281 @@ router.post('/leagues/:league_key/players/compare', authenticate, async (req: Re
     console.error('Player comparison error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to compare players',
+    });
+  }
+});
+
+// ============================================================
+// Waiver Advisor Endpoints
+// ============================================================
+
+/**
+ * Get waiver wire recommendations based on team needs
+ */
+router.get('/leagues/:league_key/waiver/recommendations', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { position, limit = '10' } = req.query;
+
+    // Fetch data in parallel
+    const [settingsData, scoreboardData, rostersData, faData, teamsStatsData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams/roster/players/stats`),
+      makeYahooRequest(user.id, `/league/${league_key}/players;status=FA;count=50;sort=PTS`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams/stats`),
+    ]);
+
+    // Get stat categories
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const statCategories = (settings?.stat_categories?.stats || [])
+      .map((s: any) => s.stat)
+      .filter((stat: any) => stat && !stat.is_only_display_stat);
+
+    // Get week dates for schedule
+    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+    const firstMatchup = scoreboard?.['0']?.matchups?.['0']?.matchup;
+    const weekStart = firstMatchup?.week_start;
+    const weekEnd = firstMatchup?.week_end;
+
+    // Get games per team for the week
+    let gamesPerTeam: Record<string, number> = {};
+    if (weekStart && weekEnd) {
+      try {
+        const scheduleAnalysis = await ballDontLieService.getScheduleAnalysis(weekStart, weekEnd);
+        // Extract just the total count from each team's schedule
+        for (const [team, data] of Object.entries(scheduleAnalysis.gamesPerTeam || {})) {
+          gamesPerTeam[team] = data.total;
+        }
+      } catch (err) {
+        console.warn('Could not fetch schedule:', err);
+      }
+    }
+
+    // Parse user's roster stats
+    const teams = rostersData?.fantasy_content?.league?.[1]?.teams;
+    const teamCount = teams?.count || 0;
+    let userTeamStats: Record<string, number> = {};
+    let userRoster: WaiverPlayerStats[] = [];
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teams?.[i]?.team;
+      if (!team) continue;
+
+      const teamProps = team[0] || [];
+      let isUserTeam = false;
+      for (const prop of teamProps) {
+        if (prop?.is_owned_by_current_login === 1) {
+          isUserTeam = true;
+          break;
+        }
+      }
+
+      if (isUserTeam) {
+        // Get team stats
+        const teamStatsArr = team[1]?.team_stats?.stats || [];
+        for (const statEntry of teamStatsArr) {
+          if (statEntry?.stat) {
+            const statId = statEntry.stat.stat_id?.toString();
+            const value = parseFloat(statEntry.stat.value) || 0;
+            if (statId) userTeamStats[statId] = value;
+          }
+        }
+
+        // Parse roster
+        const roster = team[1]?.roster?.['0']?.players;
+        if (roster) {
+          const playerCount = roster.count || 0;
+          for (let p = 0; p < playerCount; p++) {
+            const player = roster[p]?.player;
+            if (player) {
+              const parsed = parseYahooPlayer(player);
+              if (parsed) userRoster.push(parsed);
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    // Calculate league averages from all teams
+    const allTeamStats: Record<string, number>[] = [];
+    const teamsData = teamsStatsData?.fantasy_content?.league?.[1]?.teams;
+    const allTeamCount = teamsData?.count || 0;
+
+    for (let i = 0; i < allTeamCount; i++) {
+      const team = teamsData?.[i]?.team;
+      if (!team) continue;
+
+      const teamStatsArr = team[1]?.team_stats?.stats || [];
+      const stats: Record<string, number> = {};
+      for (const statEntry of teamStatsArr) {
+        if (statEntry?.stat) {
+          const statId = statEntry.stat.stat_id?.toString();
+          const value = parseFloat(statEntry.stat.value) || 0;
+          if (statId) stats[statId] = value;
+        }
+      }
+      allTeamStats.push(stats);
+    }
+
+    const leagueAverages = calculateLeagueAverages(allTeamStats);
+
+    // Analyze team needs
+    const teamNeeds = analyzeTeamNeeds(userTeamStats, leagueAverages, statCategories);
+
+    // Parse free agents
+    const freeAgents: WaiverPlayerStats[] = [];
+    const faPlayers = faData?.fantasy_content?.league?.[1]?.players;
+    const faCount = faPlayers?.count || 0;
+
+    for (let i = 0; i < faCount; i++) {
+      const player = faPlayers?.[i]?.player;
+      if (player) {
+        const parsed = parseYahooPlayer(player);
+        if (parsed) freeAgents.push(parsed);
+      }
+    }
+
+    // Generate recommendations
+    const positionFilter = position && typeof position === 'string' ? position : undefined;
+    const recommendations = generateRecommendations(
+      freeAgents,
+      teamNeeds,
+      statCategories,
+      gamesPerTeam,
+      parseInt(limit as string, 10) || 10,
+      positionFilter
+    );
+
+    res.json({
+      recommendations,
+      teamNeeds,
+      weekStart,
+      weekEnd,
+      rosterSize: userRoster.length,
+      freeAgentsAvailable: freeAgents.length,
+    });
+  } catch (error: any) {
+    console.error('Waiver recommendations error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get waiver recommendations',
+    });
+  }
+});
+
+/**
+ * Get drop suggestions from user's roster
+ */
+router.get('/leagues/:league_key/waiver/drops', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { limit = '5' } = req.query;
+
+    // Fetch data in parallel
+    const [settingsData, rostersData, teamsStatsData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams/roster/players/stats`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams/stats`),
+    ]);
+
+    // Get stat categories
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const statCategories = (settings?.stat_categories?.stats || [])
+      .map((s: any) => s.stat)
+      .filter((stat: any) => stat && !stat.is_only_display_stat);
+
+    // Parse user's roster
+    const teams = rostersData?.fantasy_content?.league?.[1]?.teams;
+    const teamCount = teams?.count || 0;
+    let userTeamStats: Record<string, number> = {};
+    let userRoster: WaiverPlayerStats[] = [];
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teams?.[i]?.team;
+      if (!team) continue;
+
+      const teamProps = team[0] || [];
+      let isUserTeam = false;
+      for (const prop of teamProps) {
+        if (prop?.is_owned_by_current_login === 1) {
+          isUserTeam = true;
+          break;
+        }
+      }
+
+      if (isUserTeam) {
+        // Get team stats
+        const teamStatsArr = team[1]?.team_stats?.stats || [];
+        for (const statEntry of teamStatsArr) {
+          if (statEntry?.stat) {
+            const statId = statEntry.stat.stat_id?.toString();
+            const value = parseFloat(statEntry.stat.value) || 0;
+            if (statId) userTeamStats[statId] = value;
+          }
+        }
+
+        // Parse roster
+        const roster = team[1]?.roster?.['0']?.players;
+        if (roster) {
+          const playerCount = roster.count || 0;
+          for (let p = 0; p < playerCount; p++) {
+            const player = roster[p]?.player;
+            if (player) {
+              const parsed = parseYahooPlayer(player);
+              if (parsed) userRoster.push(parsed);
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    // Calculate league averages
+    const allTeamStats: Record<string, number>[] = [];
+    const teamsData = teamsStatsData?.fantasy_content?.league?.[1]?.teams;
+    const allTeamCount = teamsData?.count || 0;
+
+    for (let i = 0; i < allTeamCount; i++) {
+      const team = teamsData?.[i]?.team;
+      if (!team) continue;
+
+      const teamStatsArr = team[1]?.team_stats?.stats || [];
+      const stats: Record<string, number> = {};
+      for (const statEntry of teamStatsArr) {
+        if (statEntry?.stat) {
+          const statId = statEntry.stat.stat_id?.toString();
+          const value = parseFloat(statEntry.stat.value) || 0;
+          if (statId) stats[statId] = value;
+        }
+      }
+      allTeamStats.push(stats);
+    }
+
+    const leagueAverages = calculateLeagueAverages(allTeamStats);
+
+    // Analyze team needs
+    const teamNeeds = analyzeTeamNeeds(userTeamStats, leagueAverages, statCategories);
+
+    // Find drop candidates
+    const dropCandidates = identifyDropCandidates(
+      userRoster,
+      teamNeeds,
+      statCategories,
+      parseInt(limit as string, 10) || 5
+    );
+
+    res.json({
+      dropCandidates,
+      teamNeeds,
+      rosterSize: userRoster.length,
+    });
+  } catch (error: any) {
+    console.error('Waiver drops error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get drop suggestions',
     });
   }
 });
