@@ -81,6 +81,23 @@ export const SELECTORS = {
     send: '[data-testid="chat-send"]',
   },
 
+  // Trade Analyzer
+  trade: {
+    tab: '[data-testid="trade-tab"]',
+    page: '[data-testid="trade-analyzer-page"]',
+    noLeague: '[data-testid="trade-no-league"]',
+    builder: '[data-testid="trade-builder"]',
+    partnerSelect: '[data-testid="trade-partner-select"]',
+    givePanel: '[data-testid="trade-builder-give-panel"]',
+    receivePanel: '[data-testid="trade-builder-receive-panel"]',
+    analyzeBtn: '[data-testid="analyze-trade-btn"]',
+    resetBtn: '[data-testid="trade-reset-button"]',
+    analysisResult: '[data-testid="trade-analysis-result"]',
+    fairnessMeter: '[data-testid="trade-fairness-meter"]',
+    categoryImpact: '[data-testid="trade-category-impact"]',
+    tradeImpact: '[data-testid="trade-impact"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
