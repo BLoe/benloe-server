@@ -4,6 +4,7 @@ import { Dashboard } from './components/Dashboard';
 import { useAuth } from './hooks/useAuth';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { api } from './services/api';
+import { LearningModeProvider } from './contexts/LearningModeContext';
 
 // Helper to parse Yahoo's complex JSON structure for leagues
 function parseLeaguesFromResponse(data: any): any[] {
@@ -78,6 +79,7 @@ function App() {
   const isLoading = authLoading || leaguesLoading;
 
   return (
+    <LearningModeProvider>
     <div className="min-h-screen bg-court-deep">
       <Header
         leagues={leagues}
@@ -136,6 +138,7 @@ function App() {
         )}
       </main>
     </div>
+    </LearningModeProvider>
   );
 }
 

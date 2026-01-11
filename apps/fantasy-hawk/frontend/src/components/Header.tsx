@@ -1,4 +1,5 @@
 import { ConnectButton } from './ConnectButton';
+import { LearningModeToggle } from './learning/LearningModeToggle';
 
 interface HeaderProps {
   leagues?: any[];
@@ -45,7 +46,10 @@ export function Header({ leagues = [], selectedLeague, onLeagueChange }: HeaderP
             )}
           </div>
 
-          <ConnectButton />
+          <div className="flex items-center gap-2">
+            <LearningModeToggle compact />
+            <ConnectButton />
+          </div>
         </div>
 
         {/* Mobile league selector */}
