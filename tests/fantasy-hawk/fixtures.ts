@@ -170,6 +170,17 @@ export const SELECTORS = {
     standingsTable: '[data-testid="outlook-standings-table"]',
   },
 
+  // Learning Mode
+  learning: {
+    toggle: '[data-testid="learning-mode-toggle"]',
+    tooltipTrigger: '[data-testid="tooltip-trigger"]',
+    tooltip: '[data-testid="tooltip"]',
+    glossaryButton: '[data-testid="glossary-button"]',
+    glossary: '[data-testid="glossary"]',
+    glossarySearch: '[data-testid="glossary-search"]',
+    glossaryDefinition: '[data-testid="glossary-definition"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',

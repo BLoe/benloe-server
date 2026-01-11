@@ -44,7 +44,7 @@ interface PlayoffOddsProps {
   season: SeasonInfo;
 }
 
-export function PlayoffOdds({ playoffOdds, userTeam, raceStatus, season }: PlayoffOddsProps) {
+export function PlayoffOdds({ playoffOdds, userTeam, raceStatus: _raceStatus, season }: PlayoffOddsProps) {
   // Get odds gauge color
   const getOddsColor = (odds: number): string => {
     if (odds >= 80) return 'text-green-400';
@@ -61,11 +61,7 @@ export function PlayoffOdds({ playoffOdds, userTeam, raceStatus, season }: Playo
   };
 
   // Sort teams into categories
-  const clinchTeams = playoffOdds.filter(t => t.clinched);
   const bubbleTeams = playoffOdds.filter(t => !t.clinched && !t.eliminated && t.playoffOdds >= 20 && t.playoffOdds <= 80);
-  const eliminatedTeams = playoffOdds.filter(t => t.eliminated);
-  const safeTeams = playoffOdds.filter(t => !t.clinched && !t.eliminated && t.playoffOdds > 80);
-  const longShotTeams = playoffOdds.filter(t => !t.clinched && !t.eliminated && t.playoffOdds < 20);
 
   // Find user's competitors (teams within 2 spots of user)
   const userRank = userTeam?.currentRank || 0;
@@ -77,7 +73,6 @@ export function PlayoffOdds({ playoffOdds, userTeam, raceStatus, season }: Playo
   );
 
   // Calculate what-if scenarios
-  const avgWinsPerWeek = 5; // Typical category wins per week
   const userCurrentOdds = userTeam?.playoffOdds || 0;
 
   // Simple projections for winning/losing the week

@@ -94,7 +94,7 @@ interface OutlookDashboardProps {
 
 export function OutlookDashboard({ standingsData, playoffsData, onRefresh }: OutlookDashboardProps) {
   const { season, projections, userTeam, insights } = standingsData;
-  const { playoffOdds, userTeam: userPlayoff, raceStatus } = playoffsData;
+  const { playoffOdds, raceStatus } = playoffsData;
 
   // Calculate season progress percentage
   const seasonProgress = ((season.currentWeek - 1) / season.totalWeeks) * 100;

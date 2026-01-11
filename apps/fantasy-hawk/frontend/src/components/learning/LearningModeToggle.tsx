@@ -1,4 +1,4 @@
-import { GraduationCap, HelpCircle } from 'lucide-react';
+import { GraduationCap } from 'lucide-react';
 import { useLearningMode } from '../../contexts/LearningModeContext';
 
 interface LearningModeToggleProps {
