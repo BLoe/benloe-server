@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { LoadingSpinner } from './LoadingSpinner';
 import { SettingsBreakdown } from './league/SettingsBreakdown';
-import { BarChart3, TrendingUp, Lightbulb } from 'lucide-react';
+import { CustomRankings } from './league/CustomRankings';
+import { BarChart3, TrendingUp, Lightbulb, ListOrdered } from 'lucide-react';
 
 interface LeagueInsightsProps {
   selectedLeague: string | null;
@@ -65,7 +66,7 @@ export function LeagueInsights({ selectedLeague }: LeagueInsightsProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<InsightsData | null>(null);
-  const [activeTab, setActiveTab] = useState<'settings' | 'analysis'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'analysis' | 'rankings'>('settings');
 
   useEffect(() => {
     if (selectedLeague) {
@@ -168,6 +169,17 @@ export function LeagueInsights({ selectedLeague }: LeagueInsightsProps) {
           }`}
         >
           Strategy Analysis
+        </button>
+        <button
+          onClick={() => setActiveTab('rankings')}
+          className={`px-4 py-2 rounded-t-lg transition-colors flex items-center gap-2 ${
+            activeTab === 'rankings'
+              ? 'bg-court-base text-gray-100 border-b-2 border-hawk-teal'
+              : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          <ListOrdered className="w-4 h-4" />
+          Custom Rankings
         </button>
       </div>
 
@@ -273,6 +285,11 @@ export function LeagueInsights({ selectedLeague }: LeagueInsightsProps) {
             </div>
           )}
         </div>
+      )}
+
+      {/* Rankings Tab Content */}
+      {activeTab === 'rankings' && selectedLeague && (
+        <CustomRankings selectedLeague={selectedLeague} />
       )}
 
       {/* Refresh Button */}
