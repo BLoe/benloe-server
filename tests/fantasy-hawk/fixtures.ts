@@ -136,6 +136,24 @@ export const SELECTORS = {
     rankingsPositionFilter: '[data-testid="league-rankings-position-filter"]',
   },
 
+  // Schedule Planner
+  schedule: {
+    tab: '[data-testid="schedule-tab"]',
+    page: '[data-testid="schedule-planner-page"]',
+    noLeague: '[data-testid="schedule-no-league"]',
+    error: '[data-testid="schedule-error"]',
+    empty: '[data-testid="schedule-empty"]',
+    heatmap: '[data-testid="schedule-heatmap"]',
+    calendar: '[data-testid="schedule-calendar"]',
+    weeklyView: '[data-testid="schedule-weekly-view"]',
+    rosterStrength: '[data-testid="schedule-roster-strength"]',
+    playoffAnalysis: '[data-testid="schedule-playoff-analysis"]',
+    playoffError: '[data-testid="schedule-playoff-error"]',
+    rosterAnalysis: '[data-testid="schedule-roster-analysis"]',
+    bestTeams: '[data-testid="schedule-best-teams"]',
+    worstTeams: '[data-testid="schedule-worst-teams"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import { LoadingSpinner } from '../LoadingSpinner';
-import { Trophy, Star, TrendingUp, TrendingDown, Users, Calendar } from 'lucide-react';
+import { Trophy, Star, TrendingUp, TrendingDown, Users } from 'lucide-react';
 
 interface PlayoffAnalysisProps {
   selectedLeague: string;

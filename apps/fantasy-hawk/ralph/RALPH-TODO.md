@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 31
+- **Completed:** 32
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 20
+- **Remaining:** 19
 
 ---
 
@@ -91,7 +91,7 @@
 | 701 | Schedule Planner - Season schedule API | COMPLETE | [701-schedule-api.md](tasks/701-schedule-api.md) |
 | 702 | Schedule Planner - Calendar view UI | COMPLETE | [702-schedule-calendar.md](tasks/702-schedule-calendar.md) |
 | 703 | Schedule Planner - Playoff week analysis | COMPLETE | [703-schedule-playoffs.md](tasks/703-schedule-playoffs.md) |
-| 704 | Schedule Planner - E2E tests | NOT_STARTED | [704-schedule-tests.md](tasks/704-schedule-tests.md) |
+| 704 | Schedule Planner - E2E tests | COMPLETE | [704-schedule-tests.md](tasks/704-schedule-tests.md) |
 
 ### Feature 10: Season Outlook
 
