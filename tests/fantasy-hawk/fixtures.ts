@@ -98,6 +98,20 @@ export const SELECTORS = {
     tradeImpact: '[data-testid="trade-impact"]',
   },
 
+  // Punt Engine
+  punt: {
+    tab: '[data-testid="punt-tab"]',
+    page: '[data-testid="punt-page"]',
+    noLeague: '[data-testid="punt-no-league"]',
+    error: '[data-testid="punt-error"]',
+    empty: '[data-testid="punt-empty"]',
+    analyzer: '[data-testid="punt-analyzer"]',
+    currentBuild: '[data-testid="punt-current-build"]',
+    categoryRanks: '[data-testid="punt-category-ranks"]',
+    archetypes: '[data-testid="punt-archetypes"]',
+    archetypesPanel: '[data-testid="archetypes-panel"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
