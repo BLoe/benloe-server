@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 22
+- **Completed:** 23
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 29
+- **Remaining:** 28
 
 ---
 
@@ -68,7 +68,7 @@
 |----|------|--------|--------|
 | 501 | Punt Engine - Analysis API | COMPLETE | [501-punt-api.md](tasks/501-punt-api.md) |
 | 502 | Punt Engine - Strategy analyzer UI | COMPLETE | [502-punt-analyzer.md](tasks/502-punt-analyzer.md) |
-| 503 | Punt Engine - Build archetypes | NOT_STARTED | [503-punt-archetypes.md](tasks/503-punt-archetypes.md) |
+| 503 | Punt Engine - Build archetypes | COMPLETE | [503-punt-archetypes.md](tasks/503-punt-archetypes.md) |
 | 504 | Punt Engine - E2E tests | NOT_STARTED | [504-punt-tests.md](tasks/504-punt-tests.md) |
 
 ### Feature 7: League-Specific Insights

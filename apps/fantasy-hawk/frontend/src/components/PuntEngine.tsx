@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { LoadingSpinner } from './LoadingSpinner';
 import { StrategyAnalyzer } from './punt/StrategyAnalyzer';
+import { Archetypes } from './punt/Archetypes';
 import { Target, HelpCircle } from 'lucide-react';
 
 interface PuntEngineProps {
@@ -161,10 +162,15 @@ export function PuntEngine({ selectedLeague }: PuntEngineProps) {
 
       {/* Analysis Content */}
       {analysis ? (
-        <StrategyAnalyzer
-          analysis={analysis}
-          totalTeams={analysis.totalTeams || 12}
-        />
+        <>
+          <StrategyAnalyzer
+            analysis={analysis}
+            totalTeams={analysis.totalTeams || 12}
+          />
+
+          {/* Build Archetypes Guide */}
+          <Archetypes archetypes={analysis.archetypes} />
+        </>
       ) : (
         <div className="card text-center py-12" data-testid="punt-empty">
           <Target className="w-12 h-12 text-gray-600 mx-auto mb-4" />
