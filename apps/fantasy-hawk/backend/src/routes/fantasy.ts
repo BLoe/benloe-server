@@ -17,6 +17,7 @@ import {
 import {
   parseLeagueSettings,
   analyzeLeague,
+  generateCustomRankings,
   LeagueCategory,
 } from '../services/leagueInsights';
 
@@ -2108,6 +2109,83 @@ router.get('/leagues/:league_key/insights/analysis', authenticate, async (req: R
     console.error('League insights analysis error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to analyze league',
+    });
+  }
+});
+
+/**
+ * Get custom player rankings based on league settings
+ * Rankings are weighted by actual league categories
+ */
+router.get('/leagues/:league_key/insights/rankings', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const position = req.query.position as string | undefined;
+
+    // Check cache
+    const cacheKey = `rankings:${league_key}`;
+    const cached = insightsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < INSIGHTS_CACHE_TTL) {
+      let result = cached.data;
+      // Apply position filter if provided
+      if (position && position !== 'All') {
+        result = {
+          ...result,
+          players: result.players.filter((p: any) => p.position === position),
+        };
+      }
+      return res.json(result);
+    }
+
+    // Get league settings
+    const [settingsData, leagueData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}`),
+    ]);
+
+    const settingsContent = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
+    const statCategories = settingsContent?.stat_categories?.stats || [];
+
+    // Parse categories
+    const categories: LeagueCategory[] = statCategories.map((s: any) => ({
+      statId: s.stat?.stat_id?.toString() || '',
+      name: s.stat?.name || '',
+      displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
+      abbr: s.stat?.abbr || '',
+    })).filter((c: LeagueCategory) => c.statId);
+
+    // Get league type and team count
+    const leagueType = leagueInfo.scoring_type || 'head-to-head';
+    const numTeams = parseInt(leagueInfo.num_teams || '12', 10);
+
+    // Parse settings and generate rankings
+    const settings = parseLeagueSettings(categories, leagueType, numTeams);
+    const rankings = generateCustomRankings(categories, settings);
+
+    const result = {
+      leagueName: leagueInfo.name || 'Unknown League',
+      ...rankings,
+    };
+
+    // Cache the result
+    insightsCache.set(cacheKey, { data: result, timestamp: Date.now() });
+
+    // Apply position filter if provided
+    let filteredResult = result;
+    if (position && position !== 'All') {
+      filteredResult = {
+        ...result,
+        players: result.players.filter(p => p.position === position),
+      };
+    }
+
+    res.json(filteredResult);
+  } catch (error: any) {
+    console.error('League insights rankings error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get league rankings',
     });
   }
 });
