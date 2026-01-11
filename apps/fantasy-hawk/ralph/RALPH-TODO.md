@@ -9,10 +9,10 @@
 ## Progress Summary
 
 - **Total Tasks:** 51
-- **Completed:** 24
+- **Completed:** 25
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 27
+- **Remaining:** 26
 
 ---
 
@@ -75,7 +75,7 @@
 
 | ID | Task | Status | Ticket |
 |----|------|--------|--------|
-| 601 | League Insights - Analysis API | NOT_STARTED | [601-league-api.md](tasks/601-league-api.md) |
+| 601 | League Insights - Analysis API | COMPLETE | [601-league-api.md](tasks/601-league-api.md) |
 | 602 | League Insights - Settings breakdown UI | NOT_STARTED | [602-league-settings.md](tasks/602-league-settings.md) |
 | 603 | League Insights - Custom rankings | NOT_STARTED | [603-league-rankings.md](tasks/603-league-rankings.md) |
 | 604 | League Insights - E2E tests | NOT_STARTED | [604-league-tests.md](tasks/604-league-tests.md) |

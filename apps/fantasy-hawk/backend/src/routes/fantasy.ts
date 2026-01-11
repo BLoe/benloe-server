@@ -14,6 +14,11 @@ import {
   analyzePuntStrategy,
   getLeaguePuntStrategies,
 } from '../services/puntAnalysis';
+import {
+  parseLeagueSettings,
+  analyzeLeague,
+  LeagueCategory,
+} from '../services/leagueInsights';
 
 const router = Router();
 
@@ -1976,6 +1981,133 @@ router.get('/leagues/:league_key/punt/strategies', authenticate, async (req: Req
     console.error('Punt strategies error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to get punt strategies',
+    });
+  }
+});
+
+/**
+ * ===== LEAGUE INSIGHTS ENDPOINTS =====
+ */
+
+// Simple in-memory cache for league insights (settings rarely change)
+const insightsCache = new Map<string, { data: any; timestamp: number }>();
+const INSIGHTS_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Get parsed league settings summary
+ * Identifies non-standard settings and highlights unusual category weights
+ */
+router.get('/leagues/:league_key/insights/settings', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Check cache
+    const cacheKey = `settings:${league_key}`;
+    const cached = insightsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < INSIGHTS_CACHE_TTL) {
+      return res.json(cached.data);
+    }
+
+    // Get league settings and league info
+    const [settingsData, leagueData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}`),
+    ]);
+
+    const settingsContent = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
+    const statCategories = settingsContent?.stat_categories?.stats || [];
+
+    // Parse categories
+    const categories: LeagueCategory[] = statCategories.map((s: any) => ({
+      statId: s.stat?.stat_id?.toString() || '',
+      name: s.stat?.name || '',
+      displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
+      abbr: s.stat?.abbr || '',
+    })).filter((c: LeagueCategory) => c.statId);
+
+    // Get league type and team count
+    const leagueType = leagueInfo.scoring_type || 'head-to-head';
+    const numTeams = parseInt(leagueInfo.num_teams || '12', 10);
+
+    // Parse settings
+    const settingsSummary = parseLeagueSettings(categories, leagueType, numTeams);
+
+    const result = {
+      leagueName: leagueInfo.name || 'Unknown League',
+      season: leagueInfo.season || '',
+      ...settingsSummary,
+    };
+
+    // Cache the result
+    insightsCache.set(cacheKey, { data: result, timestamp: Date.now() });
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('League insights settings error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get league insights',
+    });
+  }
+});
+
+/**
+ * Get full league analysis
+ * Category importance rankings, positional scarcity, and exploitable edges
+ */
+router.get('/leagues/:league_key/insights/analysis', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Check cache
+    const cacheKey = `analysis:${league_key}`;
+    const cached = insightsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < INSIGHTS_CACHE_TTL) {
+      return res.json(cached.data);
+    }
+
+    // Get league settings and league info
+    const [settingsData, leagueData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}`),
+    ]);
+
+    const settingsContent = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
+    const statCategories = settingsContent?.stat_categories?.stats || [];
+
+    // Parse categories
+    const categories: LeagueCategory[] = statCategories.map((s: any) => ({
+      statId: s.stat?.stat_id?.toString() || '',
+      name: s.stat?.name || '',
+      displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
+      abbr: s.stat?.abbr || '',
+    })).filter((c: LeagueCategory) => c.statId);
+
+    // Get league type and team count
+    const leagueType = leagueInfo.scoring_type || 'head-to-head';
+    const numTeams = parseInt(leagueInfo.num_teams || '12', 10);
+
+    // Run full analysis
+    const { settings, analysis } = analyzeLeague(categories, leagueType, numTeams);
+
+    const result = {
+      leagueName: leagueInfo.name || 'Unknown League',
+      season: leagueInfo.season || '',
+      settings,
+      analysis,
+    };
+
+    // Cache the result
+    insightsCache.set(cacheKey, { data: result, timestamp: Date.now() });
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('League insights analysis error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to analyze league',
     });
   }
 });
