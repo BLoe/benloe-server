@@ -87,6 +87,11 @@ export const api = {
       fetchApi(`/fantasy/leagues/${leagueKey}/schedule/roster${season ? `?season=${season}` : ''}`),
     getPlayoffSchedule: (leagueKey: string) =>
       fetchApi(`/fantasy/leagues/${leagueKey}/schedule/playoffs`),
+    // Season Outlook endpoints
+    getOutlookStandings: (leagueKey: string) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/outlook/standings`),
+    getOutlookPlayoffs: (leagueKey: string) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/outlook/playoffs`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>

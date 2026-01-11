@@ -154,6 +154,22 @@ export const SELECTORS = {
     worstTeams: '[data-testid="schedule-worst-teams"]',
   },
 
+  // Season Outlook
+  outlook: {
+    tab: '[data-testid="outlook-tab"]',
+    page: '[data-testid="season-outlook-page"]',
+    noLeague: '[data-testid="outlook-no-league"]',
+    error: '[data-testid="outlook-error"]',
+    empty: '[data-testid="outlook-empty"]',
+    dashboard: '[data-testid="outlook-dashboard"]',
+    currentStanding: '[data-testid="outlook-current-standing"]',
+    projectedFinish: '[data-testid="outlook-projected-finish"]',
+    trend: '[data-testid="outlook-trend"]',
+    seasonProgress: '[data-testid="outlook-season-progress"]',
+    playoffOdds: '[data-testid="outlook-playoff-odds"]',
+    standingsTable: '[data-testid="outlook-standings-table"]',
+  },
+
   // Loading states
   loadingSpinner: '[data-testid="loading"]',
   errorMessage: '[data-testid="error"]',
