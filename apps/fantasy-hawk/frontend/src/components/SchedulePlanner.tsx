@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CalendarView } from './schedule/CalendarView';
-import { Calendar, Users, TrendingUp } from 'lucide-react';
+import { PlayoffAnalysis } from './schedule/PlayoffAnalysis';
+import { Calendar, Users, TrendingUp, Trophy } from 'lucide-react';
 
 interface SchedulePlannerProps {
   selectedLeague: string | null;
@@ -41,7 +42,7 @@ interface RosterSchedule {
   playerPlayoffGames: Record<string, number>;
 }
 
-type ViewType = 'season' | 'roster';
+type ViewType = 'season' | 'roster' | 'playoffs';
 
 export function SchedulePlanner({ selectedLeague }: SchedulePlannerProps) {
   const [loading, setLoading] = useState(false);
@@ -65,10 +66,11 @@ export function SchedulePlanner({ selectedLeague }: SchedulePlannerProps) {
       if (viewType === 'season') {
         const data = await api.fantasy.getSeasonSchedule();
         setSeasonSchedule(data as SeasonSchedule);
-      } else {
+      } else if (viewType === 'roster') {
         const data = await api.fantasy.getRosterSchedule(selectedLeague!);
         setRosterSchedule(data as RosterSchedule);
       }
+      // Playoffs view loads its own data via PlayoffAnalysis component
     } catch (err: any) {
       console.error('Failed to load schedule:', err);
       setError(err.message || 'Failed to load schedule data');
@@ -154,114 +156,135 @@ export function SchedulePlanner({ selectedLeague }: SchedulePlannerProps) {
             <Users className="w-4 h-4" />
             My Roster
           </button>
+          <button
+            onClick={() => setViewType('playoffs')}
+            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-colors ${
+              viewType === 'playoffs'
+                ? 'bg-hawk-orange text-gray-900'
+                : 'bg-court-base text-gray-300 hover:bg-court-surface'
+            }`}
+          >
+            <Trophy className="w-4 h-4" />
+            Playoffs
+          </button>
         </div>
       </div>
 
-      {/* Season Info */}
-      <div className="card bg-court-base/50">
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="text-gray-400">Season:</span>
-            <span className="text-gray-100 ml-2 font-medium">
-              {currentSchedule.season}-{currentSchedule.season + 1}
-            </span>
-          </div>
-          {seasonSchedule && (
-            <>
-              <div>
-                <span className="text-gray-400">Total Weeks:</span>
-                <span className="text-gray-100 ml-2 font-medium">
-                  {seasonSchedule.totalWeeks}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-400">Playoff Weeks:</span>
-                <span className="text-hawk-orange ml-2 font-medium">
-                  {seasonSchedule.playoffWeeks.join(', ')}
-                </span>
-              </div>
-            </>
-          )}
-          {viewType === 'roster' && rosterSchedule && (
-            <div>
-              <span className="text-gray-400">Playoff Games:</span>
-              <span className="text-hawk-teal ml-2 font-medium">
-                {rosterSchedule.playoffGamesTotal}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Calendar View */}
-      <CalendarView
-        weeks={viewType === 'season'
-          ? seasonSchedule?.weeks || []
-          : rosterSchedule?.weeks.map(w => ({
-              weekNumber: w.weekNumber,
-              startDate: w.startDate,
-              endDate: w.endDate,
-              gameCount: w.totalGames,
-              gamesPerTeam: w.gamesByTeam,
-            })) || []
-        }
-        teams={seasonSchedule?.teams || []}
-        playoffWeeks={currentSchedule.playoffWeeks}
-        selectedWeek={selectedWeek}
-        onWeekSelect={setSelectedWeek}
-        viewType={viewType}
-        rosterTeams={rosterSchedule?.rosterTeams}
-      />
-
-      {/* Roster Playoff Analysis (only in roster view) */}
-      {viewType === 'roster' && rosterSchedule && (
-        <div className="card" data-testid="schedule-roster-strength">
-          <h3 className="font-semibold text-gray-100 mb-4 flex items-center gap-2">
-            <Users className="w-5 h-5 text-hawk-teal" />
-            Playoff Games by Player
-          </h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {rosterSchedule.players
-              .sort((a, b) =>
-                (rosterSchedule.playerPlayoffGames[b.name] || 0) -
-                (rosterSchedule.playerPlayoffGames[a.name] || 0)
-              )
-              .map((player, index) => {
-                const games = rosterSchedule.playerPlayoffGames[player.name] || 0;
-                const isLow = games < 9; // Typically 3 weeks * 3 games = 9 minimum expected
-                return (
-                  <div
-                    key={index}
-                    className={`p-3 rounded-lg ${
-                      isLow ? 'bg-red-500/10 border border-red-500/30' : 'bg-court-base'
-                    }`}
-                    data-testid={`schedule-roster-player-${index}`}
-                  >
-                    <div className="font-medium text-gray-200 truncate">
-                      {player.name}
-                    </div>
-                    <div className="flex items-center justify-between mt-1">
-                      <span className="text-xs text-gray-500">{player.team}</span>
-                      <span className={`font-bold ${isLow ? 'text-red-400' : 'text-hawk-teal'}`}>
-                        {games} games
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-        </div>
+      {/* Playoffs View */}
+      {viewType === 'playoffs' && (
+        <PlayoffAnalysis selectedLeague={selectedLeague} />
       )}
 
-      {/* Refresh Button */}
-      <div className="text-center">
-        <button
-          onClick={loadScheduleData}
-          className="text-sm text-gray-400 hover:text-gray-200 underline"
-        >
-          Refresh Schedule
-        </button>
-      </div>
+      {/* Season/Roster Views */}
+      {viewType !== 'playoffs' && (
+        <>
+          {/* Season Info */}
+          <div className="card bg-court-base/50">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-gray-400">Season:</span>
+                <span className="text-gray-100 ml-2 font-medium">
+                  {currentSchedule.season}-{currentSchedule.season + 1}
+                </span>
+              </div>
+              {seasonSchedule && (
+                <>
+                  <div>
+                    <span className="text-gray-400">Total Weeks:</span>
+                    <span className="text-gray-100 ml-2 font-medium">
+                      {seasonSchedule.totalWeeks}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Playoff Weeks:</span>
+                    <span className="text-hawk-orange ml-2 font-medium">
+                      {seasonSchedule.playoffWeeks.join(', ')}
+                    </span>
+                  </div>
+                </>
+              )}
+              {viewType === 'roster' && rosterSchedule && (
+                <div>
+                  <span className="text-gray-400">Playoff Games:</span>
+                  <span className="text-hawk-teal ml-2 font-medium">
+                    {rosterSchedule.playoffGamesTotal}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Calendar View */}
+          <CalendarView
+            weeks={viewType === 'season'
+              ? seasonSchedule?.weeks || []
+              : rosterSchedule?.weeks.map(w => ({
+                  weekNumber: w.weekNumber,
+                  startDate: w.startDate,
+                  endDate: w.endDate,
+                  gameCount: w.totalGames,
+                  gamesPerTeam: w.gamesByTeam,
+                })) || []
+            }
+            teams={seasonSchedule?.teams || []}
+            playoffWeeks={currentSchedule.playoffWeeks}
+            selectedWeek={selectedWeek}
+            onWeekSelect={setSelectedWeek}
+            viewType={viewType}
+            rosterTeams={rosterSchedule?.rosterTeams}
+          />
+
+          {/* Roster Playoff Analysis (only in roster view) */}
+          {viewType === 'roster' && rosterSchedule && (
+            <div className="card" data-testid="schedule-roster-strength">
+              <h3 className="font-semibold text-gray-100 mb-4 flex items-center gap-2">
+                <Users className="w-5 h-5 text-hawk-teal" />
+                Playoff Games by Player
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {rosterSchedule.players
+                  .sort((a, b) =>
+                    (rosterSchedule.playerPlayoffGames[b.name] || 0) -
+                    (rosterSchedule.playerPlayoffGames[a.name] || 0)
+                  )
+                  .map((player, index) => {
+                    const games = rosterSchedule.playerPlayoffGames[player.name] || 0;
+                    const isLow = games < 9;
+                    return (
+                      <div
+                        key={index}
+                        className={`p-3 rounded-lg ${
+                          isLow ? 'bg-red-500/10 border border-red-500/30' : 'bg-court-base'
+                        }`}
+                        data-testid={`schedule-roster-player-${index}`}
+                      >
+                        <div className="font-medium text-gray-200 truncate">
+                          {player.name}
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs text-gray-500">{player.team}</span>
+                          <span className={`font-bold ${isLow ? 'text-red-400' : 'text-hawk-teal'}`}>
+                            {games} games
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* Refresh Button */}
+          <div className="text-center">
+            <button
+              onClick={loadScheduleData}
+              className="text-sm text-gray-400 hover:text-gray-200 underline"
+            >
+              Refresh Schedule
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -2347,4 +2347,143 @@ router.get('/leagues/:league_key/schedule/roster', authenticate, async (req: Req
   }
 });
 
+/**
+ * Get detailed playoff schedule analysis for a league
+ * Analyzes game distribution during playoff weeks
+ */
+router.get('/leagues/:league_key/schedule/playoffs', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+
+    // Get season schedule to find playoff weeks
+    const seasonSchedule = await ballDontLieService.getSeasonSchedule();
+
+    // Get user's roster to identify their teams
+    const rostersData = await makeYahooRequest(user.id, `/league/${league_key}/teams/roster`);
+    const teams = rostersData?.fantasy_content?.league?.[1]?.teams;
+
+    // Find user's team and extract player NBA teams
+    const rosterTeams: string[] = [];
+    const playerInfo: Array<{ name: string; team: string }> = [];
+    const teamCount = teams?.count || 0;
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teams?.[i]?.team;
+      if (!team) continue;
+
+      const teamProps = team[0] || [];
+      let isUserTeam = false;
+      for (const prop of teamProps) {
+        if (prop?.is_owned_by_current_login === 1) {
+          isUserTeam = true;
+          break;
+        }
+      }
+
+      if (isUserTeam) {
+        const roster = team[1]?.roster?.['0']?.players;
+        if (roster) {
+          const playerCount = roster.count || 0;
+          for (let p = 0; p < playerCount; p++) {
+            const player = roster[p]?.player;
+            if (player) {
+              const playerProps = player[0] || [];
+              let playerName = '';
+              let nbaTeam = '';
+
+              for (const prop of playerProps) {
+                if (prop?.name?.full) playerName = prop.name.full;
+                if (prop?.editorial_team_abbr) nbaTeam = prop.editorial_team_abbr;
+              }
+
+              if (nbaTeam) {
+                rosterTeams.push(nbaTeam.toUpperCase());
+                playerInfo.push({ name: playerName, team: nbaTeam.toUpperCase() });
+              }
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    const uniqueRosterTeams = [...new Set(rosterTeams)];
+
+    // Get playoff weeks
+    const playoffWeeks = seasonSchedule.weeks.filter(w =>
+      seasonSchedule.playoffWeeks.includes(w.weekNumber)
+    );
+
+    // Calculate games per team during playoffs
+    const teamPlayoffGames: Record<string, { total: number; byWeek: Record<number, number> }> = {};
+
+    for (const team of seasonSchedule.teams) {
+      teamPlayoffGames[team.abbreviation] = { total: 0, byWeek: {} };
+      for (const week of playoffWeeks) {
+        const games = week.gamesPerTeam[team.abbreviation] || 0;
+        teamPlayoffGames[team.abbreviation].total += games;
+        teamPlayoffGames[team.abbreviation].byWeek[week.weekNumber] = games;
+      }
+    }
+
+    // Sort teams by playoff games
+    const rankedTeams = Object.entries(teamPlayoffGames)
+      .map(([abbr, data]) => ({
+        team: abbr,
+        totalGames: data.total,
+        gamesByWeek: data.byWeek,
+        isOnRoster: uniqueRosterTeams.includes(abbr),
+      }))
+      .sort((a, b) => b.totalGames - a.totalGames);
+
+    // Calculate user's roster playoff strength
+    let rosterTotalGames = 0;
+    const playerPlayoffGames: Record<string, number> = {};
+
+    for (const player of playerInfo) {
+      const teamGames = teamPlayoffGames[player.team]?.total || 0;
+      rosterTotalGames += teamGames;
+      playerPlayoffGames[player.name] = teamGames;
+    }
+
+    // Calculate optimal (if all players had best schedule)
+    const bestSchedule = rankedTeams[0]?.totalGames || 0;
+    const optimalGames = playerInfo.length * bestSchedule;
+
+    // Calculate average per team
+    const avgPlayoffGames = Object.values(teamPlayoffGames).reduce((sum, t) => sum + t.total, 0) / 30;
+
+    res.json({
+      season: seasonSchedule.season,
+      playoffWeeks: playoffWeeks.map(w => ({
+        weekNumber: w.weekNumber,
+        startDate: w.startDate,
+        endDate: w.endDate,
+        totalGames: w.games.length,
+      })),
+      teamRankings: rankedTeams.slice(0, 15), // Top 15 teams
+      rosterTeams: uniqueRosterTeams,
+      rosterAnalysis: {
+        totalPlayoffGames: rosterTotalGames,
+        optimalGames,
+        percentOfOptimal: optimalGames > 0 ? Math.round((rosterTotalGames / optimalGames) * 100) : 0,
+        averagePerTeam: avgPlayoffGames,
+        players: playerInfo.map(p => ({
+          name: p.name,
+          team: p.team,
+          playoffGames: playerPlayoffGames[p.name] || 0,
+        })).sort((a, b) => b.playoffGames - a.playoffGames),
+      },
+      bestScheduleTeams: rankedTeams.slice(0, 5).map(t => t.team),
+      worstScheduleTeams: rankedTeams.slice(-5).reverse().map(t => t.team),
+    });
+  } catch (error: any) {
+    console.error('Playoff schedule error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to fetch playoff schedule',
+    });
+  }
+});
+
 export const fantasyRoutes = router;

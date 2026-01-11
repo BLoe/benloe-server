@@ -85,6 +85,8 @@ export const api = {
       fetchApi(`/fantasy/schedule/team/${teamAbbr}${season ? `?season=${season}` : ''}`),
     getRosterSchedule: (leagueKey: string, season?: number) =>
       fetchApi(`/fantasy/leagues/${leagueKey}/schedule/roster${season ? `?season=${season}` : ''}`),
+    getPlayoffSchedule: (leagueKey: string) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/schedule/playoffs`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>
