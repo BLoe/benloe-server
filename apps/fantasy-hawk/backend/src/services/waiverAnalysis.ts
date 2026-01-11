@@ -394,3 +394,160 @@ export function calculateLeagueAverages(
 
   return averages;
 }
+
+// ============================================================
+// FAAB Suggestion Logic
+// ============================================================
+
+export interface FaabSuggestion {
+  player: PlayerStats;
+  suggestedBid: number;
+  bidRangeMin: number;
+  bidRangeMax: number;
+  percentOfBudget: number;
+  competition: 'high' | 'medium' | 'low';
+  reasoning: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface FaabContext {
+  userFaabBalance: number;
+  totalFaabBudget: number;
+  leagueAvgFaab: number;
+  weeksRemaining: number;
+  isPlayoffs: boolean;
+}
+
+/**
+ * Estimates competition level based on player ownership and priority
+ */
+export function estimateCompetition(
+  percentOwned: number,
+  priority: 'high' | 'medium' | 'low'
+): 'high' | 'medium' | 'low' {
+  // Players with rising ownership indicate more competition
+  if (priority === 'high' && percentOwned > 30) return 'high';
+  if (priority === 'high' || percentOwned > 50) return 'medium';
+  if (percentOwned > 20) return 'low';
+  return 'low';
+}
+
+/**
+ * Calculates season progress factor (0 = start, 1 = end)
+ * Affects bidding aggressiveness
+ */
+export function getSeasonProgress(weeksRemaining: number, totalWeeks: number = 20): number {
+  const weeksPlayed = totalWeeks - weeksRemaining;
+  return Math.max(0, Math.min(1, weeksPlayed / totalWeeks));
+}
+
+/**
+ * Calculates FAAB suggestion for a player
+ */
+export function calculateFaabSuggestion(
+  recommendation: WaiverRecommendation,
+  context: FaabContext
+): FaabSuggestion {
+  const { player, score, priority, fillsNeeds, reason } = recommendation;
+  const { userFaabBalance, totalFaabBudget, leagueAvgFaab, weeksRemaining, isPlayoffs } = context;
+
+  // Base bid percentage based on priority
+  let baseBidPercent: number;
+  switch (priority) {
+    case 'high':
+      baseBidPercent = 0.25; // 25% of budget for must-haves
+      break;
+    case 'medium':
+      baseBidPercent = 0.12; // 12% for strong adds
+      break;
+    default:
+      baseBidPercent = 0.05; // 5% for speculative
+  }
+
+  // Adjust for season progress (bid more aggressively late season)
+  const seasonProgress = getSeasonProgress(weeksRemaining);
+  const progressMultiplier = 1 + (seasonProgress * 0.5); // Up to 50% more late season
+
+  // Adjust for playoff push
+  const playoffMultiplier = isPlayoffs ? 1.3 : 1.0;
+
+  // Calculate suggested bid
+  let suggestedBid = Math.round(
+    totalFaabBudget * baseBidPercent * progressMultiplier * playoffMultiplier
+  );
+
+  // Cap at remaining budget
+  suggestedBid = Math.min(suggestedBid, userFaabBalance);
+
+  // Don't suggest more than remaining budget percentage
+  const maxBudgetPercent = priority === 'high' ? 0.6 : priority === 'medium' ? 0.35 : 0.15;
+  suggestedBid = Math.min(suggestedBid, Math.round(userFaabBalance * maxBudgetPercent));
+
+  // Set range (±30% of suggested)
+  const bidRangeMin = Math.max(1, Math.round(suggestedBid * 0.7));
+  const bidRangeMax = Math.min(userFaabBalance, Math.round(suggestedBid * 1.3));
+
+  // Determine competition level
+  const competition = estimateCompetition(player.percentOwned, priority);
+
+  // Adjust for competition
+  if (competition === 'high') {
+    suggestedBid = Math.min(userFaabBalance, Math.round(suggestedBid * 1.2));
+  }
+
+  // Generate reasoning
+  let reasoning = '';
+  if (priority === 'high') {
+    reasoning = `High-impact pickup${fillsNeeds.length > 0 ? ` filling ${fillsNeeds.slice(0, 2).join(', ')}` : ''}`;
+  } else if (priority === 'medium') {
+    reasoning = `Solid addition${fillsNeeds.length > 0 ? ` for ${fillsNeeds[0]}` : ''}`;
+  } else {
+    reasoning = 'Low-risk speculative add';
+  }
+
+  if (competition === 'high') {
+    reasoning += ' - expect competition';
+  } else if (competition === 'low' && player.percentOwned < 15) {
+    reasoning += ' - may clear waivers';
+  }
+
+  return {
+    player,
+    suggestedBid,
+    bidRangeMin,
+    bidRangeMax,
+    percentOfBudget: Math.round((suggestedBid / totalFaabBudget) * 100),
+    competition,
+    reasoning,
+    priority,
+  };
+}
+
+/**
+ * Generates FAAB suggestions for a list of recommendations
+ */
+export function generateFaabSuggestions(
+  recommendations: WaiverRecommendation[],
+  context: FaabContext,
+  limit: number = 10
+): FaabSuggestion[] {
+  // If no budget remaining, return empty
+  if (context.userFaabBalance <= 0) {
+    return [];
+  }
+
+  const suggestions = recommendations
+    .slice(0, limit)
+    .map((rec) => calculateFaabSuggestion(rec, context));
+
+  return suggestions;
+}
+
+/**
+ * Calculates league average FAAB remaining from all teams
+ */
+export function calculateLeagueAvgFaab(teamFaabBalances: number[]): number {
+  if (teamFaabBalances.length === 0) return 0;
+  const total = teamFaabBalances.reduce((sum, balance) => sum + balance, 0);
+  return Math.round(total / teamFaabBalances.length);
+}

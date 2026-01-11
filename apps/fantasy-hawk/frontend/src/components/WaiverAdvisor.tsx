@@ -1,6 +1,7 @@
 import { ClipboardList, ExternalLink, RefreshCw } from 'lucide-react';
 import { RecommendationsPanel } from './waiver/RecommendationsPanel';
 import { DropsPanel } from './waiver/DropsPanel';
+import { FaabSuggestions } from './waiver/FaabSuggestions';
 
 interface WaiverAdvisorProps {
   selectedLeague: string;
@@ -70,9 +71,17 @@ export function WaiverAdvisor({ selectedLeague }: WaiverAdvisorProps) {
           <RecommendationsPanel leagueKey={selectedLeague} />
         </div>
 
-        {/* Drops - 1 column */}
-        <div className="card">
-          <DropsPanel leagueKey={selectedLeague} />
+        {/* Right Column - Drops & FAAB */}
+        <div className="space-y-6">
+          {/* Drops */}
+          <div className="card">
+            <DropsPanel leagueKey={selectedLeague} />
+          </div>
+
+          {/* FAAB Suggestions (only shows for FAAB leagues) */}
+          <div className="card">
+            <FaabSuggestions leagueKey={selectedLeague} />
+          </div>
         </div>
       </div>
 

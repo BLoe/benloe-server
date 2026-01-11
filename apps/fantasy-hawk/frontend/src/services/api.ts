@@ -105,6 +105,8 @@ export const api = {
       fetchApi(`/fantasy/leagues/${leagueKey}/waiver/recommendations${position ? `?position=${position}` : ''}${limit ? `${position ? '&' : '?'}limit=${limit}` : ''}`),
     getWaiverDrops: (leagueKey: string, limit?: number) =>
       fetchApi(`/fantasy/leagues/${leagueKey}/waiver/drops${limit ? `?limit=${limit}` : ''}`),
+    getWaiverFaab: (leagueKey: string, limit?: number) =>
+      fetchApi(`/fantasy/leagues/${leagueKey}/waiver/faab${limit ? `?limit=${limit}` : ''}`),
     proxy: (endpoint: string) => fetchApi(`/fantasy/proxy?endpoint=${encodeURIComponent(endpoint)}`),
     dumpSettings: (leagueKey: string) => fetchApi(`/fantasy/debug/dump-settings/${leagueKey}`),
     dump: (type: string, leagueKey: string, week?: number) =>

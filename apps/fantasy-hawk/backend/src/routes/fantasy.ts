@@ -32,7 +32,10 @@ import {
   generateRecommendations,
   identifyDropCandidates,
   calculateLeagueAverages,
+  generateFaabSuggestions,
+  calculateLeagueAvgFaab,
   type PlayerStats as WaiverPlayerStats,
+  type FaabContext,
 } from '../services/waiverAnalysis';
 
 const router = Router();
@@ -3333,6 +3336,229 @@ router.get('/leagues/:league_key/waiver/drops', authenticate, async (req: Reques
     console.error('Waiver drops error:', error);
     res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
       error: error.message || 'Failed to get drop suggestions',
+    });
+  }
+});
+
+/**
+ * Get FAAB bid suggestions for waiver recommendations
+ * Only available for FAAB leagues
+ */
+router.get('/leagues/:league_key/waiver/faab', authenticate, async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { league_key } = req.params;
+    const { limit = '10' } = req.query;
+
+    // Fetch data in parallel
+    const [settingsData, scoreboardData, rostersData, faData, teamsStatsData, teamsData] = await Promise.all([
+      makeYahooRequest(user.id, `/league/${league_key}/settings`),
+      makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams/roster/players/stats`),
+      makeYahooRequest(user.id, `/league/${league_key}/players;status=FA;count=50;sort=PTS`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams/stats`),
+      makeYahooRequest(user.id, `/league/${league_key}/teams`),
+    ]);
+
+    // Get league settings
+    const settings = settingsData?.fantasy_content?.league?.[1]?.settings?.[0];
+    const usesFaab = settings?.uses_faab === '1' || settings?.uses_faab === 1;
+
+    // If not a FAAB league, return error
+    if (!usesFaab) {
+      return res.json({
+        usesFaab: false,
+        message: 'This league does not use FAAB bidding',
+        suggestions: [],
+      });
+    }
+
+    // Get stat categories
+    const statCategories = (settings?.stat_categories?.stats || [])
+      .map((s: any) => s.stat)
+      .filter((stat: any) => stat && !stat.is_only_display_stat);
+
+    // Get playoff info
+    const playoffStartWeek = parseInt(settings?.playoff_start_week || '20', 10);
+
+    // Get week info
+    const leagueInfo = settingsData?.fantasy_content?.league?.[0];
+    const currentWeek = parseInt(leagueInfo?.current_week || '1', 10);
+    const weeksRemaining = Math.max(0, playoffStartWeek - currentWeek);
+    const isPlayoffs = currentWeek >= playoffStartWeek;
+
+    // Get week dates for schedule
+    const scoreboard = scoreboardData?.fantasy_content?.league?.[1]?.scoreboard;
+    const firstMatchup = scoreboard?.['0']?.matchups?.['0']?.matchup;
+    const weekStart = firstMatchup?.week_start;
+    const weekEnd = firstMatchup?.week_end;
+
+    // Get games per team for the week
+    let gamesPerTeam: Record<string, number> = {};
+    if (weekStart && weekEnd) {
+      try {
+        const scheduleAnalysis = await ballDontLieService.getScheduleAnalysis(weekStart, weekEnd);
+        for (const [team, data] of Object.entries(scheduleAnalysis.gamesPerTeam || {})) {
+          gamesPerTeam[team] = data.total;
+        }
+      } catch (err) {
+        console.warn('Could not fetch schedule:', err);
+      }
+    }
+
+    // Parse all teams to get FAAB balances
+    const allTeamsData = teamsData?.fantasy_content?.league?.[1]?.teams;
+    const allTeamCount = allTeamsData?.count || 0;
+    const teamFaabBalances: number[] = [];
+    let userFaabBalance = 0;
+    let userWaiverPriority = 0;
+
+    for (let i = 0; i < allTeamCount; i++) {
+      const team = allTeamsData?.[i]?.team;
+      if (!team) continue;
+
+      const teamProps = team[0] || [];
+      let faabBalance = 0;
+      let waiverPriority = 0;
+      let isUserTeam = false;
+
+      for (const prop of teamProps) {
+        if (prop?.faab_balance !== undefined) {
+          faabBalance = parseFloat(prop.faab_balance) || 0;
+        }
+        if (prop?.waiver_priority !== undefined) {
+          waiverPriority = parseInt(prop.waiver_priority, 10) || 0;
+        }
+        if (prop?.is_owned_by_current_login === 1) {
+          isUserTeam = true;
+        }
+      }
+
+      teamFaabBalances.push(faabBalance);
+
+      if (isUserTeam) {
+        userFaabBalance = faabBalance;
+        userWaiverPriority = waiverPriority;
+      }
+    }
+
+    const leagueAvgFaab = calculateLeagueAvgFaab(teamFaabBalances);
+
+    // Get total budget (default $100 if not specified)
+    const totalFaabBudget = 100; // Most leagues use $100
+
+    // Parse user's roster stats
+    const teams = rostersData?.fantasy_content?.league?.[1]?.teams;
+    const teamCount = teams?.count || 0;
+    let userTeamStats: Record<string, number> = {};
+
+    for (let i = 0; i < teamCount; i++) {
+      const team = teams?.[i]?.team;
+      if (!team) continue;
+
+      const teamProps = team[0] || [];
+      let isUserTeam = false;
+      for (const prop of teamProps) {
+        if (prop?.is_owned_by_current_login === 1) {
+          isUserTeam = true;
+          break;
+        }
+      }
+
+      if (isUserTeam) {
+        const teamStatsArr = team[1]?.team_stats?.stats || [];
+        for (const statEntry of teamStatsArr) {
+          if (statEntry?.stat) {
+            const statId = statEntry.stat.stat_id?.toString();
+            const value = parseFloat(statEntry.stat.value) || 0;
+            if (statId) userTeamStats[statId] = value;
+          }
+        }
+        break;
+      }
+    }
+
+    // Calculate league averages
+    const allTeamStats: Record<string, number>[] = [];
+    const teamsStatsContent = teamsStatsData?.fantasy_content?.league?.[1]?.teams;
+    const statsTeamCount = teamsStatsContent?.count || 0;
+
+    for (let i = 0; i < statsTeamCount; i++) {
+      const team = teamsStatsContent?.[i]?.team;
+      if (!team) continue;
+
+      const teamStatsArr = team[1]?.team_stats?.stats || [];
+      const stats: Record<string, number> = {};
+      for (const statEntry of teamStatsArr) {
+        if (statEntry?.stat) {
+          const statId = statEntry.stat.stat_id?.toString();
+          const value = parseFloat(statEntry.stat.value) || 0;
+          if (statId) stats[statId] = value;
+        }
+      }
+      allTeamStats.push(stats);
+    }
+
+    const leagueAverages = calculateLeagueAverages(allTeamStats);
+    const teamNeeds = analyzeTeamNeeds(userTeamStats, leagueAverages, statCategories);
+
+    // Parse free agents
+    const freeAgents: WaiverPlayerStats[] = [];
+    const faPlayers = faData?.fantasy_content?.league?.[1]?.players;
+    const faCount = faPlayers?.count || 0;
+
+    for (let i = 0; i < faCount; i++) {
+      const player = faPlayers?.[i]?.player;
+      if (player) {
+        const parsed = parseYahooPlayer(player);
+        if (parsed) freeAgents.push(parsed);
+      }
+    }
+
+    // Generate recommendations first
+    const recommendations = generateRecommendations(
+      freeAgents,
+      teamNeeds,
+      statCategories,
+      gamesPerTeam,
+      parseInt(limit as string, 10) || 10
+    );
+
+    // Build FAAB context
+    const faabContext: FaabContext = {
+      userFaabBalance,
+      totalFaabBudget,
+      leagueAvgFaab,
+      weeksRemaining,
+      isPlayoffs,
+    };
+
+    // Generate FAAB suggestions
+    const suggestions = generateFaabSuggestions(
+      recommendations,
+      faabContext,
+      parseInt(limit as string, 10) || 10
+    );
+
+    res.json({
+      usesFaab: true,
+      suggestions,
+      budget: {
+        remaining: userFaabBalance,
+        total: totalFaabBudget,
+        leagueAverage: leagueAvgFaab,
+        percentRemaining: Math.round((userFaabBalance / totalFaabBudget) * 100),
+      },
+      waiverPriority: userWaiverPriority,
+      currentWeek,
+      weeksRemaining,
+      isPlayoffs,
+      teamNeeds,
+    });
+  } catch (error: any) {
+    console.error('FAAB suggestions error:', error);
+    res.status(error.message === 'Yahoo account not connected' ? 403 : 500).json({
+      error: error.message || 'Failed to get FAAB suggestions',
     });
   }
 });

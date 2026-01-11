@@ -9,9 +9,16 @@ import {
   generateRecommendations,
   identifyDropCandidates,
   calculateLeagueAverages,
+  estimateCompetition,
+  getSeasonProgress,
+  calculateFaabSuggestion,
+  generateFaabSuggestions,
+  calculateLeagueAvgFaab,
   type StatCategory,
   type PlayerStats,
   type TeamNeeds,
+  type WaiverRecommendation,
+  type FaabContext,
 } from './waiverAnalysis';
 
 describe('Waiver Analysis Service', () => {
@@ -373,6 +380,163 @@ describe('Waiver Analysis Service', () => {
     it('handles empty array', () => {
       const result = calculateLeagueAverages([]);
       expect(result).toEqual({});
+    });
+  });
+
+  // FAAB Tests
+  describe('FAAB Suggestions', () => {
+    const samplePlayer: PlayerStats = {
+      playerKey: 'p1',
+      name: 'Test Player',
+      position: 'PG',
+      team: 'LAL',
+      percentOwned: 40,
+      gamesPlayed: 20,
+      stats: { '12': 400 },
+      averages: { '12': 20 },
+    };
+
+    const sampleRecommendation: WaiverRecommendation = {
+      player: samplePlayer,
+      score: 8,
+      reason: 'Helps in PTS, AST',
+      fillsNeeds: ['PTS', 'AST'],
+      gamesThisWeek: 4,
+      trend: 'rising',
+      priority: 'high',
+    };
+
+    const sampleContext: FaabContext = {
+      userFaabBalance: 67,
+      totalFaabBudget: 100,
+      leagueAvgFaab: 52,
+      weeksRemaining: 10,
+      isPlayoffs: false,
+    };
+
+    describe('estimateCompetition', () => {
+      it('returns high for high priority with decent ownership', () => {
+        expect(estimateCompetition(40, 'high')).toBe('high');
+      });
+
+      it('returns medium for high priority with low ownership', () => {
+        expect(estimateCompetition(15, 'high')).toBe('medium');
+      });
+
+      it('returns low for low priority and low ownership', () => {
+        expect(estimateCompetition(10, 'low')).toBe('low');
+      });
+
+      it('returns medium for very high ownership', () => {
+        expect(estimateCompetition(60, 'medium')).toBe('medium');
+      });
+    });
+
+    describe('getSeasonProgress', () => {
+      it('returns 0 at start of season', () => {
+        expect(getSeasonProgress(20, 20)).toBe(0);
+      });
+
+      it('returns 1 at end of season', () => {
+        expect(getSeasonProgress(0, 20)).toBe(1);
+      });
+
+      it('returns 0.5 at midseason', () => {
+        expect(getSeasonProgress(10, 20)).toBe(0.5);
+      });
+
+      it('clamps to 0-1 range', () => {
+        expect(getSeasonProgress(25, 20)).toBe(0);
+        expect(getSeasonProgress(-5, 20)).toBe(1);
+      });
+    });
+
+    describe('calculateFaabSuggestion', () => {
+      it('returns higher bid for high priority players', () => {
+        const highPriority: WaiverRecommendation = { ...sampleRecommendation, priority: 'high' };
+        const lowPriority: WaiverRecommendation = { ...sampleRecommendation, priority: 'low' };
+
+        const highResult = calculateFaabSuggestion(highPriority, sampleContext);
+        const lowResult = calculateFaabSuggestion(lowPriority, sampleContext);
+
+        expect(highResult.suggestedBid).toBeGreaterThan(lowResult.suggestedBid);
+      });
+
+      it('respects budget constraints', () => {
+        const lowBudgetContext: FaabContext = { ...sampleContext, userFaabBalance: 5 };
+        const result = calculateFaabSuggestion(sampleRecommendation, lowBudgetContext);
+
+        expect(result.suggestedBid).toBeLessThanOrEqual(5);
+      });
+
+      it('calculates percentage of budget correctly', () => {
+        const result = calculateFaabSuggestion(sampleRecommendation, sampleContext);
+        const expectedPercent = Math.round((result.suggestedBid / 100) * 100);
+
+        expect(result.percentOfBudget).toBe(expectedPercent);
+      });
+
+      it('sets bid range appropriately', () => {
+        const result = calculateFaabSuggestion(sampleRecommendation, sampleContext);
+
+        expect(result.bidRangeMin).toBeLessThan(result.suggestedBid);
+        expect(result.bidRangeMax).toBeGreaterThan(result.suggestedBid);
+        expect(result.bidRangeMin).toBeGreaterThanOrEqual(1);
+      });
+
+      it('includes reasoning based on priority', () => {
+        const result = calculateFaabSuggestion(sampleRecommendation, sampleContext);
+
+        expect(result.reasoning).toContain('High-impact');
+      });
+
+      it('increases bid during playoffs', () => {
+        const regularContext: FaabContext = { ...sampleContext, isPlayoffs: false };
+        const playoffContext: FaabContext = { ...sampleContext, isPlayoffs: true };
+
+        const regularResult = calculateFaabSuggestion(sampleRecommendation, regularContext);
+        const playoffResult = calculateFaabSuggestion(sampleRecommendation, playoffContext);
+
+        expect(playoffResult.suggestedBid).toBeGreaterThanOrEqual(regularResult.suggestedBid);
+      });
+    });
+
+    describe('generateFaabSuggestions', () => {
+      const recommendations: WaiverRecommendation[] = [
+        { ...sampleRecommendation, priority: 'high' },
+        { ...sampleRecommendation, player: { ...samplePlayer, playerKey: 'p2' }, priority: 'medium' },
+        { ...sampleRecommendation, player: { ...samplePlayer, playerKey: 'p3' }, priority: 'low' },
+      ];
+
+      it('generates suggestions for all recommendations', () => {
+        const suggestions = generateFaabSuggestions(recommendations, sampleContext);
+
+        expect(suggestions).toHaveLength(3);
+      });
+
+      it('respects limit parameter', () => {
+        const suggestions = generateFaabSuggestions(recommendations, sampleContext, 2);
+
+        expect(suggestions).toHaveLength(2);
+      });
+
+      it('returns empty when no budget remaining', () => {
+        const noBudgetContext: FaabContext = { ...sampleContext, userFaabBalance: 0 };
+        const suggestions = generateFaabSuggestions(recommendations, noBudgetContext);
+
+        expect(suggestions).toHaveLength(0);
+      });
+    });
+
+    describe('calculateLeagueAvgFaab', () => {
+      it('calculates average correctly', () => {
+        const balances = [100, 50, 75, 25];
+        expect(calculateLeagueAvgFaab(balances)).toBe(63); // (100+50+75+25)/4 = 62.5 → 63
+      });
+
+      it('returns 0 for empty array', () => {
+        expect(calculateLeagueAvgFaab([])).toBe(0);
+      });
     });
   });
 });
