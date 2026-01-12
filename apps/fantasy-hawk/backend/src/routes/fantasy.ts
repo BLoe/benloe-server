@@ -445,7 +445,7 @@ router.get('/leagues/:league_key/category/profile', authenticate, async (req: Re
     );
 
     res.json({
-      profile,
+      ...profile,
       totalTeams: teamCount,
     });
   } catch (error: any) {
@@ -1666,8 +1666,15 @@ router.get('/leagues/:league_key/matchup/current', authenticate, async (req: Req
 
     if (!userMatchup || !userTeam || !opponentTeam) {
       return res.json({
-        matchup: null,
-        message: 'No active matchup found (bye week or season ended)',
+        week: scoreboard['0']?.week || 0,
+        weekStart: '',
+        weekEnd: '',
+        yourTeam: { teamKey: '', name: '', logoUrl: '' },
+        opponentTeam: { teamKey: '', name: '', logoUrl: '' },
+        score: { wins: 0, losses: 0, ties: 0 },
+        categories: [],
+        lastUpdated: new Date().toISOString(),
+        isByeWeek: true,
       });
     }
 
@@ -1701,58 +1708,66 @@ router.get('/leagues/:league_key/matchup/current', authenticate, async (req: Req
     for (const cat of statCategories) {
       if (!cat?.stat_id) continue;
 
-      const userValue = parseFloat(userTeamData.categoryStats[cat.stat_id]?.value || '0');
-      const oppValue = parseFloat(opponentTeamData.categoryStats[cat.stat_id]?.value || '0');
+      const userValue = userTeamData.categoryStats[cat.stat_id]?.value || '0';
+      const oppValue = opponentTeamData.categoryStats[cat.stat_id]?.value || '0';
+      const userNum = parseFloat(userValue);
+      const oppNum = parseFloat(oppValue);
 
       // Determine if higher or lower is better (TOs are typically negative)
       const isNegative = cat.name?.toLowerCase().includes('turnover') || cat.abbr === 'TO';
-      let status: 'win' | 'loss' | 'tie' = 'tie';
+      const isPercentage = cat.name?.toLowerCase().includes('percentage') ||
+                           cat.abbr === 'FG%' || cat.abbr === 'FT%' || cat.abbr === '3P%';
+      let winner: 'you' | 'opponent' | 'tie' = 'tie';
 
-      if (userValue !== oppValue) {
+      if (userNum !== oppNum) {
         if (isNegative) {
-          status = userValue < oppValue ? 'win' : 'loss';
+          winner = userNum < oppNum ? 'you' : 'opponent';
         } else {
-          status = userValue > oppValue ? 'win' : 'loss';
+          winner = userNum > oppNum ? 'you' : 'opponent';
         }
       }
 
-      const diff = isNegative ? oppValue - userValue : userValue - oppValue;
+      const diff = Math.abs(userNum - oppNum);
+      const margin = isPercentage ? `${(diff * 100).toFixed(1)}%` : diff.toFixed(1);
 
       categories.push({
         statId: cat.stat_id,
         name: cat.name,
-        abbr: cat.abbr || cat.display_name,
-        userValue,
+        displayName: cat.abbr || cat.display_name || cat.name,
+        yourValue: userValue,
         opponentValue: oppValue,
-        status,
-        difference: diff,
+        winner,
+        margin: winner === 'you' ? `+${margin}` : winner === 'opponent' ? `-${margin}` : '',
+        isPercentage,
         isNegative,
       });
     }
 
     // Calculate overall score
-    const wins = categories.filter(c => c.status === 'win').length;
-    const losses = categories.filter(c => c.status === 'loss').length;
-    const ties = categories.filter(c => c.status === 'tie').length;
+    const wins = categories.filter(c => c.winner === 'you').length;
+    const losses = categories.filter(c => c.winner === 'opponent').length;
+    const ties = categories.filter(c => c.winner === 'tie').length;
 
     res.json({
       week: userMatchup.week,
       weekStart: userMatchup.week_start,
       weekEnd: userMatchup.week_end,
-      userTeam: {
-        name: userTeamData.name,
+      yourTeam: {
         teamKey: userTeamData.team_key,
+        name: userTeamData.name,
         logoUrl: userTeamData.team_logos?.[0]?.team_logo?.url,
-        score: { wins, losses, ties },
+        managerName: userTeamData.managers?.[0]?.manager?.nickname,
       },
-      opponent: {
-        name: opponentTeamData.name,
+      opponentTeam: {
         teamKey: opponentTeamData.team_key,
+        name: opponentTeamData.name,
         logoUrl: opponentTeamData.team_logos?.[0]?.team_logo?.url,
-        score: { wins: losses, losses: wins, ties },
+        managerName: opponentTeamData.managers?.[0]?.manager?.nickname,
       },
+      score: { wins, losses, ties },
       categories,
-      status: wins > losses ? 'winning' : wins < losses ? 'losing' : 'tied',
+      lastUpdated: new Date().toISOString(),
+      isByeWeek: false,
     });
   } catch (error: any) {
     console.error('Matchup current error:', error);
@@ -2084,7 +2099,7 @@ router.post('/leagues/:league_key/trade/analyze', authenticate, async (req: Requ
       }
 
       categoryImpact.push({
-        statId: cat.stat_id,
+        statId: String(cat.stat_id),
         name: cat.name,
         displayName: cat.display_name || cat.abbr,
         giving,

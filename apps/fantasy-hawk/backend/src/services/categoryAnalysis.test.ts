@@ -172,9 +172,9 @@ describe('Category Analysis Service', () => {
   describe('detectArchetype', () => {
     it('detects Big Man Build', () => {
       const categoryRanks: CategoryRank[] = [
-        { statId: '15', name: 'Rebounds', abbr: 'REB', value: 600, rank: 1, classification: 'elite', zScore: 2, percentile: 97, vsLeagueAvg: 20 },
-        { statId: '18', name: 'Blocks', abbr: 'BLK', value: 100, rank: 2, classification: 'elite', zScore: 1.8, percentile: 95, vsLeagueAvg: 18 },
-        { statId: '16', name: 'Assists', abbr: 'AST', value: 400, rank: 11, classification: 'weak', zScore: -1.5, percentile: 10, vsLeagueAvg: -15 },
+        { statId: '15', name: 'Rebounds', displayName: 'REB', value: 600, rank: 1, totalTeams: 12, classification: 'elite', zScore: 2, percentile: 97, leagueAvg: 500, leagueStdDev: 50 },
+        { statId: '18', name: 'Blocks', displayName: 'BLK', value: 100, rank: 2, totalTeams: 12, classification: 'elite', zScore: 1.8, percentile: 95, leagueAvg: 80, leagueStdDev: 10 },
+        { statId: '16', name: 'Assists', displayName: 'AST', value: 400, rank: 11, totalTeams: 12, classification: 'weak', zScore: -1.5, percentile: 10, leagueAvg: 500, leagueStdDev: 60 },
       ];
 
       const result = detectArchetype(categoryRanks, 12);
@@ -184,9 +184,9 @@ describe('Category Analysis Service', () => {
 
     it('detects Guard Heavy Build', () => {
       const categoryRanks: CategoryRank[] = [
-        { statId: '16', name: 'Assists', abbr: 'AST', value: 600, rank: 1, classification: 'elite', zScore: 2, percentile: 97, vsLeagueAvg: 20 },
-        { statId: '17', name: 'Steals', abbr: 'STL', value: 100, rank: 2, classification: 'elite', zScore: 1.8, percentile: 95, vsLeagueAvg: 18 },
-        { statId: '15', name: 'Rebounds', abbr: 'REB', value: 400, rank: 11, classification: 'weak', zScore: -1.5, percentile: 10, vsLeagueAvg: -15 },
+        { statId: '16', name: 'Assists', displayName: 'AST', value: 600, rank: 1, totalTeams: 12, classification: 'elite', zScore: 2, percentile: 97, leagueAvg: 500, leagueStdDev: 50 },
+        { statId: '17', name: 'Steals', displayName: 'STL', value: 100, rank: 2, totalTeams: 12, classification: 'elite', zScore: 1.8, percentile: 95, leagueAvg: 80, leagueStdDev: 10 },
+        { statId: '15', name: 'Rebounds', displayName: 'REB', value: 400, rank: 11, totalTeams: 12, classification: 'weak', zScore: -1.5, percentile: 10, leagueAvg: 500, leagueStdDev: 60 },
       ];
 
       const result = detectArchetype(categoryRanks, 12);
@@ -195,9 +195,9 @@ describe('Category Analysis Service', () => {
 
     it('detects Balanced Build when no weak categories', () => {
       const categoryRanks: CategoryRank[] = [
-        { statId: '12', name: 'Points', abbr: 'PTS', value: 500, rank: 4, classification: 'strong', zScore: 0.5, percentile: 70, vsLeagueAvg: 5 },
-        { statId: '15', name: 'Rebounds', abbr: 'REB', value: 450, rank: 5, classification: 'strong', zScore: 0.4, percentile: 65, vsLeagueAvg: 4 },
-        { statId: '16', name: 'Assists', abbr: 'AST', value: 480, rank: 6, classification: 'average', zScore: 0.2, percentile: 55, vsLeagueAvg: 2 },
+        { statId: '12', name: 'Points', displayName: 'PTS', value: 500, rank: 4, totalTeams: 12, classification: 'strong', zScore: 0.5, percentile: 70, leagueAvg: 480, leagueStdDev: 40 },
+        { statId: '15', name: 'Rebounds', displayName: 'REB', value: 450, rank: 5, totalTeams: 12, classification: 'strong', zScore: 0.4, percentile: 65, leagueAvg: 430, leagueStdDev: 50 },
+        { statId: '16', name: 'Assists', displayName: 'AST', value: 480, rank: 6, totalTeams: 12, classification: 'average', zScore: 0.2, percentile: 55, leagueAvg: 470, leagueStdDev: 50 },
       ];
 
       const result = detectArchetype(categoryRanks, 12);
@@ -261,7 +261,7 @@ describe('Category Analysis Service', () => {
       const profile = buildTeamProfile('team3', 'Test Team', allTeamStats.team3, allTeamStats, categories);
 
       // team3 has highest points (550), should be rank 1
-      const ptsCategory = profile.categories.find(c => c.abbr === 'PTS');
+      const ptsCategory = profile.categoryRanks.find((c: CategoryRank) => c.displayName === 'PTS');
       expect(ptsCategory?.rank).toBe(1);
     });
 

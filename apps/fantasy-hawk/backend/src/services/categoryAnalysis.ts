@@ -14,23 +14,25 @@ export interface StatCategory {
 export interface CategoryRank {
   statId: string;
   name: string;
-  abbr: string;
+  displayName: string;
   value: number;
   rank: number;
-  classification: 'elite' | 'strong' | 'average' | 'weak';
+  totalTeams: number;
   zScore: number;
   percentile: number;
-  vsLeagueAvg: number; // percentage vs league average
+  classification: 'elite' | 'strong' | 'average' | 'weak';
+  leagueAvg: number;
+  leagueStdDev: number;
 }
 
 export interface TeamProfile {
   teamKey: string;
   teamName: string;
-  categories: CategoryRank[];
+  categoryRanks: CategoryRank[];
   archetype: string;
   puntCategories: string[];
-  strengths: string[];
-  weaknesses: string[];
+  strengths: CategoryRank[];
+  weaknesses: CategoryRank[];
 }
 
 export interface CategoryTrend {
@@ -155,11 +157,11 @@ export function detectArchetype(
   const elite = categoryRanks.filter(c => c.classification === 'elite');
   const weak = categoryRanks.filter(c => c.classification === 'weak');
 
-  const puntCategories = weak.map(c => c.abbr);
+  const puntCategories = weak.map(c => c.displayName);
 
   // Check for common archetypes
-  const eliteAbbrs = elite.map(c => c.abbr);
-  const weakAbbrs = weak.map(c => c.abbr);
+  const eliteAbbrs = elite.map(c => c.displayName);
+  const weakAbbrs = weak.map(c => c.displayName);
 
   // Big Man Build: Strong in REB, BLK, FG%, weak in AST, FT%, 3PM
   if (
@@ -264,13 +266,15 @@ export function buildTeamProfile(
     categoryRanks.push({
       statId,
       name: cat.name || statId,
-      abbr: cat.abbr || cat.display_name || statId,
+      displayName: cat.abbr || cat.display_name || statId,
       value: teamValue,
       rank,
-      classification: classifyRank(rank, totalTeams),
+      totalTeams,
       zScore: Math.round(zScore * 100) / 100,
       percentile,
-      vsLeagueAvg: Math.round(vsLeagueAvg * 10) / 10,
+      classification: classifyRank(rank, totalTeams),
+      leagueAvg: Math.round(mean * 100) / 100,
+      leagueStdDev: Math.round(stdDev * 100) / 100,
     });
   }
 
@@ -281,18 +285,16 @@ export function buildTeamProfile(
 
   const strengths = categoryRanks
     .filter(c => c.classification === 'elite' || c.classification === 'strong')
-    .slice(0, 3)
-    .map(c => `${c.abbr} (${c.rank}${getRankSuffix(c.rank)})`);
+    .slice(0, 3);
 
   const weaknesses = categoryRanks
     .filter(c => c.classification === 'weak')
-    .slice(0, 3)
-    .map(c => `${c.abbr} (${c.rank}${getRankSuffix(c.rank)})`);
+    .slice(0, 3);
 
   return {
     teamKey,
     teamName,
-    categories: categoryRanks,
+    categoryRanks,
     archetype,
     puntCategories,
     strengths,
@@ -348,7 +350,7 @@ export function buildComparison(
     userTeam: {
       teamKey: userTeamKey,
       teamName: userTeamName,
-      categories: profile.categories,
+      categories: profile.categoryRanks,
     },
     leagueAverages,
     leagueStdDevs,
