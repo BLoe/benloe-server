@@ -3,306 +3,986 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PR Tracker - Personal Records</title>
+    <title>IRON PR — Personal Records</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        .exercise-card {
-            transition: all 0.2s ease-in-out;
-        }
-        .exercise-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-        .loading {
-            opacity: 0.6;
-            pointer-events: none;
-        }
-        
-        .pr-celebration {
-            animation: prBounceFlashy 1.2s ease-out;
-            transform-origin: center;
-        }
-        
-        @keyframes prBounceFlashy {
-            0% { 
-                transform: scale(1) rotateZ(0deg); 
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                filter: hue-rotate(0deg) brightness(1);
-            }
-            10% { 
-                transform: scale(1.3) rotateZ(-5deg); 
-                box-shadow: 0 8px 25px rgba(34, 197, 94, 0.4);
-                filter: hue-rotate(60deg) brightness(1.2);
-            }
-            25% { 
-                transform: scale(1.4) rotateZ(5deg); 
-                box-shadow: 0 12px 35px rgba(59, 130, 246, 0.5);
-                filter: hue-rotate(120deg) brightness(1.3);
-            }
-            40% { 
-                transform: scale(1.2) rotateZ(-3deg); 
-                box-shadow: 0 10px 30px rgba(168, 85, 247, 0.4);
-                filter: hue-rotate(180deg) brightness(1.1);
-            }
-            60% { 
-                transform: scale(1.1) rotateZ(2deg); 
-                box-shadow: 0 6px 20px rgba(245, 158, 11, 0.3);
-                filter: hue-rotate(240deg) brightness(1.05);
-            }
-            80% { 
-                transform: scale(1.05) rotateZ(-1deg); 
-                box-shadow: 0 4px 15px rgba(239, 68, 68, 0.2);
-                filter: hue-rotate(300deg) brightness(1.02);
-            }
-            100% { 
-                transform: scale(1) rotateZ(0deg); 
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                filter: hue-rotate(360deg) brightness(1);
-            }
-        }
-        
-        .pr-number {
-            transition: all 0.3s ease;
-        }
-        
-        .pr-card {
-            transition: all 0.2s ease;
-        }
-        
-        .pr-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        
-        .increment-btn {
-            transition: all 0.2s ease;
-        }
-        
-        .increment-btn:hover {
-            transform: scale(1.05);
-        }
-        
-        .increment-btn:active {
-            transform: scale(0.95);
+        :root {
+            --bg-primary: #0a0a0b;
+            --bg-secondary: #111113;
+            --bg-card: #18181b;
+            --bg-card-hover: #1f1f23;
+            --border-subtle: #27272a;
+            --border-strong: #3f3f46;
+            --text-primary: #fafafa;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
+            --accent-orange: #f97316;
+            --accent-orange-glow: rgba(249, 115, 22, 0.4);
+            --accent-red: #ef4444;
+            --accent-gold: #fbbf24;
+            --accent-green: #22c55e;
+            --accent-blue: #3b82f6;
+            --gradient-fire: linear-gradient(135deg, #f97316 0%, #ea580c 50%, #dc2626 100%);
+            --gradient-steel: linear-gradient(180deg, #27272a 0%, #18181b 100%);
+            --gradient-gold: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
         }
 
-        /* Collapsible card styles */
-        .pr-card {
-            cursor: pointer;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Oswald', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            background-image:
+                radial-gradient(ellipse at 50% 0%, rgba(249, 115, 22, 0.08) 0%, transparent 50%),
+                url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            background-blend-mode: normal, overlay;
+            background-size: cover, 200px 200px;
+        }
+
+        .font-display { font-family: 'Bebas Neue', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        .state-screen {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .state-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            padding: 3rem;
+            max-width: 420px;
+            width: 100%;
+            text-align: center;
+            position: relative;
             overflow: hidden;
         }
-        
-        .pr-card.collapsed {
-            height: 60px;
+
+        .state-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--gradient-fire);
         }
-        
-        .pr-card.expanded {
-            height: auto;
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid var(--border-subtle);
+            border-top-color: var(--accent-orange);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 1.5rem;
         }
-        
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .state-title {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 2rem;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+        }
+
+        .state-text {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            font-weight: 400;
+            margin-bottom: 2rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem 2rem;
+            font-family: 'Oswald', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            text-decoration: none;
+            border: none;
+            border-radius: 2px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: var(--gradient-fire);
+            color: white;
+            box-shadow: 0 4px 20px var(--accent-orange-glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px var(--accent-orange-glow);
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-subtle);
+            margin-top: 1rem;
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+        }
+
+        .hidden { display: none !important; }
+
+        .app-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem 4rem;
+        }
+
+        .app-header {
+            text-align: center;
+            margin-bottom: 3rem;
+            position: relative;
+        }
+
+        .logo {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: clamp(3rem, 8vw, 5rem);
+            letter-spacing: 0.15em;
+            background: var(--gradient-fire);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: 0 0 60px var(--accent-orange-glow);
+            margin-bottom: 0.25rem;
+            line-height: 1;
+        }
+
+        .logo-icon {
+            display: inline-block;
+            margin-right: 0.25em;
+            filter: drop-shadow(0 0 20px var(--accent-orange-glow));
+        }
+
+        .tagline {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+            font-weight: 400;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .user-greeting {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-weight: 400;
+        }
+
+        .user-greeting strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .header-btn {
+            padding: 0.6rem 1.2rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .header-btn:hover {
+            color: var(--text-primary);
+            border-color: var(--accent-orange);
+            background: rgba(249, 115, 22, 0.1);
+        }
+
+        .section {
+            margin-bottom: 3rem;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .section-icon {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--gradient-fire);
+            border-radius: 2px;
+            font-size: 1.25rem;
+        }
+
+        .section-title {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.75rem;
+            letter-spacing: 0.1em;
+            color: var(--text-primary);
+        }
+
+        .pr-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1rem;
+        }
+
+        .pr-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .pr-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--gradient-steel);
+            transition: all 0.3s ease;
+        }
+
+        .pr-card:hover {
+            border-color: var(--border-strong);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .pr-card:hover::before {
+            background: var(--gradient-fire);
+        }
+
+        .pr-card.collapsed .pr-card-content {
+            display: none;
+        }
+
         .pr-card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 16px 20px;
-            min-height: 60px;
+            padding: 1.25rem 1.5rem;
+            gap: 1rem;
         }
 
-        .pr-card-header-left {
-            display: flex;
-            align-items: center;
-            flex: 1;
-            min-width: 0;
-        }
-
-        .pr-card-header-right {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex-shrink: 0;
-        }
-        
-        .pr-card-content {
-            padding: 0 20px 20px 20px;
-            opacity: 0;
-            transform: translateY(-10px);
-            transition: all 0.3s ease;
-        }
-        
-        .pr-card.expanded .pr-card-content {
-            opacity: 1;
-            transform: translateY(0);
-        }
-        
-        .expand-icon {
-            transition: transform 0.3s ease;
-            font-size: 18px;
-            color: #6b7280;
-        }
-        
-        .pr-card.expanded .expand-icon {
-            transform: rotate(180deg);
-        }
-        
-        .pr-card-title {
-            font-weight: 600;
-            color: #1f2937;
-        }
-
-        .pr-card-title.collapsed {
+        .pr-card-name {
+            font-family: 'Oswald', sans-serif;
+            font-size: 1rem;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--text-primary);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            max-width: 200px;
+            flex: 1;
         }
 
-        .pr-card-title.expanded {
+        .pr-card.expanded .pr-card-name {
             white-space: normal;
             overflow: visible;
-            text-overflow: initial;
-            max-width: none;
         }
-        
-        .pr-card-value {
+
+        .pr-card-weight {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.5rem;
             font-weight: 700;
-            color: #2563eb;
-            font-size: 18px;
+            color: var(--accent-orange);
+            white-space: nowrap;
         }
+
+        .pr-card-weight .unit {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-left: 0.25em;
+        }
+
+        .expand-arrow {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            transition: transform 0.3s ease;
+        }
+
+        .pr-card.expanded .expand-arrow {
+            transform: rotate(180deg);
+        }
+
+        .pr-card-content {
+            padding: 0 1.5rem 1.5rem;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .pr-display {
+            text-align: center;
+            padding: 1.5rem 0;
+            margin-bottom: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 2px;
+            border: 1px solid var(--border-subtle);
+        }
+
+        .pr-display-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 3.5rem;
+            font-weight: 700;
+            color: var(--accent-orange);
+            line-height: 1;
+            text-shadow: 0 0 40px var(--accent-orange-glow);
+        }
+
+        .pr-display-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            margin-top: 0.5rem;
+        }
+
+        .increment-btns {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .increment-btn {
+            flex: 1;
+            padding: 0.9rem 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .increment-btn:hover {
+            border-color: var(--accent-orange);
+            background: rgba(249, 115, 22, 0.15);
+            color: var(--accent-orange);
+            transform: translateY(-2px);
+        }
+
+        .increment-btn:active {
+            transform: translateY(0);
+        }
+
+        /* Sparkline styles */
+        .sparkline-container {
+            margin: 1rem 0;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+        }
+
+        .sparkline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .sparkline-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+        }
+
+        .sparkline-stats {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--accent-green);
+        }
+
+        .sparkline-svg {
+            width: 100%;
+            height: 50px;
+            overflow: visible;
+        }
+
+        .sparkline-line {
+            fill: none;
+            stroke: var(--accent-orange);
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .sparkline-area {
+            fill: url(#sparklineGradient);
+            opacity: 0.3;
+        }
+
+        .sparkline-point {
+            fill: var(--accent-orange);
+        }
+
+        .sparkline-point-current {
+            fill: var(--accent-gold);
+            filter: drop-shadow(0 0 4px var(--accent-gold));
+        }
+
+        .sparkline-empty {
+            text-align: center;
+            padding: 0.75rem;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        .pr-celebration {
+            animation: prCelebrate 1s ease-out;
+        }
+
+        .pr-celebration::before {
+            background: var(--gradient-gold) !important;
+        }
+
+        @keyframes prCelebrate {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 0 rgba(251, 191, 36, 0);
+            }
+            20% {
+                transform: scale(1.05);
+                box-shadow: 0 0 40px rgba(251, 191, 36, 0.4);
+            }
+            40% {
+                transform: scale(1.08);
+                box-shadow: 0 0 60px rgba(251, 191, 36, 0.6);
+            }
+            60% {
+                transform: scale(1.04);
+                box-shadow: 0 0 40px rgba(251, 191, 36, 0.4);
+            }
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 rgba(251, 191, 36, 0);
+            }
+        }
+
+        .confetti-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1000;
+            overflow: hidden;
+        }
+
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            opacity: 0;
+        }
+
+        .manager-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            margin-bottom: 2rem;
+            overflow: hidden;
+        }
+
+        .manager-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 1.5rem;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .manager-title {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.25rem;
+            letter-spacing: 0.1em;
+        }
+
+        .close-btn {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .close-btn:hover {
+            color: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+
+        .manager-body {
+            padding: 1.5rem;
+        }
+
+        .add-exercise-form {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 0.75rem;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        @media (max-width: 640px) {
+            .add-exercise-form {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .form-input {
+            padding: 0.9rem 1rem;
+            font-family: 'Oswald', sans-serif;
+            font-size: 0.95rem;
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .form-input:focus {
+            border-color: var(--accent-orange);
+            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.1);
+        }
+
+        .btn-add {
+            padding: 0.9rem 1.5rem;
+            font-family: 'Oswald', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--bg-primary);
+            background: var(--accent-green);
+            border: none;
+            border-radius: 2px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-add:hover {
+            background: #16a34a;
+            transform: translateY(-2px);
+        }
+
+        .exercise-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .exercise-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.25rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            transition: all 0.2s ease;
+        }
+
+        .exercise-item:hover {
+            border-color: var(--border-strong);
+        }
+
+        .exercise-info {
+            flex: 1;
+        }
+
+        .exercise-name {
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            margin-bottom: 0.25rem;
+        }
+
+        .exercise-meta {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .exercise-pr {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            color: var(--accent-orange);
+        }
+
+        .btn-delete {
+            padding: 0.5rem 1rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-delete:hover {
+            color: var(--accent-red);
+            border-color: var(--accent-red);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .history-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-left: 3px solid var(--accent-gold);
+            border-radius: 2px;
+            transition: all 0.2s ease;
+        }
+
+        .history-item:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--border-strong);
+        }
+
+        .history-exercise {
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            margin-bottom: 0.25rem;
+        }
+
+        .history-weight {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-secondary);
+        }
+
+        .history-increase {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+
+        .history-badge {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.25rem;
+        }
+
+        .history-pr-badge {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1rem;
+            letter-spacing: 0.1em;
+            color: var(--accent-gold);
+        }
+
+        .history-date {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: var(--text-muted);
+        }
+
+        .empty-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .debug-panel {
+            display: none;
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: 2px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .error-details {
+            padding: 1rem;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 2px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--accent-red);
+            margin-bottom: 1.5rem;
+            text-align: left;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-strong);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        @media (max-width: 640px) {
+            .app-container {
+                padding: 1.5rem 1rem 3rem;
+            }
+
+            .logo {
+                font-size: 2.5rem;
+            }
+
+            .section-title {
+                font-size: 1.4rem;
+            }
+
+            .pr-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .pr-display-value {
+                font-size: 2.5rem;
+            }
+
+            .header-controls {
+                flex-direction: column;
+                gap: 0.75rem;
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-in {
+            animation: fadeInUp 0.5s ease forwards;
+        }
+
+        .animate-delay-1 { animation-delay: 0.1s; opacity: 0; }
+        .animate-delay-2 { animation-delay: 0.2s; opacity: 0; }
+        .animate-delay-3 { animation-delay: 0.3s; opacity: 0; }
+        .animate-delay-4 { animation-delay: 0.4s; opacity: 0; }
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
-    <!-- Authentication Check -->
-    <div id="authCheck" class="flex items-center justify-center min-h-screen">
-        <div class="text-center">
-            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p class="text-gray-600">Checking authentication...</p>
+<body>
+    <div id="confettiContainer" class="confetti-container"></div>
+
+    <div id="authCheck" class="state-screen">
+        <div class="state-card">
+            <div class="spinner"></div>
+            <h1 class="state-title">LOADING</h1>
+            <p class="state-text">Checking authentication...</p>
         </div>
     </div>
 
-    <!-- Not Authenticated -->
-    <div id="notAuthenticated" class="flex items-center justify-center min-h-screen hidden">
-        <div class="text-center bg-white p-8 rounded-lg shadow-md max-w-md">
-            <h1 class="text-2xl font-bold text-gray-800 mb-4">🔐 Authentication Required</h1>
-            <p class="text-gray-600 mb-6">Please sign in to access your personal weight tracker.</p>
-            <div id="debugInfo" class="text-xs text-left bg-gray-100 p-3 rounded mb-4 font-mono" style="display: none;">
+    <div id="notAuthenticated" class="state-screen hidden">
+        <div class="state-card">
+            <h1 class="state-title">🔐 AUTHENTICATION REQUIRED</h1>
+            <p class="state-text">Sign in to access your personal records and track your strength progress.</p>
+            <div id="debugInfo" class="debug-panel">
                 <div id="debugMessages"></div>
             </div>
-            <div class="space-y-4">
-                <a href="https://auth.benloe.com/?redirect=https://weights.benloe.com"
-                   class="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium inline-block w-full">
-                    Sign In
-                </a>
-                <button onclick="window.location.reload()" class="bg-gray-500 text-white px-6 py-3 rounded-md hover:bg-gray-600 font-medium inline-block w-full">
-                    Retry
-                </button>
-            </div>
+            <a href="https://auth.benloe.com/?redirect=https://weights.benloe.com" class="btn btn-primary">
+                Sign In
+            </a>
+            <button onclick="window.location.reload()" class="btn btn-secondary">
+                Retry
+            </button>
         </div>
     </div>
 
-    <!-- Application Error -->
-    <div id="appError" class="flex items-center justify-center min-h-screen hidden">
-        <div class="text-center bg-white p-8 rounded-lg shadow-md max-w-md">
-            <h1 class="text-2xl font-bold text-red-600 mb-4">⚠️ Application Error</h1>
-            <p class="text-gray-600 mb-4">Something went wrong while loading the app.</p>
-            <div id="errorDetails" class="text-sm text-left bg-red-50 p-4 rounded mb-4 font-mono text-red-800"></div>
-            <div id="errorDebugInfo" class="text-xs text-left bg-gray-100 p-3 rounded mb-4 font-mono" style="display: none;">
+    <div id="appError" class="state-screen hidden">
+        <div class="state-card">
+            <h1 class="state-title" style="color: var(--accent-red);">⚠️ ERROR</h1>
+            <p class="state-text">Something went wrong while loading the app.</p>
+            <div id="errorDetails" class="error-details"></div>
+            <div id="errorDebugInfo" class="debug-panel">
                 <div id="errorDebugMessages"></div>
             </div>
-            <div class="space-y-4">
-                <button onclick="window.location.reload()" class="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 font-medium inline-block w-full">
-                    Reload Page
-                </button>
-                <a href="https://benloe.com" class="bg-gray-500 text-white px-6 py-3 rounded-md hover:bg-gray-600 font-medium inline-block w-full">
-                    Go Home
-                </a>
-            </div>
+            <button onclick="window.location.reload()" class="btn btn-primary">
+                Reload Page
+            </button>
+            <a href="https://benloe.com" class="btn btn-secondary">
+                Go Home
+            </a>
         </div>
     </div>
 
+    <div id="mainApp" class="app-container hidden">
+        <header class="app-header animate-in animate-delay-1">
+            <h1 class="logo">
+                <span class="logo-icon">🏋️</span>IRON PR
+            </h1>
+            <p class="tagline">Track Your Strength Journey</p>
+            <div class="header-controls">
+                <span id="userGreeting" class="user-greeting"></span>
+                <button id="toggleExerciseManager" class="header-btn">⚙️ Manage Exercises</button>
+                <a href="https://auth.benloe.com/dashboard" class="header-btn">Account</a>
+            </div>
+        </header>
 
-    <!-- Main App -->
-    <div id="mainApp" class="container mx-auto px-4 py-8 max-w-4xl hidden">
-        <!-- Header -->
-        <div class="text-center mb-8">
-            <h1 class="text-4xl font-bold text-gray-800 mb-2">🏆 PR Tracker</h1>
-            <p class="text-gray-600">Track your personal records and celebrate your progress</p>
-            <div class="mt-4 flex justify-center items-center gap-4">
-                <span id="userGreeting" class="text-gray-700"></span>
-                <button id="toggleExerciseManager" class="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 font-medium">
-                    Manage Exercises
-                </button>
-                <a href="https://auth.benloe.com/dashboard" class="text-blue-600 hover:text-blue-700">
-                    Account
-                </a>
+        <div id="exerciseManager" class="manager-panel hidden">
+            <div class="manager-header">
+                <h2 class="manager-title">MANAGE EXERCISES</h2>
+                <button id="closeExerciseManager" class="close-btn">✕</button>
+            </div>
+            <div class="manager-body">
+                <form id="newExerciseForm" class="add-exercise-form">
+                    <input type="text" id="newExerciseName" class="form-input" placeholder="Exercise name..." required>
+                    <input type="number" id="newExerciseWeight" class="form-input" placeholder="Starting PR (lbs)" step="2.5" min="0" required style="width: 160px;">
+                    <button type="submit" class="btn-add">+ Add</button>
+                </form>
+                <div id="exerciseList" class="exercise-list"></div>
             </div>
         </div>
 
-        <!-- Exercise Manager -->
-        <div id="exerciseManager" class="bg-white rounded-lg shadow-md p-6 mb-8 hidden">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-semibold text-gray-800">Manage Exercises</h2>
-                <button id="closeExerciseManager" class="text-gray-500 hover:text-gray-700">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
+        <section class="section animate-in animate-delay-2">
+            <div class="section-header">
+                <div class="section-icon">🏆</div>
+                <h2 class="section-title">PERSONAL RECORDS</h2>
             </div>
-            
-            <div class="mb-6 p-4 bg-gray-50 rounded-md">
-                <h3 class="font-semibold text-gray-800 mb-3">Add New Exercise</h3>
-                <form id="newExerciseForm" class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <input type="text" id="newExerciseName" placeholder="Exercise name..." class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required>
-                    <input type="number" id="newExerciseWeight" placeholder="Starting PR (lbs)" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" step="2.5" min="0" required>
-                    <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 font-medium">
-                        Add Exercise
-                    </button>
-                </form>
-            </div>
-            
-            <div>
-                <h3 class="font-semibold text-gray-800 mb-3">Your Exercises</h3>
-                <div id="exerciseList" class="space-y-2">
-                    <!-- Exercise list will be populated here -->
+            <div id="currentPRs" class="pr-grid">
+                <div class="empty-state">
+                    <div class="empty-icon">🏋️</div>
+                    <p>Add exercises to start tracking your PRs</p>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <!-- Current PRs -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-            <h2 class="text-xl font-semibold text-gray-800 mb-6">🏆 Your Personal Records</h2>
-            <div id="currentPRs" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <p class="text-gray-500 text-center py-8 col-span-full">Add some exercises to start tracking your PRs!</p>
+        <section class="section animate-in animate-delay-3">
+            <div class="section-header">
+                <div class="section-icon">📜</div>
+                <h2 class="section-title">PR HISTORY</h2>
             </div>
-        </div>
-
-        <!-- PR History Chart -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">📈 Progress Over Time</h2>
-            <div id="prChart" class="h-64 flex items-center justify-center">
-                <p class="text-gray-500 text-center">Charts will appear here as you track your PRs!</p>
+            <div id="prHistory" class="history-list">
+                <div class="empty-state">
+                    <div class="empty-icon">📝</div>
+                    <p>Update records to see your history</p>
+                </div>
             </div>
-        </div>
-
-        <!-- PR History -->
-        <div class="bg-white rounded-lg shadow-md p-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">📜 PR History</h2>
-            <div id="prHistory" class="space-y-4">
-                <p class="text-gray-500 text-center py-8">No PR history yet. Update some records to see your progress!</p>
-            </div>
-        </div>
+        </section>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script>
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         class PRTracker {
             constructor() {
                 this.user = null;
                 this.exercises = [];
-                this.prs = {}; // Store current PRs by exercise ID
-                this.prHistory = []; // Store all PR updates
-                this.chart = null;
+                this.prs = {};
+                this.prHistory = [];
                 this.init();
             }
 
@@ -310,7 +990,7 @@
                 try {
                     log('Initializing app...');
                     await this.checkAuth();
-                    log(`Auth check complete. User: ${this.user ? 'SET' : 'NULL'}`);
+                    log('Auth check complete. User: ' + (this.user ? 'SET' : 'NULL'));
                     if (this.user) {
                         log('User found, loading app data...');
                         await this.loadData();
@@ -323,10 +1003,8 @@
                         this.showNotAuthenticated();
                     }
                 } catch (error) {
-                    log(`Initialization error: ${error.message}`);
+                    log('Initialization error: ' + error.message);
                     console.error('Initialization error:', error);
-
-                    // Show appropriate error screen based on error type
                     if (error.message && error.message.includes('auth')) {
                         this.showNotAuthenticated();
                     } else {
@@ -338,28 +1016,21 @@
             async checkAuth() {
                 try {
                     log('Starting auth check...');
-
-                    // Check authentication using our weights API user endpoint
-                    const userResponse = await fetch('/api/user/me', {
-                        credentials: 'include'
-                    });
-
-                    log(`Auth response status: ${userResponse.status}`);
-
+                    const userResponse = await fetch('/api/user/me', { credentials: 'include' });
+                    log('Auth response status: ' + userResponse.status);
                     if (userResponse.ok) {
                         const data = await userResponse.json();
                         this.user = data.user;
-                        log(`Authentication successful - User: ${this.user.email}`);
+                        log('Authentication successful - User: ' + this.user.email);
                         return;
                     } else {
                         const errorData = await userResponse.text();
-                        log(`Auth failed - Status: ${userResponse.status}, Error: ${errorData}`);
+                        log('Auth failed - Status: ' + userResponse.status + ', Error: ' + errorData);
                     }
-
                     log('Authentication failed - not logged in');
                     this.user = null;
                 } catch (error) {
-                    log(`Auth check failed with error: ${error.message}`);
+                    log('Auth check failed with error: ' + error.message);
                     console.error('Full auth error:', error);
                     this.user = null;
                 }
@@ -375,10 +1046,7 @@
 
             async loadExercises() {
                 try {
-                    const response = await fetch('/api/exercises', {
-                        credentials: 'include'
-                    });
-                    
+                    const response = await fetch('/api/exercises', { credentials: 'include' });
                     if (response.ok) {
                         const data = await response.json();
                         this.exercises = data.exercises || [];
@@ -390,10 +1058,7 @@
 
             async loadPRs() {
                 try {
-                    const response = await fetch('/api/prs', {
-                        credentials: 'include'
-                    });
-                    
+                    const response = await fetch('/api/prs', { credentials: 'include' });
                     if (response.ok) {
                         const data = await response.json();
                         this.prs = data.prs || {};
@@ -406,10 +1071,7 @@
 
             async loadPRHistory() {
                 try {
-                    const response = await fetch('/api/prs/history', {
-                        credentials: 'include'
-                    });
-                    
+                    const response = await fetch('/api/prs/history', { credentials: 'include' });
                     if (response.ok) {
                         const data = await response.json();
                         this.prHistory = data.history || [];
@@ -424,32 +1086,19 @@
                 try {
                     const response = await fetch('/api/exercises', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',
                         body: JSON.stringify({ name, initialWeight })
                     });
-
                     if (response.ok) {
                         const data = await response.json();
                         this.exercises.push(data.exercise);
-                        
-                        // Update local PR data if initial PR was set
-                        if (data.pr) {
-                            this.prs[data.exercise.id] = data.pr;
-                        }
-                        
-                        // Update local PR history if available
-                        if (data.prHistory) {
-                            this.prHistory.unshift(data.prHistory);
-                        }
-
+                        if (data.pr) this.prs[data.exercise.id] = data.pr;
+                        if (data.prHistory) this.prHistory.unshift(data.prHistory);
                         this.renderExerciseList();
                         this.renderPRs();
                         this.renderPRHistory();
-                        this.renderChart();
-                        return true;
+                                                return true;
                     } else {
                         const error = await response.json();
                         alert(error.error || 'Failed to add exercise');
@@ -466,21 +1115,17 @@
                 try {
                     const response = await fetch('/api/prs', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',
                         body: JSON.stringify({ exerciseId, weight: newWeight })
                     });
-
                     if (response.ok) {
                         const data = await response.json();
                         this.prs[exerciseId] = data.pr;
                         this.prHistory.unshift(data.history);
                         this.renderPRs();
                         this.renderPRHistory();
-                        this.renderChart();
-                        return true;
+                                                return true;
                     } else {
                         const error = await response.json();
                         alert(error.error || 'Failed to update PR');
@@ -494,21 +1139,20 @@
             }
 
             async deleteExercise(exerciseId) {
+                if (!confirm('Delete this exercise and all its records?')) return false;
                 try {
-                    const response = await fetch(`/api/exercises/${exerciseId}`, {
+                    const response = await fetch('/api/exercises/' + exerciseId, {
                         method: 'DELETE',
                         credentials: 'include'
                     });
-
                     if (response.ok) {
-                        this.exercises = this.exercises.filter(ex => ex.id !== exerciseId);
+                        this.exercises = this.exercises.filter(function(ex) { return ex.id !== exerciseId; });
                         delete this.prs[exerciseId];
-                        this.prHistory = this.prHistory.filter(h => h.exerciseId !== exerciseId);
+                        this.prHistory = this.prHistory.filter(function(h) { return h.exerciseId !== exerciseId; });
                         this.renderExerciseList();
                         this.renderPRs();
                         this.renderPRHistory();
-                        this.renderChart();
-                        return true;
+                                                return true;
                     } else {
                         const error = await response.json();
                         alert(error.error || 'Failed to delete exercise');
@@ -522,287 +1166,402 @@
             }
 
             initializeEventListeners() {
-                document.getElementById('newExerciseForm').addEventListener('submit', async (e) => {
+                var self = this;
+                document.getElementById('newExerciseForm').addEventListener('submit', async function(e) {
                     e.preventDefault();
-                    await this.handleAddExercise();
+                    await self.handleAddExercise();
                 });
 
-                document.getElementById('toggleExerciseManager').addEventListener('click', () => {
-                    const manager = document.getElementById('exerciseManager');
-                    manager.classList.toggle('hidden');
+                document.getElementById('toggleExerciseManager').addEventListener('click', function() {
+                    document.getElementById('exerciseManager').classList.toggle('hidden');
                 });
 
-                document.getElementById('closeExerciseManager').addEventListener('click', () => {
+                document.getElementById('closeExerciseManager').addEventListener('click', function() {
                     document.getElementById('exerciseManager').classList.add('hidden');
                 });
-
-                // PR increment event handlers will be added dynamically in renderPRs
             }
 
             async handleIncrementPR(exerciseId, increment) {
-                const currentPR = this.prs[exerciseId]?.weight || 0;
-                const newWeight = currentPR + increment;
-                
-                const success = await this.updatePR(exerciseId, newWeight);
+                var currentPR = this.prs[exerciseId] ? this.prs[exerciseId].weight : 0;
+                var newWeight = currentPR + increment;
+                var success = await this.updatePR(exerciseId, newWeight);
                 if (success) {
                     this.animatePRUpdate(exerciseId);
+                    this.triggerConfetti();
                 }
             }
 
             animatePRUpdate(exerciseId) {
-                const prCard = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+                var prCard = document.querySelector('[data-exercise-id="' + exerciseId + '"]');
                 if (prCard) {
                     prCard.classList.add('pr-celebration');
-                    setTimeout(() => {
-                        prCard.classList.remove('pr-celebration');
-                    }, 1200);
+                    setTimeout(function() { prCard.classList.remove('pr-celebration'); }, 1000);
+                }
+            }
+
+            triggerConfetti() {
+                var container = document.getElementById('confettiContainer');
+                var colors = ['#f97316', '#fbbf24', '#22c55e', '#3b82f6', '#ef4444', '#a855f7'];
+
+                for (var i = 0; i < 50; i++) {
+                    var confetti = document.createElement('div');
+                    confetti.className = 'confetti';
+                    confetti.style.left = Math.random() * 100 + '%';
+                    confetti.style.top = '-10px';
+                    confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                    confetti.style.transform = 'rotate(' + Math.random() * 360 + 'deg)';
+
+                    var animation = confetti.animate([
+                        { opacity: 1, transform: 'translateY(0) rotate(0deg) scale(1)' },
+                        { opacity: 0, transform: 'translateY(' + (window.innerHeight + 100) + 'px) rotate(' + (Math.random() * 720 - 360) + 'deg) scale(0.5)' }
+                    ], {
+                        duration: 2000 + Math.random() * 1000,
+                        easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)'
+                    });
+
+                    container.appendChild(confetti);
+                    (function(c) {
+                        animation.onfinish = function() { c.remove(); };
+                    })(confetti);
                 }
             }
 
             toggleCard(exerciseId) {
-                const prCard = document.querySelector(`[data-exercise-id="${exerciseId}"]`);
+                var prCard = document.querySelector('[data-exercise-id="' + exerciseId + '"]');
                 if (prCard) {
                     prCard.classList.toggle('collapsed');
                     prCard.classList.toggle('expanded');
-
-                    // Toggle title ellipsis classes
-                    const title = prCard.querySelector('.pr-card-title');
-                    if (title) {
-                        title.classList.toggle('collapsed');
-                        title.classList.toggle('expanded');
-                    }
                 }
             }
 
             async handleAddExercise() {
-                const form = document.getElementById('newExerciseForm');
-                const name = document.getElementById('newExerciseName').value.trim();
-                const weight = parseFloat(document.getElementById('newExerciseWeight').value);
+                var form = document.getElementById('newExerciseForm');
+                var name = document.getElementById('newExerciseName').value.trim();
+                var weight = parseFloat(document.getElementById('newExerciseWeight').value);
 
-                if (!name) {
-                    alert('Please enter an exercise name');
+                if (!name || !weight || weight <= 0) {
+                    alert('Please enter exercise name and starting PR');
                     return;
                 }
 
-                if (!weight || weight <= 0) {
-                    alert('Please enter a starting PR weight');
-                    return;
-                }
-
-                form.classList.add('loading');
-
-                const success = await this.addExercise(name, weight);
-                if (success) {
-                    form.reset();
-                }
-
-                form.classList.remove('loading');
+                form.style.opacity = '0.5';
+                form.style.pointerEvents = 'none';
+                var success = await this.addExercise(name, weight);
+                if (success) form.reset();
+                form.style.opacity = '1';
+                form.style.pointerEvents = 'auto';
             }
 
             render() {
                 if (this.user) {
-                    document.getElementById('userGreeting').textContent = 
-                        `Hello, ${this.user.name || this.user.email}!`;
+                    var greeting = document.getElementById('userGreeting');
+                    greeting.textContent = 'Welcome back, ';
+                    var strong = document.createElement('strong');
+                    strong.textContent = this.user.name || this.user.email;
+                    greeting.appendChild(strong);
                 }
-                
                 this.renderExerciseList();
                 this.renderPRs();
                 this.renderPRHistory();
-                this.renderChart();
-            }
+                            }
 
             renderPRs() {
-                const container = document.getElementById('currentPRs');
-                
+                var container = document.getElementById('currentPRs');
+                container.textContent = '';
+
                 if (this.exercises.length === 0) {
-                    container.innerHTML = '<p class="text-gray-500 text-center py-8 col-span-full">Add some exercises to start tracking your PRs!</p>';
+                    var empty = document.createElement('div');
+                    empty.className = 'empty-state';
+                    empty.style.gridColumn = '1 / -1';
+                    empty.innerHTML = '<div class="empty-icon">🏋️</div><p>Add exercises to start tracking your PRs</p>';
+                    container.appendChild(empty);
                     return;
                 }
 
-                container.innerHTML = this.exercises
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map(exercise => {
-                    const currentPR = this.prs[exercise.id]?.weight || 0;
-                    return `
-                        <div class="pr-card collapsed bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-200 transition-all duration-300" data-exercise-id="${exercise.id}">
-                            <div class="pr-card-header" onclick="app.toggleCard('${exercise.id}')">
-                                <div class="pr-card-header-left">
-                                    <span class="pr-card-title collapsed">${exercise.name}</span>
-                                </div>
-                                <div class="pr-card-header-right">
-                                    <span class="pr-card-value">${currentPR} lbs</span>
-                                    <div class="expand-icon">▼</div>
-                                </div>
-                            </div>
-                            <div class="pr-card-content">
-                                <div class="text-center mb-4">
-                                    <div class="text-xl font-semibold text-gray-800 mb-2">${exercise.name}</div>
-                                    <div class="text-3xl font-bold text-blue-600 pr-number">${currentPR} lbs</div>
-                                    <div class="text-sm text-gray-500">Current PR</div>
-                                </div>
-                                <div class="flex gap-2 justify-center">
-                                    <button onclick="app.handleIncrementPR('${exercise.id}', 2.5)" 
-                                            class="increment-btn bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm font-medium">
-                                        +2.5
-                                    </button>
-                                    <button onclick="app.handleIncrementPR('${exercise.id}', 5)" 
-                                            class="increment-btn bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm font-medium">
-                                        +5
-                                    </button>
-                                    <button onclick="app.handleIncrementPR('${exercise.id}', 10)" 
-                                            class="increment-btn bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded text-sm font-medium">
-                                        +10
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
+                var self = this;
+                this.exercises.sort(function(a, b) { return a.name.localeCompare(b.name); }).forEach(function(exercise) {
+                    var currentPR = self.prs[exercise.id] ? self.prs[exercise.id].weight : 0;
+                    
+                    var card = document.createElement('div');
+                    card.className = 'pr-card collapsed';
+                    card.setAttribute('data-exercise-id', exercise.id);
+                    
+                    var header = document.createElement('div');
+                    header.className = 'pr-card-header';
+                    header.onclick = function() { self.toggleCard(exercise.id); };
+                    
+                    var nameSpan = document.createElement('span');
+                    nameSpan.className = 'pr-card-name';
+                    nameSpan.textContent = exercise.name;
+                    
+                    var weightSpan = document.createElement('span');
+                    weightSpan.className = 'pr-card-weight';
+                    weightSpan.textContent = currentPR;
+                    var unit = document.createElement('span');
+                    unit.className = 'unit';
+                    unit.textContent = 'lbs';
+                    weightSpan.appendChild(unit);
+                    
+                    var arrow = document.createElement('div');
+                    arrow.className = 'expand-arrow';
+                    arrow.textContent = '▼';
+                    
+                    header.appendChild(nameSpan);
+                    header.appendChild(weightSpan);
+                    header.appendChild(arrow);
+                    
+                    var content = document.createElement('div');
+                    content.className = 'pr-card-content';
+                    
+                    var display = document.createElement('div');
+                    display.className = 'pr-display';
+                    var displayValue = document.createElement('div');
+                    displayValue.className = 'pr-display-value';
+                    displayValue.textContent = currentPR;
+                    var displayLabel = document.createElement('div');
+                    displayLabel.className = 'pr-display-label';
+                    displayLabel.textContent = 'Current PR (lbs)';
+                    display.appendChild(displayValue);
+                    display.appendChild(displayLabel);
+                    
+                    var btns = document.createElement('div');
+                    btns.className = 'increment-btns';
+                    
+                    [2.5, 5, 10].forEach(function(inc) {
+                        var btn = document.createElement('button');
+                        btn.className = 'increment-btn';
+                        btn.textContent = '+' + inc;
+                        btn.onclick = function(e) {
+                            e.stopPropagation();
+                            self.handleIncrementPR(exercise.id, inc);
+                        };
+                        btns.appendChild(btn);
+                    });
+                    
+                    // Add sparkline
+                    var sparkline = self.createSparkline(exercise.id);
+
+                    content.appendChild(display);
+                    content.appendChild(sparkline);
+                    content.appendChild(btns);
+                    card.appendChild(header);
+                    card.appendChild(content);
+                    container.appendChild(card);
+                });
+            }
+
+            createSparkline(exerciseId) {
+                var container = document.createElement('div');
+                container.className = 'sparkline-container';
+
+                // Get history for this exercise
+                var exerciseHistory = this.prHistory.filter(function(h) {
+                    return h.exerciseId === exerciseId;
+                }).sort(function(a, b) {
+                    return new Date(a.createdAt) - new Date(b.createdAt);
+                });
+
+                if (exerciseHistory.length < 2) {
+                    var empty = document.createElement('div');
+                    empty.className = 'sparkline-empty';
+                    empty.textContent = exerciseHistory.length === 0 ? 'No history yet' : 'Need 2+ PRs to show progress';
+                    container.appendChild(empty);
+                    return container;
+                }
+
+                // Calculate stats
+                var firstWeight = exerciseHistory[0].weight;
+                var lastWeight = exerciseHistory[exerciseHistory.length - 1].weight;
+                var totalGain = lastWeight - firstWeight;
+                var percentGain = ((totalGain / firstWeight) * 100).toFixed(1);
+
+                // Header with stats
+                var header = document.createElement('div');
+                header.className = 'sparkline-header';
+                var label = document.createElement('span');
+                label.className = 'sparkline-label';
+                label.textContent = 'Progress';
+                var stats = document.createElement('span');
+                stats.className = 'sparkline-stats';
+                stats.textContent = '+' + totalGain.toFixed(1) + ' lbs (' + percentGain + '%)';
+                header.appendChild(label);
+                header.appendChild(stats);
+
+                // Create SVG sparkline
+                var svgNS = 'http://www.w3.org/2000/svg';
+                var svg = document.createElementNS(svgNS, 'svg');
+                svg.setAttribute('class', 'sparkline-svg');
+                svg.setAttribute('viewBox', '0 0 200 50');
+                svg.setAttribute('preserveAspectRatio', 'none');
+
+                // Add gradient definition
+                var defs = document.createElementNS(svgNS, 'defs');
+                var gradient = document.createElementNS(svgNS, 'linearGradient');
+                gradient.setAttribute('id', 'sparklineGradient-' + exerciseId);
+                gradient.setAttribute('x1', '0%');
+                gradient.setAttribute('y1', '0%');
+                gradient.setAttribute('x2', '0%');
+                gradient.setAttribute('y2', '100%');
+                var stop1 = document.createElementNS(svgNS, 'stop');
+                stop1.setAttribute('offset', '0%');
+                stop1.setAttribute('stop-color', '#f97316');
+                stop1.setAttribute('stop-opacity', '0.4');
+                var stop2 = document.createElementNS(svgNS, 'stop');
+                stop2.setAttribute('offset', '100%');
+                stop2.setAttribute('stop-color', '#f97316');
+                stop2.setAttribute('stop-opacity', '0');
+                gradient.appendChild(stop1);
+                gradient.appendChild(stop2);
+                defs.appendChild(gradient);
+                svg.appendChild(defs);
+
+                // Calculate points
+                var weights = exerciseHistory.map(function(h) { return h.weight; });
+                var minWeight = Math.min.apply(null, weights);
+                var maxWeight = Math.max.apply(null, weights);
+                var range = maxWeight - minWeight || 1;
+                var padding = 5;
+                var width = 200;
+                var height = 50;
+
+                var points = exerciseHistory.map(function(h, i) {
+                    var x = padding + (i / (exerciseHistory.length - 1)) * (width - padding * 2);
+                    var y = height - padding - ((h.weight - minWeight) / range) * (height - padding * 2);
+                    return { x: x, y: y };
+                });
+
+                // Create path for area fill
+                var areaPath = document.createElementNS(svgNS, 'path');
+                var areaD = 'M ' + points[0].x + ' ' + height;
+                points.forEach(function(p) { areaD += ' L ' + p.x + ' ' + p.y; });
+                areaD += ' L ' + points[points.length - 1].x + ' ' + height + ' Z';
+                areaPath.setAttribute('d', areaD);
+                areaPath.setAttribute('fill', 'url(#sparklineGradient-' + exerciseId + ')');
+                svg.appendChild(areaPath);
+
+                // Create path for line
+                var linePath = document.createElementNS(svgNS, 'path');
+                var lineD = 'M ' + points[0].x + ' ' + points[0].y;
+                for (var i = 1; i < points.length; i++) {
+                    lineD += ' L ' + points[i].x + ' ' + points[i].y;
+                }
+                linePath.setAttribute('d', lineD);
+                linePath.setAttribute('class', 'sparkline-line');
+                svg.appendChild(linePath);
+
+                // Add points
+                points.forEach(function(p, i) {
+                    var circle = document.createElementNS(svgNS, 'circle');
+                    circle.setAttribute('cx', p.x);
+                    circle.setAttribute('cy', p.y);
+                    circle.setAttribute('r', i === points.length - 1 ? 4 : 3);
+                    circle.setAttribute('class', i === points.length - 1 ? 'sparkline-point-current' : 'sparkline-point');
+                    svg.appendChild(circle);
+                });
+
+                container.appendChild(header);
+                container.appendChild(svg);
+                return container;
             }
 
             renderExerciseList() {
-                const list = document.getElementById('exerciseList');
-                
+                var list = document.getElementById('exerciseList');
+                list.textContent = '';
+
                 if (this.exercises.length === 0) {
-                    list.innerHTML = '<p class="text-gray-500 text-center py-4">No exercises yet. Add your first exercise above!</p>';
+                    var empty = document.createElement('div');
+                    empty.className = 'empty-state';
+                    empty.innerHTML = '<p>No exercises yet</p>';
+                    list.appendChild(empty);
                     return;
                 }
 
-                list.innerHTML = this.exercises
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map(exercise => `
-                    <div class="flex justify-between items-center p-3 bg-white border rounded-md">
-                        <div>
-                            <span class="font-medium">${exercise.name}</span>
-                            <div class="text-sm text-gray-500">
-                                PR: ${this.prs[exercise.id]?.weight || 0} lbs
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <span class="text-xs text-gray-400">
-                                Added ${new Date(exercise.createdAt).toLocaleDateString()}
-                            </span>
-                            <button onclick="app.deleteExercise('${exercise.id}')" 
-                                    class="text-red-500 hover:text-red-700 text-sm font-medium">
-                                Delete
-                            </button>
-                        </div>
-                    </div>
-                `).join('');
+                var self = this;
+                this.exercises.sort(function(a, b) { return a.name.localeCompare(b.name); }).forEach(function(exercise) {
+                    var item = document.createElement('div');
+                    item.className = 'exercise-item';
+                    
+                    var info = document.createElement('div');
+                    info.className = 'exercise-info';
+                    
+                    var name = document.createElement('div');
+                    name.className = 'exercise-name';
+                    name.textContent = exercise.name;
+                    
+                    var meta = document.createElement('div');
+                    meta.className = 'exercise-meta';
+                    meta.textContent = 'PR: ';
+                    var prSpan = document.createElement('span');
+                    prSpan.className = 'exercise-pr';
+                    prSpan.textContent = (self.prs[exercise.id] ? self.prs[exercise.id].weight : 0) + ' lbs';
+                    meta.appendChild(prSpan);
+                    meta.appendChild(document.createTextNode(' · Added ' + new Date(exercise.createdAt).toLocaleDateString()));
+                    
+                    info.appendChild(name);
+                    info.appendChild(meta);
+                    
+                    var deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'btn-delete';
+                    deleteBtn.textContent = 'Delete';
+                    deleteBtn.onclick = function() { self.deleteExercise(exercise.id); };
+                    
+                    item.appendChild(info);
+                    item.appendChild(deleteBtn);
+                    list.appendChild(item);
+                });
             }
 
             renderPRHistory() {
-                const container = document.getElementById('prHistory');
-                
+                var container = document.getElementById('prHistory');
+                container.textContent = '';
+
                 if (!this.prHistory || this.prHistory.length === 0) {
-                    container.innerHTML = '<p class="text-gray-500 text-center py-8">No PR history yet. Update some records to see your progress!</p>';
+                    var empty = document.createElement('div');
+                    empty.className = 'empty-state';
+                    empty.innerHTML = '<div class="empty-icon">📝</div><p>Update records to see your history</p>';
+                    container.appendChild(empty);
                     return;
                 }
 
-                container.innerHTML = this.prHistory.slice(0, 10).map(history => {
-                    const exercise = this.exercises.find(ex => ex.id === history.exerciseId);
-                    const exerciseName = exercise?.name || 'Unknown Exercise';
-                    const increase = history.previousWeight ? ` (+${history.weight - history.previousWeight})` : '';
+                var self = this;
+                this.prHistory.slice(0, 10).forEach(function(history) {
+                    var exercise = self.exercises.find(function(ex) { return ex.id === history.exerciseId; });
+                    var exerciseName = exercise ? exercise.name : 'Unknown Exercise';
+                    var increase = history.previousWeight ? '+' + (history.weight - history.previousWeight).toFixed(1) : '';
+
+                    var item = document.createElement('div');
+                    item.className = 'history-item';
                     
-                    return `
-                        <div class="flex justify-between items-center p-4 border rounded-md">
-                            <div>
-                                <span class="font-medium">${exerciseName}</span>
-                                <span class="text-gray-600 ml-2">New PR: ${history.weight} lbs${increase}</span>
-                            </div>
-                            <div class="text-right">
-                                <div class="text-sm font-medium text-green-600">🎉 PR!</div>
-                                <div class="text-xs text-gray-500">${new Date(history.createdAt).toLocaleDateString()}</div>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            }
-
-            renderChart() {
-                const chartContainer = document.getElementById('prChart');
-                
-                if (!this.prHistory || this.prHistory.length === 0) {
-                    chartContainer.innerHTML = '<p class="text-gray-500 text-center">Charts will appear here as you track your PRs!</p>';
-                    return;
-                }
-
-                // Destroy existing chart
-                if (this.chart) {
-                    this.chart.destroy();
-                }
-
-                // Create canvas if it doesn't exist
-                let canvas = chartContainer.querySelector('canvas');
-                if (!canvas) {
-                    chartContainer.innerHTML = '<canvas id="prChartCanvas"></canvas>';
-                    canvas = document.getElementById('prChartCanvas');
-                }
-
-                // Prepare data for chart
-                const exerciseData = {};
-                
-                this.prHistory.forEach(history => {
-                    const exercise = this.exercises.find(ex => ex.id === history.exerciseId);
-                    const exerciseName = exercise?.name || 'Unknown';
-                    
-                    if (!exerciseData[exerciseName]) {
-                        exerciseData[exerciseName] = [];
+                    var left = document.createElement('div');
+                    var exName = document.createElement('div');
+                    exName.className = 'history-exercise';
+                    exName.textContent = exerciseName;
+                    var weight = document.createElement('div');
+                    weight.className = 'history-weight';
+                    weight.textContent = 'New PR: ' + history.weight + ' lbs ';
+                    if (increase) {
+                        var incSpan = document.createElement('span');
+                        incSpan.className = 'history-increase';
+                        incSpan.textContent = '(' + increase + ')';
+                        weight.appendChild(incSpan);
                     }
+                    left.appendChild(exName);
+                    left.appendChild(weight);
                     
-                    exerciseData[exerciseName].push({
-                        x: new Date(history.createdAt),
-                        y: history.weight
-                    });
-                });
-
-                // Create datasets
-                const colors = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'];
-                const datasets = Object.keys(exerciseData).map((exerciseName, index) => ({
-                    label: exerciseName,
-                    data: exerciseData[exerciseName].sort((a, b) => a.x - b.x),
-                    borderColor: colors[index % colors.length],
-                    backgroundColor: colors[index % colors.length] + '20',
-                    tension: 0.3,
-                    fill: false
-                }));
-
-                // Create chart
-                this.chart = new Chart(canvas, {
-                    type: 'line',
-                    data: { datasets },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            x: {
-                                type: 'time',
-                                time: {
-                                    displayFormats: {
-                                        day: 'MMM dd',
-                                        week: 'MMM dd',
-                                        month: 'MMM yyyy'
-                                    }
-                                }
-                            },
-                            y: {
-                                beginAtZero: true,
-                                title: {
-                                    display: true,
-                                    text: 'Weight (lbs)'
-                                }
-                            }
-                        },
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: 'PR Progression Over Time'
-                            },
-                            legend: {
-                                position: 'top'
-                            }
-                        }
-                    }
+                    var badge = document.createElement('div');
+                    badge.className = 'history-badge';
+                    var prBadge = document.createElement('span');
+                    prBadge.className = 'history-pr-badge';
+                    prBadge.textContent = '🎉 NEW PR';
+                    var date = document.createElement('span');
+                    date.className = 'history-date';
+                    date.textContent = new Date(history.createdAt).toLocaleDateString();
+                    badge.appendChild(prBadge);
+                    badge.appendChild(date);
+                    
+                    item.appendChild(left);
+                    item.appendChild(badge);
+                    container.appendChild(item);
                 });
             }
 
@@ -825,49 +1584,29 @@
                 document.getElementById('mainApp').classList.add('hidden');
                 document.getElementById('notAuthenticated').classList.add('hidden');
                 document.getElementById('appError').classList.remove('hidden');
-
-                // Show error details
-                const errorDetails = document.getElementById('errorDetails');
-                errorDetails.textContent = error.message || 'Unknown error occurred';
-
-                // Copy debug messages to error screen
-                const debugMessages = document.getElementById('debugMessages');
-                const errorDebugMessages = document.getElementById('errorDebugMessages');
-                const errorDebugInfo = document.getElementById('errorDebugInfo');
-                if (debugMessages && debugMessages.children.length > 0) {
-                    errorDebugInfo.style.display = 'block';
-                    errorDebugMessages.innerHTML = debugMessages.innerHTML;
-                }
+                document.getElementById('errorDetails').textContent = error.message || 'Unknown error occurred';
             }
         }
 
-        // Simple console logging with visible debug
         function log(message) {
-            console.log(`WeightsApp: ${message}`);
-
-            // Also show in debug panel for mobile users
-            const debugInfo = document.getElementById('debugInfo');
-            const debugMessages = document.getElementById('debugMessages');
+            console.log('WeightsApp: ' + message);
+            var debugInfo = document.getElementById('debugInfo');
+            var debugMessages = document.getElementById('debugMessages');
             if (debugInfo && debugMessages) {
                 debugInfo.style.display = 'block';
-                const msgDiv = document.createElement('div');
-                msgDiv.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+                var msgDiv = document.createElement('div');
+                msgDiv.textContent = new Date().toLocaleTimeString() + ': ' + message;
                 msgDiv.style.marginBottom = '4px';
                 debugMessages.appendChild(msgDiv);
-
-                // Keep only last 10 messages
                 while (debugMessages.children.length > 10) {
                     debugMessages.removeChild(debugMessages.firstChild);
                 }
             }
         }
 
-
-        // Initialize the app
-        let app;
-        document.addEventListener('DOMContentLoaded', () => {
+        var app;
+        document.addEventListener('DOMContentLoaded', function() {
             app = new PRTracker();
-
         });
     </script>
 </body>
