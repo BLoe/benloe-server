@@ -1,0 +1,152 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User Profile - AI-managed fitness context
+model UserProfile {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  primaryGoalSummary String?
+  goalType           String    @default("general") // weight_loss, strength, sport, consistency, health, general
+  targetDate         DateTime?
+  constraints        String?   // JSON: injuries, equipment, schedule, preferences
+  notes              String?   // Freeform AI-maintained notes
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("user_profiles")
+}
+
+// Weekly Workout Schedule Template
+model WorkoutTemplate {
+  id          String   @id @default(cuid())
+  userId      String
+  dayOfWeek   Int      // 0=Sunday, 1=Monday, etc.
+  name        String   // e.g., "Upper Body Strength"
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  exercises WorkoutExercise[]
+
+  @@unique([userId, dayOfWeek])
+  @@map("workout_templates")
+}
+
+// Exercises within a workout template
+model WorkoutExercise {
+  id                String   @id @default(cuid())
+  workoutTemplateId String
+  exerciseDetailId  String?
+  name              String
+  sets              Int?
+  reps              String?  // Can be "8-12" or "AMRAP"
+  duration          String?  // e.g., "30 seconds"
+  notes             String?
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workoutTemplate WorkoutTemplate @relation(fields: [workoutTemplateId], references: [id], onDelete: Cascade)
+  exerciseDetail  ExerciseDetail? @relation(fields: [exerciseDetailId], references: [id])
+
+  @@map("workout_exercises")
+}
+
+// Exercise Details Library
+model ExerciseDetail {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  description     String?
+  focusPoints     String?  // JSON array of focus points
+  equipmentNeeded String?  // JSON array
+  modifications   String?  // JSON: easier/harder variants
+  videoUrl        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  exercises WorkoutExercise[]
+
+  @@unique([userId, name])
+  @@map("exercise_details")
+}
+
+// Workout Completions
+model WorkoutCompletion {
+  id                String   @id @default(cuid())
+  userId            String
+  workoutTemplateId String?
+  workoutName       String   // Denormalized for history
+  completedDate     DateTime // Date only, not time
+  notes             String?
+  duration          Int?     // Minutes
+  rating            Int?     // 1-5 how it felt
+  createdAt         DateTime @default(now())
+
+  @@unique([userId, completedDate, workoutName])
+  @@map("workout_completions")
+}
+
+// User-defined Metrics
+model MetricDefinition {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String   // e.g., "Body Weight", "Waist", "Sleep Hours"
+  unit      String?  // e.g., "lbs", "inches", "hours"
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  values MetricValue[]
+
+  @@unique([userId, name])
+  @@map("metric_definitions")
+}
+
+model MetricValue {
+  id                 String   @id @default(cuid())
+  metricDefinitionId String
+  value              Float
+  recordedDate       DateTime
+  notes              String?
+  createdAt          DateTime @default(now())
+
+  metric MetricDefinition @relation(fields: [metricDefinitionId], references: [id], onDelete: Cascade)
+
+  @@map("metric_values")
+}
+
+// Milestones
+model Milestone {
+  id          String    @id @default(cuid())
+  userId      String
+  title       String
+  description String?
+  targetDate  DateTime?
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("milestones")
+}
+
+// Chat History (for context continuity)
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String   // "user" or "assistant"
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("chat_messages")
+}
