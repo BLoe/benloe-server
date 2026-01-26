@@ -1,8 +1,33 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { claudeService, ClaudeError } from '../services/claude';
+import { claudeService, ClaudeError, ClaudeRequest } from '../services/claude';
 
 const router = Router();
+
+// Content block schema (for tool use support)
+const contentBlockSchema = z.union([
+  z.string(),
+  z.array(z.object({
+    type: z.string(),
+    text: z.string().optional(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+    input: z.any().optional(),
+    tool_use_id: z.string().optional(),
+    content: z.union([z.string(), z.array(z.any())]).optional(),
+  })),
+]);
+
+// Tool definition schema
+const toolSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  input_schema: z.object({
+    type: z.literal('object'),
+    properties: z.record(z.any()).optional(),
+    required: z.array(z.string()).optional(),
+  }).passthrough(),
+});
 
 // Request validation schema
 const messageSchema = z.object({
@@ -10,14 +35,20 @@ const messageSchema = z.object({
   messages: z.array(
     z.object({
       role: z.enum(['user', 'assistant']),
-      content: z.string(),
+      content: contentBlockSchema,
     })
   ),
-  max_tokens: z.number().min(1).max(4096).default(1024),
+  max_tokens: z.number().min(1).max(8192).default(1024),
   system: z.string().optional(),
   temperature: z.number().min(0).max(1).optional(),
   top_p: z.number().min(0).max(1).optional(),
   stop_sequences: z.array(z.string()).optional(),
+  tools: z.array(toolSchema).optional(),
+  tool_choice: z.union([
+    z.object({ type: z.literal('auto') }),
+    z.object({ type: z.literal('any') }),
+    z.object({ type: z.literal('tool'), name: z.string() }),
+  ]).optional(),
 });
 
 /**
@@ -49,7 +80,7 @@ router.post('/messages', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const response = await claudeService.sendMessage(userId, parsed.data);
+    const response = await claudeService.sendMessage(userId, parsed.data as ClaudeRequest);
 
     if (isError(response)) {
       const statusCode = response.error.type === 'no_api_key' ? 400 : 500;
@@ -83,7 +114,7 @@ router.post(
         return;
       }
 
-      const result = await claudeService.streamMessage(userId, parsed.data);
+      const result = await claudeService.streamMessage(userId, parsed.data as ClaudeRequest);
 
       if (result.error) {
         const statusCode = result.error.error.type === 'no_api_key' ? 400 : 500;

@@ -13,9 +13,29 @@ const prisma = new PrismaClient();
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 
+export interface ClaudeContentBlock {
+  type: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: any;
+  tool_use_id?: string;
+  content?: string | any[];
+}
+
 export interface ClaudeMessage {
   role: 'user' | 'assistant';
-  content: string;
+  content: string | ClaudeContentBlock[];
+}
+
+export interface ClaudeTool {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties?: Record<string, any>;
+    required?: string[];
+  };
 }
 
 export interface ClaudeRequest {
@@ -26,6 +46,8 @@ export interface ClaudeRequest {
   temperature?: number | undefined;
   top_p?: number | undefined;
   stop_sequences?: string[] | undefined;
+  tools?: ClaudeTool[] | undefined;
+  tool_choice?: { type: 'auto' | 'any' } | { type: 'tool'; name: string } | undefined;
 }
 
 export interface ClaudeResponse {
@@ -34,7 +56,10 @@ export interface ClaudeResponse {
   role: string;
   content: Array<{
     type: string;
-    text: string;
+    text?: string;
+    id?: string;
+    name?: string;
+    input?: any;
   }>;
   model: string;
   stop_reason: string | null;
