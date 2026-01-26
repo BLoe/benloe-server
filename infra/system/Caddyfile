@@ -1,0 +1,16 @@
+# Main Caddyfile for benloe.com and subdomains
+
+# Root domain
+benloe.com {
+	root * /srv/benloe/static/benloe.com
+	file_server
+	encode gzip
+}
+
+# www redirect
+www.benloe.com {
+	redir https://benloe.com{uri} permanent
+}
+
+# Import subdomain configurations from monorepo
+import /srv/benloe/infra/caddy/*

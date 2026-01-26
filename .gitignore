@@ -16,6 +16,9 @@ npm-debug.log*
 *.sqlite
 data/
 
+# Backups
+backups/
+
 # Logs
 logs/
 *.log
