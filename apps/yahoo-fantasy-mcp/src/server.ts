@@ -53,7 +53,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // Start server
-app.listen(config.port, () => {
+app.listen(config.port, '127.0.0.1', () => {
   console.log(`Yahoo Fantasy MCP server running on port ${config.port}`);
   console.log(`Environment: ${config.nodeEnv}`);
   console.log(`Server URL: ${config.mcpServerUrl}`);

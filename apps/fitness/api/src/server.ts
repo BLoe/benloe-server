@@ -80,7 +80,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   });
 });
 
-app.listen(PORT, () => {
+app.listen(Number(PORT), '127.0.0.1', () => {
   console.log(`Fitness API running on port ${PORT}`);
 });
 

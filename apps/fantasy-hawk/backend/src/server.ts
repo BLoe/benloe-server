@@ -73,7 +73,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-app.listen(PORT, () => {
+app.listen(Number(PORT), '127.0.0.1', () => {
   console.log(`Fantasy Hawk API running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
   console.log(`Frontend URL: ${process.env.FRONTEND_URL}`);

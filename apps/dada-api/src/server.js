@@ -489,6 +489,6 @@ app.get('/health', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '127.0.0.1', () => {
   console.log(`DADA API server running on port ${PORT}`);
 });

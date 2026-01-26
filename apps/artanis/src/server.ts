@@ -159,7 +159,7 @@ app.use(
   }
 );
 
-app.listen(PORT, () => {
+app.listen(Number(PORT), '127.0.0.1', () => {
   console.log(`🔐 Artanis Auth Server running on port ${PORT}`);
 });
 

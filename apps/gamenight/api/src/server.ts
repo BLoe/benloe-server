@@ -95,7 +95,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, next: express
   });
 });
 
-app.listen(PORT, () => {
+app.listen(Number(PORT), '127.0.0.1', () => {
   console.log(`🎲 Game Night API running on port ${PORT}`);
 });
 
