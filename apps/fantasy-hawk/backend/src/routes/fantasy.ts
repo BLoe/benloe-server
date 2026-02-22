@@ -481,9 +481,8 @@ router.get('/leagues/:league_key/category/comparison', authenticate, async (req:
     const teamCount = teamsData?.count || 0;
 
     const allTeamStats: Record<string, Record<string, number>> = {};
+    const allTeamNames: Record<string, string> = {};
     let userTeamKey = '';
-    let userTeamName = '';
-    let userTeamStats: Record<string, number> = {};
 
     for (let i = 0; i < teamCount; i++) {
       const team = teamsData?.[i]?.team;
@@ -493,14 +492,13 @@ router.get('/leagues/:league_key/category/comparison', authenticate, async (req:
       if (!parsed) continue;
 
       allTeamStats[parsed.teamKey] = parsed.stats;
+      allTeamNames[parsed.teamKey] = parsed.teamName;
 
       // Check if this is user's team
       const props = team[0] || [];
       for (const prop of props) {
         if (prop?.is_owned_by_current_login === 1) {
           userTeamKey = parsed.teamKey;
-          userTeamName = parsed.teamName;
-          userTeamStats = parsed.stats;
           break;
         }
       }
@@ -510,18 +508,26 @@ router.get('/leagues/:league_key/category/comparison', authenticate, async (req:
       return res.status(404).json({ error: 'User team not found in league' });
     }
 
-    // Build comparison
-    const comparison = buildComparison(
-      userTeamKey,
-      userTeamName,
-      userTeamStats,
-      allTeamStats,
-      statCategories
-    );
+    // Build profiles for all teams
+    const teams = Object.entries(allTeamStats).map(([teamKey, teamStats]) => {
+      const profile = buildTeamProfile(teamKey, allTeamNames[teamKey], teamStats, allTeamStats, statCategories);
+      return {
+        teamKey,
+        teamName: allTeamNames[teamKey],
+        isUser: teamKey === userTeamKey,
+        archetype: profile.archetype,
+        categoryRanks: profile.categoryRanks,
+      };
+    });
+
+    const categories = statCategories
+      .filter(c => c.stat_id && c.is_only_display_stat !== '1')
+      .map(c => c.abbr || c.display_name || c.stat_id.toString());
 
     res.json({
-      comparison,
-      totalTeams: teamCount,
+      userTeamKey,
+      teams,
+      categories,
     });
   } catch (error: any) {
     console.error('Category comparison error:', error);
