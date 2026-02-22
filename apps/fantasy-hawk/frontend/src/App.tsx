@@ -1,5 +1,5 @@
 import { useState, useEffect, Suspense, lazy } from 'react';
-import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Header } from './components/Header';
 import { useAuth } from './hooks/useAuth';
 import { LoadingSpinner } from './components/LoadingSpinner';
@@ -217,11 +217,11 @@ function AppContent() {
 
 function App() {
   return (
-    <HashRouter>
+    <BrowserRouter>
       <LearningModeProvider>
         <AppContent />
       </LearningModeProvider>
-    </HashRouter>
+    </BrowserRouter>
   );
 }
 
