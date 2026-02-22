@@ -120,6 +120,10 @@ export function EnhancedCategoryTable({ leagueKey }: EnhancedCategoryTableProps)
       case 'percentiles':
         return `${cat.percentile.toFixed(0)}%`;
       default:
+        // Format percentage categories (FG%, FT%) as readable percentages
+        if (cat.displayName.includes('%')) {
+          return `${(cat.value * 100).toFixed(1)}%`;
+        }
         return cat.value.toFixed(1);
     }
   }
