@@ -137,7 +137,7 @@ export function DebugPanel({ selectedLeague }: DebugPanelProps) {
       const data = await response.json();
       setBdlResult({
         status: 'success',
-        message: data.configured ? 'Ball Don\'t Lie API configured' : 'API key not configured',
+        message: data.available ? 'Ball Don\'t Lie API configured' : 'API key not configured',
         latency,
       });
     } catch (err: any) {
