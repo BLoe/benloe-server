@@ -3414,7 +3414,7 @@ router.get('/leagues/:league_key/waiver/recommendations', authenticate, async (r
       makeYahooRequest(user.id, `/league/${league_key}/settings`),
       makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
       makeYahooRequest(user.id, `/league/${league_key}/teams/roster/players/stats`),
-      makeYahooRequest(user.id, `/league/${league_key}/players;status=FA;count=50;sort=PTS`),
+      makeYahooRequest(user.id, `/league/${league_key}/players;status=FA;count=50`),
       makeYahooRequest(user.id, `/league/${league_key}/teams/stats`),
     ]);
 
@@ -3686,7 +3686,7 @@ router.get('/leagues/:league_key/waiver/faab', authenticate, async (req: Request
       makeYahooRequest(user.id, `/league/${league_key}/settings`),
       makeYahooRequest(user.id, `/league/${league_key}/scoreboard`),
       makeYahooRequest(user.id, `/league/${league_key}/teams/roster/players/stats`),
-      makeYahooRequest(user.id, `/league/${league_key}/players;status=FA;count=50;sort=PTS`),
+      makeYahooRequest(user.id, `/league/${league_key}/players;status=FA;count=50`),
       makeYahooRequest(user.id, `/league/${league_key}/teams/stats`),
       makeYahooRequest(user.id, `/league/${league_key}/teams`),
     ]);

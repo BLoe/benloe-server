@@ -84,12 +84,15 @@ export function LeagueInsights({ selectedLeague }: LeagueInsightsProps) {
       const [settingsResponse, analysisResponse] = await Promise.all([
         api.fantasy.getLeagueInsightsSettings(selectedLeague),
         api.fantasy.getLeagueInsightsAnalysis(selectedLeague),
-      ]) as [{ settings: LeagueSettingsSummary; leagueName?: string }, { settings: LeagueSettingsSummary; analysis: LeagueAnalysis }];
+      ]) as [any, { settings: LeagueSettingsSummary; analysis: LeagueAnalysis }];
+
+      // Settings endpoint returns settings flat at top level (not wrapped in "settings")
+      const { leagueName, season, ...settingsData } = settingsResponse;
 
       setData({
-        settings: settingsResponse.settings,
+        settings: settingsData as LeagueSettingsSummary,
         analysis: analysisResponse.analysis,
-        leagueName: settingsResponse.leagueName,
+        leagueName,
       });
     } catch (err: any) {
       console.error('Failed to load league insights:', err);
