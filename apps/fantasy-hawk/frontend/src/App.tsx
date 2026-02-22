@@ -1,5 +1,5 @@
 import { useState, useEffect, Suspense, lazy } from 'react';
-import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Header } from './components/Header';
 import { useAuth } from './hooks/useAuth';
 import { LoadingSpinner } from './components/LoadingSpinner';
@@ -69,6 +69,7 @@ function AppContent() {
   const [selectedLeague, setSelectedLeague] = useState<string | null>(null);
   const [leaguesLoading, setLeaguesLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Load leagues when connected
   useEffect(() => {
@@ -77,15 +78,26 @@ function AppContent() {
     }
   }, [isConnected]);
 
-  // Navigate to first league when leagues are loaded
+  // Sync selectedLeague from URL and handle initial navigation
   useEffect(() => {
-    if (leagues.length > 0 && !selectedLeague) {
+    if (leagues.length === 0) return;
+
+    // Extract league key from current URL path (e.g. /league/466.l.15701/insights)
+    const match = location.pathname.match(/^\/league\/([^/]+)/);
+    const urlLeagueKey = match ? match[1] : null;
+
+    if (urlLeagueKey && leagues.some(l => l.league_key === urlLeagueKey)) {
+      // URL has a valid league — sync state to match it (no redirect)
+      if (selectedLeague !== urlLeagueKey) {
+        setSelectedLeague(urlLeagueKey);
+      }
+    } else if (!selectedLeague) {
+      // No league in URL and none selected — redirect to first league
       const firstLeagueKey = leagues[0].league_key;
       setSelectedLeague(firstLeagueKey);
-      // Navigate to the first league's standings
       navigate(`/league/${firstLeagueKey}/standings`, { replace: true });
     }
-  }, [leagues, selectedLeague, navigate]);
+  }, [leagues, location.pathname]);
 
   async function loadLeagues() {
     try {
@@ -100,11 +112,14 @@ function AppContent() {
     }
   }
 
-  // Handle league change from header dropdown
+  // Handle league change from header dropdown — preserve current tab
   function handleLeagueChange(leagueKey: string | null) {
     setSelectedLeague(leagueKey);
     if (leagueKey) {
-      navigate(`/league/${leagueKey}/standings`);
+      // Keep the current tab when switching leagues (e.g. /insights stays /insights)
+      const tabMatch = location.pathname.match(/^\/league\/[^/]+\/(.+)$/);
+      const currentTab = tabMatch ? tabMatch[1] : 'standings';
+      navigate(`/league/${leagueKey}/${currentTab}`);
     }
   }
 
