@@ -1718,10 +1718,10 @@ router.get('/leagues/:league_key/matchup/current', authenticate, async (req: Req
     const userTeamData = parseTeamData(userTeam);
     const opponentTeamData = parseTeamData(opponentTeam);
 
-    // Build category comparison
+    // Build category comparison (exclude display-only stats)
     const categories: any[] = [];
     for (const cat of statCategories) {
-      if (!cat?.stat_id) continue;
+      if (!cat?.stat_id || cat.is_only_display_stat) continue;
 
       const userValue = userTeamData.categoryStats[cat.stat_id]?.value || '0';
       const oppValue = opponentTeamData.categoryStats[cat.stat_id]?.value || '0';
@@ -1894,7 +1894,7 @@ router.get('/leagues/:league_key/matchup/projections', authenticate, async (req:
     const projections: any[] = [];
 
     for (const cat of statCategories) {
-      if (!cat?.stat_id) continue;
+      if (!cat?.stat_id || cat.is_only_display_stat) continue;
 
       const userCurrent = userStats[cat.stat_id] || 0;
       const oppCurrent = oppStats[cat.stat_id] || 0;
