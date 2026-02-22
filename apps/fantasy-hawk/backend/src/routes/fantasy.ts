@@ -2383,13 +2383,15 @@ router.get('/leagues/:league_key/insights/settings', authenticate, async (req: R
     const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
     const statCategories = settingsContent?.stat_categories?.stats || [];
 
-    // Parse categories
-    const categories: LeagueCategory[] = statCategories.map((s: any) => ({
-      statId: s.stat?.stat_id?.toString() || '',
-      name: s.stat?.name || '',
-      displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
-      abbr: s.stat?.abbr || '',
-    })).filter((c: LeagueCategory) => c.statId);
+    // Parse categories (filter out display-only stats like FGA, FTM/FTA)
+    const categories: LeagueCategory[] = statCategories
+      .filter((s: any) => s.stat?.stat_id && s.stat?.is_only_display_stat !== '1')
+      .map((s: any) => ({
+        statId: s.stat?.stat_id?.toString() || '',
+        name: s.stat?.name || '',
+        displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
+        abbr: s.stat?.abbr || '',
+      }));
 
     // Get league type and team count
     const leagueType = leagueInfo.scoring_type || 'head-to-head';
@@ -2442,13 +2444,15 @@ router.get('/leagues/:league_key/insights/analysis', authenticate, async (req: R
     const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
     const statCategories = settingsContent?.stat_categories?.stats || [];
 
-    // Parse categories
-    const categories: LeagueCategory[] = statCategories.map((s: any) => ({
-      statId: s.stat?.stat_id?.toString() || '',
-      name: s.stat?.name || '',
-      displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
-      abbr: s.stat?.abbr || '',
-    })).filter((c: LeagueCategory) => c.statId);
+    // Parse categories (filter out display-only stats like FGA, FTM/FTA)
+    const categories: LeagueCategory[] = statCategories
+      .filter((s: any) => s.stat?.stat_id && s.stat?.is_only_display_stat !== '1')
+      .map((s: any) => ({
+        statId: s.stat?.stat_id?.toString() || '',
+        name: s.stat?.name || '',
+        displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
+        abbr: s.stat?.abbr || '',
+      }));
 
     // Get league type and team count
     const leagueType = leagueInfo.scoring_type || 'head-to-head';
@@ -2511,13 +2515,15 @@ router.get('/leagues/:league_key/insights/rankings', authenticate, async (req: R
     const leagueInfo = leagueData?.fantasy_content?.league?.[0] || {};
     const statCategories = settingsContent?.stat_categories?.stats || [];
 
-    // Parse categories
-    const categories: LeagueCategory[] = statCategories.map((s: any) => ({
-      statId: s.stat?.stat_id?.toString() || '',
-      name: s.stat?.name || '',
-      displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
-      abbr: s.stat?.abbr || '',
-    })).filter((c: LeagueCategory) => c.statId);
+    // Parse categories (filter out display-only stats like FGA, FTM/FTA)
+    const categories: LeagueCategory[] = statCategories
+      .filter((s: any) => s.stat?.stat_id && s.stat?.is_only_display_stat !== '1')
+      .map((s: any) => ({
+        statId: s.stat?.stat_id?.toString() || '',
+        name: s.stat?.name || '',
+        displayName: s.stat?.display_name || s.stat?.abbr || s.stat?.name || '',
+        abbr: s.stat?.abbr || '',
+      }));
 
     // Get league type and team count
     const leagueType = leagueInfo.scoring_type || 'head-to-head';

@@ -106,6 +106,11 @@ export function parseLeagueSettings(
       return true;
     }
 
+    // Special handling for steals (ST, STL)
+    if ((ca === 'ST' || ca === 'STL') && (sa === 'ST' || sa === 'STL')) {
+      return true;
+    }
+
     // Don't match partial overlaps like REB/OREB or FG/FGM - these are different categories
     return false;
   };
@@ -197,8 +202,9 @@ export function parseLeagueSettings(
   }
 
   // Determine league type
+  // Yahoo uses: "head" (H2H each cat), "headone" (H2H one win), "headpoint" (H2H points), "roto"
   let parsedLeagueType: 'head-to-head' | 'roto' | 'points' | 'unknown' = 'unknown';
-  if (leagueType.includes('head-to-head')) {
+  if (leagueType.includes('head')) {
     parsedLeagueType = 'head-to-head';
   } else if (leagueType.includes('roto')) {
     parsedLeagueType = 'roto';
@@ -236,7 +242,7 @@ export function analyzeCategoryImportance(
     // Scarcity: How rare is excellence
     if (abbr.includes('BLK')) {
       scarcity = 85; // Very scarce - only a few elite shot blockers
-    } else if (abbr.includes('STL')) {
+    } else if ((abbr === 'ST' || abbr.includes('STL'))) {
       scarcity = 75; // Scarce - steals hard to find
     } else if (abbr.includes('AST')) {
       scarcity = 70; // Somewhat scarce - concentrated in PGs
@@ -261,7 +267,7 @@ export function analyzeCategoryImportance(
     // Volatility: How much does it swing week to week
     if (abbr.includes('BLK')) {
       volatility = 85; // Very volatile
-    } else if (abbr.includes('STL')) {
+    } else if ((abbr === 'ST' || abbr.includes('STL'))) {
       volatility = 80; // Very volatile
     } else if (abbr.includes('3PM') || abbr.includes('3P')) {
       volatility = 70; // Somewhat volatile
@@ -290,7 +296,7 @@ export function analyzeCategoryImportance(
       streamability = 65; // Moderate - need bigs
     } else if (abbr.includes('BLK')) {
       streamability = 45; // Hard - need specific players
-    } else if (abbr.includes('STL')) {
+    } else if ((abbr === 'ST' || abbr.includes('STL'))) {
       streamability = 55; // Moderate
     } else if (abbr.includes('AST')) {
       streamability = 40; // Hard - need ball handlers
@@ -572,7 +578,7 @@ export function calculatePlayerScore(
     if (abbr.includes('PTS')) { statKey = 'pts'; weight = weights.pts || 1.0; }
     else if (abbr.includes('REB') && !abbr.includes('OREB')) { statKey = 'reb'; weight = weights.reb || 1.0; }
     else if (abbr.includes('AST')) { statKey = 'ast'; weight = weights.ast || 1.0; }
-    else if (abbr.includes('STL')) { statKey = 'stl'; weight = weights.stl || 1.5; }
+    else if ((abbr === 'ST' || abbr.includes('STL'))) { statKey = 'stl'; weight = weights.stl || 1.5; }
     else if (abbr.includes('BLK')) { statKey = 'blk'; weight = weights.blk || 1.5; }
     else if (abbr.includes('3PM') || abbr.includes('3P')) { statKey = 'threepm'; weight = weights.threepm || 1.0; }
     else if (abbr.includes('FG%')) { statKey = 'fgpct'; weight = weights.fgpct || 1.0; }
