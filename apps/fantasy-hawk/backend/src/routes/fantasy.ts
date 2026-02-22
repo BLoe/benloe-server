@@ -509,14 +509,23 @@ router.get('/leagues/:league_key/category/comparison', authenticate, async (req:
     }
 
     // Build profiles for all teams
+    // Sort categoryRanks by statId so all teams have consistent column order
+    // (buildTeamProfile sorts by rank, which differs per team)
+    const categoryOrder = statCategories
+      .filter(c => c.stat_id && c.is_only_display_stat !== '1')
+      .map(c => c.stat_id.toString());
+
     const teams = Object.entries(allTeamStats).map(([teamKey, teamStats]) => {
       const profile = buildTeamProfile(teamKey, allTeamNames[teamKey], teamStats, allTeamStats, statCategories);
+      const sortedRanks = [...profile.categoryRanks].sort(
+        (a, b) => categoryOrder.indexOf(a.statId) - categoryOrder.indexOf(b.statId)
+      );
       return {
         teamKey,
         teamName: allTeamNames[teamKey],
         isUser: teamKey === userTeamKey,
         archetype: profile.archetype,
-        categoryRanks: profile.categoryRanks,
+        categoryRanks: sortedRanks,
       };
     });
 
