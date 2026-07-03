@@ -107,6 +107,26 @@ Check services: `pm2 list`
 3. Restart service: `pm2 restart <service-name>`
 4. Commit and push: `git add . && git commit && git push`
 
+## OS Updates (7-Day Delay Rule)
+
+Ubuntu packages are updated automatically, but **only versions published at
+least 7 days ago** are installed (supply-chain caution over patch speed —
+this includes security updates, deliberately).
+
+- Script: `infra/scripts/apt-delayed-upgrade.sh` — checks each pending .deb's
+  `Last-Modified` date in the archive pool and pins away anything younger
+  than 7 days, then runs a normal `dist-upgrade`. Covers the Ubuntu, Caddy,
+  and Chrome repos uniformly.
+- Schedule: `apt-delayed-upgrade.timer`, daily ~06:30 UTC. Units live in
+  `infra/systemd/` (source of truth) and are **copied** to
+  `/etc/systemd/system/` — after editing, re-copy and `systemctl daemon-reload`.
+- Logs: `/srv/benloe/logs/apt-delayed-upgrade.log`
+- unattended-upgrades' install step is disabled (`APT::Periodic::Unattended-Upgrade "0"`
+  in `/etc/apt/apt.conf.d/20auto-upgrades`) so nothing bypasses the rule.
+  Don't re-enable it or run `apt-get upgrade` manually for routine updates.
+- Kernel updates set the reboot-required flag; reboots are manual (Ben's call).
+  PM2 and Caddy are boot-enabled, so a plain `systemctl reboot` is safe.
+
 ## Technology Preferences
 
 **Choose technologies with strong representation in training data:**
