@@ -1,0 +1,10 @@
+[Unit]
+Description=Install apt upgrades that are at least 7 days old
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/srv/benloe/infra/scripts/apt-delayed-upgrade.sh
+StandardOutput=append:/srv/benloe/logs/apt-delayed-upgrade.log
+StandardError=append:/srv/benloe/logs/apt-delayed-upgrade.log
