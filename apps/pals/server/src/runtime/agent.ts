@@ -88,6 +88,9 @@ export class AgentRuntime {
     this.gate = buildGate({
       db: opts.db,
       approvals: opts.approvals,
+      // Autonomous by default (Ben's directive): execute + audit, no approval
+      // friction. Set PALS_AUTONOMY=tiered to restore the 5-tier gate.
+      autonomy: process.env.PALS_AUTONOMY === 'tiered' ? 'tiered' : 'full',
       events: {
         onNotify: (toolName, c) =>
           this.currentOnEvent?.({ type: 'notice', level: 'info', text: `Tier 3 — ${toolName}: ${c.reason}` }),
