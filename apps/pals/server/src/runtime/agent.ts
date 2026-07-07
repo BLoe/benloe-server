@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { MemoryStore } from '../memory/index.js';
@@ -14,6 +15,7 @@ export type TurnEvent =
   | { type: 'text-delta'; delta: string }
   | { type: 'tool-start'; toolId: string; name: string; input: unknown }
   | { type: 'tool-end'; toolId: string; output: string; isError: boolean }
+  | { type: 'widget'; widgetType: string; data: unknown }
   | { type: 'notice'; level: 'info' | 'warn'; text: string }
   | { type: 'approval-requested'; approvalId: string }
   | { type: 'turn-end'; usage: Record<string, unknown> | null; sessionId: string | null; stopReason: string }
@@ -29,6 +31,8 @@ export interface RuntimeOptions {
   mcpServers?: Record<string, unknown>;
   /** Extra allowedTools entries — ONLY ungated mcp__pals__* names (Appendix B). */
   allowedTools?: string[];
+  /** render_widget emissions forward into the active turn's event stream. */
+  widgetBus?: EventEmitter;
   queryFn?: QueryFn; // injectable for tests
   cwd?: string;
   dataDir?: string;
@@ -72,6 +76,10 @@ export class AgentRuntime {
   readonly authMode: 'subscription' | 'api';
   private queryFn: QueryFn;
   private gate;
+  /** Single-flight (guaranteed by the queue): the active turn's sinks. */
+  private currentOnEvent: ((e: TurnEvent) => void) | null = null;
+  private currentAbort: AbortController | null = null;
+  private currentThreadId: string | null = null;
 
   constructor(private opts: RuntimeOptions) {
     this.queryFn = opts.queryFn ?? sdkQuery;
@@ -79,8 +87,23 @@ export class AgentRuntime {
     this.gate = buildGate({
       db: opts.db,
       approvals: opts.approvals,
-      events: {},
+      events: {
+        onNotify: (toolName, c) =>
+          this.currentOnEvent?.({ type: 'notice', level: 'info', text: `Tier 3 — ${toolName}: ${c.reason}` }),
+        onApprovalRequested: (id) => this.currentOnEvent?.({ type: 'approval-requested', approvalId: id }),
+      },
     });
+    opts.widgetBus?.on('widget', (w: { widgetType: string; data: unknown }) =>
+      this.currentOnEvent?.({ type: 'widget', widgetType: w.widgetType, data: w.data }),
+    );
+  }
+
+  /** Abort the in-flight turn (optionally only if it belongs to threadId). */
+  interrupt(threadId?: string): boolean {
+    if (!this.currentAbort) return false;
+    if (threadId && this.currentThreadId !== threadId) return false;
+    this.currentAbort.abort();
+    return true;
   }
 
   /** Serialized entry point: all turns pass through the queue. */
@@ -108,6 +131,10 @@ export class AgentRuntime {
     const standingOrders = this.safeRead('STANDING_ORDERS.md');
     const ctx: GateContext = { threadId: req.threadId, sessionKind: req.kind, standingOrders };
     const messageId = randomUUID();
+    const abort = req.abort ?? new AbortController();
+    this.currentOnEvent = req.onEvent;
+    this.currentAbort = abort;
+    this.currentThreadId = req.threadId;
     req.onEvent({ type: 'turn-start', messageId, threadId: req.threadId, model });
 
     const systemPrompt = assemblePrompt(this.opts.memory, { kind: req.kind, ...req.promptInput });
@@ -164,7 +191,7 @@ export class AgentRuntime {
               },
             ],
           },
-          abortController: req.abort,
+          abortController: abort,
         },
       } as Parameters<QueryFn>[0]);
 
@@ -215,6 +242,10 @@ export class AgentRuntime {
     } catch (err) {
       req.onEvent({ type: 'error', message: String((err as Error).message ?? err).slice(0, 500), retryable: true });
       throw err;
+    } finally {
+      this.currentOnEvent = null;
+      this.currentAbort = null;
+      this.currentThreadId = null;
     }
 
     if (sessionId && sessionId !== thread.sdk_session_id) {
