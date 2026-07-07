@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/db && cp -r src/db/migrations dist/db/",
     "dev": "tsx src/index.ts",
     "test": "vitest run"
   },
