@@ -167,6 +167,20 @@ body {
 .chit button.approve { background: var(--paper-ink); color: var(--paper); }
 .chit .decided { padding: 10px 12px 12px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; }
 
+/* ---------- approval drawer (out-of-band sign-offs) ---------- */
+.inbox-drawer {
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-0);
+  padding: 8px 14px 12px;
+  max-height: 55dvh;
+  overflow-y: auto;
+}
+.inbox-drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--dim); padding: 4px 0 8px;
+}
+
 /* ---------- widgets ---------- */
 .widget {
   background: var(--ink-1); border: 1px solid var(--line); border-radius: var(--radius);

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { applyPromotions, classifyToolUse, parsePromotions, type Classification, type TierPolicy, DEFAULT_POLICY } from './classify.js';
-import type { ApprovalQueue } from './approvals.js';
+import type { ApprovalQueue, ApprovalPacket } from './approvals.js';
 
 export interface GateContext {
   threadId: string | null;
@@ -15,7 +15,7 @@ export type GateResult =
 
 export interface GateEvents {
   onNotify?(toolName: string, c: Classification, input: Record<string, unknown>): void;
-  onApprovalRequested?(id: string): void;
+  onApprovalRequested?(packet: ApprovalPacket): void;
 }
 
 const TIER_DENY_MESSAGES: Record<number, string> = {
@@ -72,7 +72,7 @@ export function buildGate(opts: {
     // Tier 2 — approve-before. Scheduled sessions never sit on an approval;
     // they defer the action to a user-visible packet and move on.
     const payload = JSON.stringify(input, null, 1).slice(0, 8000);
-    const { id, decision } = opts.approvals.enqueue({
+    const { decision, packet } = opts.approvals.enqueue({
       tier: 2,
       action: `${toolName}:${c.actionClass}`,
       payload,
@@ -82,7 +82,7 @@ export function buildGate(opts: {
       threadId: ctx.threadId,
       ttlMs: ctx.sessionKind === 'user' ? undefined : 1000, // non-interactive: fail fast, packet remains visible
     });
-    opts.events?.onApprovalRequested?.(id);
+    opts.events?.onApprovalRequested?.(packet);
     const d = await decision;
     if (d.approved) {
       audit(toolName, c, 'approved', ctx, input);

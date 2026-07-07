@@ -43,7 +43,7 @@ export class ApprovalQueue extends EventEmitter {
 
   enqueue(
     packet: Omit<ApprovalPacket, 'id' | 'expiresAt'> & { ttlMs?: number },
-  ): { id: string; decision: Promise<ApprovalDecision> } {
+  ): { id: string; decision: Promise<ApprovalDecision>; packet: ApprovalPacket } {
     const id = randomUUID();
     const ttl = packet.ttlMs ?? this.defaultTtlMs;
     const expiresAt = new Date(Date.now() + ttl).toISOString();
@@ -60,8 +60,19 @@ export class ApprovalQueue extends EventEmitter {
       this.waiters.set(id, { resolve, timer });
     });
 
-    this.emit('approval', { ...packet, id, expiresAt } satisfies ApprovalPacket);
-    return { id, decision };
+    const full: ApprovalPacket = {
+      id,
+      tier: packet.tier,
+      action: packet.action,
+      payload: packet.payload,
+      reasoning: packet.reasoning,
+      confidence: packet.confidence,
+      reversibility: packet.reversibility,
+      threadId: packet.threadId,
+      expiresAt,
+    };
+    this.emit('approval', full);
+    return { id, decision, packet: full };
   }
 
   decide(id: string, approved: boolean, editedPayload?: string, message?: string): boolean {

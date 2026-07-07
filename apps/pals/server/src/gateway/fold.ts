@@ -1,4 +1,5 @@
 import type { TurnEvent } from '../runtime/agent.js';
+import type { ApprovalPacket } from '../tiers/approvals.js';
 
 /**
  * Typed message parts (§12.3): the persisted shape of an assistant message
@@ -9,7 +10,7 @@ export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'tool-run'; toolId: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean }
   | { type: 'widget'; widgetType: string; data: unknown }
-  | { type: 'approval-ref'; approvalId: string }
+  | { type: 'approval'; packet: ApprovalPacket }
   | { type: 'notice'; level: string; text: string };
 
 export function foldEvent(parts: MessagePart[], e: TurnEvent | { type: 'widget'; widgetType: string; data: unknown }): MessagePart[] {
@@ -37,8 +38,8 @@ export function foldEvent(parts: MessagePart[], e: TurnEvent | { type: 'widget';
     case 'widget':
       parts.push({ type: 'widget', widgetType: e.widgetType, data: e.data });
       return parts;
-    case 'approval-requested':
-      parts.push({ type: 'approval-ref', approvalId: e.approvalId });
+    case 'approval':
+      parts.push({ type: 'approval', packet: e.packet });
       return parts;
     case 'notice':
       parts.push({ type: 'notice', level: e.level, text: e.text });
