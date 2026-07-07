@@ -46,6 +46,10 @@ export default function App() {
             setInbox((prev) => [...prev.filter((x) => x.id !== p.id), p]);
           }
           if (e.event === 'approval-result') setInbox((prev) => prev.filter((p) => p.id !== (e.data as { id: string }).id));
+          if (e.event === 'thread-titled') {
+            const { id, title } = e.data as { id: string; title: string };
+            setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
+          }
         });
       } catch (err) {
         if (err instanceof AuthRequiredError) setAuthState('login');

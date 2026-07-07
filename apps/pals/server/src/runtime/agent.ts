@@ -8,6 +8,7 @@ import { buildGate, type GateContext } from '../tiers/gate.js';
 import { assemblePrompt, type PromptInput } from './prompt.js';
 import { refusalFallback, route } from './router.js';
 import { TurnQueue, type TurnKind } from './queue.js';
+import { generateTitle } from './titler.js';
 
 /** §12.2 event vocabulary — the gateway maps these 1:1 onto SSE. */
 export type TurnEvent =
@@ -109,6 +110,16 @@ export class AgentRuntime {
   /** Serialized entry point: all turns pass through the queue. */
   run(req: TurnRequest): Promise<{ stopReason: string; sessionId: string | null }> {
     return this.queue.submit(req.kind, () => this.executeTurn(req));
+  }
+
+  /**
+   * Name a conversation from its opening exchange (§9.2 nano route). Runs OFF
+   * the turn queue: it is a stateless, tool-less read that shares no state with
+   * the active turn, so it must not wait behind — or block — the next user turn.
+   * Never throws; returns null when a title can't be produced.
+   */
+  titleFor(userText: string, assistantText: string): Promise<string | null> {
+    return generateTitle(this.queryFn, { userText, assistantText });
   }
 
   private threadRow(threadId: string): { sdk_session_id: string | null; model_override: string | null } {

@@ -23,11 +23,15 @@ const fakeAuthFetch = (async (url: string | URL, init?: RequestInit) => {
 }) as typeof fetch;
 
 // Scripted runtime standing in for the real SDK-backed one.
-function fakeRuntime(script?: (onEvent: (e: TurnEvent) => void) => Promise<void>) {
+function fakeRuntime(
+  script?: (onEvent: (e: TurnEvent) => void) => Promise<void>,
+  titleFor: (u: string, a: string) => Promise<string | null> = async () => 'Auto Title',
+) {
   return {
     authMode: 'subscription' as const,
     queue: { depth: 0 },
     interrupt: () => true,
+    titleFor,
     run: async (req: { threadId: string; onEvent: (e: TurnEvent) => void }) => {
       if (script) await script(req.onEvent);
       return { stopReason: 'success', sessionId: 's1' };
@@ -103,6 +107,8 @@ describe('threads', () => {
   });
 });
 
+const deps_thread = (id: string) => pals.db.prepare('SELECT title FROM thread WHERE id = ?').get(id) as { title: string | null };
+
 async function collectSse(res: globalThis.Response): Promise<SseEvent[]> {
   const events: SseEvent[] = [];
   const parse = createSseParser((e) => events.push(e));
@@ -142,6 +148,45 @@ describe('chat stream', () => {
       { type: 'tool-run', toolId: 'tu1', name: 'Bash', input: { command: 'ls' }, output: 'ok', isError: false, done: true },
       { type: 'text', text: ' — done.' },
     ]);
+  });
+
+  it('auto-titles an untitled thread from its first turn, but never re-titles', async () => {
+    let titleCalls = 0;
+    let turn = 0;
+    const script = async (onEvent: (e: TurnEvent) => void) => {
+      onEvent({ type: 'turn-start', messageId: `m${++turn}`, threadId: 't', model: 'claude-sonnet-5' });
+      onEvent({ type: 'text-delta', delta: 'Here is your answer.' });
+      onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+    };
+    await startApp(
+      fakeRuntime(script, async () => {
+        titleCalls++;
+        return 'Weight Tracker Deploy';
+      }),
+    );
+    const { id } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+    // first turn — titles it (awaited before the stream closes)
+    await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'deploy the weight tracker' }) }));
+    let row = deps_thread(id);
+    expect(row.title).toBe('Weight Tracker Deploy');
+    expect(titleCalls).toBe(1);
+    // second turn — established title is left alone, no extra titling call
+    await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'now add a chart' }) }));
+    row = deps_thread(id);
+    expect(row.title).toBe('Weight Tracker Deploy');
+    expect(titleCalls).toBe(1);
+  });
+
+  it('leaves the thread untitled when the titler returns null', async () => {
+    const script = async (onEvent: (e: TurnEvent) => void) => {
+      onEvent({ type: 'turn-start', messageId: 'm1', threadId: 't', model: 'claude-sonnet-5' });
+      onEvent({ type: 'text-delta', delta: 'ok' });
+      onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+    };
+    await startApp(fakeRuntime(script, async () => null));
+    const { id } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+    await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'hi' }) }));
+    expect(deps_thread(id).title).toBeNull();
   });
 
   it('rejects unknown threads and empty text', async () => {
