@@ -1,0 +1,228 @@
+/* PALS — "night desk" token system.
+   Dark blue-slate instrument ground; phosphor amber for the machine's own
+   voice and activity; warm paper reserved exclusively for approval chits —
+   the places a human signature is required. Mono carries labels and data;
+   the humanist system sans carries conversation. */
+
+:root {
+  --ink-0: #0e1420; /* page ground */
+  --ink-1: #151d2c; /* raised surface */
+  --ink-2: #1e2938; /* inset / wells */
+  --line: #2a3750; /* hairlines */
+  --text: #cdd6e4;
+  --dim: #8391a6;
+  --amber: #f0b249; /* phosphor — PALS activity, accents */
+  --amber-dim: #8a6a2f;
+  --paper: #f2ecdc; /* approval chit */
+  --paper-ink: #262119;
+  --paper-line: #c9bfa5;
+  --ok: #6fbf8f;
+  --warn: #e0654f;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --rail: 3px;
+  --radius: 6px;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--ink-0);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- app frame ---------- */
+.app { display: flex; height: 100%; height: 100dvh; }
+.sidebar {
+  display: none;
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--ink-1);
+  flex-direction: column;
+}
+@media (min-width: 900px) { .sidebar { display: flex; } }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+/* ---------- status rail (annunciator strip) ---------- */
+.status-rail {
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(env(safe-area-inset-top) + 8px) 14px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink-1);
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+  color: var(--dim); text-transform: uppercase;
+}
+.status-rail .wordmark { color: var(--amber); font-weight: 700; letter-spacing: 0.2em; }
+.status-rail .spacer { flex: 1; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.pill {
+  border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+  cursor: pointer; background: transparent; color: inherit; font: inherit;
+}
+.pill.attention { border-color: var(--amber); color: var(--amber); }
+
+/* ---------- threads ---------- */
+.thread-list { overflow-y: auto; flex: 1; padding: 8px; }
+.thread-item {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--text); padding: 10px 10px; border-radius: var(--radius);
+  cursor: pointer; font: inherit;
+}
+.thread-item:hover { background: var(--ink-2); }
+.thread-item.active { background: var(--ink-2); box-shadow: inset var(--rail) 0 0 var(--amber); }
+.thread-item .meta { font-family: var(--mono); font-size: 10px; color: var(--dim); }
+.new-thread {
+  margin: 10px; padding: 8px; font-family: var(--mono); font-size: 12px;
+  background: transparent; color: var(--amber); border: 1px dashed var(--amber-dim);
+  border-radius: var(--radius); cursor: pointer;
+}
+
+/* ---------- chat log ---------- */
+.chat { flex: 1; overflow-y: auto; padding: 16px 14px 8px; }
+.chat-inner { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.msg-user { align-self: flex-end; max-width: 85%; }
+.msg-user .body {
+  background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 8px 12px; white-space: pre-wrap;
+}
+.msg-assistant { align-self: stretch; padding-left: 12px; border-left: var(--rail) solid transparent; }
+.msg-assistant.streaming { border-left-color: var(--amber); }
+.msg-assistant .prose :is(p, ul, ol) { margin: 0 0 0.6em; }
+.msg-assistant .prose :is(h1,h2,h3,h4) { font-family: var(--mono); letter-spacing: 0.04em; margin: 0.8em 0 0.4em; }
+.msg-assistant .prose code { font-family: var(--mono); font-size: 0.88em; background: var(--ink-2); padding: 1px 5px; border-radius: 4px; }
+.msg-assistant .prose pre { background: var(--ink-2); border: 1px solid var(--line); padding: 10px; border-radius: var(--radius); overflow-x: auto; }
+.msg-assistant .prose pre code { background: none; padding: 0; }
+.msg-assistant .prose a { color: var(--amber); }
+.msg-assistant .prose table { border-collapse: collapse; font-size: 0.9em; }
+.msg-assistant .prose :is(th, td) { border: 1px solid var(--line); padding: 4px 8px; }
+.cursor {
+  display: inline-block; width: 7px; height: 15px; background: var(--amber);
+  vertical-align: text-bottom; animation: blink 1s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ---------- tool run cards (terminal) ---------- */
+.tool-run {
+  font-family: var(--mono); font-size: 12px;
+  background: var(--ink-2); border: 1px solid var(--line);
+  border-left: var(--rail) dotted var(--amber-dim);
+  border-radius: var(--radius); margin: 6px 0;
+}
+.tool-run summary {
+  padding: 6px 10px; cursor: pointer; color: var(--dim); list-style: none;
+  display: flex; gap: 8px; align-items: center; user-select: none;
+}
+.tool-run summary::-webkit-details-marker { display: none; }
+.tool-run .tool-name { color: var(--amber); }
+.tool-run .tool-cmd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tool-run .status { flex-shrink: 0; }
+.tool-run .status.err { color: var(--warn); }
+.tool-run .out {
+  border-top: 1px solid var(--line); padding: 8px 10px; margin: 0;
+  white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto;
+  color: var(--text);
+}
+
+/* ---------- notices ---------- */
+.notice {
+  font-family: var(--mono); font-size: 11px; color: var(--dim);
+  padding: 3px 0 3px 10px; border-left: 2px solid var(--line);
+}
+.notice.warn { color: var(--warn); border-left-color: var(--warn); }
+
+/* ---------- approval chit: the signature element ---------- */
+.chit {
+  background: var(--paper); color: var(--paper-ink);
+  border-radius: 4px; padding: 0; margin: 10px 0; overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+.chit header {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+  padding: 7px 12px; border-bottom: 1px solid var(--paper-line);
+  display: flex; justify-content: space-between;
+}
+.chit .action { padding: 10px 12px 0; font-weight: 600; }
+.chit .payload {
+  font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  background: rgba(0, 0, 0, 0.05); border: 1px solid var(--paper-line);
+  margin: 8px 12px; padding: 8px; border-radius: 3px; max-height: 220px; overflow-y: auto;
+}
+.chit .reasoning { padding: 0 12px 4px; font-size: 13px; color: #55503f; }
+.chit .countdown { height: 3px; background: var(--paper-line); }
+.chit .countdown > div { height: 100%; background: #b3862d; transition: width 1s linear; }
+.chit .actions { display: flex; gap: 8px; padding: 10px 12px 12px; }
+.chit button {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 8px 16px; border-radius: 3px; cursor: pointer; border: 1.5px solid var(--paper-ink);
+  background: transparent; color: var(--paper-ink);
+}
+.chit button.approve { background: var(--paper-ink); color: var(--paper); }
+.chit .decided { padding: 10px 12px 12px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; }
+
+/* ---------- widgets ---------- */
+.widget {
+  background: var(--ink-1); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px; margin: 8px 0;
+}
+.widget .w-title {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--dim); margin-bottom: 8px;
+}
+.macro-ring { display: flex; align-items: center; gap: 16px; }
+.macro-ring .legend { font-family: var(--mono); font-size: 12px; display: grid; gap: 4px; }
+.weight-chart svg { width: 100%; height: auto; }
+.checkin-row { display: flex; gap: 6px; }
+.checkin-row button {
+  flex: 1; padding: 8px 0; font-family: var(--mono); background: var(--ink-2);
+  color: var(--text); border: 1px solid var(--line); border-radius: 4px; cursor: pointer;
+}
+.checkin-row button:hover { border-color: var(--amber); }
+.grocery label { display: flex; gap: 8px; padding: 3px 0; }
+
+/* ---------- composer ---------- */
+.composer {
+  display: flex; gap: 8px; align-items: flex-end;
+  padding: 10px 14px calc(env(safe-area-inset-bottom) + 10px);
+  border-top: 1px solid var(--line); background: var(--ink-1);
+}
+.composer textarea {
+  flex: 1; resize: none; background: var(--ink-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  font: inherit; padding: 9px 12px; max-height: 40dvh; min-height: 40px; outline: none;
+}
+.composer textarea:focus { border-color: var(--amber-dim); }
+.composer button {
+  font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.1em; font-size: 12px;
+  background: var(--amber); color: var(--ink-0); border: 0; border-radius: var(--radius);
+  padding: 10px 16px; cursor: pointer; font-weight: 700;
+}
+.composer button:disabled { background: var(--amber-dim); cursor: default; }
+.composer button.stop { background: var(--warn); color: var(--ink-0); }
+
+/* ---------- utility ---------- */
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.empty {
+  color: var(--dim); font-family: var(--mono); font-size: 13px; text-align: center;
+  margin-top: 30dvh; letter-spacing: 0.06em;
+}
+.error-banner {
+  background: rgba(224, 101, 79, 0.12); border: 1px solid var(--warn); color: var(--warn);
+  border-radius: var(--radius); padding: 8px 12px; margin: 8px 0; font-size: 13px;
+}
+.login-splash {
+  height: 100dvh; display: flex; flex-direction: column; gap: 18px;
+  align-items: center; justify-content: center; font-family: var(--mono);
+}
+.login-splash .wordmark { color: var(--amber); font-size: 28px; letter-spacing: 0.3em; font-weight: 700; }
+.login-splash button {
+  background: var(--amber); border: 0; color: var(--ink-0); font: inherit;
+  padding: 10px 22px; border-radius: var(--radius); cursor: pointer; letter-spacing: 0.1em;
+}
