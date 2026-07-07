@@ -86,6 +86,11 @@ export function classifyWrite(path: string, policy = DEFAULT_POLICY): Classifica
   if (within(p, policy.writeApprove)) {
     return { tier: 2, actionClass: 'caddy-config', reason: 'reviewed config surface' };
   }
+  if (p.endsWith('/ecosystem.config.js')) {
+    // Evaluated by the ROOT pm2 daemon on pm2-start — writing one is a
+    // reviewed config change, or it's a privilege-escalation vector.
+    return { tier: 2, actionClass: 'pm2-config', reason: 'pm2 ecosystem files run as root' };
+  }
   if (within(p, policy.writeAllow)) {
     return { tier: 3, actionClass: 'workspace-write', reason: 'workspace write' };
   }

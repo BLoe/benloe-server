@@ -1,3 +1,23 @@
+// Privilege drop FIRST (§13.2): PM2's own uid switching can't work while PM2
+// lives under /root (its fork wrapper is unreadable to the target user), so
+// the daemon starts us as root and we immediately become claude-worker.
+// Nothing — not even module side effects below — runs with root privileges.
+const proc = process as NodeJS.Process & {
+  initgroups?(user: string, extraGroup: string): void;
+  setgid?(id: string | number): void;
+  setuid?(id: string | number): void;
+};
+if (proc.getuid?.() === 0) {
+  const RUN_AS = process.env.PALS_RUN_AS ?? 'claude-worker';
+  proc.initgroups?.(RUN_AS, RUN_AS);
+  proc.setgid?.(RUN_AS);
+  proc.setuid?.(RUN_AS);
+}
+if (proc.getuid?.() === 0) {
+  console.error('refusing to run as root');
+  process.exit(1);
+}
+
 import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';

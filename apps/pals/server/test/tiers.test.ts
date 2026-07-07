@@ -204,3 +204,13 @@ describe('gate + approvals', () => {
     expect(approvals.expireOverdue()).toBe(1);
   });
 });
+
+describe('pm2 ecosystem escalation guard', () => {
+  it('writing any ecosystem.config.js is approval-gated (root pm2 evaluates them)', () => {
+    expect(classifyToolUse('Write', { file_path: '/srv/benloe/apps/newapp/ecosystem.config.js' }).tier).toBe(2);
+    expect(classifyToolUse('Edit', { file_path: '/srv/benloe/apps/dada-api/ecosystem.config.js' }).tier).toBe(2);
+    // pals' own ecosystem stays Tier 0 via the self-modification denyWrite? No —
+    // apps/pals root is writable; only server/ is denied. The ecosystem rule wins:
+    expect(classifyToolUse('Write', { file_path: '/srv/benloe/apps/pals/ecosystem.config.js' }).tier).toBe(2);
+  });
+});
