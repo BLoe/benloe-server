@@ -43,9 +43,16 @@ export default function App() {
     return () => stop?.();
   }, []);
 
-  // Load history when the active thread changes.
+  // Load history when the active thread changes — but NOT for a thread we
+  // just created inside send(), or the reset would wipe the optimistic
+  // message we're about to stream a reply into.
+  const skipLoadRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeId) return;
+    if (skipLoadRef.current === activeId) {
+      skipLoadRef.current = null;
+      return;
+    }
     setThread(emptyThread());
     api.messages(activeId).then(({ messages }) => setThread((s) => loadHistory(s, messages)));
   }, [activeId]);
@@ -58,13 +65,29 @@ export default function App() {
 
   const send = useCallback(async () => {
     const text = draft.trim();
-    if (!text || thread.status === 'streaming' || !activeId) return;
+    if (!text || thread.status === 'streaming') return;
     setDraft('');
+    // Fresh install has no threads yet — create one lazily on first send so
+    // the composer is never a silent no-op.
+    let targetId = activeId;
+    if (!targetId) {
+      try {
+        const { id } = await api.createThread();
+        targetId = id;
+        skipLoadRef.current = id; // don't let the activeId effect wipe the optimistic message
+        setActiveId(id);
+      } catch (err) {
+        if (err instanceof AuthRequiredError) return setAuthState('login');
+        setThread((s) => ({ ...s, status: 'error', error: `Could not start a thread: ${(err as Error).message}` }));
+        setDraft(text);
+        return;
+      }
+    }
     setThread((s) => addUserMessage(s, text, `local-${Date.now()}`));
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      await streamChat(activeId, text, (e) => setThread((s) => applyEvent(s, e)), ac.signal);
+      await streamChat(targetId, text, (e) => setThread((s) => applyEvent(s, e)), ac.signal);
     } catch (err) {
       if (err instanceof AuthRequiredError) return setAuthState('login');
       setThread((s) => ({ ...s, status: 'error', error: String((err as Error).message) }));
