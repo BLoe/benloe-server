@@ -1,0 +1,338 @@
+import { EventEmitter } from 'node:events';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+import type Database from 'better-sqlite3';
+import { queryReadonly, QueryGuardError } from '../db/index.js';
+import type { Embedder } from '../embeddings/index.js';
+import type { EpisodicStore } from '../episodic/index.js';
+import type { MemoryStore } from '../memory/index.js';
+import type { ApprovalQueue } from '../tiers/approvals.js';
+import { addLesson, recallLessons, retireLesson } from '../memory/lessons.js';
+import { dailyTotals, logFood, updatePantry, addRecipe } from '../domains/food.js';
+import { logBodyMetric, logWorkout } from '../domains/training.js';
+import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
+import { addJournal, addPriceWatch, importTransactionsCsv, logMood, upsertContact, upsertTask } from '../domains/misc.js';
+
+export interface PalsToolContext {
+  db: Database.Database;
+  readonlyDb: Database.Database;
+  episodic: EpisodicStore;
+  embedder: Embedder;
+  memory: MemoryStore;
+  approvals: ApprovalQueue;
+  /** render_widget / proactive cards flow to the gateway through this bus. */
+  widgetBus: EventEmitter;
+}
+
+const ok = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data) }] });
+const fail = (message: string) => ({ content: [{ type: 'text' as const, text: `ERROR: ${message}` }], isError: true });
+
+export const WIDGET_TYPES = ['macro-ring', 'weight-chart', 'briefing', 'grocery', 'checkin', 'diff', 'usage'] as const;
+
+/** Every mcp__pals__* tool is Tier 4 by design — writes go to PALS's own data. */
+export function buildPalsTools(ctx: PalsToolContext) {
+  return [
+    tool(
+      'log_food',
+      'Log a food/meal entry with estimated macros. Returns running daily totals. Always include your confidence.',
+      {
+        description: z.string(),
+        meal: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
+        kcal: z.number().optional(),
+        protein_g: z.number().optional(),
+        carbs_g: z.number().optional(),
+        fat_g: z.number().optional(),
+        fiber_g: z.number().optional(),
+        confidence: z.enum(['high', 'medium', 'low']).optional(),
+        source: z.enum(['text', 'photo', 'recipe', 'restaurant']).optional(),
+      },
+      async (args) => ok(logFood(ctx.db, args)),
+    ),
+    tool(
+      'log_workout',
+      'Log a workout with sets. Flags PRs against history.',
+      {
+        name: z.string().optional(),
+        notes: z.string().optional(),
+        rpe_session: z.number().optional(),
+        sets: z.array(
+          z.object({
+            exercise: z.string(),
+            reps: z.number().optional(),
+            weight_lb: z.number().optional(),
+            rpe: z.number().optional(),
+          }),
+        ),
+      },
+      async (args) => ok(logWorkout(ctx.db, args)),
+    ),
+    tool(
+      'log_body_metric',
+      'Log a body metric (weight_lb, bodyfat_pct, ...). Weight returns the EWMA trend.',
+      { metric: z.string(), value: z.number() },
+      async (args) => ok(logBodyMetric(ctx.db, args)),
+    ),
+    tool(
+      'log_mood',
+      'Log a 1-5 mood/energy/stress check-in.',
+      {
+        mood: z.number().int().min(1).max(5).optional(),
+        energy: z.number().int().min(1).max(5).optional(),
+        stress: z.number().int().min(1).max(5).optional(),
+        note: z.string().optional(),
+      },
+      async (args) => ok({ id: logMood(ctx.db, args) }),
+    ),
+    tool(
+      'add_journal',
+      'Append a free-form journal entry (embedded for later semantic recall).',
+      { body: z.string().min(1) },
+      async ({ body }) => {
+        const id = addJournal(ctx.db, body);
+        try {
+          await ctx.episodic.indexText(ctx.embedder, 'journal', `journal:${id}`, null, body);
+          ctx.db.prepare('UPDATE journal_entry SET embedded = 1 WHERE id = ?').run(id);
+        } catch {
+          /* embedder down: backfill job will catch it (§14) */
+        }
+        return ok({ id });
+      },
+    ),
+    tool(
+      'log_claim',
+      'Log an insurance claim/EOB. Returns updated deductible/OOP accumulators.',
+      {
+        service_date: z.string().optional(),
+        provider: z.string().optional(),
+        description: z.string().optional(),
+        billed: z.number().optional(),
+        allowed: z.number().optional(),
+        plan_paid: z.number().optional(),
+        patient_owed: z.number().optional(),
+        applied_to_deductible: z.number().optional(),
+        applied_to_oop: z.number().optional(),
+        status: z.enum(['submitted', 'processed', 'paid', 'denied', 'appeal']).optional(),
+      },
+      async (args) => ok(logClaim(ctx.db, { planId: seedInsurancePlan(ctx.db), ...args })),
+    ),
+    tool(
+      'log_lab',
+      'Log a lab result; flags out-of-range values.',
+      {
+        drawn_on: z.string(),
+        panel: z.string().optional(),
+        analyte: z.string(),
+        value: z.number().optional(),
+        unit: z.string().optional(),
+        ref_low: z.number().optional(),
+        ref_high: z.number().optional(),
+      },
+      async (args) => ok(logLab(ctx.db, args)),
+    ),
+    tool(
+      'log_medication',
+      'Add a medication/supplement with schedule and supply for refill nudges.',
+      {
+        name: z.string(),
+        dose: z.string().optional(),
+        schedule: z.string().optional(),
+        is_supplement: z.boolean().optional(),
+        days_supply: z.number().optional(),
+        last_filled_on: z.string().optional(),
+        refills_left: z.number().optional(),
+      },
+      async (args) => ok({ id: logMedication(ctx.db, args) }),
+    ),
+    tool(
+      'log_hsa_contribution',
+      'Record an HSA contribution; returns YTD vs IRS limit headroom.',
+      { amount: z.number(), taxYear: z.number().int(), source: z.enum(['payroll', 'manual']).optional() },
+      async (args) => ok(logHsaContribution(ctx.db, args)),
+    ),
+    tool(
+      'import_transactions_csv',
+      'Import transactions from CSV text (date,amount,merchant[,category]). Idempotent.',
+      { csv: z.string(), account_id: z.number().optional() },
+      async ({ csv, account_id }) => ok(importTransactionsCsv(ctx.db, csv, account_id ?? null)),
+    ),
+    tool(
+      'update_pantry',
+      'Upsert a pantry item; use quantityDelta when consuming or restocking.',
+      {
+        name: z.string(),
+        location: z.enum(['pantry', 'fridge', 'freezer']).optional(),
+        quantity: z.number().optional(),
+        quantityDelta: z.number().optional(),
+        unit: z.string().optional(),
+        expires_on: z.string().optional(),
+        is_staple: z.boolean().optional(),
+      },
+      async (args) => ok(updatePantry(ctx.db, args)),
+    ),
+    tool(
+      'add_recipe',
+      'Save a recipe with per-serving macros and ingredients.',
+      {
+        title: z.string(),
+        instructions: z.string().optional(),
+        servings: z.number().optional(),
+        kcal_per_serving: z.number().optional(),
+        protein_g: z.number().optional(),
+        carbs_g: z.number().optional(),
+        fat_g: z.number().optional(),
+        tags: z.array(z.string()).optional(),
+        ingredients: z.array(z.object({ name: z.string(), quantity: z.number().optional(), unit: z.string().optional() })).optional(),
+      },
+      async (args) => ok({ id: addRecipe(ctx.db, args) }),
+    ),
+    tool(
+      'upsert_task',
+      'Create or update a task/reminder (recur_rule for recurring maintenance).',
+      {
+        id: z.number().optional(),
+        title: z.string(),
+        notes: z.string().optional(),
+        domain: z.string().optional(),
+        due_on: z.string().optional(),
+        recur_rule: z.string().optional(),
+        priority: z.number().optional(),
+        status: z.enum(['open', 'done', 'snoozed', 'cancelled']).optional(),
+      },
+      async (args) => ok({ id: upsertTask(ctx.db, args) }),
+    ),
+    tool(
+      'upsert_contact',
+      'Create or update a contact (birthday, keep-in-touch cadence, gift ideas).',
+      {
+        name: z.string(),
+        relationship: z.string().optional(),
+        birthday: z.string().optional(),
+        keep_in_touch_days: z.number().optional(),
+        last_contacted_on: z.string().optional(),
+        gift_ideas: z.string().optional(),
+        notes: z.string().optional(),
+      },
+      async (args) => ok({ id: upsertContact(ctx.db, args) }),
+    ),
+    tool(
+      'add_price_watch',
+      'Watch an item/URL for a target price.',
+      { item: z.string(), url: z.string().optional(), target_price: z.number().optional() },
+      async (args) => ok({ id: addPriceWatch(ctx.db, args) }),
+    ),
+    tool(
+      'query_db',
+      'Run a read-only SELECT against pals.db (all quantified-self data). The workhorse for totals, trends, and accumulators.',
+      { sql: z.string(), params: z.array(z.union([z.string(), z.number(), z.null()])).optional() },
+      async ({ sql, params }) => {
+        try {
+          return ok(queryReadonly(ctx.readonlyDb, sql, params ?? []));
+        } catch (err) {
+          if (err instanceof QueryGuardError) return fail(err.message);
+          throw err;
+        }
+      },
+    ),
+    tool(
+      'search_episodic',
+      'Semantic recall over past conversations, journals, and documents.',
+      { query: z.string(), kind: z.enum(['conversation', 'journal', 'document']).optional(), k: z.number().int().max(20).optional() },
+      async ({ query, kind, k }) => {
+        const [v] = await ctx.embedder.embed([query]);
+        return ok(ctx.episodic.searchChunks(v!, k ?? 6, kind));
+      },
+    ),
+    tool(
+      'search_documents',
+      'RAG over the document vault (uploaded PDFs: insurance SPD, lease, tax docs).',
+      { query: z.string(), k: z.number().int().max(20).optional() },
+      async ({ query, k }) => {
+        const [v] = await ctx.embedder.embed([query]);
+        return ok(ctx.episodic.searchChunks(v!, k ?? 6, 'document'));
+      },
+    ),
+    tool(
+      'recall_lessons',
+      'Recall the most relevant active lessons for the current context.',
+      { context: z.string(), k: z.number().int().max(10).optional() },
+      async ({ context, k }) => ok(await recallLessons(ctx.episodic, ctx.embedder, context, k ?? 4)),
+    ),
+    tool(
+      'add_lesson',
+      'Store a governed lesson (needs evidence + confidence >= 0.6; autonomy escalations are rejected).',
+      { text: z.string(), domain: z.string().nullable().optional(), evidence: z.string(), confidence: z.number().min(0).max(1) },
+      async (args) => {
+        const res = await addLesson(ctx.episodic, ctx.embedder, { ...args, domain: args.domain ?? null });
+        return 'rejected' in res ? fail(res.rejected) : ok(res);
+      },
+    ),
+    tool(
+      'retire_lesson',
+      'Retire (or mark superseded) a lesson that proved wrong or stale.',
+      { id: z.number().int(), superseded: z.boolean().optional() },
+      async ({ id, superseded }) => {
+        retireLesson(ctx.episodic, id, superseded ?? false);
+        return ok({ id, status: superseded ? 'superseded' : 'retired' });
+      },
+    ),
+    tool(
+      'update_memory',
+      'Rewrite a curated memory file (GOALS.md, PREFERENCES.md, domains/*.md, ...). Git-committed. STANDING_ORDERS.md is Ben-only.',
+      { file: z.string(), content: z.string(), reason: z.string() },
+      async ({ file, content, reason }) => {
+        try {
+          ctx.memory.update(file, content, reason);
+          return ok({ file, committed: true });
+        } catch (err) {
+          return fail((err as Error).message);
+        }
+      },
+    ),
+    tool(
+      'render_widget',
+      'Render a rich card inline in the chat (macro-ring, weight-chart, briefing, grocery, checkin, diff, usage).',
+      { widgetType: z.enum(WIDGET_TYPES), data: z.record(z.string(), z.unknown()) },
+      async ({ widgetType, data }) => {
+        ctx.widgetBus.emit('widget', { widgetType, data });
+        return ok({ rendered: widgetType });
+      },
+    ),
+    tool(
+      'enqueue_approval',
+      'Proactively propose a Tier-2 action for Ben to approve (returns the packet id; do NOT wait).',
+      {
+        action: z.string(),
+        payload: z.string(),
+        reasoning: z.string(),
+        confidence: z.number().min(0).max(1).optional(),
+        reversibility: z.string().optional(),
+      },
+      async (args) => {
+        const { id } = ctx.approvals.enqueue({
+          tier: 2,
+          action: args.action,
+          payload: args.payload,
+          reasoning: args.reasoning,
+          confidence: args.confidence ?? null,
+          reversibility: args.reversibility ?? null,
+          threadId: null,
+        });
+        return ok({ approvalId: id, status: 'pending' });
+      },
+    ),
+  ];
+}
+
+export function buildPalsMcpServer(ctx: PalsToolContext) {
+  return createSdkMcpServer({ name: 'pals', version: '1.0.0', tools: buildPalsTools(ctx) });
+}
+
+/** allowedTools entries for the runtime — pals tools are the ONLY ungated names (Appendix B). */
+export function palsAllowedTools(): string[] {
+  return buildPalsTools(dummyCtx()).map((t) => `mcp__pals__${(t as { name: string }).name}`);
+}
+
+// A throwaway context for name extraction only — handlers are never called on it.
+function dummyCtx(): PalsToolContext {
+  return new Proxy({}, { get: () => new Proxy({}, { get: () => () => undefined }) }) as PalsToolContext;
+}
