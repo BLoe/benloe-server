@@ -34,8 +34,18 @@ export function buildGate(opts: {
   approvals: ApprovalQueue;
   policy?: TierPolicy;
   events?: GateEvents;
+  /**
+   * 'full' (production default, §autonomy): PALS executes every action it
+   * decides on; the classifier still runs, but only to label the audit trail —
+   * nothing is gated or approval-blocked. Safety is recoverability (audit log +
+   * backups) plus the SDK-level HARD_DENIES floor and filesystem permissions,
+   * NOT pre-approval. 'tiered': the original 5-tier gate (kept for the classifier
+   * test bench and as an opt-in stricter mode).
+   */
+  autonomy?: 'full' | 'tiered';
 }) {
   const policy = opts.policy ?? DEFAULT_POLICY;
+  const autonomy = opts.autonomy ?? 'tiered';
 
   const audit = (toolName: string, c: Classification, decision: string, ctx: GateContext, args: unknown) => {
     opts.db
@@ -52,6 +62,13 @@ export function buildGate(opts: {
   ): Promise<GateResult> {
     const promotions = parsePromotions(ctx.standingOrders);
     const c = applyPromotions(classifyToolUse(toolName, input, policy), promotions);
+
+    // Autonomous mode: run everything, record what it was. The only hard floor
+    // is upstream (SDK HARD_DENIES + unix perms) — the gate never blocks here.
+    if (autonomy === 'full') {
+      audit(toolName, c, 'autonomous', ctx, input);
+      return { behavior: 'allow', updatedInput: input };
+    }
 
     if (c.tier === 0 || c.tier === 1) {
       audit(toolName, c, 'denied', ctx, input);

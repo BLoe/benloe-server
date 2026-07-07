@@ -203,6 +203,35 @@ describe('gate + approvals', () => {
       .run();
     expect(approvals.expireOverdue()).toBe(1);
   });
+
+  describe('autonomy: full', () => {
+    const full = () => buildGate({ db: pals.db, approvals, autonomy: 'full' });
+
+    it('executes every tier without approval, recording the real tier + an autonomous decision', async () => {
+      const gate = full();
+      // a would-be tier-2 (git push) runs immediately, no approval enqueued
+      const push = await gate('Bash', { command: 'git push origin main' }, ctx);
+      expect(push.behavior).toBe('allow');
+      // a would-be tier-1 human-only and tier-0 both run too
+      const apt = await gate('Bash', { command: 'apt upgrade' }, ctx);
+      const pm2 = await gate('Bash', { command: 'pm2 restart pals-api' }, ctx);
+      expect(apt.behavior).toBe('allow');
+      expect(pm2.behavior).toBe('allow');
+      expect(approvals.pending()).toHaveLength(0); // nothing was ever gated
+      const rows = auditRows();
+      expect(rows.every((r) => r.decision === 'autonomous')).toBe(true);
+      // the classifier still labels the audit trail with the true tier
+      expect(rows.map((r) => r.tier).sort()).toEqual([0, 1, 2]);
+    });
+
+    it('does not block or notify — a tier-3 action just runs', async () => {
+      let notified = '';
+      const gate = buildGate({ db: pals.db, approvals, autonomy: 'full', events: { onNotify: (t) => (notified = t) } });
+      const r = await gate('Write', { file_path: '/srv/benloe/static/x/index.html', content: 'x' }, ctx);
+      expect(r.behavior).toBe('allow');
+      expect(notified).toBe(''); // no notify plumbing fires in full mode
+    });
+  });
 });
 
 describe('pm2 ecosystem escalation guard', () => {
