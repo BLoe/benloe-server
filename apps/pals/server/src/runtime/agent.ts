@@ -3,7 +3,7 @@ import type { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { MemoryStore } from '../memory/index.js';
-import type { ApprovalQueue } from '../tiers/approvals.js';
+import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
 import { buildGate, type GateContext } from '../tiers/gate.js';
 import { assemblePrompt, type PromptInput } from './prompt.js';
 import { refusalFallback, route } from './router.js';
@@ -17,7 +17,7 @@ export type TurnEvent =
   | { type: 'tool-end'; toolId: string; output: string; isError: boolean }
   | { type: 'widget'; widgetType: string; data: unknown }
   | { type: 'notice'; level: 'info' | 'warn'; text: string }
-  | { type: 'approval-requested'; approvalId: string }
+  | { type: 'approval'; packet: ApprovalPacket }
   | { type: 'turn-end'; usage: Record<string, unknown> | null; sessionId: string | null; stopReason: string }
   | { type: 'error'; message: string; retryable: boolean };
 
@@ -90,7 +90,7 @@ export class AgentRuntime {
       events: {
         onNotify: (toolName, c) =>
           this.currentOnEvent?.({ type: 'notice', level: 'info', text: `Tier 3 — ${toolName}: ${c.reason}` }),
-        onApprovalRequested: (id) => this.currentOnEvent?.({ type: 'approval-requested', approvalId: id }),
+        onApprovalRequested: (packet) => this.currentOnEvent?.({ type: 'approval', packet }),
       },
     });
     opts.widgetBus?.on('widget', (w: { widgetType: string; data: unknown }) =>

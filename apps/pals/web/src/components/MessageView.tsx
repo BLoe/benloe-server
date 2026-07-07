@@ -73,22 +73,6 @@ export function ApprovalChit({ packet, onDecided }: { packet: ApprovalPacket; on
   );
 }
 
-function ApprovalRef({ approvalId }: { approvalId: string }) {
-  const [packet, setPacket] = useState<ApprovalPacket | null>(null);
-  const [gone, setGone] = useState(false);
-  useEffect(() => {
-    api.approvals()
-      .then(({ approvals }) => {
-        const p = approvals.find((a) => a.id === approvalId);
-        if (p) setPacket(p);
-        else setGone(true);
-      })
-      .catch(() => setGone(true));
-  }, [approvalId]);
-  if (packet) return <ApprovalChit packet={packet} />;
-  return <div className="notice">{gone ? `approval ${approvalId.slice(0, 8)} already decided` : 'loading approval…'}</div>;
-}
-
 export function MessageView({ message, onCheckin }: { message: ChatMessage; onCheckin?: (k: string, v: number) => void }) {
   if (message.role === 'user') {
     const text = message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
@@ -108,8 +92,9 @@ export function MessageView({ message, onCheckin }: { message: ChatMessage; onCh
             return <ToolRunCard key={i} part={part} />;
           case 'widget':
             return <Widget key={i} widgetType={part.widgetType} data={part.data as Record<string, unknown>} onCheckin={onCheckin} />;
-          case 'approval-ref':
-            return <ApprovalRef key={i} approvalId={part.approvalId} />;
+          case 'approval':
+            // Rendered inline, in chronological order, right where the agent asked.
+            return <ApprovalChit key={i} packet={part.packet} />;
           case 'notice':
             return <div key={i} className={`notice${part.level === 'warn' ? ' warn' : ''}`}>{part.text}</div>;
           default:

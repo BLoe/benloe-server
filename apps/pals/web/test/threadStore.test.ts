@@ -62,6 +62,28 @@ describe('threadStore.applyEvent', () => {
   });
 });
 
+describe('inline approval ordering (regression)', () => {
+  it('an approval folds into the message at its position, not pinned to the top', () => {
+    const packet = {
+      id: 'ap-1', tier: 2, action: 'Bash:bash:git-push', payload: 'git push origin main',
+      reasoning: 'publish', confidence: 0.9, reversibility: 'revert', threadId: 't1',
+      expiresAt: '2026-07-08T00:00:00Z',
+    };
+    let state = addUserMessage(emptyThread(), 'build and push', 'l1');
+    for (const e of [
+      { event: 'turn-start', data: { type: 'turn-start', messageId: 'm1', threadId: 't1', model: 'claude-sonnet-5' } },
+      { event: 'text-delta', data: { type: 'text-delta', delta: 'Built it. Ready to push:' } },
+      { event: 'approval', data: { type: 'approval', packet } },
+    ] as SseEvent[]) {
+      state = applyEvent(state, e);
+    }
+    const assistant = state.messages[1]!;
+    // text first, THEN the approval — chronological, in the assistant message.
+    expect(assistant.parts.map((p) => p.type)).toEqual(['text', 'approval']);
+    expect((assistant.parts[1] as { packet: { id: string } }).packet.id).toBe('ap-1');
+  });
+});
+
 describe('client/server protocol parity', () => {
   it('the client parses exactly what the server encoder produced (chunk-fuzzed)', () => {
     const wire = recordedTurn.map((e, i) => encodeSse({ ...e, id: String(i) })).join('');

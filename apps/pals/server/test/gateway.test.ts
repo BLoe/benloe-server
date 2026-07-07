@@ -227,19 +227,25 @@ describe('SSE round-trip fuzz', () => {
 });
 
 describe('foldEvent', () => {
-  it('accumulates text, completes tool runs, appends widgets and approval refs', () => {
+  it('accumulates text, completes tool runs, appends widgets and inline approvals', () => {
     const parts: MessagePart[] = [];
+    const packet = {
+      id: 'ap1', tier: 2, action: 'Bash:git-push', payload: 'git push', reasoning: 'r',
+      confidence: null, reversibility: null, threadId: 't1', expiresAt: '2026-07-08T00:00:00Z',
+    };
     const feed: (TurnEvent | { type: 'widget'; widgetType: string; data: unknown })[] = [
       { type: 'text-delta', delta: 'a' },
       { type: 'text-delta', delta: 'b' },
       { type: 'tool-start', toolId: 't1', name: 'Read', input: {} },
       { type: 'widget', widgetType: 'macro-ring', data: { p: 1 } },
       { type: 'tool-end', toolId: 't1', output: 'x', isError: false },
-      { type: 'approval-requested', approvalId: 'ap1' },
+      { type: 'approval', packet },
       { type: 'text-delta', delta: 'c' },
     ];
     for (const e of feed) foldEvent(parts, e as never);
-    expect(parts.map((p) => p.type)).toEqual(['text', 'tool-run', 'widget', 'approval-ref', 'text']);
+    // Approval folds inline, in order — NOT pinned to the top (the reported bug).
+    expect(parts.map((p) => p.type)).toEqual(['text', 'tool-run', 'widget', 'approval', 'text']);
+    expect((parts[3] as { packet: { id: string } }).packet.id).toBe('ap1');
     expect((parts[0] as { text: string }).text).toBe('ab');
     expect((parts[1] as { done: boolean }).done).toBe(true);
   });
