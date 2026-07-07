@@ -1,0 +1,114 @@
+import { fork, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+export const EMBEDDING_DIMS = 384;
+
+interface Pending {
+  resolve(vectors: Float32Array[]): void;
+  reject(err: Error): void;
+}
+
+/**
+ * In-process embedder (§7.3): one child process hosting bge-small-en-v1.5.
+ * A child process rather than a worker thread because onnxruntime-node's
+ * native addon refuses to load twice in one process — child respawn is the
+ * only crash-recovery path that actually works (validated in tests).
+ * Spawned lazily; in-flight requests fail fast on crash and callers degrade.
+ */
+export class Embedder {
+  private child: ChildProcess | null = null;
+  private ready: Promise<void> | null = null;
+  private pending = new Map<number, Pending>();
+  private nextId = 1;
+
+  private spawn(): Promise<void> {
+    const child = fork(fileURLToPath(new URL('./worker.mjs', import.meta.url)), [], {
+      serialization: 'advanced',
+      stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+      env: process.env,
+    });
+    this.child = child;
+    this.ready = new Promise<void>((resolveReady, rejectReady) => {
+      const onFirst = (msg: { ready?: boolean }) => {
+        if (msg.ready) {
+          child.off('message', onFirst);
+          resolveReady();
+        }
+      };
+      child.on('message', onFirst);
+      child.once('error', rejectReady);
+      child.once('exit', () => rejectReady(new Error('embedding process exited during startup')));
+    });
+
+    child.on('message', (msg: { id?: number; dims?: number; vectors?: Float32Array[]; error?: string }) => {
+      if (msg.id === undefined) return;
+      const p = this.pending.get(msg.id);
+      if (!p) return;
+      this.pending.delete(msg.id);
+      if (msg.error) p.reject(new Error(`embedding failed: ${msg.error}`));
+      else if (msg.dims !== EMBEDDING_DIMS) p.reject(new Error(`unexpected dims ${msg.dims}`));
+      else p.resolve(msg.vectors!.map((v) => new Float32Array(v)));
+    });
+
+    const failAll = (why: string) => {
+      for (const [, p] of this.pending) p.reject(new Error(why));
+      this.pending.clear();
+      if (this.child === child) {
+        this.child = null;
+        this.ready = null;
+      }
+    };
+    child.on('error', (err) => failAll(`embedding process error: ${err.message}`));
+    child.on('exit', (code) => failAll(`embedding process exited (code ${code})`));
+
+    return this.ready;
+  }
+
+  async embed(texts: string[]): Promise<Float32Array[]> {
+    if (texts.length === 0) return [];
+    if (!this.child) await this.spawn();
+    else await this.ready;
+    const id = this.nextId++;
+    return new Promise<Float32Array[]>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.child!.send({ id, texts });
+    });
+  }
+
+  get alive(): boolean {
+    return this.child !== null;
+  }
+
+  /** Test hook: hard-kill the child to exercise crash recovery. */
+  async terminateForTest(): Promise<void> {
+    const child = this.child;
+    this.child = null;
+    this.ready = null;
+    if (child) {
+      const gone = new Promise((r) => child.once('exit', r));
+      child.kill('SIGKILL');
+      await gone;
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.terminateForTest();
+  }
+}
+
+/**
+ * Split text into ~maxWords-word chunks with overlap (§7.3: ~512 tokens with
+ * 64-token overlap ≈ 380 words / 48-word overlap at ~0.75 words per token).
+ */
+export function chunkText(text: string, maxWords = 380, overlapWords = 48): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  if (words.length <= maxWords) return [words.join(' ')];
+  const chunks: string[] = [];
+  const step = maxWords - overlapWords;
+  for (let start = 0; start < words.length; start += step) {
+    chunks.push(words.slice(start, start + maxWords).join(' '));
+    if (start + maxWords >= words.length) break;
+  }
+  return chunks;
+}
