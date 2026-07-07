@@ -11,6 +11,8 @@ import { buildPalsMcpServer, palsAllowedTools } from './mcp/pals-server.js';
 import { buildExternalMcpServers } from './mcp/external.js';
 import { buildApp } from './gateway/app.js';
 import { seedInsurancePlan } from './domains/healthcare.js';
+import { Scheduler } from './scheduler/index.js';
+import { buildJobs } from './scheduler/jobs.js';
 
 const DATA_DIR = process.env.PALS_DATA_DIR ?? '/srv/benloe/data/pals';
 const PORT = Number(process.env.PORT ?? 3008);
@@ -68,6 +70,15 @@ app.listen(PORT, '127.0.0.1', () => {
 
 // Sweep approvals that expired while we were down (§14).
 approvals.expireOverdue();
+
+// Proactive routines (§11) — PALS_SCHEDULER=off for tests/dev.
+if (process.env.PALS_SCHEDULER !== 'off') {
+  const scheduler = new Scheduler(
+    buildJobs({ db: pals.db, runtime, approvals, widgetBus, episodic, embedder, dataDir: DATA_DIR }),
+  );
+  scheduler.start();
+  console.log('scheduler armed:', JSON.stringify(scheduler.nextFireTimes()));
+}
 
 process.on('SIGTERM', () => {
   void embedder.close().finally(() => {
