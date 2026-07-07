@@ -17,6 +17,7 @@ interface MockOpts {
   threads?: unknown[];
   onChat?: (body: { threadId: string; text: string }) => string; // returns SSE wire
   onCreateThread?: () => string;
+  eventsWire?: string; // SSE wire pushed down /api/events on connect
 }
 
 function mockFetch(opts: MockOpts = {}) {
@@ -39,7 +40,16 @@ function mockFetch(opts: MockOpts = {}) {
     if (url.endsWith('/api/healthz')) return Response.json({ ok: true, authMode: 'subscription', queueDepth: 0, pendingApprovals: 0, db: true, embedder: true });
     if (url.endsWith('/api/approvals')) return Response.json({ approvals: [] });
     if (url.includes('/messages')) return Response.json({ messages: [] });
-    if (url.endsWith('/api/events')) return new Response(new ReadableStream(), { status: 200 });
+    if (url.endsWith('/api/events')) {
+      const wire = opts.eventsWire;
+      const stream = new ReadableStream({
+        start(controller) {
+          if (wire) controller.enqueue(new TextEncoder().encode(wire));
+          // left open — matches the real long-lived channel
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }
     if (url.endsWith('/api/chat') && method === 'POST') {
       const body = JSON.parse(String(init!.body)) as { threadId: string; text: string };
       chats.push(body);
@@ -128,6 +138,19 @@ describe('send with no thread (regression)', () => {
     await waitFor(() => expect(chats).toHaveLength(1));
     expect(chats[0]!.threadId).toBe('existing');
     expect(created).toHaveLength(0); // no new thread
+  });
+
+  it('renames a thread in the sidebar live when a thread-titled event arrives', async () => {
+    const wire = encodeSse({ event: 'thread-titled', data: { id: 't1', title: 'Weight Tracker Deploy' }, id: '1' });
+    mockFetch({
+      threads: [{ id: 't1', title: null, model_override: null, archived: 0, updated_at: 'x', messages: 1 }],
+      eventsWire: wire,
+    });
+    render(<App />);
+    // The boot fetch returns title=null, so the only way this label can appear
+    // in the sidebar is the thread-titled event being applied in place.
+    expect(await screen.findByText('Weight Tracker Deploy')).toBeTruthy();
+    expect(screen.queryByText('untitled')).toBeNull();
   });
 
   it('does nothing on empty input (button stays disabled, Enter is a no-op)', async () => {

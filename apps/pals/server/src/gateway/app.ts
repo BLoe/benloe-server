@@ -10,7 +10,7 @@ import { foldEvent, type MessagePart } from './fold.js';
 
 export interface GatewayDeps {
   db: Database.Database;
-  runtime: Pick<AgentRuntime, 'run' | 'interrupt' | 'authMode'> & { queue: { depth: number } };
+  runtime: Pick<AgentRuntime, 'run' | 'interrupt' | 'authMode' | 'titleFor'> & { queue: { depth: number } };
   approvals: ApprovalQueue;
   widgetBus: EventEmitter;
   ownerEmail: string;
@@ -104,7 +104,9 @@ export function buildApp(deps: GatewayDeps) {
     if (typeof threadId !== 'string' || typeof text !== 'string' || !text.trim()) {
       return res.status(400).json({ error: 'threadId and text required' });
     }
-    const thread = deps.db.prepare('SELECT id FROM thread WHERE id = ?').get(threadId);
+    const thread = deps.db.prepare('SELECT id, title FROM thread WHERE id = ?').get(threadId) as
+      | { id: string; title: string | null }
+      | undefined;
     if (!thread) return res.status(404).json({ error: 'no such thread' });
 
     deps.db
@@ -140,6 +142,24 @@ export function buildApp(deps: GatewayDeps) {
         deps.db
           .prepare('INSERT INTO message (id, thread_id, role, parts, usage) VALUES (?,?,?,?,?)')
           .run(assistantId ?? randomUUID(), threadId, 'assistant', JSON.stringify(parts), usage ? JSON.stringify(usage) : null);
+      }
+      // Auto-name a still-"untitled" thread from its opening exchange. Best
+      // effort — a titling failure must never surface to the chat turn — and
+      // only on the first turn, so an established title is never overwritten.
+      if (!thread.title?.trim() && parts.length > 0) {
+        const assistantText = parts
+          .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+          .map((p) => p.text)
+          .join(' ')
+          .trim();
+        try {
+          const title = await deps.runtime.titleFor(text, assistantText);
+          if (title) {
+            const upd = deps.db.prepare('UPDATE thread SET title = ? WHERE id = ? AND (title IS NULL OR title = ?)');
+            const r = upd.run(title, threadId, '');
+            if (r.changes > 0) broadcast('thread-titled', { id: threadId, title });
+          }
+        } catch { /* leave it untitled; never break the turn */ }
       }
       res.end();
     }
