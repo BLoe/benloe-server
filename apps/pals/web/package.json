@@ -1,0 +1,7 @@
+{
+  "name": "pals-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Placeholder — real Vite scaffold lands in build task #11"
+}

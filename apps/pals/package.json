@@ -1,0 +1,14 @@
+{
+  "name": "pals",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PALS — personal agent for the benloe.com nexus (docs/AgentArchitectureV2.md)",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  }
+}
