@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Cabinet — a design walkthrough</title>
+<style>
+  :root {
+    --walnut: #171009;
+    --walnut-2: #20160d;
+    --walnut-3: #0e0a05;
+    --rule: #3a2c1c;
+    --rule-soft: #2a2013;
+    --brass: #c99b53;
+    --brass-hi: #eccb88;
+    --brass-dim: #8a6b39;
+    --patina: #7fa093;
+    --paper: #e7dcc3;
+    --ink: #241a10;
+    --vermilion: #d5573b;
+    --linen: #e6dbc5;
+    --linen-dim: #9d8d71;
+    --linen-faint: #6a5c46;
+    --serif: 'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+    --mono: ui-monospace,'SF Mono','JetBrains Mono','IBM Plex Mono',Menlo,monospace;
+    --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background:
+      radial-gradient(120% 80% at 82% -10%, #221708 0%, transparent 55%),
+      radial-gradient(90% 70% at 0% 110%, #1b1108 0%, transparent 60%),
+      var(--walnut);
+    color: var(--linen); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased; letter-spacing: .01em;
+    min-height: 100dvh; display: flex; flex-direction: column;
+  }
+
+  /* ---- top progress rail ---- */
+  .topbar {
+    display: flex; align-items: center; gap: 14px; padding: 14px 20px;
+    border-bottom: 1px solid var(--rule); background: linear-gradient(180deg,#1b120a,transparent);
+    position: sticky; top: 0; z-index: 5;
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand .glyph { width: 13px; height: 13px; border: 1.5px solid var(--brass); transform: rotate(45deg); border-radius: 2px; }
+  .brand .word { font-family: var(--serif); font-size: 16px; font-weight: 600; letter-spacing: .14em; }
+  .progress { flex: 1; height: 3px; background: var(--rule-soft); border-radius: 2px; overflow: hidden; }
+  .progress > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg,var(--brass-dim),var(--brass)); transition: width .5s cubic-bezier(.16,1,.3,1); box-shadow: 0 0 8px #c99b5355; }
+  .counter { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; color: var(--linen-dim); white-space: nowrap; }
+  .counter b { color: var(--brass); }
+
+  /* ---- stage ---- */
+  .stage { flex: 1; display: grid; place-items: center; padding: 30px 20px 40px; }
+  .stop {
+    width: min(760px, 100%); display: none; animation: rise .5s cubic-bezier(.16,1,.3,1) both;
+  }
+  .stop.active { display: block; }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: var(--brass-dim); margin-bottom: 14px; }
+  .eyebrow b { color: var(--brass); }
+  h1.q { font-family: var(--serif); font-weight: 600; font-size: clamp(28px, 4.4vw, 40px); line-height: 1.05; letter-spacing: -.01em; margin: 0 0 18px; text-wrap: balance; }
+  h1.q .em { color: var(--brass); font-style: italic; }
+  .lede { font-family: var(--serif); font-size: 17px; line-height: 1.6; color: #cdbfa4; max-width: 60ch; margin: 0 0 26px; }
+  .lede .mark { color: var(--linen); border-bottom: 1px solid var(--brass-dim); }
+
+  /* ---- controls ---- */
+  .control { margin-top: 8px; }
+  .ctl-hint { font-family: var(--mono); font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--linen-faint); margin-bottom: 12px; }
+  .opts { display: flex; flex-direction: column; gap: 10px; }
+  .opts.row { flex-direction: row; flex-wrap: wrap; }
+  .opt {
+    text-align: left; font: inherit; font-size: 15px; color: var(--linen);
+    background: linear-gradient(180deg,var(--walnut-2),#1a1108); border: 1px solid var(--rule);
+    border-radius: 11px; padding: 15px 17px; cursor: pointer; transition: border-color .14s, background .14s, transform .05s;
+    display: flex; align-items: center; gap: 13px;
+  }
+  .opt:hover { border-color: var(--brass-dim); }
+  .opt:active { transform: translateY(1px); }
+  .opt .tick { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--rule); flex: none; display: grid; place-items: center; transition: all .14s; }
+  .opt .tick::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: transparent; transition: background .14s; }
+  .opt .lab { flex: 1; }
+  .opt .note { font-family: var(--mono); font-size: 11px; color: var(--linen-faint); letter-spacing: .04em; }
+  .opt[aria-pressed="true"] { border-color: var(--brass); background: linear-gradient(180deg,#2a1d10,#20160d); }
+  .opt[aria-pressed="true"] .tick { border-color: var(--brass); }
+  .opt[aria-pressed="true"] .tick::after { background: var(--brass); }
+  .opt.multi[aria-pressed="true"] .tick { border-radius: 5px; }
+
+  /* scale 1-10 */
+  .scale { display: flex; gap: 7px; flex-wrap: wrap; }
+  .scale button {
+    width: 44px; height: 44px; font-family: var(--mono); font-size: 14px; color: var(--linen-dim);
+    background: var(--walnut-3); border: 1px solid var(--rule); border-radius: 9px; cursor: pointer;
+    transition: all .12s; font-variant-numeric: tabular-nums;
+  }
+  .scale button:hover { border-color: var(--brass-dim); color: var(--linen); }
+  .scale button[aria-pressed="true"] { background: linear-gradient(180deg,var(--brass-hi),var(--brass)); color: var(--ink); border-color: transparent; font-weight: 700; }
+  .scale-ends { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--linen-faint); margin-top: 10px; }
+
+  textarea.note-field {
+    width: 100%; min-height: 130px; resize: vertical; background: var(--walnut-3); color: var(--linen);
+    border: 1px solid var(--rule); border-radius: 11px; font: inherit; font-size: 15px; padding: 14px 16px; line-height: 1.5;
+  }
+  textarea.note-field:focus { outline: none; border-color: var(--brass-dim); }
+  .other-field { margin-top: 10px; width: 100%; background: var(--walnut-3); color: var(--linen); border: 1px solid var(--rule); border-radius: 9px; font: inherit; padding: 12px 14px; display: none; }
+  .other-field.show { display: block; }
+
+  /* ---- footer nav ---- */
+  .nav {
+    display: flex; align-items: center; gap: 12px; padding: 16px 20px calc(16px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--rule); background: linear-gradient(0deg,#1b120a,transparent); position: sticky; bottom: 0;
+  }
+  .btn {
+    font: inherit; font-size: 14px; font-weight: 600; padding: 12px 22px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--rule); background: transparent; color: var(--linen-dim); transition: all .14s;
+  }
+  .btn:hover:not(:disabled) { color: var(--linen); border-color: var(--brass-dim); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn.primary { color: var(--ink); border-color: transparent; background: linear-gradient(180deg,var(--brass-hi),var(--brass)); }
+  .btn.primary:hover:not(:disabled) { background: linear-gradient(180deg,#f2d59a,var(--brass-hi)); }
+  .nav .spacer { flex: 1; }
+  .savednote { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--linen-faint); }
+
+  a { color: var(--brass); }
+  :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  /* ---- demo bits ---- */
+  .swatches { display: grid; grid-template-columns: repeat(auto-fit,minmax(110px,1fr)); gap: 12px; margin-bottom: 24px; }
+  .sw { border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; background: var(--walnut-2); }
+  .sw .chip { height: 62px; }
+  .sw .meta { padding: 8px 10px; }
+  .sw .nm { font-size: 12.5px; color: var(--linen); }
+  .sw .hex { font-family: var(--mono); font-size: 10px; color: var(--linen-faint); letter-spacing: .04em; }
+
+  .demo-panel { border: 1px solid var(--rule); border-radius: 14px; padding: 22px; margin-bottom: 24px; background: radial-gradient(120% 120% at 50% 0%, #241810, var(--walnut-3)); }
+
+  .type-serif { font-family: var(--serif); font-size: 24px; line-height: 1.3; color: var(--linen); }
+  .type-serif .em { color: var(--brass); font-style: italic; }
+  .type-mono { font-family: var(--mono); font-size: 12px; letter-spacing: .04em; color: var(--patina); margin-top: 14px; font-variant-numeric: tabular-nums; }
+  .type-cap { font-family: var(--mono); font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--linen-faint); margin-bottom: 12px; }
+
+  .dial-demo { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+  .needle { transform-box: fill-box; transform-origin: 50% 92%; transform: rotate(var(--needle)); }
+  .stop.active .needle { animation: settle 1.6s cubic-bezier(.16,1,.3,1) both; }
+  @keyframes settle { from { transform: rotate(-140deg); } }
+  .readout { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .readout .big { font-size: 22px; color: var(--linen); }
+  .readout .unit { font-size: 12px; color: var(--linen-dim); }
+  .readout .sub { display: block; font-size: 11px; color: var(--linen-faint); margin-top: 4px; }
+
+  .surf-list { display: grid; gap: 10px; margin-bottom: 8px; }
+  .surf { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; border: 1px solid var(--rule); border-radius: 11px; padding: 14px 16px; background: var(--walnut-2); }
+  .surf .ic { width: 30px; height: 30px; color: var(--brass); }
+  .surf .nm { font-size: 15px; font-weight: 600; color: var(--linen); }
+  .surf .ds { font-size: 13px; color: var(--linen-dim); }
+
+  /* Today preview (compact) */
+  .today-prev { border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; margin-bottom: 22px; background: var(--walnut); }
+  .tp-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--rule); font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--linen-dim); }
+  .tp-bar b { color: var(--brass); }
+  .tp-body { padding: 20px; }
+  .tp-greet { font-family: var(--serif); font-size: 23px; line-height: 1.1; margin: 0 0 8px; }
+  .tp-greet .em { color: var(--brass); font-style: italic; }
+  .tp-read { font-family: var(--serif); font-size: 14px; color: #cdbfa4; margin: 0 0 18px; line-height: 1.5; }
+  .tp-card { display: grid; grid-template-columns: 4px auto 1fr; gap: 0 12px; align-items: center; border: 1px solid var(--rule); border-radius: 10px; padding: 12px 12px 12px 0; overflow: hidden; background: var(--walnut-2); }
+  .tp-card .st { align-self: stretch; background: linear-gradient(180deg,var(--vermilion),#8f3220); border-radius: 10px 0 0 10px; }
+  .tp-card .bd { width: 30px; height: 30px; margin-left: 14px; border-radius: 7px; display: grid; place-items: center; color: var(--vermilion); background: #d5573b18; border: 1px solid #d5573b40; font-family: var(--mono); font-size: 14px; }
+  .tp-card .h { font-size: 14px; font-weight: 600; }
+  .tp-card .d { font-size: 12px; color: var(--linen-dim); }
+
+  .fullview { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-decoration: none; border: 1px solid var(--rule); border-radius: 8px; padding: 9px 14px; color: var(--brass); }
+  .fullview:hover { border-color: var(--brass-dim); }
+
+  /* finish */
+  .payload { width: 100%; min-height: 200px; background: var(--walnut-3); color: var(--patina); border: 1px solid var(--rule); border-radius: 11px; font-family: var(--mono); font-size: 12px; line-height: 1.5; padding: 14px 16px; resize: vertical; white-space: pre; overflow: auto; }
+  .copyrow { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+  .copied { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--patina); opacity: 0; transition: opacity .2s; }
+  .copied.show { opacity: 1; }
+
+  @media (max-width: 520px) {
+    .scale button { width: 40px; height: 40px; }
+    h1.q { font-size: 26px; }
+    .stage { padding: 22px 16px 30px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="glyph" aria-hidden="true"></span><span class="word" id="brandword">CABINET</span></div>
+  <div class="progress"><i id="bar"></i></div>
+  <div class="counter" id="counter">Intro</div>
+</header>
+
+<main class="stage" id="stage">
+
+  <!-- 0 cover -->
+  <section class="stop active" data-stop="cover">
+    <div class="eyebrow">A design walkthrough</div>
+    <h1 class="q">Let&rsquo;s shape <span class="em">v2</span> together.</h1>
+    <p class="lede">This is the current design thinking for your personal agent, laid out as a short guided tour &mdash; the name, the look, the ideas behind it. React to each stop with a tap, a rating, or a note. At the end you&rsquo;ll get a block of feedback to paste back into our chat.<br><br><span class="mark">Nothing is installed and nothing leaves your browser</span> until you copy it yourself.</p>
+    <div class="control"><div class="ctl-hint">About 11 stops &middot; two minutes</div></div>
+  </section>
+
+  <!-- 1 name -->
+  <section class="stop" data-stop="q" data-q="name" data-type="choice" data-required="1" data-label="What should the system be called?">
+    <div class="eyebrow"><b>01</b> &middot; The name</div>
+    <h1 class="q">First: what do we call it?</h1>
+    <p class="lede"><span class="mark">PALS</span> reads like a friendly buddy-bot. But the system is really your <span class="mark">chief of staff</span> &mdash; you&rsquo;re the principal; it keeps your records and runs your affairs. My recommendation is <span class="mark">Cabinet</span>: the cabinet where you keep things, and the cabinet of advisors that acts for you.</p>
+    <div class="control">
+      <div class="opts">
+        <button class="opt" data-value="cabinet"><span class="tick" aria-hidden="true"></span><span class="lab">Cabinet</span><span class="note">recommended</span></button>
+        <button class="opt" data-value="keep-pals"><span class="tick" aria-hidden="true"></span><span class="lab">Keep PALS</span><span class="note">zero churn</span></button>
+        <button class="opt" data-value="other"><span class="tick" aria-hidden="true"></span><span class="lab">Something else&hellip;</span></button>
+      </div>
+      <input class="other-field" type="text" placeholder="Your name idea" data-other="name" maxlength="40">
+    </div>
+  </section>
+
+  <!-- 2 reframe -->
+  <section class="stop" data-stop="q" data-q="reframe_resonance" data-type="scale" data-required="1" data-label="How much does the 'situation room, not chatbot' reframe resonate? (1-10)">
+    <div class="eyebrow"><b>02</b> &middot; The idea</div>
+    <h1 class="q">It shouldn&rsquo;t be <span class="em">a chatbot.</span></h1>
+    <p class="lede">V1 looks like ChatGPT because it&rsquo;s built the same way: a list of conversations and a message log. That hides everything that makes this thing special &mdash; the work it does on its own, your whole life&rsquo;s data, the fact that it runs your server. v2 makes it a <span class="mark">situation room</span>: it opens on what needs you, shows your operation at a glance, and lets you watch it work. Chat becomes one way in, not the whole building.</p>
+    <div class="control">
+      <div class="ctl-hint">Rate the reframe</div>
+      <div class="scale" data-scale></div>
+      <div class="scale-ends"><span>Not convinced</span><span>Yes, exactly</span></div>
+    </div>
+  </section>
+
+  <!-- 3 palette -->
+  <section class="stop" data-stop="q" data-q="palette" data-type="choice" data-required="1" data-label="Reaction to the colour palette?">
+    <div class="eyebrow"><b>03</b> &middot; Colour</div>
+    <h1 class="q">The palette: <span class="em">the campaign desk.</span></h1>
+    <p class="lede">Warm walnut ground, <span class="mark">brass</span> for the system&rsquo;s own voice and activity, aged paper only where you sign off on something, one alert red. A bespoke desk at night &mdash; not a sterile dashboard.</p>
+    <div class="swatches">
+      <div class="sw"><div class="chip" style="background:#171009"></div><div class="meta"><div class="nm">Walnut</div><div class="hex">#171009</div></div></div>
+      <div class="sw"><div class="chip" style="background:#c99b53"></div><div class="meta"><div class="nm">Brass</div><div class="hex">#c99b53</div></div></div>
+      <div class="sw"><div class="chip" style="background:#e7dcc3"></div><div class="meta"><div class="nm">Paper</div><div class="hex">#e7dcc3</div></div></div>
+      <div class="sw"><div class="chip" style="background:#7fa093"></div><div class="meta"><div class="nm">Patina</div><div class="hex">#7fa093</div></div></div>
+      <div class="sw"><div class="chip" style="background:#d5573b"></div><div class="meta"><div class="nm">Vermilion</div><div class="hex">#d5573b</div></div></div>
+    </div>
+    <div class="control">
+      <div class="opts">
+        <button class="opt" data-value="love"><span class="tick" aria-hidden="true"></span><span class="lab">Love it &mdash; warm and distinctive</span></button>
+        <button class="opt" data-value="too-dark"><span class="tick" aria-hidden="true"></span><span class="lab">Right idea, but too dark</span></button>
+        <button class="opt" data-value="colder"><span class="tick" aria-hidden="true"></span><span class="lab">Want colder &amp; higher-contrast instead</span></button>
+        <button class="opt" data-value="no"><span class="tick" aria-hidden="true"></span><span class="lab">Not feeling it &mdash; try something else</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 type / voice -->
+  <section class="stop" data-stop="q" data-q="voice" data-type="scale" data-required="1" data-label="The system speaking in a book serif — rate it (1-10)">
+    <div class="eyebrow"><b>04</b> &middot; The voice</div>
+    <h1 class="q">It speaks in a <span class="em">serif.</span></h1>
+    <p class="lede">The agent&rsquo;s voice &mdash; briefings, its read of your day &mdash; is set in a book serif, the way something considered is written. Data and labels are a precise mono. That pairing is the personality; it&rsquo;s the opposite of the flat sans every chatbot uses.</p>
+    <div class="demo-panel">
+      <div class="type-cap">The morning briefing</div>
+      <div class="type-serif">Good morning, Ben. <span class="em">A quiet day</span> &mdash; protein three mornings straight, and weight still drifting down.</div>
+      <div class="type-mono">PROTEIN 142 / 185 g &middot; WEIGHT 178.4 lb &middot; &minus;0.6 / 7d</div>
+    </div>
+    <div class="control">
+      <div class="ctl-hint">Rate the voice</div>
+      <div class="scale" data-scale></div>
+      <div class="scale-ends"><span>Too much</span><span>Love it</span></div>
+    </div>
+  </section>
+
+  <!-- 5 instruments -->
+  <section class="stop" data-stop="q" data-q="instruments" data-type="choice" data-required="1" data-label="Data as engraved instruments vs flat charts?">
+    <div class="eyebrow"><b>05</b> &middot; Instruments</div>
+    <h1 class="q">Your data as <span class="em">instruments.</span></h1>
+    <p class="lede">The signature idea: your numbers are rendered as engraved dials and rules with a needle that settles into place &mdash; a coherent family of instruments, not generic bar charts. Here&rsquo;s today&rsquo;s protein.</p>
+    <div class="demo-panel">
+      <div class="dial-demo">
+        <svg viewBox="0 0 120 120" width="120" height="120" aria-hidden="true">
+          <g stroke="#6a5c46" stroke-width="1.4">
+            <line x1="60" y1="14" x2="60" y2="21" transform="rotate(-135 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="20" transform="rotate(-108 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="20" transform="rotate(-81 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="20" transform="rotate(-54 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="20" transform="rotate(-27 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="21" transform="rotate(0 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="20" transform="rotate(27 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="20" transform="rotate(54 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="20" transform="rotate(81 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="20" transform="rotate(108 60 60)"/>
+            <line x1="60" y1="14" x2="60" y2="21" transform="rotate(135 60 60)"/>
+          </g>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#241810" stroke-width="5"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#c99b53" stroke-width="5" stroke-linecap="round" stroke-dasharray="222.6 289" transform="rotate(135 60 60)" opacity=".92"/>
+          <g class="needle" style="--needle: 73deg;">
+            <line x1="60" y1="60" x2="60" y2="24" stroke="#eccb88" stroke-width="2"/>
+            <circle cx="60" cy="24" r="2.2" fill="#eccb88"/>
+          </g>
+          <circle cx="60" cy="60" r="4.5" fill="#20160d" stroke="#c99b53" stroke-width="1.4"/>
+        </svg>
+        <div class="readout"><span class="big">142</span> <span class="unit">/ 185 g protein</span><span class="sub">1,840 / 2,300 kcal &middot; 3 meals</span></div>
+      </div>
+    </div>
+    <div class="control">
+      <div class="opts">
+        <button class="opt" data-value="instruments"><span class="tick" aria-hidden="true"></span><span class="lab">Instruments &mdash; love the character</span></button>
+        <button class="opt" data-value="mix"><span class="tick" aria-hidden="true"></span><span class="lab">A mix &mdash; instruments for hero stats, clean charts elsewhere</span></button>
+        <button class="opt" data-value="flat"><span class="tick" aria-hidden="true"></span><span class="lab">Prefer clean, flat charts</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 surfaces -->
+  <section class="stop" data-stop="q" data-q="surfaces_excite" data-type="multi" data-required="1" data-label="Which surfaces excite you most? (multi-select)">
+    <div class="eyebrow"><b>06</b> &middot; The building</div>
+    <h1 class="q">Five surfaces, <span class="em">not a thread list.</span></h1>
+    <p class="lede">Instead of one chat screen, v2 has five places. Tap the ones that excite you most &mdash; it tells me where the value is for you.</p>
+    <div class="surf-list">
+      <div class="surf"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 6l6-4 6 4v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><path d="M6 14V9h4v5"/></svg><div><div class="nm">Today</div><div class="ds">Opens on what needs you &mdash; the briefing, alerts, your vitals.</div></div></div>
+      <div class="surf"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg><div><div class="nm">Domains</div><div class="ds">Nutrition, training, health, money&hellip; each a dashboard plus the agent&rsquo;s read.</div></div></div>
+      <div class="surf"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 8h3l2 5 3-10 2 5h2"/></svg><div><div class="nm">Ops</div><div class="ds">A live feed of everything it does on its own &mdash; with one-tap rollback.</div></div></div>
+      <div class="surf"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2.5C5.5 2.5 4 4 4 6c-1 .4-1.5 1.3-1.5 2.3 0 1 .6 1.9 1.5 2.2 0 1.6 1.3 2.7 3 2.7"/><path d="M8 2.5c2.5 0 4 1.5 4 3.5 1 .4 1.5 1.3 1.5 2.3 0 1-.6 1.9-1.5 2.2 0 1.6-1.3 2.7-3 2.7"/><path d="M8 2.5v11"/></svg><div><div class="nm">Brain</div><div class="ds">What it knows about you &mdash; inspectable and editable.</div></div></div>
+      <div class="surf"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"/></svg><div><div class="nm">Threads</div><div class="ds">Conversations, kept as a searchable archive with their results attached.</div></div></div>
+    </div>
+    <div class="control">
+      <div class="ctl-hint">Select any that stand out</div>
+      <div class="opts row" data-multi>
+        <button class="opt multi" data-value="today"><span class="tick" aria-hidden="true"></span><span class="lab">Today</span></button>
+        <button class="opt multi" data-value="domains"><span class="tick" aria-hidden="true"></span><span class="lab">Domains</span></button>
+        <button class="opt multi" data-value="ops"><span class="tick" aria-hidden="true"></span><span class="lab">Ops</span></button>
+        <button class="opt multi" data-value="brain"><span class="tick" aria-hidden="true"></span><span class="lab">Brain</span></button>
+        <button class="opt multi" data-value="threads"><span class="tick" aria-hidden="true"></span><span class="lab">Threads</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 today -->
+  <section class="stop" data-stop="q" data-q="today_rating" data-type="scale" data-required="1" data-label="Rate the Today home surface (1-10)">
+    <div class="eyebrow"><b>07</b> &middot; Your morning</div>
+    <h1 class="q">This is what <span class="em">opens.</span></h1>
+    <p class="lede">Not a blank prompt &mdash; a briefing in the system&rsquo;s voice, the two things that actually need you, and your vitals as instruments. Here&rsquo;s a taste; the link opens the full screen.</p>
+    <div class="today-prev">
+      <div class="tp-bar"><span>Tue &middot; <b>7 Jul</b> &middot; 06:12</span><span style="margin-left:auto;color:var(--brass)">&#8984;K</span></div>
+      <div class="tp-body">
+        <div class="tp-greet">Good morning, Ben. <span class="em">A quiet day</span> &mdash; two things worth a minute.</div>
+        <div class="tp-read">Protein three mornings straight and weight drifting down. Only real items: a refill that runs out Saturday, and dining running hot.</div>
+        <div class="tp-card"><span class="st" aria-hidden="true"></span><span class="bd" aria-hidden="true">&#8478;</span><div><div class="h">Metformin runs out Saturday</div><div class="d">8 tablets left. I can reorder from your July plan.</div></div></div>
+      </div>
+    </div>
+    <a class="fullview" href="today.html" target="_blank" rel="noopener">Open the full Today screen &rarr;</a>
+    <div class="control" style="margin-top:24px">
+      <div class="ctl-hint">Rate this home screen</div>
+      <div class="scale" data-scale></div>
+      <div class="scale-ends"><span>Miss</span><span>Nailed it</span></div>
+    </div>
+  </section>
+
+  <!-- 8 ops / autonomy -->
+  <section class="stop" data-stop="q" data-q="ops_importance" data-type="scale" data-required="1" data-label="How important is a live action feed + one-tap rollback to you? (1-10)">
+    <div class="eyebrow"><b>08</b> &middot; Autonomy you can watch</div>
+    <h1 class="q">You told it to <span class="em">stop asking.</span></h1>
+    <p class="lede">So the safety moves from asking-first to <span class="mark">watching-after</span>. Ops is a live ledger of everything the agent does on its own &mdash; what, why, and the result &mdash; with one-tap rollback backed by backups and git. It&rsquo;s what lets full autonomy feel safe instead of opaque.</p>
+    <div class="control">
+      <div class="ctl-hint">How important is this to you?</div>
+      <div class="scale" data-scale></div>
+      <div class="scale-ends"><span>Don&rsquo;t need it</span><span>Essential</span></div>
+    </div>
+  </section>
+
+  <!-- 9 interaction -->
+  <section class="stop" data-stop="q" data-q="interaction" data-type="boolean" data-required="1" data-label="Command bar + presence strip as the front door (instead of a chat box) — yes?">
+    <div class="eyebrow"><b>09</b> &middot; How you drive it</div>
+    <h1 class="q">One key, <span class="em">from anywhere.</span></h1>
+    <p class="lede">A command bar (&#8984;K) is the universal way in &mdash; type or speak an intent from any screen and it routes: a quick log, a question, a build, a view. A quiet presence strip along the bottom shows what it&rsquo;s doing right now. The front door is a command line, not a chat box.</p>
+    <div class="control">
+      <div class="ctl-hint">Does this interaction model work for you?</div>
+      <div class="opts row" data-bool>
+        <button class="opt" data-value="true"><span class="tick" aria-hidden="true"></span><span class="lab">Yes &mdash; that&rsquo;s how I&rsquo;d want to drive it</span></button>
+        <button class="opt" data-value="false"><span class="tick" aria-hidden="true"></span><span class="lab">No &mdash; I&rsquo;d rather it stay chat-first</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10 build order -->
+  <section class="stop" data-stop="q" data-q="build_order" data-type="choice" data-required="1" data-label="Where should I build first?">
+    <div class="eyebrow"><b>10</b> &middot; Where I start</div>
+    <h1 class="q">What do I build <span class="em">first?</span></h1>
+    <p class="lede">The full v2 is a big build. I&rsquo;d rather ship one real surface you can use than half of everything. Where&rsquo;s the most value for you first?</p>
+    <div class="control">
+      <div class="opts">
+        <button class="opt" data-value="today-ops-domains"><span class="tick" aria-hidden="true"></span><span class="lab">Today &rarr; Ops &rarr; Domains</span><span class="note">my pick</span></button>
+        <button class="opt" data-value="ops-first"><span class="tick" aria-hidden="true"></span><span class="lab">Ops first &mdash; let me watch it work</span></button>
+        <button class="opt" data-value="domains-first"><span class="tick" aria-hidden="true"></span><span class="lab">Domains first &mdash; my life data</span></button>
+        <button class="opt" data-value="today-only"><span class="tick" aria-hidden="true"></span><span class="lab">Just make Today great, then reassess</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 notes -->
+  <section class="stop" data-stop="q" data-q="notes" data-type="text" data-required="0" data-label="Anything else — reactions, ideas, concerns">
+    <div class="eyebrow"><b>11</b> &middot; Open floor</div>
+    <h1 class="q">Anything else <span class="em">on your mind?</span></h1>
+    <p class="lede">Reactions, half-formed ideas, things I missed, things you hate. Optional &mdash; but this is where the good stuff usually is.</p>
+    <div class="control">
+      <textarea class="note-field" data-textfield placeholder="Type freely&hellip;"></textarea>
+    </div>
+  </section>
+
+  <!-- 12 finish -->
+  <section class="stop" data-stop="finish">
+    <div class="eyebrow">Done &middot; thank you</div>
+    <h1 class="q">That&rsquo;s your <span class="em">feedback.</span></h1>
+    <p class="lede">Copy the block below and paste it back into our chat. It&rsquo;s the whole tour &mdash; every answer, labelled &mdash; and it&rsquo;s all I need to start building the right thing.</p>
+    <textarea class="payload" id="payload" readonly spellcheck="false"></textarea>
+    <div class="copyrow">
+      <button class="btn primary" id="copybtn">Copy feedback</button>
+      <button class="btn" id="restartbtn">Start over</button>
+      <span class="copied" id="copied">Copied to clipboard</span>
+    </div>
+  </section>
+
+</main>
+
+<footer class="nav">
+  <button class="btn" id="back">Back</button>
+  <span class="spacer"></span>
+  <span class="savednote" id="saved"></span>
+  <button class="btn primary" id="next">Begin the tour &rarr;</button>
+</footer>
+
+<script>
+(function () {
+  var KEY = 'cabinet_tour_v1';
+  var stops = Array.prototype.slice.call(document.querySelectorAll('.stop'));
+  var idx = 0;
+  var answers = load();
+
+  var elBar = document.getElementById('bar');
+  var elCounter = document.getElementById('counter');
+  var elBack = document.getElementById('back');
+  var elNext = document.getElementById('next');
+  var elSaved = document.getElementById('saved');
+  var TOTAL = stops.length - 1; // name..finish = 12; cover is the intro
+
+  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(answers)); } catch (e) {} }
+
+  // Build 1-10 scales
+  document.querySelectorAll('[data-scale]').forEach(function (host) {
+    for (var i = 1; i <= 10; i++) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = i; b.setAttribute('data-val', i);
+      host.appendChild(b);
+    }
+  });
+
+  function stopEl() { return stops[idx]; }
+  function qid(s) { return s.getAttribute('data-q'); }
+
+  function isAnswered(s) {
+    if (s.getAttribute('data-stop') !== 'q') return true;
+    if (s.getAttribute('data-required') !== '1') return true;
+    var id = qid(s), a = answers[id];
+    if (!a) return false;
+    if (a.type === 'multi') return a.value && a.value.length > 0;
+    if (a.type === 'text') return a.value && a.value.trim().length > 0;
+    if (a.value === 'other') { var ov = answers[id].other; return ov && ov.trim().length > 0; }
+    return a.value !== undefined && a.value !== null && a.value !== '';
+  }
+
+  function record(id, label, type, value, extra) {
+    answers[id] = { question: label, type: type, value: value };
+    if (extra) for (var k in extra) answers[id][k] = extra[k];
+    save(); refreshNav(); flashSaved();
+  }
+
+  var savedT;
+  function flashSaved() {
+    elSaved.textContent = 'saved'; clearTimeout(savedT);
+    savedT = setTimeout(function () { elSaved.textContent = ''; }, 1200);
+  }
+
+  // Wire choice / bool
+  document.querySelectorAll('.stop').forEach(function (s) {
+    var type = s.getAttribute('data-type');
+    var id = qid(s), label = s.getAttribute('data-label');
+    if (type === 'choice' || type === 'boolean') {
+      s.querySelectorAll('.opt').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          s.querySelectorAll('.opt').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
+          btn.setAttribute('aria-pressed', 'true');
+          var val = btn.getAttribute('data-value');
+          var lab = btn.querySelector('.lab').textContent.trim();
+          var other = s.querySelector('.other-field');
+          if (other) other.classList.toggle('show', val === 'other');
+          var value = type === 'boolean' ? (val === 'true') : val;
+          var extra = other && val === 'other' ? { other: other.value } : null;
+          record(id, label, type, value, extra);
+          if (other && val === 'other') other.focus();
+        });
+      });
+      var of = s.querySelector('.other-field');
+      if (of) of.addEventListener('input', function () {
+        if (answers[id]) { answers[id].other = of.value; save(); refreshNav(); }
+      });
+    }
+    if (type === 'multi') {
+      s.querySelectorAll('.opt').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var on = btn.getAttribute('aria-pressed') === 'true';
+          btn.setAttribute('aria-pressed', on ? 'false' : 'true');
+          var vals = [], labs = [];
+          s.querySelectorAll('.opt[aria-pressed="true"]').forEach(function (o) {
+            vals.push(o.getAttribute('data-value')); labs.push(o.querySelector('.lab').textContent.trim());
+          });
+          record(id, label, 'multi', vals, { labels: labs });
+        });
+      });
+    }
+    if (type === 'scale') {
+      s.querySelectorAll('[data-scale] button').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          s.querySelectorAll('[data-scale] button').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
+          btn.setAttribute('aria-pressed', 'true');
+          record(id, label, 'scale', parseInt(btn.getAttribute('data-val'), 10));
+        });
+      });
+    }
+    if (type === 'text') {
+      var tf = s.querySelector('[data-textfield]');
+      tf.addEventListener('input', function () { record(id, label, 'text', tf.value); });
+    }
+  });
+
+  // Restore prior answers into the UI
+  function restore() {
+    document.querySelectorAll('.stop').forEach(function (s) {
+      var type = s.getAttribute('data-type'), id = qid(s), a = answers[id];
+      if (!a) return;
+      if (type === 'choice' || type === 'boolean') {
+        var target = type === 'boolean' ? String(a.value) : a.value;
+        var btn = s.querySelector('.opt[data-value="' + target + '"]');
+        if (btn) btn.setAttribute('aria-pressed', 'true');
+        var of = s.querySelector('.other-field');
+        if (of && a.value === 'other') { of.classList.add('show'); of.value = a.other || ''; }
+      } else if (type === 'multi' && a.value) {
+        a.value.forEach(function (v) { var b = s.querySelector('.opt[data-value="' + v + '"]'); if (b) b.setAttribute('aria-pressed', 'true'); });
+      } else if (type === 'scale' && a.value) {
+        var sb = s.querySelector('[data-scale] button[data-val="' + a.value + '"]'); if (sb) sb.setAttribute('aria-pressed', 'true');
+      } else if (type === 'text') {
+        var tf = s.querySelector('[data-textfield]'); if (tf) tf.value = a.value || '';
+      }
+    });
+  }
+
+  function show(n) {
+    idx = Math.max(0, Math.min(stops.length - 1, n));
+    stops.forEach(function (s, i) { s.classList.toggle('active', i === idx); });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    refreshNav();
+    if (stops[idx].getAttribute('data-stop') === 'finish') buildPayload();
+  }
+
+  function refreshNav() {
+    var frac = idx / (stops.length - 1);
+    elBar.style.width = (frac * 100) + '%';
+    elCounter.innerHTML = idx === 0 ? 'Intro' : 'Stop <b>' + idx + '</b> / ' + TOTAL;
+    elBack.style.visibility = idx === 0 ? 'hidden' : 'visible';
+    var last = idx === stops.length - 1;
+    elNext.style.visibility = last ? 'hidden' : 'visible';
+    if (idx === 0) elNext.textContent = 'Begin the tour →';
+    else if (idx === stops.length - 2) elNext.textContent = 'See my feedback →';
+    else elNext.textContent = 'Next →';
+    elNext.disabled = !isAnswered(stopEl());
+  }
+
+  elNext.addEventListener('click', function () { if (!elNext.disabled) show(idx + 1); });
+  elBack.addEventListener('click', function () { show(idx - 1); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !elNext.disabled && document.activeElement.tagName !== 'TEXTAREA') show(idx + 1);
+  });
+
+  function buildPayload() {
+    var out = { tour: 'cabinet-v2-design', version: 1, answers: {} };
+    Object.keys(answers).forEach(function (k) {
+      var a = answers[k];
+      var entry = { q: a.question };
+      if (a.type === 'scale') entry.rating = a.value + '/10';
+      else if (a.type === 'multi') entry.selected = a.labels || a.value;
+      else if (a.type === 'boolean') entry.answer = a.value ? 'yes' : 'no';
+      else if (a.value === 'other') entry.answer = 'other: ' + (a.other || '');
+      else entry.answer = a.value;
+      out.answers[k] = entry;
+    });
+    document.getElementById('payload').value = JSON.stringify(out, null, 2);
+  }
+
+  document.getElementById('copybtn').addEventListener('click', function () {
+    var ta = document.getElementById('payload');
+    var done = function () { document.getElementById('copied').classList.add('show'); setTimeout(function () { document.getElementById('copied').classList.remove('show'); }, 2000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(done, function () { ta.select(); document.execCommand('copy'); done(); });
+    } else { ta.select(); document.execCommand('copy'); done(); }
+  });
+  document.getElementById('restartbtn').addEventListener('click', function () {
+    answers = {}; save();
+    document.querySelectorAll('.opt[aria-pressed="true"],[data-scale] button[aria-pressed="true"]').forEach(function (o) { o.setAttribute('aria-pressed', 'false'); });
+    document.querySelectorAll('.note-field,.other-field').forEach(function (f) { f.value = ''; });
+    document.querySelectorAll('.other-field').forEach(function (f) { f.classList.remove('show'); });
+    show(0);
+  });
+
+  restore();
+  show(0);
+})();
+</script>
+</body>
+</html>
