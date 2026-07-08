@@ -1,0 +1,72 @@
+/* Instrument family — engraved brass readouts. All values from tokens.css. */
+
+/* ---- section label ---- */
+.section-label {
+  display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4);
+  font-family: var(--mono); font-size: var(--fs-cap); letter-spacing: var(--tracking-cap);
+  text-transform: uppercase; color: var(--linen-dim);
+}
+.section-label .n { color: var(--brass); }
+.section-label::after { content: ""; height: 1px; flex: 1; background: linear-gradient(90deg, var(--rule), transparent); }
+
+/* ---- readout ---- */
+.readout { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--linen); line-height: 1.2; }
+.readout .big { font-size: var(--fs-read); letter-spacing: -0.01em; }
+.readout .big.ok { color: var(--patina); }
+.readout .big.warn { color: var(--brass-hi); }
+.readout .big.crit { color: var(--vermilion); }
+.readout .unit { font-size: var(--fs-fine); color: var(--linen-dim); }
+.readout .sub { display: block; font-size: var(--fs-fine); color: var(--linen-faint); margin-top: 3px; }
+
+/* ---- panel / card ---- */
+.inst-card {
+  background: radial-gradient(120% 120% at 50% 0%, var(--panel-2), var(--inset));
+  border: 1px solid var(--rule); border-radius: var(--r-4);
+  padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3);
+  position: relative; overflow: hidden;
+}
+.inst-card.paper { background: var(--paper); color: var(--paper-ink); border-color: var(--paper-line); box-shadow: var(--elev-paper); }
+.inst-card > .cap {
+  font-family: var(--mono); font-size: var(--fs-cap); letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--linen-faint); display: flex; justify-content: space-between; align-items: center;
+}
+.inst-card > .cap .tag { color: var(--patina); }
+.inst-card > .cap .tag.warn { color: var(--brass); }
+.inst-card > .cap .tag.crit { color: var(--vermilion); }
+.inst-card > .stripe { position: absolute; left: 0; top: 0; bottom: 0; width: var(--rail); }
+.inst-card.sev-ok > .stripe { background: linear-gradient(180deg, var(--patina), var(--patina-dim)); }
+.inst-card.sev-warn > .stripe { background: linear-gradient(180deg, var(--brass), var(--brass-dim)); }
+.inst-card.sev-crit > .stripe { background: linear-gradient(180deg, var(--vermilion), var(--vermilion-dim)); }
+.inst-card.has-stripe { padding-left: calc(var(--sp-4) + var(--rail)); }
+
+/* ---- dial ---- */
+.inst-dial { display: flex; align-items: center; gap: var(--sp-4); }
+.inst-dial svg { flex: none; }
+.inst-dial .needle {
+  transform-box: fill-box; transform-origin: 50% 92%; transform: rotate(var(--needle, 0deg));
+  animation: dial-settle var(--dur-settle) var(--ease-settle) both;
+}
+@keyframes dial-settle { from { transform: rotate(-140deg); } }
+
+/* ---- ring ---- */
+.inst-ring { display: flex; align-items: center; gap: var(--sp-4); }
+.inst-ring svg { flex: none; }
+.inst-ring .ring-prog { animation: ring-fill var(--dur-3) var(--ease-settle) both; }
+@keyframes ring-fill { from { stroke-dasharray: 0 999; } }
+
+/* ---- sparkline ---- */
+.inst-spark { display: block; width: 100%; height: 30px; }
+
+/* ---- rule (horizontal scale) ---- */
+.inst-rule { display: flex; flex-direction: column; gap: var(--sp-2); }
+.inst-rule .scale { position: relative; height: 16px; }
+.inst-rule .scale .track { position: absolute; top: 7px; left: 0; right: 0; height: 2px; background: var(--rule); }
+.inst-rule .scale .tick { position: absolute; top: 5px; width: 1px; height: 6px; background: var(--linen-faint); }
+.inst-rule .scale .mark { position: absolute; top: 2px; width: 2px; height: 12px; background: var(--brass); border-radius: 1px; box-shadow: 0 0 6px #c99b5366; transition: left var(--dur-3) var(--ease-settle); }
+
+/* ---- gauge (linear bar) ---- */
+.inst-gauge { display: flex; flex-direction: column; gap: var(--sp-2); }
+.inst-gauge .bar { height: 8px; border-radius: var(--r-pill); background: var(--inset); border: 1px solid var(--rule-soft); overflow: hidden; }
+.inst-gauge .bar > i { display: block; height: 100%; border-radius: var(--r-pill); background: linear-gradient(90deg, var(--brass-dim), var(--brass)); transition: width var(--dur-3) var(--ease-settle); }
+.inst-gauge.over .bar > i { background: linear-gradient(90deg, var(--vermilion-dim), var(--vermilion)); }
+.inst-gauge .foot { display: flex; justify-content: space-between; font-family: var(--mono); font-size: var(--fs-cap); color: var(--linen-faint); letter-spacing: 0.06em; }
