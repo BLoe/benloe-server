@@ -1,0 +1,297 @@
+/* ============================================================================
+   OPS surface — the trust ledger. Reverse-chron action feed with per-row
+   revert. Scanability over decoration. Tokens only; no shared selectors.
+   ========================================================================== */
+
+.ops {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ---- header: intent line + filter pills ---- */
+.ops-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.ops-lede {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--linen-dim);
+  max-width: 46ch;
+}
+
+.ops-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.ops-fpill {
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  color: var(--linen-dim);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  padding: var(--sp-2) var(--sp-4);
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+    background var(--dur-1) var(--ease);
+}
+
+.ops-fpill:hover {
+  color: var(--linen);
+  border-color: var(--brass-dim);
+}
+
+.ops-fpill.active {
+  color: var(--inset);
+  background: var(--brass);
+  border-color: var(--brass);
+}
+
+.ops-fpill:focus-visible {
+  outline: 2px solid var(--brass-hi);
+  outline-offset: 2px;
+}
+
+/* ---- states ---- */
+.ops-loading {
+  color: var(--linen-faint);
+  font-size: var(--fs-fine);
+  padding: var(--sp-7) 0;
+}
+
+.ops-empty {
+  color: var(--linen-dim);
+  font-size: var(--fs-body);
+  font-style: italic;
+  padding: var(--sp-7) 0;
+}
+
+/* ---- feed ---- */
+.ops-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r-3);
+  overflow: hidden;
+  transition: opacity var(--dur-2) var(--ease);
+}
+
+.ops-feed.is-loading {
+  opacity: 0.5;
+}
+
+.ops-row {
+  display: grid;
+  grid-template-columns: 4.75rem 1fr auto;
+  gap: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--rule-soft);
+  transition: opacity var(--dur-2) var(--ease);
+}
+
+.ops-row:last-child {
+  border-bottom: none;
+}
+
+.ops-row.reverted {
+  opacity: 0.55;
+}
+
+/* ---- when ---- */
+.ops-when {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  align-items: flex-start;
+  padding-top: 1px;
+}
+
+.ops-time {
+  font-size: var(--fs-sm);
+  color: var(--brass);
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-day {
+  font-size: var(--fs-cap);
+  color: var(--linen-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ---- main column ---- */
+.ops-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.ops-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.ops-tool {
+  font-size: var(--fs-fine);
+  color: var(--linen-dim);
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-1);
+  padding: 1px var(--sp-2);
+  word-break: break-word;
+}
+
+.ops-verb {
+  font-family: var(--serif);
+  font-size: var(--fs-body);
+  color: var(--linen);
+}
+
+.ops-reason {
+  font-size: var(--fs-sm);
+  color: var(--linen-dim);
+}
+
+.ops-diff {
+  font-size: var(--fs-fine);
+  color: var(--linen-faint);
+  background: var(--inset);
+  border: 1px solid var(--rule-soft);
+  border-left: 2px solid var(--brass-deep);
+  border-radius: var(--r-1);
+  padding: var(--sp-2) var(--sp-3);
+  margin: var(--sp-1) 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.ops-result {
+  font-size: var(--fs-fine);
+  color: var(--patina);
+}
+
+/* ---- side column: chips + revert ---- */
+.ops-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-3);
+  white-space: nowrap;
+}
+
+.ops-chips {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.ops-chip {
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  border-radius: var(--r-1);
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--rule);
+}
+
+.ops-chip.tier {
+  color: var(--linen-dim);
+  background: var(--panel-2);
+  border-color: var(--brass-deep);
+}
+
+.ops-chip.kind {
+  color: var(--linen-dim);
+  background: transparent;
+}
+
+.ops-chip.kind.user {
+  color: var(--brass-hi);
+  border-color: var(--brass-dim);
+}
+
+.ops-chip.kind.heartbeat {
+  color: var(--patina);
+  border-color: var(--patina-dim);
+}
+
+.ops-chip.kind.cron {
+  color: var(--linen-dim);
+  border-color: var(--rule);
+}
+
+.ops-revert {
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  color: var(--brass);
+  background: transparent;
+  border: 1px solid var(--brass-dim);
+  border-radius: var(--r-pill);
+  padding: var(--sp-2) var(--sp-4);
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease);
+}
+
+.ops-revert:hover:not(:disabled) {
+  color: var(--inset);
+  background: var(--brass);
+  border-color: var(--brass);
+}
+
+.ops-revert:disabled {
+  color: var(--linen-faint);
+  border-color: var(--rule);
+  cursor: default;
+}
+
+.ops-revert:focus-visible {
+  outline: 2px solid var(--brass-hi);
+  outline-offset: 2px;
+}
+
+.ops-reverted {
+  font-size: var(--fs-cap);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-cap);
+  color: var(--linen-faint);
+}
+
+@media (max-width: 640px) {
+  .ops {
+    padding: var(--sp-4);
+  }
+  .ops-row {
+    grid-template-columns: 3.75rem 1fr;
+  }
+  .ops-side {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}

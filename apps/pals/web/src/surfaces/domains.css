@@ -1,0 +1,159 @@
+/* ============================================================================
+   DOMAINS surface — pill switcher + instruments / narrative / log template.
+   Tokens only; no shared selectors with other surfaces.
+   ========================================================================== */
+
+.dom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-6);
+  max-width: 1080px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ---- switcher: a row of brass pills ---- */
+.dom-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.dom-pill {
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  color: var(--linen-dim);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  padding: var(--sp-2) var(--sp-4);
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+    background var(--dur-1) var(--ease);
+}
+
+.dom-pill:hover {
+  color: var(--linen);
+  border-color: var(--brass-dim);
+}
+
+.dom-pill.active {
+  color: var(--inset);
+  background: var(--brass);
+  border-color: var(--brass);
+}
+
+.dom-pill:focus-visible {
+  outline: 2px solid var(--brass-hi);
+  outline-offset: 2px;
+}
+
+/* ---- body ---- */
+.dom-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  transition: opacity var(--dur-2) var(--ease);
+}
+
+.dom-body.is-loading {
+  opacity: 0.45;
+}
+
+.dom-loading {
+  color: var(--linen-faint);
+  font-size: var(--fs-fine);
+  padding: var(--sp-7) 0;
+}
+
+/* ---- instruments grid ---- */
+.dom-instruments {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+/* ---- narrative: the voice in a bordered panel ---- */
+.dom-narrative {
+  border: 1px solid var(--rule);
+  border-left: var(--rail) solid var(--brass-dim);
+  border-radius: var(--r-3);
+  background: var(--panel);
+  padding: var(--sp-5) var(--sp-6);
+  margin-bottom: var(--sp-4);
+}
+
+.dom-narrative .voice {
+  font-size: var(--fs-lede);
+  color: var(--linen);
+}
+
+/* ---- log: engraved mono list ---- */
+.dom-log {
+  list-style: none;
+  padding: 0;
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r-3);
+  overflow: hidden;
+}
+
+.dom-log-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr auto;
+  gap: var(--sp-4);
+  align-items: baseline;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.dom-log-row:last-child {
+  border-bottom: none;
+}
+
+.dom-log-at {
+  font-size: var(--fs-fine);
+  color: var(--brass-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.dom-log-text {
+  font-size: var(--fs-sm);
+  color: var(--linen);
+}
+
+.dom-log-meta {
+  font-size: var(--fs-fine);
+  color: var(--linen-faint);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ---- empty states ---- */
+.dom-empty {
+  color: var(--linen-dim);
+  font-size: var(--fs-body);
+  font-style: italic;
+  padding: var(--sp-4) 0;
+  margin-bottom: var(--sp-2);
+}
+
+@media (max-width: 640px) {
+  .dom {
+    padding: var(--sp-4);
+  }
+  .dom-log-row {
+    grid-template-columns: 4.5rem 1fr;
+  }
+  .dom-log-meta {
+    grid-column: 2;
+    text-align: left;
+    white-space: normal;
+  }
+}
