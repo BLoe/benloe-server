@@ -10,6 +10,7 @@ declare global {
         email: string;
         name: string | null;
         avatar: string | null;
+        role: string;
         timezone: string;
         createdAt: Date;
         lastLoginAt: Date | null;

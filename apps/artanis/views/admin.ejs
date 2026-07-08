@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Keys - benloe.com</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link href="/tailwind.css" rel="stylesheet">
+    <style>
+        :root { --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f8f9fa; }
+        .header-bg { background: var(--primary-gradient); box-shadow: 0 2px 20px rgba(0,0,0,0.1); }
+        .card { background: #fff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.08); border: 1px solid #e6e6ee; }
+        .btn { background: var(--primary-gradient); transition: all .2s ease; }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .btn:disabled { opacity: .5; transform: none; box-shadow: none; cursor: default; }
+        .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
+        .keybox { background: #fff8e6; border: 1px solid #f0d98c; }
+        .pill-active { background: #e6f6ec; color: #1f7a45; }
+        .pill-revoked { background: #f3f4f6; color: #8a8a8a; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <header class="header-bg text-white">
+        <div class="max-w-3xl mx-auto px-6 py-8">
+            <a href="/dashboard" class="inline-flex items-center text-white/90 hover:text-white text-lg font-medium mb-5 hover:underline">&larr; Dashboard</a>
+            <h1 class="text-3xl font-bold">Agent Keys</h1>
+            <p class="text-white/85 mt-1">Access credentials for non-human principals (agents) that log in to benloe.com services.</p>
+        </div>
+    </header>
+
+    <main class="max-w-3xl mx-auto px-6 py-8 space-y-8">
+        <!-- Create -->
+        <section class="card p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-1">Mint a key</h2>
+            <p class="text-gray-500 text-sm mb-4">Creates the agent if it doesn't exist. The key is shown once — copy it now, only its hash is stored.</p>
+            <form id="createForm" class="flex flex-col sm:flex-row gap-3">
+                <input id="name" placeholder="agent name (e.g. benji)" required
+                       class="mono flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                <input id="label" placeholder="label (optional)"
+                       class="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                <button type="submit" class="btn text-white font-semibold rounded-lg px-5 py-2">Create</button>
+            </form>
+            <p id="createErr" class="text-red-600 text-sm mt-3 hidden"></p>
+            <div id="keyResult" class="keybox rounded-lg p-4 mt-4 hidden">
+                <div class="text-sm text-amber-800 font-medium mb-2">New key for <span id="keyAgent" class="mono"></span> — shown once:</div>
+                <div class="flex items-center gap-3">
+                    <code id="keyValue" class="mono text-sm bg-white border border-amber-200 rounded px-3 py-2 flex-1 break-all"></code>
+                    <button id="copyBtn" class="btn text-white text-sm font-semibold rounded-lg px-4 py-2 whitespace-nowrap">Copy</button>
+                </div>
+                <div class="text-xs text-amber-700 mt-2">Present it as <span class="mono">Authorization: Bearer &lt;key&gt;</span></div>
+            </div>
+        </section>
+
+        <!-- List -->
+        <section class="card p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Existing agents</h2>
+            <div id="list" class="divide-y divide-gray-100">
+                <div class="text-gray-400 py-6 text-center">Loading…</div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+        const fmt = (d) => d ? new Date(d).toLocaleString() : 'never';
+
+        async function load() {
+            const r = await fetch('/api/admin/agents', { credentials: 'same-origin' });
+            if (!r.ok) { $('list').innerHTML = '<div class="text-red-600 py-6 text-center">Failed to load (' + r.status + ')</div>'; return; }
+            const { agents } = await r.json();
+            if (!agents.length) { $('list').innerHTML = '<div class="text-gray-400 py-6 text-center">No agent keys yet.</div>'; return; }
+            $('list').innerHTML = agents.map((a) => `
+                <div class="flex items-center justify-between py-4 gap-4">
+                    <div class="min-w-0">
+                        <div class="font-semibold text-gray-800 mono">${a.name}
+                            <span class="text-xs font-normal ml-2 px-2 py-0.5 rounded-full ${a.active ? 'pill-active' : 'pill-revoked'}">${a.active ? 'active' : 'revoked'}</span>
+                        </div>
+                        <div class="text-sm text-gray-500 mono">…${a.keyHint}${a.label ? ' · ' + escapeHtml(a.label) : ''}</div>
+                        <div class="text-xs text-gray-400">last used ${fmt(a.lastUsedAt)} · created ${fmt(a.createdAt)}</div>
+                    </div>
+                    ${a.active ? `<button data-name="${a.name}" class="revoke danger text-sm font-semibold text-red-600 border border-red-200 hover:bg-red-50 rounded-lg px-4 py-2 whitespace-nowrap">Revoke</button>` : ''}
+                </div>`).join('');
+            document.querySelectorAll('.revoke').forEach((b) => b.addEventListener('click', () => revoke(b.dataset.name)));
+        }
+
+        function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+        $('createForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            $('createErr').classList.add('hidden');
+            const name = $('name').value.trim();
+            const label = $('label').value.trim();
+            const r = await fetch('/api/admin/agents', {
+                method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, label }),
+            });
+            const data = await r.json();
+            if (!r.ok) { $('createErr').textContent = data.error || 'Failed'; $('createErr').classList.remove('hidden'); return; }
+            $('keyAgent').textContent = data.agent.name;
+            $('keyValue').textContent = data.rawKey;
+            $('keyResult').classList.remove('hidden');
+            $('name').value = ''; $('label').value = '';
+            load();
+        });
+
+        $('copyBtn').addEventListener('click', () => {
+            const v = $('keyValue').textContent;
+            navigator.clipboard.writeText(v).then(() => { $('copyBtn').textContent = 'Copied'; setTimeout(() => $('copyBtn').textContent = 'Copy', 1500); });
+        });
+
+        async function revoke(name) {
+            if (!confirm('Revoke all keys for "' + name + '"? It will lose access immediately.')) return;
+            const r = await fetch('/api/admin/agents/' + encodeURIComponent(name) + '/revoke', { method: 'POST', credentials: 'same-origin' });
+            if (r.ok) load(); else alert('Revoke failed (' + r.status + ')');
+        }
+
+        load();
+    </script>
+</body>
+</html>

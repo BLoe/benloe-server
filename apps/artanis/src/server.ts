@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import { authRoutes } from './routes/auth';
 import { userRoutes } from './routes/user';
 import { apiKeysRouter } from './routes/apikeys';
+import { adminRoutes } from './routes/admin';
 import { claudeRouter } from './routes/claude';
 import { authenticate } from './middleware/auth';
 import { authService } from './services/auth';
@@ -91,6 +92,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', authenticate, userRoutes);
 app.use('/api/keys', authenticate, apiKeysRouter);
 app.use('/api/claude', authenticate, claudeRouter);
+app.use('/api/admin', authenticate, adminRoutes);
 
 // Frontend routes
 app.get('/', async (req, res) => {
@@ -134,6 +136,11 @@ app.get('/', async (req, res) => {
 
 app.get('/dashboard', authenticate, (req, res) => {
   res.render('dashboard', { user: req.user });
+});
+
+app.get('/admin', authenticate, (req, res) => {
+  if (req.user?.role !== 'admin') return res.redirect('/dashboard');
+  res.render('admin');
 });
 
 app.get('/verify', (req, res) => {
