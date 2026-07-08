@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ThreadSummary } from '../lib/cabinet.js';
+import { streamChat, foldTurn } from '../lib/chat.js';
 import { SectionLabel } from '../components/instruments/index.js';
 import './threads.css';
 
@@ -20,12 +21,19 @@ function matches(t: ThreadSummary, needle: string): boolean {
   return hay.includes(needle);
 }
 
+interface ThreadsProps {
+  /** Open (and, if new, seed) a specific thread — used by the ⌘K command bar. */
+  openThreadId?: string | null;
+  openSeed?: string | null;
+  onConsumed?: () => void;
+}
+
 /**
- * THREADS — the conversation archive. A record, not the spine: past
- * conversations, searchable, with their scrollback restyled into the design
- * system. Selecting one opens the reading pane; nothing here is live.
+ * THREADS — where conversations live. A searchable archive on the left; the
+ * right pane is a LIVE conversation: pick a thread up where it left off, or
+ * start a new one from the command bar. Every turn streams from Cabinet.
  */
-export function Threads() {
+export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
   const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -35,34 +43,39 @@ export function Threads() {
     let alive = true;
     api
       .threads()
-      .then((res) => {
-        if (!alive) return;
-        setThreads(res.threads);
-      })
-      .catch((e: unknown) => {
-        if (!alive) return;
-        setLoadError(e instanceof Error ? e.message : "Couldn't reach the archive.");
-      });
+      .then((res) => alive && setThreads(res.threads))
+      .catch((e: unknown) => alive && setLoadError(e instanceof Error ? e.message : "Couldn't reach the archive."));
     return () => {
       alive = false;
     };
   }, []);
 
+  // The command bar opens a specific (often brand-new) thread.
+  useEffect(() => {
+    if (openThreadId) setSelectedId(openThreadId);
+  }, [openThreadId]);
+
   const filtered = useMemo(() => {
     if (!threads) return null;
     const needle = query.trim().toLowerCase();
-    if (!needle) return threads;
-    return threads.filter((t) => matches(t, needle));
+    return needle ? threads.filter((t) => matches(t, needle)) : threads;
   }, [threads, query]);
 
-  const selected = filtered?.find((t) => t.id === selectedId) ?? threads?.find((t) => t.id === selectedId) ?? null;
+  // A just-created thread won't be in the fetched list yet — synthesize a stub.
+  const selected: ThreadSummary | null =
+    threads?.find((t) => t.id === selectedId) ??
+    (selectedId
+      ? { id: selectedId, title: null, model_override: null, archived: 0, updated_at: new Date().toISOString(), messages: 0 }
+      : null);
+
+  const seedForSelected = selected && selected.id === openThreadId ? openSeed ?? undefined : undefined;
 
   return (
-    <section className="threads" aria-label="Thread archive">
+    <section className="threads" aria-label="Conversations">
       <header className="threads-head">
         <div>
-          <SectionLabel n="00">Archive</SectionLabel>
-          <p className="threads-lede voice">Every conversation, on the record. Nothing here is live.</p>
+          <SectionLabel n="00">Conversations</SectionLabel>
+          <p className="threads-lede voice">Every conversation, on the record — pick one up, or start a new one with ⌘K.</p>
         </div>
         <div className="threads-search">
           <input
@@ -71,7 +84,7 @@ export function Threads() {
             placeholder="Search title or preview…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search the archive"
+            aria-label="Search conversations"
           />
         </div>
       </header>
@@ -104,7 +117,7 @@ export function Threads() {
               ))}
             </ul>
           ) : threads.length === 0 ? (
-            <p className="threads-empty voice">Nothing filed yet. Conversations land here once they start.</p>
+            <p className="threads-empty voice">Nothing filed yet. Start one with ⌘K.</p>
           ) : (
             <p className="threads-empty voice">Nothing matches “{query.trim()}.”</p>
           )}
@@ -112,10 +125,10 @@ export function Threads() {
 
         <div className="threads-reading-pane">
           {selected ? (
-            <ThreadReader key={selected.id} thread={selected} onBack={() => setSelectedId(null)} />
+            <Conversation key={selected.id} thread={selected} seed={seedForSelected} onSeedConsumed={onConsumed} onBack={() => setSelectedId(null)} />
           ) : (
             <div className="threads-reader-empty">
-              <p className="threads-hint voice">Pick a thread to read it back.</p>
+              <p className="threads-hint voice">Pick a conversation, or press ⌘K to start one.</p>
             </div>
           )}
         </div>
@@ -124,10 +137,25 @@ export function Threads() {
   );
 }
 
-/* ---- reading pane: fetches + renders one thread's messages ---- */
-function ThreadReader({ thread, onBack }: { thread: ThreadSummary; onBack: () => void }) {
+/* ---- a live conversation: history + streaming turns + a composer ---- */
+function Conversation({
+  thread,
+  seed,
+  onSeedConsumed,
+  onBack,
+}: {
+  thread: ThreadSummary;
+  seed?: string;
+  onSeedConsumed?: () => void;
+  onBack: () => void;
+}) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [live, setLive] = useState<MessagePart[] | null>(null);
+  const [sending, setSending] = useState(false);
+  const [draft, setDraft] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const seededRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -135,46 +163,115 @@ function ThreadReader({ thread, onBack }: { thread: ThreadSummary; onBack: () =>
     setError(null);
     api
       .messages(thread.id)
-      .then((res) => {
-        if (alive) setMessages(res.messages);
-      })
-      .catch((e: unknown) => {
-        if (alive) setError(e instanceof Error ? e.message : "Couldn't pull that thread.");
-      });
+      .then((res) => alive && setMessages(res.messages))
+      .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : "Couldn't pull that thread."));
     return () => {
       alive = false;
     };
   }, [thread.id]);
 
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView?.({ block: 'end' });
+  }, [messages, live]);
+
+  const send = useCallback(
+    async (text: string) => {
+      const t = text.trim();
+      if (!t || sending) return;
+      setDraft('');
+      setError(null);
+      const userMsg: ChatMessage = { id: `local-${Date.now()}`, role: 'user', parts: [{ type: 'text', text: t }], created_at: new Date().toISOString() };
+      setMessages((m) => [...(m ?? []), userMsg]);
+      const parts: MessagePart[] = [];
+      setLive(parts);
+      setSending(true);
+      try {
+        await streamChat(thread.id, t, (e) => {
+          if (e.type === 'error') {
+            setError(e.message);
+            return;
+          }
+          foldTurn(parts, e);
+          setLive([...parts]);
+        });
+        setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'The turn failed.');
+      } finally {
+        setLive(null);
+        setSending(false);
+      }
+    },
+    [thread.id, sending],
+  );
+
+  // Auto-send the seed (from the command bar) once history has loaded.
+  useEffect(() => {
+    if (seed && !seededRef.current && messages !== null) {
+      seededRef.current = true;
+      onSeedConsumed?.();
+      void send(seed);
+    }
+  }, [seed, messages, send, onSeedConsumed]);
+
   return (
     <div className="reader">
       <header className="reader-head">
         <button type="button" className="threads-back" onClick={onBack}>
-          ← Archive
+          ← Conversations
         </button>
         <div className="reader-title">
-          <h2>{thread.title ?? 'Untitled thread'}</h2>
-          <span className="reader-meta data">
-            {thread.messages} messages · {stamp(thread.updated_at)}
-          </span>
+          <h2>{thread.title ?? 'New conversation'}</h2>
+          <span className="reader-meta data">{thread.messages > 0 ? `${thread.messages} messages · ` : ''}Cabinet</span>
         </div>
       </header>
 
-      {error ? (
-        <p className="threads-empty voice">{error}</p>
-      ) : !messages ? (
-        <p className="threads-loading data">Pulling the scrollback…</p>
-      ) : messages.length === 0 ? (
-        <p className="threads-empty voice">Empty thread. Nothing was said.</p>
-      ) : (
-        <ol className="reader-log">
-          {messages.map((m) => (
+      <ol className="reader-log">
+        {!messages && !error ? (
+          <li>
+            <p className="threads-loading data">Pulling the scrollback…</p>
+          </li>
+        ) : (
+          (messages ?? []).map((m) => (
             <li key={m.id}>
               <MessageRow message={m} />
             </li>
-          ))}
-        </ol>
-      )}
+          ))
+        )}
+        {live && (
+          <li>
+            <StreamingRow parts={live} />
+          </li>
+        )}
+        <div ref={bottomRef} />
+      </ol>
+
+      {error && <p className="reader-error voice">{error}</p>}
+
+      <form
+        className="composer"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send(draft);
+        }}
+      >
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void send(draft);
+            }
+          }}
+          placeholder="Message Cabinet…"
+          rows={1}
+          aria-label="Message Cabinet"
+        />
+        <button type="submit" disabled={sending || !draft.trim()}>
+          {sending ? '…' : 'Send'}
+        </button>
+      </form>
     </div>
   );
 }
@@ -188,7 +285,6 @@ function agentName(author?: string | null): string | null {
 function whoLabel(message: ChatMessage): string {
   if (message.role === 'assistant') return 'Cabinet';
   if (message.role === 'system') return 'System';
-  // user turn — attribute it: agents by name, everyone else (Ben) as "You"
   return agentName(message.author) ?? 'You';
 }
 
@@ -204,6 +300,23 @@ function MessageRow({ message }: { message: ChatMessage }) {
         {message.parts.map((p, i) => (
           <MessagePartView key={i} part={p} />
         ))}
+      </div>
+    </div>
+  );
+}
+
+function StreamingRow({ parts }: { parts: MessagePart[] }) {
+  return (
+    <div className="msg msg--assistant msg--streaming">
+      <div className="msg-meta">
+        <span className="msg-who data">Cabinet</span>
+        <span className="msg-when data">now</span>
+      </div>
+      <div className="msg-parts">
+        {parts.map((p, i) => (
+          <MessagePartView key={i} part={p} />
+        ))}
+        <span className="msg-cursor" aria-hidden="true" />
       </div>
     </div>
   );

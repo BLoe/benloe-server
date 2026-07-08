@@ -42,6 +42,7 @@ export const fetchApi: CabinetApi = {
   saveMemoryFile: (name: string, content: string) => send<{ ok: boolean }>(`/api/memory/${encodeURIComponent(name)}`, 'PUT', { content }),
   recall: (query: string) => get<RecallResponse>(`/api/recall${qs({ q: query })}`),
   threads: () => get<{ threads: ThreadSummary[] }>('/api/threads'),
+  createThread: () => send<{ id: string }>('/api/threads', 'POST', {}),
   messages: (threadId: string) => get<{ messages: ChatMessage[] }>(`/api/threads/${threadId}/messages`),
   command: (intent: string) => send<{ threadId: string }>('/api/command', 'POST', { intent }),
 };

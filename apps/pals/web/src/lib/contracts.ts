@@ -120,6 +120,7 @@ export interface CabinetApi {
   saveMemoryFile(name: string, content: string): Promise<{ ok: boolean }>;
   recall(query: string): Promise<RecallResponse>;
   threads(): Promise<{ threads: ThreadSummary[] }>;
+  createThread(): Promise<{ id: string }>;
   messages(threadId: string): Promise<{ messages: ChatMessage[] }>;
   command(intent: string): Promise<{ threadId: string }>;
 }
