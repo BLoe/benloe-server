@@ -382,3 +382,6 @@
     max-width: 100%;
   }
 }
+
+/* attribution: an agent author (e.g. Benji) reads in brass, not "You" */
+.msg-who--agent { color: var(--brass); }

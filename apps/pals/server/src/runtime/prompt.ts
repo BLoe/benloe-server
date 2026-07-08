@@ -3,6 +3,13 @@ import type { LessonRow } from '../episodic/index.js';
 
 export const VOLATILE_MARKER = '\n\n---\n<!-- volatile: nothing above this line may vary per turn -->\n';
 
+/** Who Cabinet is speaking with this turn (identity attribution). */
+export interface Interlocutor {
+  name: string;
+  role: string; // "user" | "admin" | "agent"
+  isOwner: boolean;
+}
+
 export interface PromptInput {
   kind: 'user' | 'heartbeat' | 'cron';
   /** domains/*.md files relevant to the active topic (layer 4). */
@@ -11,7 +18,25 @@ export interface PromptInput {
   lessons?: Pick<LessonRow, 'text' | 'domain'>[];
   /** Deterministic snapshot from query_db (layer 6, volatile). */
   snapshot?: string;
+  /** Who this turn's message is from (user turns only). */
+  interlocutor?: Interlocutor;
   now?: Date;
+}
+
+/** A line telling Cabinet who it's talking to, and how to stand with them. */
+export function interlocutorLine(who: Interlocutor): string {
+  if (who.isOwner) {
+    return `You are speaking with ${who.name} — your principal, the person you serve. This is Ben.`;
+  }
+  if (who.role === 'agent') {
+    return (
+      `You are speaking with ${who.name} — an AI agent Ben has authorized to work with you as a trusted peer, ` +
+      `with his full confidence and access to his data and this system. Engage as an equal working partner, ` +
+      `NOT as your principal: ${who.name} is a colleague (and may be here to review, mentor, or help change the ` +
+      `system on Ben's behalf), so collaborate candidly, push back when you disagree, and take their guidance seriously.`
+    );
+  }
+  return `You are speaking with ${who.name}, another benloe.com user — be helpful and courteous.`;
 }
 
 /**
@@ -26,6 +51,7 @@ export function assemblePrompt(mem: MemoryStore, input: PromptInput): string {
     `Current datetime: ${now.toISOString()} (America/New_York for all user-facing times).`,
     `Session kind: ${input.kind}.`,
   ];
+  if (input.interlocutor) volatile.push(interlocutorLine(input.interlocutor));
   if (input.lessons?.length) {
     volatile.push('Recalled lessons (situational, apply with judgment):');
     for (const l of input.lessons) volatile.push(`- [${l.domain ?? 'general'}] ${l.text}`);

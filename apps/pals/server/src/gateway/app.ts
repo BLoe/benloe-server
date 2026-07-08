@@ -88,7 +88,8 @@ export function buildApp(deps: GatewayDeps) {
 
   app.post('/api/threads', (req, res) => {
     const id = randomUUID();
-    deps.db.prepare('INSERT INTO thread (id, title, kind) VALUES (?,?,?)').run(id, req.body?.title ?? null, 'user');
+    const by = (req as AuthedRequest).principal?.email ?? null;
+    deps.db.prepare('INSERT INTO thread (id, title, kind, created_by) VALUES (?,?,?,?)').run(id, req.body?.title ?? null, 'user', by);
     res.status(201).json({ id });
   });
 
@@ -109,7 +110,7 @@ export function buildApp(deps: GatewayDeps) {
     const before = String(req.query.before ?? '9999-12-31');
     const rows = deps.db
       .prepare(
-        `SELECT id, role, parts, usage, created_at FROM message
+        `SELECT id, role, parts, usage, author, created_at FROM message
          WHERE thread_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?`,
       )
       .all(req.params.id, before, limit) as { parts: string; usage: string | null }[];
@@ -129,10 +130,13 @@ export function buildApp(deps: GatewayDeps) {
       | undefined;
     if (!thread) return res.status(404).json({ error: 'no such thread' });
 
+    const principal = (req as AuthedRequest).principal;
     deps.db
-      .prepare('INSERT INTO message (id, thread_id, role, parts) VALUES (?,?,?,?)')
-      .run(randomUUID(), threadId, 'user', JSON.stringify([{ type: 'text', text }]));
-    deps.db.prepare("UPDATE thread SET updated_at = datetime('now') WHERE id = ?").run(threadId);
+      .prepare('INSERT INTO message (id, thread_id, role, parts, author) VALUES (?,?,?,?,?)')
+      .run(randomUUID(), threadId, 'user', JSON.stringify([{ type: 'text', text }]), principal?.email ?? null);
+    deps.db
+      .prepare("UPDATE thread SET updated_at = datetime('now'), created_by = COALESCE(created_by, ?) WHERE id = ?")
+      .run(principal?.email ?? null, threadId);
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -153,7 +157,13 @@ export function buildApp(deps: GatewayDeps) {
 
     const hb = setInterval(() => res.write(SSE_HEARTBEAT), 25_000);
     try {
-      await deps.runtime.run({ threadId, prompt: text, kind: 'user', onEvent: send });
+      await deps.runtime.run({
+        threadId, prompt: text, kind: 'user', onEvent: send,
+        // Tell Cabinet who it's talking to (Ben vs an agent like Benji).
+        promptInput: principal
+          ? { interlocutor: { name: principal.name ?? principal.email, role: principal.role, isOwner: principal.isOwner } }
+          : undefined,
+      });
     } catch (err) {
       res.write(encodeSse({ event: 'error', data: { message: String((err as Error).message).slice(0, 300), retryable: true } }));
     } finally {
