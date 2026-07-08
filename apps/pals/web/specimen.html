@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cabinet — token specimen</title>
+<link rel="stylesheet" href="./src/styles/base.css">
+<style>
+  .sheet { max-width: 1000px; margin: 0 auto; padding: var(--sp-8) var(--sp-7); display: flex; flex-direction: column; gap: var(--sp-8); }
+  .head .word { font-family: var(--serif); font-size: var(--fs-h2); font-weight: 600; letter-spacing: var(--tracking-word); }
+  .head .sub { font-family: var(--mono); font-size: var(--fs-cap); letter-spacing: var(--tracking-cap); text-transform: uppercase; color: var(--brass-dim); }
+  .sec-label { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+  .sec-label::after { content: ""; height: 1px; flex: 1; background: linear-gradient(90deg, var(--rule), transparent); }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: var(--sp-3); }
+  .sw { border: 1px solid var(--rule); border-radius: var(--r-3); overflow: hidden; background: var(--panel); }
+  .sw .chip { height: 68px; }
+  .sw .m { padding: var(--sp-2) var(--sp-3); }
+  .sw .nm { font-size: var(--fs-sm); color: var(--linen); }
+  .sw .hx { font-family: var(--mono); font-size: var(--fs-cap); color: var(--linen-faint); }
+  .type-row { display: flex; align-items: baseline; gap: var(--sp-4); padding: var(--sp-2) 0; border-bottom: 1px solid var(--rule-soft); }
+  .type-row .tag { font-family: var(--mono); font-size: var(--fs-cap); color: var(--brass-dim); width: 92px; flex: none; text-transform: uppercase; letter-spacing: .12em; }
+  .voice-demo { border: 1px solid var(--rule); border-radius: var(--r-4); padding: var(--sp-6); background: radial-gradient(120% 120% at 50% 0%, var(--panel-2), var(--inset)); display: flex; flex-direction: column; gap: var(--sp-3); }
+  .voice-demo .g { font-family: var(--serif); font-size: var(--fs-read); color: var(--linen); }
+  .voice-demo .g em { color: var(--brass); }
+  .voice-demo .d { font-family: var(--mono); font-size: var(--fs-fine); color: var(--patina); letter-spacing: .04em; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="head">
+    <div class="word">CABINET</div>
+    <div class="sub">Design tokens — the campaign desk</div>
+  </div>
+
+  <section>
+    <div class="sec-label label">Palette</div>
+    <div class="swatches">
+      <div class="sw"><div class="chip" style="background:var(--ground)"></div><div class="m"><div class="nm">Ground</div><div class="hx">#171009</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--panel)"></div><div class="m"><div class="nm">Panel</div><div class="hx">#20160d</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--panel-2)"></div><div class="m"><div class="nm">Panel 2</div><div class="hx">#241810</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--brass)"></div><div class="m"><div class="nm">Brass</div><div class="hx">#c99b53</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--brass-hi)"></div><div class="m"><div class="nm">Brass hi</div><div class="hx">#eccb88</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--paper)"></div><div class="m"><div class="nm">Paper</div><div class="hx">#e7dcc3</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--patina)"></div><div class="m"><div class="nm">Patina</div><div class="hx">#7fa093</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--vermilion)"></div><div class="m"><div class="nm">Vermilion</div><div class="hx">#d5573b</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--linen)"></div><div class="m"><div class="nm">Linen</div><div class="hx">#e6dbc5</div></div></div>
+      <div class="sw"><div class="chip" style="background:var(--linen-dim)"></div><div class="m"><div class="nm">Linen dim</div><div class="hx">#9d8d71</div></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-label label">Type scale</div>
+    <div class="type-row"><span class="tag">h1 · serif</span><span style="font-family:var(--serif);font-size:var(--fs-h1);font-weight:600">Good morning, Ben.</span></div>
+    <div class="type-row"><span class="tag">read · mono</span><span class="data" style="font-size:var(--fs-read);color:var(--linen)">142 / 185 g</span></div>
+    <div class="type-row"><span class="tag">lede · serif</span><span style="font-family:var(--serif);font-size:var(--fs-lede);color:#cdbfa4">A quiet day — two things worth a minute.</span></div>
+    <div class="type-row"><span class="tag">body · sans</span><span style="font-size:var(--fs-body)">Dining budget at 92%, eight days to go.</span></div>
+    <div class="type-row"><span class="tag">cap · mono</span><span class="label">Awaiting your sign-off</span></div>
+  </section>
+
+  <section>
+    <div class="sec-label label">The voice</div>
+    <div class="voice-demo">
+      <div class="g">Morning. <em>Quiet day</em> — one refill to handle before Saturday, dining's hot.</div>
+      <div class="d">PROTEIN 142 / 185 g · WEIGHT 178.4 lb · −0.6 / 7D</div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

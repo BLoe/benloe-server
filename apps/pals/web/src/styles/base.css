@@ -1,0 +1,52 @@
+/* ============================================================================
+   CABINET — base / reset. Derives entirely from tokens.css.
+   ========================================================================== */
+@import './tokens.css';
+
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; }
+
+html, body, #root { height: 100%; }
+
+body {
+  background:
+    radial-gradient(120% 80% at 82% -10%, #221708 0%, transparent 55%),
+    radial-gradient(90% 70% at 0% 110%, #1b1108 0%, transparent 60%),
+    var(--ground);
+  color: var(--linen);
+  font-family: var(--sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* the system's voice */
+.voice { font-family: var(--serif); line-height: var(--lh-read); }
+
+/* mono labels / eyebrows / data */
+.label {
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  color: var(--linen-dim);
+}
+.data { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+h1, h2, h3 { font-family: var(--serif); font-weight: 600; text-wrap: balance; }
+h1 { font-size: var(--fs-h1); line-height: var(--lh-tight); letter-spacing: -0.01em; }
+h2 { font-size: var(--fs-h2); line-height: var(--lh-snug); }
+
+a { color: var(--brass); text-decoration: none; }
+a:hover { color: var(--brass-hi); }
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; border-radius: var(--r-1); }
+
+/* thin brass scrollbars, in-world */
+* { scrollbar-width: thin; scrollbar-color: var(--brass-deep) transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-thumb { background: var(--brass-deep); border-radius: var(--r-pill); border: 2px solid transparent; background-clip: content-box; }
