@@ -123,6 +123,24 @@ router.post('/logout', async (req, res) => {
 // Check authentication status
 router.get('/me', async (req, res) => {
   try {
+    // Agent principals authenticate with a bearer access key instead of a
+    // cookie session — resolves to their User (role "agent").
+    const authz = req.headers.authorization;
+    if (authz && /^Bearer\s+/i.test(authz)) {
+      const rawKey = authz.replace(/^Bearer\s+/i, '').trim();
+      const agent = await authService.verifyAgentKey(rawKey);
+      return res.json({
+        user: {
+          id: agent.id,
+          email: agent.email,
+          name: agent.name,
+          role: agent.role,
+          createdAt: agent.createdAt,
+          lastLoginAt: agent.lastLoginAt,
+        },
+      });
+    }
+
     const token = req.cookies.token;
 
     if (!token) {

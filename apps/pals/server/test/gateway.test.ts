@@ -17,8 +17,11 @@ const OWNER = 'below413@gmail.com';
 // Fake artanis: token "owner" → Ben, token "guest" → someone else, anything else → 401.
 const fakeAuthFetch = (async (url: string | URL, init?: RequestInit) => {
   const cookie = String((init?.headers as Record<string, string>)?.Cookie ?? '');
+  const authz = String((init?.headers as Record<string, string>)?.Authorization ?? '');
   if (cookie.includes('token=owner')) return new Response(JSON.stringify({ user: { email: OWNER } }), { status: 200 });
   if (cookie.includes('token=guest')) return new Response(JSON.stringify({ user: { email: 'guest@x.com' } }), { status: 200 });
+  // an agent presents a bearer key → Artanis resolves it to a role:"agent" user
+  if (authz.includes('benji')) return new Response(JSON.stringify({ user: { email: 'benji@agents.benloe.com', name: 'benji', role: 'agent' } }), { status: 200 });
   return new Response('nope', { status: 401 });
 }) as typeof fetch;
 
@@ -83,6 +86,17 @@ describe('auth wall', () => {
     expect((await fetch(base + '/api/threads', { headers: { Cookie: 'token=guest' } })).status).toBe(403);
     expect((await fetch(base + '/api/threads', { headers: { Cookie: 'token=bogus' } })).status).toBe(401);
     expect((await asOwner('/api/threads')).status).toBe(200);
+  });
+
+  it('accepts an agent bearer key as an authorized (non-owner) principal', async () => {
+    await startApp();
+    // no credential at all → 401
+    expect((await fetch(base + '/api/threads')).status).toBe(401);
+    // a valid agent key → 200 (agents are first-class principals, not the owner)
+    const r = await fetch(base + '/api/threads', { headers: { Authorization: 'Bearer agk_benji_test' } });
+    expect(r.status).toBe(200);
+    // a bearer Artanis doesn't recognize → 401
+    expect((await fetch(base + '/api/threads', { headers: { Authorization: 'Bearer agk_nope' } })).status).toBe(401);
   });
 
   it('public liveness stays open; detailed health is walled', async () => {
