@@ -1,11 +1,11 @@
 {
-  "name": "PALS",
-  "short_name": "PALS",
-  "description": "Personal agent for the benloe.com nexus",
+  "name": "Cabinet",
+  "short_name": "Cabinet",
+  "description": "Ben's chief of staff on the benloe.com nexus",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0e1420",
-  "theme_color": "#0e1420",
+  "background_color": "#171009",
+  "theme_color": "#171009",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png" },
