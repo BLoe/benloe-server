@@ -1,0 +1,316 @@
+/* BRAIN surface — recall + standing memory. Tokens only; no hard-coded values. */
+
+.brain {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: var(--sp-8) var(--sp-7) var(--sp-9);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+}
+
+.brain__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.brain__head h1 {
+  color: var(--linen);
+}
+
+.brain__sub {
+  font-size: var(--fs-lede);
+  color: var(--linen-dim);
+}
+
+.brain__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.brain__loading {
+  color: var(--linen-faint);
+}
+
+.brain__empty,
+.brain__hint {
+  font-size: var(--fs-body);
+  color: var(--linen-dim);
+  max-width: 62ch;
+}
+
+.brain__hint {
+  color: var(--linen-faint);
+}
+
+/* ---- Recall search ----------------------------------------------------- */
+.recall__form {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.recall__input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body);
+  padding: var(--sp-3) var(--sp-4);
+  color: var(--linen);
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-2);
+  transition: border-color var(--dur-1) var(--ease);
+}
+
+.recall__input::placeholder {
+  color: var(--linen-faint);
+}
+
+.recall__input:focus {
+  outline: none;
+  border-color: var(--brass-dim);
+}
+
+.recall__go {
+  flex: none;
+  font-family: var(--sans);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: var(--sp-3) var(--sp-5);
+  color: var(--inset);
+  background: linear-gradient(180deg, var(--brass), var(--brass-deep));
+  border: 1px solid var(--brass-dim);
+  border-radius: var(--r-2);
+  transition: background var(--dur-1) var(--ease);
+}
+
+.recall__go:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass));
+}
+
+.recall__go:disabled {
+  cursor: default;
+  color: var(--linen-faint);
+  background: var(--inset);
+  border-color: var(--rule);
+}
+
+/* ---- Recall results ---------------------------------------------------- */
+.recall__results {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.hit {
+  background: radial-gradient(120% 120% at 50% 0%, var(--panel-2), var(--inset));
+  border: 1px solid var(--rule);
+  border-radius: var(--r-3);
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.hit__top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.hit__chip {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-1);
+  border: 1px solid var(--brass-dim);
+  color: var(--brass);
+}
+
+.hit__chip--fact { color: var(--patina); border-color: var(--patina-dim); }
+.hit__chip--lesson { color: var(--brass-hi); border-color: var(--brass-dim); }
+.hit__chip--thread { color: var(--linen); border-color: var(--rule); }
+.hit__chip--episodic { color: var(--linen-dim); border-color: var(--rule); }
+.hit__chip--document { color: var(--paper-2); border-color: var(--brass-deep); }
+
+.hit__title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--serif);
+  font-size: var(--fs-read);
+  line-height: var(--lh-snug);
+  color: var(--linen);
+}
+
+.hit__score {
+  flex: none;
+  font-size: var(--fs-fine);
+  color: var(--brass);
+}
+
+.hit__snippet {
+  font-family: var(--serif);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--linen-dim);
+  max-width: 68ch;
+}
+
+.hit__prov {
+  font-size: var(--fs-cap);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--linen-faint);
+}
+
+/* ---- Memory layout ----------------------------------------------------- */
+.mem {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-6);
+}
+
+.mem__files {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-4);
+}
+
+/* ---- File cards (paper — the authored surface) ------------------------- */
+.file {
+  gap: var(--sp-3);
+}
+
+.file__edit {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--paper-ink);
+  background: transparent;
+  border: 1px solid var(--paper-line);
+  border-radius: var(--r-2);
+  padding: var(--sp-3);
+}
+
+.file__edit:focus {
+  outline: none;
+  border-color: var(--brass-deep);
+}
+
+.file__read {
+  margin: 0;
+  min-height: 120px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--paper-ink);
+}
+
+.file__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.file__meta {
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--brass-deep);
+}
+
+.file__save {
+  flex: none;
+  font-family: var(--sans);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: var(--sp-2) var(--sp-4);
+  color: var(--paper);
+  background: var(--paper-ink);
+  border: 1px solid var(--paper-ink);
+  border-radius: var(--r-2);
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.file__save:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.file__save:disabled {
+  cursor: default;
+  color: var(--paper-ink);
+  background: transparent;
+  border-color: var(--paper-line);
+  opacity: 0.6;
+}
+
+/* ---- Lessons ----------------------------------------------------------- */
+.lessons {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.lesson {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.lesson__text {
+  font-family: var(--serif);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+  color: var(--linen);
+  max-width: 64ch;
+}
+
+.lesson__meta {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.lesson__domain {
+  font-size: var(--fs-cap);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--linen-dim);
+}
+
+.lesson__conf {
+  font-size: var(--fs-fine);
+  color: var(--brass);
+}
+
+@media (max-width: 640px) {
+  .brain {
+    padding: var(--sp-6) var(--sp-4) var(--sp-8);
+  }
+  .mem__files {
+    grid-template-columns: 1fr;
+  }
+  .lesson {
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+}

@@ -1,0 +1,177 @@
+/* TODAY surface — the "what needs you" home. Tokens only; no hard-coded values. */
+
+.today {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: var(--sp-8) var(--sp-7) var(--sp-9);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+}
+
+.today--message {
+  justify-content: center;
+  min-height: 40dvh;
+}
+
+.today__loading {
+  color: var(--linen-faint);
+}
+
+/* 1 — briefing ----------------------------------------------------------- */
+.today__briefing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.today__briefing h1 {
+  color: var(--linen);
+}
+
+.today__accent {
+  font-style: italic;
+  font-weight: 600;
+  color: var(--brass);
+}
+
+.today__read {
+  font-size: var(--fs-lede);
+  color: var(--linen);
+  max-width: 64ch;
+}
+
+/* 2 — sections ----------------------------------------------------------- */
+.today__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.today__nothing {
+  font-size: var(--fs-lede);
+  color: var(--linen-dim);
+}
+
+.today__attention {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* attention cards -------------------------------------------------------- */
+.attn__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+
+.attn__badge {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-read);
+  line-height: 1;
+  color: var(--brass);
+  margin-top: 2px;
+}
+
+.attn__headline {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.attn__title {
+  font-family: var(--serif);
+  font-size: var(--fs-read);
+  line-height: var(--lh-snug);
+  color: var(--linen);
+}
+
+.attn__meta {
+  font-family: var(--mono);
+  font-size: var(--fs-fine);
+  letter-spacing: 0.04em;
+  color: var(--linen-dim);
+}
+
+.attn__detail {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-body);
+  color: var(--linen-dim);
+  max-width: 62ch;
+}
+
+.attn__actions {
+  margin-top: var(--sp-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.attn__action {
+  font-family: var(--sans);
+  font-size: var(--fs-sm);
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-2);
+  background: var(--inset);
+  color: var(--linen);
+  transition: border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+
+.attn__action:hover:not(:disabled) {
+  border-color: var(--brass-dim);
+  color: var(--linen);
+}
+
+.attn__action:disabled {
+  cursor: default;
+  color: var(--linen-faint);
+}
+
+.attn__action.primary {
+  border-color: var(--brass-dim);
+  background: linear-gradient(180deg, var(--brass), var(--brass-deep));
+  color: var(--inset);
+  font-weight: 600;
+}
+
+.attn__action.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass));
+  color: var(--inset);
+}
+
+/* 3 — vitals ------------------------------------------------------------- */
+.today__vitals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--sp-3);
+}
+
+/* 4 — overnight ---------------------------------------------------------- */
+.today__overnight {
+  font-family: var(--serif);
+  font-size: var(--fs-sm);
+  color: var(--linen-dim);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--rule-soft);
+}
+
+.today__overnight-count {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--brass);
+}
+
+.today__oplink {
+  font-family: var(--mono);
+  font-size: var(--fs-fine);
+  letter-spacing: 0.04em;
+  color: var(--brass);
+}
+
+.today__oplink:hover {
+  color: var(--brass-hi);
+}
