@@ -7,6 +7,7 @@ import type { AgentRuntime, TurnEvent } from '../runtime/agent.js';
 import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import { foldEvent, type MessagePart } from './fold.js';
+import { registerSurfaceRoutes } from './surfaces.js';
 
 export interface GatewayDeps {
   db: Database.Database;
@@ -19,6 +20,8 @@ export interface GatewayDeps {
   authServiceUrl?: string;
   /** healthz extras */
   embedderAlive?: () => boolean;
+  /** curated memory store, for the Brain surface (GET/PUT /api/memory) */
+  memory?: { list(): string[]; read(file: string): string; update(file: string, content: string, reason: string): void };
 }
 
 interface AuthedRequest extends Request {
@@ -53,6 +56,9 @@ export function buildApp(deps: GatewayDeps) {
     }
   }
   app.use('/api', authenticate as never);
+
+  // Cabinet v2 surface endpoints (behind the wall). Contract: web/src/lib/contracts.ts.
+  registerSurfaceRoutes(app, { db: deps.db, memory: deps.memory, queueDepth: () => deps.runtime.queue.depth });
 
   // ---------- threads ----------
   app.get('/api/threads', (_req, res) => {
@@ -235,13 +241,17 @@ export function buildApp(deps: GatewayDeps) {
       deps.db.prepare('SELECT 1').get();
       dbOk = true;
     } catch { /* stays false */ }
+    const depth = deps.runtime.queue.depth;
     res.json({
       ok: dbOk,
       db: dbOk,
       authMode: deps.runtime.authMode,
       embedder: deps.embedderAlive?.() ?? null,
-      queueDepth: deps.runtime.queue.depth,
+      queueDepth: depth,
       pendingApprovals: deps.approvals.pending().length,
+      // presence for the v2 strip
+      presence: depth > 0 ? 'working' : 'idle',
+      presenceMeta: `${deps.approvals.pending().length} awaiting sign-off · queue ${depth}`,
     });
   });
 
