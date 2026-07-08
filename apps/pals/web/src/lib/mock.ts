@@ -139,6 +139,7 @@ export const mockApi: CabinetApi = {
   saveMemoryFile: () => delay({ ok: true }),
   recall: (q) => delay(recallFor(q)),
   threads: () => delay({ threads }),
+  createThread: () => delay({ id: 't-new' }),
   messages: () => delay({ messages: sampleMessages }),
   command: () => delay({ threadId: 't-new' }),
 };

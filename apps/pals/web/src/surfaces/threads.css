@@ -385,3 +385,55 @@
 
 /* attribution: an agent author (e.g. Benji) reads in brass, not "You" */
 .msg-who--agent { color: var(--brass); }
+
+/* ---- live conversation: composer + streaming ---- */
+.composer {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--rule-soft);
+}
+.composer textarea {
+  flex: 1;
+  resize: none;
+  background: var(--inset);
+  color: var(--linen);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-3);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  padding: 10px 12px;
+  max-height: 32dvh;
+  min-height: 42px;
+  outline: none;
+}
+.composer textarea:focus { border-color: var(--brass-dim); }
+.composer button {
+  font-family: var(--sans);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  background: var(--brass);
+  color: var(--ink);
+  border: 0;
+  border-radius: var(--r-3);
+  padding: 12px 18px;
+  cursor: pointer;
+}
+.composer button:disabled { background: var(--brass-dim); cursor: default; }
+.reader-error { color: var(--vermilion); font-size: var(--fs-sm); margin-top: var(--sp-3); }
+.msg-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  background: var(--brass);
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  animation: msg-blink 1s steps(1) infinite;
+}
+@keyframes msg-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .msg-cursor { animation: none; } }

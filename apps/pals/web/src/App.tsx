@@ -30,6 +30,8 @@ export default function App() {
   const [presenceMeta, setPresenceMeta] = useState<string>('');
   const [authState, setAuthState] = useState<'checking' | 'ok' | 'login'>('checking');
   const [now, setNow] = useState(() => new Date());
+  // A conversation opened from the command bar: a thread + a first message to send.
+  const [pendingConvo, setPendingConvo] = useState<{ id: string; seed: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -44,7 +46,13 @@ export default function App() {
   }, []);
 
   const onCommand = useCallback((intent: string) => {
-    api.command(intent).then(() => setActive('threads')).catch(() => {});
+    // Open a fresh conversation and send the intent as its first message.
+    api.createThread()
+      .then(({ id }) => {
+        setPendingConvo({ id, seed: intent });
+        setActive('threads');
+      })
+      .catch(() => {});
   }, []);
 
   if (authState === 'checking') return <div className="boot"><span className="wordmark">CABINET</span></div>;
@@ -71,7 +79,13 @@ export default function App() {
       {active === 'domains' && <Domains />}
       {active === 'ops' && <Ops />}
       {active === 'brain' && <Brain />}
-      {active === 'threads' && <Threads />}
+      {active === 'threads' && (
+        <Threads
+          openThreadId={pendingConvo?.id}
+          openSeed={pendingConvo?.seed}
+          onConsumed={() => setPendingConvo(null)}
+        />
+      )}
     </AppShell>
   );
 }

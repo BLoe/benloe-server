@@ -75,7 +75,7 @@ describe('Threads surface', () => {
     render(<Threads />);
     await screen.findByText('PALS Systems Status Report');
 
-    await user.type(screen.getByLabelText('Search the archive'), 'weight tracker');
+    await user.type(screen.getByLabelText('Search conversations'), 'weight tracker');
 
     expect(screen.queryByText('PALS Systems Status Report')).toBeNull();
     expect(screen.getByText('Weight tracker + macro ring')).toBeTruthy();
@@ -86,7 +86,7 @@ describe('Threads surface', () => {
     render(<Threads />);
     await screen.findByText('PALS Systems Status Report');
 
-    await user.type(screen.getByLabelText('Search the archive'), 'zzz-nonexistent');
+    await user.type(screen.getByLabelText('Search conversations'), 'zzz-nonexistent');
 
     expect(await screen.findByText(/Nothing matches/)).toBeTruthy();
   });
