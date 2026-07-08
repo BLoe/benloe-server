@@ -82,6 +82,7 @@ const app = buildApp({
   widgetBus,
   ownerEmail: OWNER,
   embedderAlive: () => embedder.alive,
+  memory,
 });
 
 app.listen(PORT, '127.0.0.1', () => {
