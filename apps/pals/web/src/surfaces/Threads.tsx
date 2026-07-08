@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/cabinet.js';
-import type { ChatMessage, MessagePart, MessageRole, ThreadSummary } from '../lib/cabinet.js';
+import type { ChatMessage, MessagePart, ThreadSummary } from '../lib/cabinet.js';
 import { SectionLabel } from '../components/instruments/index.js';
 import './threads.css';
 
@@ -179,17 +179,25 @@ function ThreadReader({ thread, onBack }: { thread: ThreadSummary; onBack: () =>
   );
 }
 
-function roleLabel(role: MessageRole): string {
-  if (role === 'user') return 'You';
-  if (role === 'assistant') return 'Cabinet';
-  return 'System';
+/** The agent's local name if the author is an agent principal, else null. */
+function agentName(author?: string | null): string | null {
+  const m = (author ?? '').match(/^([a-z0-9-]+)@agents\.benloe\.com$/i);
+  return m ? m[1]!.replace(/^\w/, (c) => c.toUpperCase()) : null;
+}
+
+function whoLabel(message: ChatMessage): string {
+  if (message.role === 'assistant') return 'Cabinet';
+  if (message.role === 'system') return 'System';
+  // user turn — attribute it: agents by name, everyone else (Ben) as "You"
+  return agentName(message.author) ?? 'You';
 }
 
 function MessageRow({ message }: { message: ChatMessage }) {
+  const fromAgent = message.role === 'user' && agentName(message.author) !== null;
   return (
-    <div className={`msg msg--${message.role}`}>
+    <div className={`msg msg--${message.role}${fromAgent ? ' msg--agent' : ''}`}>
       <div className="msg-meta">
-        <span className="msg-who data">{roleLabel(message.role)}</span>
+        <span className={`msg-who data${fromAgent ? ' msg-who--agent' : ''}`}>{whoLabel(message)}</span>
         <span className="msg-when data">{stamp(message.created_at)}</span>
       </div>
       <div className="msg-parts">

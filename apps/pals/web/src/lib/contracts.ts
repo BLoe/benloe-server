@@ -41,7 +41,7 @@ export interface ThreadSummary {
   /** short preview / produced-artifact hint for the archive */
   preview?: string;
 }
-export interface ChatMessage { id: string; role: MessageRole; parts: MessagePart[]; created_at: string; }
+export interface ChatMessage { id: string; role: MessageRole; parts: MessagePart[]; created_at: string; author?: string | null; }
 
 /* ---------- today ---------- */
 export interface AttentionAction { label: string; intent: string; primary?: boolean; }

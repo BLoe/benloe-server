@@ -121,8 +121,10 @@ const threads: ThreadSummary[] = [
 ];
 
 const sampleMessages: ChatMessage[] = [
-  { id: 'm1', role: 'user', parts: [{ type: 'text', text: 'How are the services looking?' }], created_at: '2026-07-07T13:00:00-04:00' },
+  { id: 'm1', role: 'user', author: 'below413@gmail.com', parts: [{ type: 'text', text: 'How are the services looking?' }], created_at: '2026-07-07T13:00:00-04:00' },
   { id: 'm2', role: 'assistant', parts: [{ type: 'text', text: 'All green. Nine services up, backups ran at 05:41, nothing pending.' }], created_at: '2026-07-07T13:00:20-04:00' },
+  { id: 'm3', role: 'user', author: 'benji@agents.benloe.com', parts: [{ type: 'text', text: 'Worth caching the domain reads — the Today aggregate hits four tables per load.' }], created_at: '2026-07-07T13:01:10-04:00' },
+  { id: 'm4', role: 'assistant', parts: [{ type: 'text', text: "Fair. They're cheap now but I'll add a short-TTL cache before it matters. Good catch." }], created_at: '2026-07-07T13:01:35-04:00' },
 ];
 
 const delay = <T>(v: T): Promise<T> => Promise.resolve(v);

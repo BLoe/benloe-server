@@ -502,7 +502,8 @@ export function registerSurfaceRoutes(app: Express, deps: SurfaceDeps): void {
     const intent = (req.body as { intent?: string })?.intent;
     if (typeof intent !== 'string' || !intent.trim()) return res.status(400).json({ error: 'intent required' });
     const id = randomUUID();
-    db.prepare('INSERT INTO thread (id, title, kind) VALUES (?,?,?)').run(id, null, 'user');
+    const by = (req as { principal?: { email?: string } }).principal?.email ?? null;
+    db.prepare('INSERT INTO thread (id, title, kind, created_by) VALUES (?,?,?,?)').run(id, null, 'user', by);
     res.status(201).json({ threadId: id });
   });
 }
