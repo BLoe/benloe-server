@@ -107,7 +107,9 @@ export class MemoryStore {
 
   /** The stable prompt layers, in cache-friendly order (§9.3 layers 1+3). */
   promptCore(): string {
-    const order = ['IDENTITY.md', 'USER.md', 'PREFERENCES.md', 'GOALS.md', 'STANDING_ORDERS.md', 'PLATFORM.md'];
+    // SOUL + VOICE sit right after IDENTITY so the character frames everything
+    // below it, and stays in the cache-stable prefix (§9.3).
+    const order = ['IDENTITY.md', 'SOUL.md', 'VOICE.md', 'USER.md', 'PREFERENCES.md', 'GOALS.md', 'STANDING_ORDERS.md', 'PLATFORM.md'];
     return order
       .filter((f) => existsSync(join(this.dir, f)))
       .map((f) => `<memory file="${f}">\n${this.read(f)}\n</memory>`)

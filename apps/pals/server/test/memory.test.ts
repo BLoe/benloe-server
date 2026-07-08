@@ -25,6 +25,8 @@ describe('MemoryStore', () => {
   it('seeds templates once, committing them', () => {
     const created = mem.ensureTemplates();
     expect(created).toContain('IDENTITY.md');
+    expect(created).toContain('SOUL.md');
+    expect(created).toContain('VOICE.md');
     expect(created).toContain('domains/nutrition.md');
     expect(mem.commitCount()).toBe(1);
     expect(mem.ensureTemplates()).toEqual([]); // idempotent
@@ -49,10 +51,15 @@ describe('MemoryStore', () => {
     },
   );
 
-  it('promptCore concatenates the stable layers in order', () => {
+  it('promptCore concatenates the stable layers in order, character first', () => {
     const core = mem.promptCore();
     expect(core.indexOf('IDENTITY.md')).toBeGreaterThanOrEqual(0);
+    // SOUL + VOICE frame everything: after IDENTITY, before the rest.
+    expect(core.indexOf('IDENTITY.md')).toBeLessThan(core.indexOf('SOUL.md'));
+    expect(core.indexOf('SOUL.md')).toBeLessThan(core.indexOf('VOICE.md'));
+    expect(core.indexOf('VOICE.md')).toBeLessThan(core.indexOf('USER.md'));
     expect(core.indexOf('IDENTITY.md')).toBeLessThan(core.indexOf('PLATFORM.md'));
+    expect(core).toContain("chief of staff"); // the character actually made it in
     expect(core).not.toContain('HEARTBEAT.md'); // heartbeat is not in the core prompt
   });
 });
