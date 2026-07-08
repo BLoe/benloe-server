@@ -92,18 +92,20 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    // Generate JWT token
+    const jwtToken = await this.issueSession(user);
+    return { user, jwtToken };
+  }
+
+  /** Sign a JWT for a user and persist a session. Used by magic-link + agent login. */
+  private async issueSession(user: { id: string; email: string; role: string }): Promise<string> {
     const jwtPayload: JWTPayload = {
       userId: user.id,
       email: user.email,
       role: user.role as UserRole,
     };
-
     const jwtToken = jwt.sign(jwtPayload, this.jwtSecret, {
       expiresIn: this.jwtExpiresIn,
     } as jwt.SignOptions);
-
-    // Create session record
     await prisma.session.create({
       data: {
         userId: user.id,
@@ -111,8 +113,14 @@ export class AuthService {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
       },
     });
+    return jwtToken;
+  }
 
-    return { user, jwtToken };
+  /** Exchange an agent access key for a browser session (so agents can use the UI). */
+  async agentLogin(rawKey: string): Promise<{ user: { id: string; email: string; name: string | null; role: string }; jwtToken: string }> {
+    const user = await this.verifyAgentKey(rawKey);
+    const jwtToken = await this.issueSession(user);
+    return { user: { id: user.id, email: user.email, name: user.name, role: user.role }, jwtToken };
   }
 
   async verifyJWT(token: string): Promise<JWTPayload> {
