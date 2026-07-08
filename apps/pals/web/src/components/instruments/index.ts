@@ -6,3 +6,4 @@ export { Rule } from './Rule.js';
 export { Gauge } from './Gauge.js';
 export { Sparkline } from './Sparkline.js';
 export { Card, StatReadout, SectionLabel } from './primitives.js';
+export { Instrument } from './Instrument.js';
