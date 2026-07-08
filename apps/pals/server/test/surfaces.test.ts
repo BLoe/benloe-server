@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { openDb, type PalsDb } from '../src/db/index.js';
+import { openDb, localDay, type PalsDb } from '../src/db/index.js';
 import { ApprovalQueue } from '../src/tiers/approvals.js';
 import { buildApp } from '../src/gateway/app.js';
 
@@ -61,11 +61,21 @@ describe('surface endpoints — frozen contract', () => {
     }
   });
 
-  it('GET /api/today returns a briefing with attention + instrument vitals', async () => {
+  it('GET /api/today returns an empty-but-valid briefing against a fresh DB', async () => {
     const t = await (await owner('/api/today')).json();
     expect(t.greeting).toContain('Ben');
-    expect(t.attention.length).toBeGreaterThan(0);
+    expect(Array.isArray(t.attention)).toBe(true);
     expect(t.vitals.every((v: { kind: string }) => ['dial', 'rule', 'ring', 'gauge', 'stat'].includes(v.kind))).toBe(true);
+    expect(t.overnight).toBeNull();
+  });
+
+  it('GET /api/today surfaces a real attention item for a low medication', async () => {
+    pals.db.prepare(
+      `INSERT INTO medication (name, dose, schedule, days_supply, last_filled_on, refills_left, active) VALUES (?,?,?,?,?,?,1)`,
+    ).run('Metformin', '500mg', '2x/day', 5, '2020-01-01', 0);
+    const t = await (await owner('/api/today')).json();
+    expect(t.attention.length).toBeGreaterThan(0);
+    expect(t.attention.some((a: { title: string }) => a.title.includes('Metformin'))).toBe(true);
   });
 
   it('GET /api/domains/:id is contract-valid and 404s unknown domains', async () => {
@@ -73,6 +83,28 @@ describe('surface endpoints — frozen contract', () => {
     expect(v).toMatchObject({ id: 'money', label: 'Money' });
     expect(Array.isArray(v.instruments) && Array.isArray(v.log)).toBe(true);
     expect((await owner('/api/domains/nope')).status).toBe(404);
+  });
+
+  it('GET /api/domains/nutrition reflects real food_log + body_metric rows', async () => {
+    const today = localDay();
+    pals.db.prepare(
+      `INSERT INTO food_log (eaten_at, local_day, meal, description, kcal, protein_g) VALUES (?,?,?,?,?,?)`,
+    ).run(new Date().toISOString(), today, 'breakfast', '3 eggs and toast', 410, 34);
+    pals.db.prepare(`INSERT INTO body_metric (measured_at, local_day, metric, value) VALUES (?,?,?,?)`)
+      .run(new Date().toISOString(), today, 'weight_lb', 178.4);
+    const v = await (await owner('/api/domains/nutrition')).json();
+    expect(v.log.some((l: { text: string }) => l.text.includes('eggs'))).toBe(true);
+    expect(v.narrative).toContain('34');
+    const dial = v.instruments.find((i: { kind: string }) => i.kind === 'dial');
+    expect(dial.value).toBe(34);
+  });
+
+  it('GET /api/domains/admin reflects real open tasks', async () => {
+    const today = localDay();
+    pals.db.prepare(`INSERT INTO task (title, due_on, status) VALUES (?,?, 'open')`).run('Renew car registration', today);
+    const v = await (await owner('/api/domains/admin')).json();
+    expect(v.log.some((l: { text: string }) => l.text === 'Renew car registration')).toBe(true);
+    expect(v.narrative).toContain('1 open task');
   });
 
   it('GET /api/ops reads the real audit trail and filters by kind', async () => {
@@ -99,9 +131,17 @@ describe('surface endpoints — frozen contract', () => {
     const c = await (await owner('/api/command', { method: 'POST', body: JSON.stringify({ intent: 'log two eggs' }) })).json();
     expect(typeof c.threadId).toBe('string');
     expect(pals.db.prepare('SELECT id FROM thread WHERE id = ?').get(c.threadId)).toBeTruthy();
+    pals.db.prepare(`INSERT INTO journal_entry (written_at, local_day, body) VALUES (?,?,?)`)
+      .run(new Date().toISOString(), localDay(), 'Had a good breakfast today, felt energized.');
     const r = await (await owner('/api/recall?q=breakfast')).json();
     expect(r.query).toBe('breakfast');
     expect(r.results.length).toBeGreaterThan(0);
+    expect(r.results[0].source).toBe('episodic');
+  });
+
+  it('GET /api/recall is contract-valid (empty results) when nothing matches', async () => {
+    const r = await (await owner('/api/recall?q=zzzznothingmatchesthis')).json();
+    expect(r.results).toEqual([]);
   });
 
   it('health carries presence for the strip', async () => {
