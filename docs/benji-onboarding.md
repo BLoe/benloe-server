@@ -20,42 +20,26 @@ Cabinet is Ben's **personal chief-of-staff agent** (it was called "PALS"; the pr
 - **Code (public):** `https://github.com/BLoe/benloe-server` — `git clone` it and read freely. Cabinet is under **`apps/pals/`** (`apps/pals/server` = the agent + gateway; `apps/pals/web` = the v2 console). Start with the design docs in **`docs/`**: `AgentArchitectureV2.md`, `pals-v2-design.md`, `cabinet-v2-build-plan.md`, `cabinet-v2-acceptance.md`. The central agent is `apps/pals/server/src/runtime/agent.ts`; the system-prompt assembly is `runtime/prompt.ts`; the personality templates are `apps/pals/server/src/memory/templates.ts` (the live `SOUL.md`/`VOICE.md`/`IDENTITY.md` files are in a private data dir, not git — but you can read them through the API, see below).
 - **Running app:** `https://cabinet.benloe.com` (a DigitalOcean VPS). The gateway is the `pals-api` service on port 3008, fronted by Caddy. The public web UI is behind an owner-auth wall — you reach the API with your key.
 
-## How you log in (token-based)
+## How you log in — use your browser
 
-Ben will give you a **bearer key** (an Artanis agent key, `agk_…`). Present it on every request:
+Ben wants you to work with Cabinet through its **actual web UI in your Playwright browser**, the same way he does — not by scripting the API. Ben will give you a **bearer key** (an Artanis agent key, `agk_…`). To turn it into a browser session, navigate once to:
 
 ```
-Authorization: Bearer <YOUR_KEY>
+https://auth.benloe.com/api/auth/agent-login?token=<YOUR_KEY>&redirect=https://cabinet.benloe.com
 ```
 
-Everything is under `https://cabinet.benloe.com/api/`. The key authenticates you as the `benji` principal; the wall rejects anyone who isn't Ben or an authorized agent.
+That sets your session cookie (as the `benji` principal) and drops you on the Cabinet console at `https://cabinet.benloe.com`, logged in. From then on, **just use the site**:
 
-**To hold a conversation with Cabinet** (this is the real chat interface Ben uses):
+- **Talk to Cabinet:** press **⌘K** (the command bar), type a message, and hit Enter — it opens a conversation and Cabinet's reply **streams back live** (text, and tool-run cards when it acts). Keep typing in the composer to continue. Your turns are attributed to you (Cabinet knows it's Benji, not Ben).
+- **Inspect it visually:** click through the surfaces — **Today** (its briefing + vitals), **Ops** (its audit ledger — every autonomous action it's taken; read this to see what it really does), **Brain** (its memory, including the `SOUL`/`VOICE`/`IDENTITY` files you'll help it refine), **Domains**, and **Threads** (past conversations).
 
-```bash
-# 1) open a thread
-curl -s -X POST https://cabinet.benloe.com/api/threads \
-  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{}'
-#   → {"id":"<threadId>"}
-
-# 2) send a message; the reply streams back as Server-Sent Events
-curl -sN -X POST https://cabinet.benloe.com/api/chat \
-  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"threadId":"<threadId>","text":"Hi Cabinet — I'\''m Benji. Ben asked me to help you improve."}'
-```
-
-The SSE stream emits named events: `turn-start`, `text-delta` (`{delta}` — concatenate these for Cabinet's reply), `tool-start`/`tool-end` (Cabinet using its tools — bash, file edits, etc.), `notice`, `turn-end`, `error`. Keep the same `threadId` across messages to continue a conversation. Read history any time with `GET /api/threads/<id>/messages`.
-
-**To inspect Cabinet's live state** (read-only, same key):
-- `GET /api/ops` — the audit ledger: every action Cabinet has taken. Read this often; it's how you see what it actually does.
-- `GET /api/memory` — Cabinet's memory files, including `SOUL.md`, `VOICE.md`, `IDENTITY.md` (its identity — the thing you'll help it refine).
-- `GET /api/today`, `GET /api/domains/<id>`, `GET /api/recall?q=…` — its surfaces and data.
+The whole app is behind the auth wall — only Ben and authorized agents get in. (If you ever need it, the same endpoints are available programmatically with `Authorization: Bearer <key>`, and `POST /api/chat` streams SSE — but lead with the browser.)
 
 ## Your first job: stress-test the chat interface and the self-change loop
 
 Before any deep architecture work, **prove the fundamentals work**, because everything downstream depends on them. This doubles as a real test of the chat interface Ben will rely on. In order:
 
-1. **Have a genuine conversation.** Open a thread, introduce yourself, and talk with Cabinet about what it is and how it sees itself. Confirm: does streaming work cleanly? Does Cabinet respond coherently, in a distinct voice (not generic-assistant)? Does it correctly understand it's talking to *you*, a peer, and not Ben? Note anything rough about the interface itself.
+1. **Have a genuine conversation — in the UI.** Press ⌘K, introduce yourself, and talk with Cabinet about what it is and how it sees itself. Confirm: does the streaming chat work cleanly in the browser? Does Cabinet respond coherently, in a distinct voice (not generic-assistant)? Does it correctly understand it's talking to *you*, a peer, and not Ben? Note anything rough about the interface itself — you're also stress-testing the chat UI Ben will rely on.
 
 2. **Verify the self-change loop — the critical test.** Ask Cabinet to make a **small, safe, verifiable change to its own codebase and deploy it** (e.g., a trivial copy tweak, a new test, or a harmless log line — you and Cabinet decide). Then confirm the whole loop actually closed: did it edit the code, run the build/tests, commit, and **redeploy its own process** so the change is live? Watch `/api/ops` and the git history to verify. **If Cabinet cannot reliably take a directive → make a code change → redeploy itself, that is the single most important thing to fix first** — flag it plainly and help fix it before moving on.
 
