@@ -57,12 +57,14 @@ Three movements, cut along dependency lines for quality:
 ## What's live vs. Ben-gated
 
 - **Not deployed.** The v2 app is built and green but **not cut over**.
-  `cabinet.benloe.com` currently serves the design tour; pointing it at the v2
-  app (or replacing `pals.benloe.com`) is **Ben's decision**. To deploy: build
-  `apps/pals/web`, serve `dist/`, set `VITE_CABINET_MOCK=false` so it uses the
-  real gateway, and restart `pals-api` behind it.
-- **Runs on mock data in dev** (`VITE_CABINET_MOCK` defaults true). The real
-  endpoints exist and are tested; flip the flag on deploy.
+  **DEPLOYED** 2026-07-08 to `cabinet.benloe.com` (Caddy serves `dist/`, proxies
+  `/api/*` + `/healthz` to `:3008`), replacing the design tour. Restarting
+  `pals-api` onto the v2 build also activated the v2 endpoints, the SOUL/VOICE
+  personality, and the autonomous gate.
+- **The mock is dev-only** and can never ship: production builds gate it on
+  `import.meta.env.DEV`, so `npm run build` always uses the real, Artanis-walled
+  API (mock data is dead-code-eliminated). `npm run dev` uses mock by default
+  (`VITE_CABINET_MOCK=false` opts out) for backendless UI work.
 - **Personality + autonomy** (SOUL/VOICE, execute-and-audit gate) are committed
   but only take effect on the running process at the next `pals-api` restart —
   also Ben-gated.
