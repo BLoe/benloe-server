@@ -1,0 +1,15 @@
+/* Boot + login splash. Everything else lives in the shell/surfaces. */
+@import './styles/base.css';
+
+.boot {
+  height: 100dvh; display: flex; flex-direction: column; gap: var(--sp-5);
+  align-items: center; justify-content: center; text-align: center;
+}
+.boot .wordmark { font-family: var(--serif); font-size: 30px; font-weight: 600; letter-spacing: 0.3em; color: var(--brass); }
+.boot .line { color: var(--linen-dim); font-family: var(--serif); font-size: var(--fs-lede); }
+.boot button {
+  font-family: var(--sans); font-weight: 600; letter-spacing: 0.06em;
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass)); color: var(--ink);
+  border-radius: var(--r-3); padding: 11px 22px; cursor: pointer;
+}
+.boot button:hover { background: linear-gradient(180deg, #f2d59a, var(--brass-hi)); }
