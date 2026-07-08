@@ -86,6 +86,9 @@
                 </div>
                 <h1 class="text-3xl font-bold mb-2">Welcome to Your Dashboard</h1>
                 <p class="text-lg opacity-90">Manage your profile and account settings</p>
+                <% if (user.role === 'admin') { %>
+                <a href="/admin" class="inline-flex items-center mt-4 px-4 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white font-medium transition">🔑 Agent keys</a>
+                <% } %>
             </div>
         </div>
     </header>
