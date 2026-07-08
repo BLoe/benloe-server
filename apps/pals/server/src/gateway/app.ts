@@ -24,8 +24,15 @@ export interface GatewayDeps {
   memory?: { list(): string[]; read(file: string): string; update(file: string, content: string, reason: string): void };
 }
 
+export interface Principal {
+  email: string;
+  name: string | null;
+  role: string; // "user" | "admin" | "agent"
+  isOwner: boolean;
+}
 interface AuthedRequest extends Request {
   userEmail?: string;
+  principal?: Principal;
 }
 
 export function buildApp(deps: GatewayDeps) {
@@ -41,15 +48,22 @@ export function buildApp(deps: GatewayDeps) {
 
   async function authenticate(req: AuthedRequest, res: Response, next: NextFunction) {
     try {
+      // Humans present a session cookie; agents present a bearer access key.
+      // Either way, Artanis resolves it to a principal.
       const token = req.cookies?.token;
-      if (!token) return res.status(401).json({ error: 'Authentication required' });
-      const r = await authFetch(`${authUrl}/api/auth/me`, { headers: { Cookie: `token=${token}` } });
+      const authz = req.headers.authorization;
+      if (!token && !authz) return res.status(401).json({ error: 'Authentication required' });
+      const headers: Record<string, string> = authz ? { Authorization: authz } : { Cookie: `token=${token}` };
+      const r = await authFetch(`${authUrl}/api/auth/me`, { headers });
       if (!r.ok) return res.status(401).json({ error: 'Authentication failed' });
-      const { user } = (await r.json()) as { user?: { email?: string } };
-      if (!user?.email || user.email !== deps.ownerEmail) {
-        return res.status(403).json({ error: 'Not authorized for PALS' }); // single-user hard wall (§4.2)
+      const { user } = (await r.json()) as { user?: { email?: string; name?: string | null; role?: string } };
+      const isOwner = !!user?.email && user.email === deps.ownerEmail;
+      const isAgent = user?.role === 'agent';
+      if (!user?.email || (!isOwner && !isAgent)) {
+        return res.status(403).json({ error: 'Not authorized for Cabinet' });
       }
       req.userEmail = user.email;
+      req.principal = { email: user.email, name: user.name ?? null, role: user.role ?? 'user', isOwner };
       next();
     } catch {
       res.status(401).json({ error: 'Authentication failed' });

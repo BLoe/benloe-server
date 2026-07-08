@@ -146,6 +146,72 @@ export class AuthService {
     });
   }
 
+  // ---- Agent access keys (non-human principals) ----
+
+  private hashAgentKey(rawKey: string): string {
+    return crypto.createHash('sha256').update(rawKey).digest('hex');
+  }
+
+  /** Resolve a raw agent key to its User, or throw. Updates last-used stamps. */
+  async verifyAgentKey(rawKey: string) {
+    const tokenHash = this.hashAgentKey(rawKey);
+    const key = await prisma.agentKey.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+    if (!key || key.revokedAt) {
+      throw new Error('Invalid or revoked agent key');
+    }
+    const now = new Date();
+    await prisma.agentKey.update({ where: { id: key.id }, data: { lastUsedAt: now } });
+    await prisma.user.update({ where: { id: key.userId }, data: { lastLoginAt: now } });
+    return key.user;
+  }
+
+  /** Mint a new key for a named agent, creating the agent User if needed.
+      Returns the raw key ONCE — only its hash is stored. */
+  async createAgentKey(
+    name: string,
+    label?: string
+  ): Promise<{ rawKey: string; user: { id: string; email: string; name: string | null; role: string } }> {
+    const email = `${name}@agents.benloe.com`;
+    let user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      user = await prisma.user.create({ data: { email, name, role: 'agent' } });
+    } else if (user.role !== 'agent') {
+      throw new Error(`${email} exists but is not an agent principal`);
+    }
+    const rawKey = `agk_${crypto.randomBytes(24).toString('hex')}`;
+    await prisma.agentKey.create({
+      data: {
+        userId: user.id,
+        tokenHash: this.hashAgentKey(rawKey),
+        keyHint: rawKey.slice(-6),
+        label: label ?? null,
+      },
+    });
+    return { rawKey, user: { id: user.id, email: user.email, name: user.name, role: user.role } };
+  }
+
+  /** Revoke all live keys for a named agent. Returns the count revoked. */
+  async revokeAgentKeys(name: string): Promise<number> {
+    const email = `${name}@agents.benloe.com`;
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return 0;
+    const r = await prisma.agentKey.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return r.count;
+  }
+
+  async listAgentKeys() {
+    return prisma.agentKey.findMany({
+      include: { user: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async logoutAllSessions(userId: string): Promise<void> {
     await prisma.session.deleteMany({
       where: { userId },

@@ -26,6 +26,8 @@ model User {
   magicTokens MagicLinkToken[]
   // API keys for external services (Claude, etc.)
   apiKeys     ApiKey[]
+  // Access keys — how non-human principals (agents) authenticate in
+  agentKeys   AgentKey[]
 
   @@map("users")
 }
@@ -74,4 +76,25 @@ model ApiKey {
   @@unique([userId, provider]) // One key per provider per user
   @@index([userId])
   @@map("api_keys")
+}
+
+// AgentKey — an inbound access credential for a non-human principal (an agent).
+// The agent is a User (role "agent"); it presents the raw key as a bearer token
+// and Artanis resolves it to that user. Distinct from ApiKey above, which stores
+// a user's OUTBOUND provider keys (Anthropic, etc.). Only the SHA-256 hash of the
+// key is stored; the raw key is shown once at creation.
+model AgentKey {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique // sha256(rawKey), hex
+  keyHint    String            // last 6 chars, for display
+  label      String?           // e.g. "Ben's work agent"
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("agent_keys")
 }
