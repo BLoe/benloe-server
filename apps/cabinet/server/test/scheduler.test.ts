@@ -210,6 +210,52 @@ describe('jobs', () => {
     expect(runtimeCalls[0]).toMatchObject({ kind: 'heartbeat' });
   });
 
+  it('heartbeat now persists its own transcript too (runAgentCronJob) — the third instance of the same gap weekly-review and briefing had', async () => {
+    upsertTask(cabinet.db, { title: 'due thing', due_on: '2000-01-01' });
+    const nudgingRuntime = {
+      run: async (req: { onEvent: (e: unknown) => void }) => {
+        req.onEvent({ type: 'turn-start', messageId: 'm1', threadId: 'sys-heartbeat', model: 'claude-haiku-4-5' });
+        req.onEvent({ type: 'text-delta', delta: 'Heads up: the due thing is overdue.' });
+        req.onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+        return { stopReason: 'success', sessionId: 's1' };
+      },
+    };
+    const events: { event: string; data: unknown }[] = [];
+    deps.widgetBus.on('push', (n: { event: string; data: unknown }) => events.push(n));
+    const jobs = buildJobs({ ...deps, runtime: nudgingRuntime as never });
+    await jobs.find((j) => j.name === 'heartbeat')!.run();
+
+    const notices = events.filter((e) => e.event === 'notice');
+    expect(notices).toHaveLength(1);
+    expect((notices[0]!.data as { text: string }).text).toBe('Heads up: the due thing is overdue.');
+
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-heartbeat' ORDER BY created_at").all() as {
+      role: string;
+      parts: string;
+    }[];
+    expect(rows.map((r) => r.role)).toEqual(['user', 'assistant']);
+    expect(JSON.parse(rows[1]!.parts)).toEqual([{ type: 'text', text: 'Heads up: the due thing is overdue.' }]);
+  });
+
+  it('heartbeat replying HEARTBEAT_OK still persists the transcript but does not push a notice', async () => {
+    upsertTask(cabinet.db, { title: 'due thing', due_on: '2000-01-01' });
+    const okRuntime = {
+      run: async (req: { onEvent: (e: unknown) => void }) => {
+        req.onEvent({ type: 'text-delta', delta: 'HEARTBEAT_OK' });
+        req.onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+        return { stopReason: 'success', sessionId: 's1' };
+      },
+    };
+    const events: { event: string; data: unknown }[] = [];
+    deps.widgetBus.on('push', (n: { event: string; data: unknown }) => events.push(n));
+    const jobs = buildJobs({ ...deps, runtime: okRuntime as never });
+    await jobs.find((j) => j.name === 'heartbeat')!.run();
+
+    expect(events.filter((e) => e.event === 'notice')).toHaveLength(0);
+    const rows = cabinet.db.prepare("SELECT role FROM message WHERE thread_id = 'sys-heartbeat'").all();
+    expect(rows).toHaveLength(2); // user prompt + assistant "HEARTBEAT_OK" — persisted even when there's nothing to surface
+  });
+
   describe('usage budget alert (piggybacks on heartbeat, SQL-only)', () => {
     const ENV_KEY = 'CABINET_USAGE_ALERT_TOKENS';
     let prevEnv: string | undefined;

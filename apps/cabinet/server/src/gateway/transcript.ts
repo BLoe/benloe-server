@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
-import type { TurnEvent } from '../runtime/agent.js';
+import type { AgentRuntime, TurnEvent } from '../runtime/agent.js';
+import type { PromptInput } from '../runtime/prompt.js';
+import type { TurnKind } from '../runtime/queue.js';
 import { foldEvent, type MessagePart } from './fold.js';
 
 /**
@@ -40,4 +42,48 @@ export function createTranscriptRecorder(): {
 export function persistUserMessage(db: Database.Database, threadId: string, text: string, author: string | null = null): void {
   db.prepare('INSERT INTO message (id, thread_id, role, parts, author) VALUES (?,?,?,?,?)')
     .run(randomUUID(), threadId, 'user', JSON.stringify([{ type: 'text', text }]), author);
+}
+
+/**
+ * The choke point for scheduler/jobs.ts's agent-invoking jobs (heartbeat,
+ * morning-briefing, weekly-review — NOT evening-checkin or maintenance,
+ * which never call runtime.run() and have nothing to persist). Each of
+ * those three jobs used to hand-wire persistUserMessage + a recorder +
+ * try/finally itself; that's exactly the "someone forgot the recorder"
+ * bug class waiting to happen a fourth time. One call here gets a job the
+ * prompt persisted, the transcript persisted (even on a mid-run throw —
+ * try/finally), and the folded text pre-joined for whatever decision the
+ * job needs to make afterward (e.g. heartbeat's HEARTBEAT_OK check).
+ *
+ * Deliberately NOT hoisted into Scheduler: JobSpec is `{name, next, run}`,
+ * intentionally agnostic to whether a job even touches the agent runtime —
+ * two of the five jobs don't. Pushing thread/prompt/transcript concerns
+ * into the dispatcher would leak agent-specific plumbing into a component
+ * that has to stay dumb about what a job does internally.
+ */
+export async function runAgentCronJob(
+  runtime: Pick<AgentRuntime, 'run'>,
+  db: Database.Database,
+  opts: { threadId: string; kind: TurnKind; prompt: string; promptInput?: Partial<PromptInput>; deep?: boolean },
+): Promise<{ parts: readonly MessagePart[]; text: string }> {
+  persistUserMessage(db, opts.threadId, opts.prompt);
+  const recorder = createTranscriptRecorder();
+  try {
+    await runtime.run({
+      threadId: opts.threadId,
+      kind: opts.kind,
+      deep: opts.deep,
+      prompt: opts.prompt,
+      promptInput: opts.promptInput,
+      onEvent: recorder.onEvent,
+    });
+  } finally {
+    recorder.persist(db, opts.threadId);
+  }
+  const text = recorder.parts
+    .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+    .map((p) => p.text)
+    .join(' ')
+    .trim();
+  return { parts: recorder.parts, text };
 }
