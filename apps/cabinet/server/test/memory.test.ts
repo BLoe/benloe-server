@@ -62,6 +62,64 @@ describe('MemoryStore', () => {
     expect(core).toContain("chief of staff"); // the character actually made it in
     expect(core).not.toContain('HEARTBEAT.md'); // heartbeat is not in the core prompt
   });
+
+  describe('history (mentorship: item 5, core-block self-editing discipline)', () => {
+    it('returns commits newest-first with add/remove line counts, hash, message, and an ISO date', () => {
+      mem.update('domains/scratch.md', 'line one\nline two\n', 'seed scratch');
+      mem.update('domains/scratch.md', 'line one\nline two\nline three\n', 'grew scratch by one line');
+      const history = mem.history('domains/scratch.md');
+      expect(history.length).toBeGreaterThanOrEqual(2);
+      expect(history[0]!.message).toContain('grew scratch by one line'); // newest first
+      expect(history[1]!.message).toContain('seed scratch');
+      expect(history[0]!.hash).toMatch(/^[0-9a-f]{6,12}$/);
+      expect(new Date(history[0]!.at).toString()).not.toBe('Invalid Date');
+      expect(history[0]!.linesAdded).toBeGreaterThanOrEqual(1); // one line added
+    });
+
+    it('returns [] for a file that was never written, rather than throwing', () => {
+      expect(mem.history('domains/never-touched.md')).toEqual([]);
+    });
+  });
+
+  describe('drift guard (mentorship: item 5 — Ben\'s ruling: block catastrophic edits, warn on nothing else)', () => {
+    const LONG = '# Scratch\n\n' + 'A real paragraph of durable content. '.repeat(20); // ~780 chars
+
+    it('a normal edit (small change, or even a full rewrite that stays reasonably sized) passes through untouched', () => {
+      mem.update('domains/drift.md', LONG, 'seed');
+      expect(() => mem.update('domains/drift.md', LONG + '\n\nOne more sentence appended.', 'grew it a bit')).not.toThrow();
+      expect(mem.read('domains/drift.md')).toContain('One more sentence appended.');
+    });
+
+    it('blocks a catastrophic shrink (below the 40%-remaining floor) and leaves the file untouched', () => {
+      mem.update('domains/drift.md', LONG, 'reseed at full length');
+      expect(() => mem.update('domains/drift.md', 'gone.', 'oops')).toThrow(/refusing to write.*shrank/);
+      expect(mem.read('domains/drift.md')).toBe(LONG); // the old content survives — write never landed
+    });
+
+    it('blocks emptying the file entirely', () => {
+      mem.update('domains/drift.md', LONG, 'reseed');
+      expect(() => mem.update('domains/drift.md', '   \n  ', 'accidentally sent whitespace')).toThrow(/empty/);
+      expect(mem.read('domains/drift.md')).toBe(LONG);
+    });
+
+    it('blocks content containing a NUL byte (binary/corrupt, not markdown)', () => {
+      mem.update('domains/drift.md', LONG, 'reseed');
+      expect(() => mem.update('domains/drift.md', `${LONG}\0garbage`, 'corrupted write')).toThrow(/NUL byte/);
+      expect(mem.read('domains/drift.md')).toBe(LONG);
+    });
+
+    it('a brand-new file is never blocked by the drift guard regardless of how short it is — there is nothing to shrink from', () => {
+      expect(() => mem.update('domains/fresh.md', 'x', 'first write ever')).not.toThrow();
+      expect(mem.read('domains/fresh.md')).toBe('x');
+    });
+
+    it('does not commit on a blocked write — commitCount is unchanged', () => {
+      mem.update('domains/drift2.md', LONG, 'reseed');
+      const before = mem.commitCount();
+      expect(() => mem.update('domains/drift2.md', 'x', 'blocked')).toThrow();
+      expect(mem.commitCount()).toBe(before);
+    });
+  });
 });
 
 describe('lesson governance', () => {

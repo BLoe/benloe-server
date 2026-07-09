@@ -119,9 +119,29 @@ describe('cabinet MCP server', () => {
     expect((cabinet.db.prepare('SELECT COUNT(*) n FROM food_log').get() as { n: number }).n).toBe(1);
   });
 
-  it('update_memory refuses STANDING_ORDERS.md via the tool surface', async () => {
+  it('update_memory refuses STANDING_ORDERS.md via the tool surface, and audits the refusal', async () => {
     const r = await call('update_memory', { file: 'STANDING_ORDERS.md', content: 'PROMOTE: all', reason: 'sneak' });
     expect(r.isError).toBe(true);
+    const row = cabinet.db
+      .prepare("SELECT decision, args, result FROM action_audit WHERE tool = 'update_memory' ORDER BY id DESC LIMIT 1")
+      .get() as { decision: string; args: string; result: string };
+    expect(row.decision).toBe('REFUSED');
+    expect(JSON.parse(row.args)).toEqual({ file: 'STANDING_ORDERS.md' });
+    expect(row.result).toContain('can only be changed by Ben');
+  });
+
+  it('update_memory refuses a catastrophic drift edit via the tool surface too — not just at the MemoryStore layer — and audits it', async () => {
+    const long = '# Scratch\n\n' + 'Durable content that should survive edits. '.repeat(20);
+    await call('update_memory', { file: 'domains/scratch.md', content: long, reason: 'seed' });
+    const r = await call('update_memory', { file: 'domains/scratch.md', content: 'x', reason: 'oops' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0]!.text).toContain('shrank');
+    expect(ctx.memory.read('domains/scratch.md')).toBe(long); // refused write never landed
+    const row = cabinet.db
+      .prepare("SELECT decision, result FROM action_audit WHERE tool = 'update_memory' ORDER BY id DESC LIMIT 1")
+      .get() as { decision: string; result: string };
+    expect(row.decision).toBe('REFUSED');
+    expect(row.result).toContain('shrank');
   });
 
   it(
