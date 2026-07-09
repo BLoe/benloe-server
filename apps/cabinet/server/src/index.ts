@@ -40,7 +40,7 @@ try {
 }
 
 import { EventEmitter } from 'node:events';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
 import { openDb } from './db/index.js';
@@ -67,6 +67,22 @@ if (!OWNER) {
 
 mkdirSync(DATA_DIR, { recursive: true });
 process.env.CABINET_MODELS_DIR ??= join(DATA_DIR, 'models');
+
+/**
+ * Read once at startup — not per healthz request, not a git subprocess in
+ * the running server. scripts/write-build-info.mjs bakes this file at build
+ * time (npm run build) with the commit that was actually compiled, so
+ * healthz.buildMarker (gateway/app.ts) tells you what's really deployed
+ * instead of a hand-typed string that goes stale after the next deploy.
+ */
+function readBuildInfo(): { sha: string; builtAt: string } {
+  try {
+    return JSON.parse(readFileSync(join(import.meta.dirname, 'build-info.json'), 'utf8'));
+  } catch {
+    return { sha: 'unknown', builtAt: 'unknown' };
+  }
+}
+const buildInfo = readBuildInfo();
 
 const cabinet = openDb(join(DATA_DIR, 'cabinet.db'));
 const episodic = new EpisodicStore(join(DATA_DIR, 'episodic.db'));
@@ -116,6 +132,7 @@ const app = buildApp({
   embedder,
   memory,
   scheduler,
+  buildMarker: buildInfo.sha,
 });
 
 app.listen(PORT, '127.0.0.1', () => {

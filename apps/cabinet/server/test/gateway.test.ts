@@ -111,6 +111,27 @@ describe('auth wall', () => {
     expect(detailed).toMatchObject({ ok: true, db: true, authMode: 'subscription' });
   });
 
+  it('/api/healthz.buildMarker is "unknown" when unwired (e.g. dev/test), not a stale hardcoded string', async () => {
+    await startApp(); // default fixture never passes buildMarker
+    expect((await (await asOwner('/api/healthz')).json()).buildMarker).toBe('unknown');
+  });
+
+  it('/api/healthz.buildMarker reflects the actually-built commit when wired', async () => {
+    const app = buildApp({
+      db: cabinet.db,
+      runtime: fakeRuntime() as never,
+      approvals,
+      widgetBus,
+      ownerEmail: OWNER,
+      authFetch: fakeAuthFetch,
+      buildMarker: 'abc123def456',
+    });
+    server = app.listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    expect((await (await asOwner('/api/healthz')).json()).buildMarker).toBe('abc123def456');
+  });
+
   it('/api/healthz carries the embedder status object plus a pendingBackfill count, not a bare boolean', async () => {
     const app = buildApp({
       db: cabinet.db,
