@@ -37,6 +37,8 @@ export interface GatewayDeps {
    * rebuilt copy: firing this proves the scheduler→job wiring itself.
    */
   scheduler?: { has(name: string): boolean; runNow(name: string): Promise<void> };
+  /** healthz.buildMarker — the actually-built commit SHA (index.ts reads dist/build-info.json once at startup, written by scripts/write-build-info.mjs at build time). 'unknown' when absent (e.g. a dev `npm run dev` run, or tests). */
+  buildMarker?: string;
   /** curated memory store, for the Brain surface (GET/PUT /api/memory) */
   memory?: { list(): string[]; read(file: string): string; update(file: string, content: string, reason: string): void };
   /** Injectable for tests; production defaults to the real dir. */
@@ -416,10 +418,11 @@ export function buildApp(deps: GatewayDeps) {
       db: dbOk,
       authMode: deps.runtime.authMode,
       embedder,
-      // Throwaway marker proving a self-deploy actually landed the new bundle
-      // (not just a bare restart of the old one) — benji/Ben verification,
-      // 2026-07-09. Safe to remove once the loop's been proven once.
-      buildMarker: 'selfdeploy-20260709T034633Z-eb732e',
+      // The commit actually compiled into this running dist/ (see index.ts's
+      // readBuildInfo + scripts/write-build-info.mjs) — deploy verification
+      // is now a one-line healthz read instead of bundle-grep + process-
+      // restart-timestamp archaeology.
+      buildMarker: deps.buildMarker ?? 'unknown',
       queueDepth: depth,
       pendingApprovals: deps.approvals.pending().length,
       // presence for the v2 strip
