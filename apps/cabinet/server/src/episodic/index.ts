@@ -13,14 +13,18 @@ export interface ChunkHit {
   distance: number;
 }
 
+export type LessonStatus = 'active' | 'retired' | 'superseded' | 'promoted';
+
 export interface LessonRow {
   id: number;
   text: string;
   domain: string | null;
   evidence: string | null;
   confidence: number | null;
-  status: 'active' | 'retired' | 'superseded';
+  status: LessonStatus;
   times_applied: number;
+  created_at: string;
+  last_used_at: string | null;
 }
 
 export interface EmbeddableTable {
@@ -84,13 +88,50 @@ export class EpisodicStore {
         domain TEXT,
         evidence TEXT,
         confidence REAL,
-        status TEXT CHECK(status IN ('active','retired','superseded')) DEFAULT 'active',
+        status TEXT CHECK(status IN ('active','retired','superseded','promoted')) DEFAULT 'active',
         times_applied INTEGER DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         last_used_at TEXT
       );
       CREATE VIRTUAL TABLE IF NOT EXISTS vec_lesson USING vec0(embedding float[${EMBEDDING_DIMS}]);
     `);
+    this.migrateLessonPromotedStatus();
+  }
+
+  /**
+   * One-time, idempotent, self-healing schema evolution for a table with no
+   * migration runner of its own (unlike cabinet.db's src/db/migrations).
+   * 'promoted' was added to lesson.status's CHECK constraint after episodic.db
+   * files already existed in the wild — CREATE TABLE IF NOT EXISTS above is a
+   * no-op against them, so their CHECK still rejects 'promoted' until this
+   * runs once. SQLite can't ALTER a CHECK constraint in place, so this does
+   * the standard rebuild-and-swap; vec_lesson is untouched since rowids
+   * (== lesson.id, an INTEGER PRIMARY KEY alias) are preserved verbatim.
+   */
+  private migrateLessonPromotedStatus(): void {
+    const row = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='lesson'").get() as
+      | { sql: string }
+      | undefined;
+    if (!row || row.sql.includes('promoted')) return; // fresh DB (already has it) or already migrated
+    this.db.transaction(() => {
+      this.db.exec(`
+        CREATE TABLE lesson_migrating (
+          id INTEGER PRIMARY KEY,
+          text TEXT NOT NULL,
+          domain TEXT,
+          evidence TEXT,
+          confidence REAL,
+          status TEXT CHECK(status IN ('active','retired','superseded','promoted')) DEFAULT 'active',
+          times_applied INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+        INSERT INTO lesson_migrating (id, text, domain, evidence, confidence, status, times_applied, created_at, last_used_at)
+          SELECT id, text, domain, evidence, confidence, status, times_applied, created_at, last_used_at FROM lesson;
+        DROP TABLE lesson;
+        ALTER TABLE lesson_migrating RENAME TO lesson;
+      `);
+    })();
   }
 
   private static asBuffer(v: Float32Array): Buffer {
@@ -188,8 +229,32 @@ export class EpisodicStore {
     return rows.filter((r) => r.status === 'active').slice(0, k);
   }
 
-  setLessonStatus(id: number, status: 'active' | 'retired' | 'superseded'): void {
+  setLessonStatus(id: number, status: LessonStatus): void {
     this.db.prepare('UPDATE lesson SET status = ? WHERE id = ?').run(status, id);
+  }
+
+  /**
+   * Lessons eligible to graduate into always-on memory (PREFERENCES.md /
+   * PLATFORM.md) instead of only ever being situationally KNN-recalled.
+   * Deliberately no domain filter — a missing domain must not permanently
+   * block graduation (the promotion step decides the destination file by
+   * judgment when domain is null). minAgeDays is the load-bearing gate: it's
+   * the only criterion immune to same-day recall bursts inflating
+   * times_applied (verified against this store's own early data, where one
+   * afternoon of manual testing alone produced double-digit times_applied
+   * on a lesson that had existed for hours, not weeks).
+   */
+  listPromotableLessons(minConfidence: number, minTimesApplied: number, minAgeDays: number): LessonRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM lesson
+         WHERE status = 'active'
+           AND confidence >= ?
+           AND times_applied >= ?
+           AND julianday('now') - julianday(created_at) >= ?
+         ORDER BY times_applied DESC`,
+      )
+      .all(minConfidence, minTimesApplied, minAgeDays) as LessonRow[];
   }
 
   markLessonUsed(id: number): void {

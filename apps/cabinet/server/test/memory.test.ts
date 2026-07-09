@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryStore, MemoryError } from '../src/memory/index.js';
-import { addLesson, recallLessons, retireLesson, validateLesson } from '../src/memory/lessons.js';
+import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesson, validateLesson } from '../src/memory/lessons.js';
 import { Embedder } from '../src/embeddings/index.js';
 import { EpisodicStore } from '../src/episodic/index.js';
 
@@ -150,6 +150,56 @@ describe('lesson store round-trip', () => {
       expect(timesApplied()).toBe(1);
 
       retireLesson(episodic, id);
+    },
+    MODEL_TIMEOUT,
+  );
+
+  it(
+    'promotion mechanism: an aged+confident+repeatedly-applied lesson graduates, lands in a memory file, flips to promoted, and drops out of all future recall — while a same-day burst-inflated lesson is correctly excluded',
+    async () => {
+      const durable = (await addLesson(episodic, embedder, {
+        text: 'Test-only: durable platform lesson used to prove the promotion mechanism end-to-end.',
+        domain: 'platform',
+        evidence: 'seeded for promotion mechanism test',
+        confidence: 0.8,
+      })) as { id: number };
+      // Seed durability deterministically instead of waiting 7 real days.
+      episodic.db.prepare("UPDATE lesson SET created_at = datetime('now', '-8 days'), times_applied = 3 WHERE id = ?").run(durable.id);
+
+      // Same shape as this store's own real lesson 2 earlier today: high
+      // times_applied purely from a same-day burst. Must NOT be eligible —
+      // this is the exact failure mode minAgeDays exists to catch.
+      const burstOneDay = (await addLesson(episodic, embedder, {
+        text: 'Test-only: same-day lesson with burst-inflated times_applied that must not be eligible.',
+        domain: 'platform',
+        evidence: 'seeded to prove age is the load-bearing gate',
+        confidence: 0.9,
+      })) as { id: number };
+      episodic.db.prepare('UPDATE lesson SET times_applied = 10 WHERE id = ?').run(burstOneDay.id);
+
+      const eligible = promotableLessons(episodic);
+      expect(eligible.some((l) => l.id === durable.id)).toBe(true);
+      expect(eligible.some((l) => l.id === burstOneDay.id)).toBe(false);
+
+      // "Lands in the target file" — the mechanical write, standing in for
+      // the agent's wording/merge judgment in the real weekly-review prompt.
+      mem.update(
+        'PLATFORM.md',
+        '# Platform work — operating notes\n\n## Promoted\n- Test-only: durable platform lesson used to prove the promotion mechanism end-to-end.\n',
+        'promotion mechanism test',
+      );
+      expect(mem.read('PLATFORM.md')).toContain('durable platform lesson used to prove the promotion mechanism');
+
+      promoteLesson(episodic, durable.id);
+      expect((episodic.db.prepare('SELECT status FROM lesson WHERE id = ?').get(durable.id) as { status: string }).status).toBe('promoted');
+
+      // Drops out of both eligibility and situational recall — the same
+      // status='active' filter guards both, so promoting is the whole fix.
+      expect(promotableLessons(episodic).some((l) => l.id === durable.id)).toBe(false);
+      const recalled = await recallLessons(episodic, embedder, 'durable platform lesson used to prove the promotion mechanism', 4);
+      expect(recalled.some((l) => l.id === durable.id)).toBe(false);
+
+      retireLesson(episodic, burstOneDay.id); // cleanup: don't leave it active for other tests in this file
     },
     MODEL_TIMEOUT,
   );

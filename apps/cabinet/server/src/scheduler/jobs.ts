@@ -181,7 +181,12 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
         '2. Goal progress against GOALS.md.',
         '3. Rewrite each domains/*.md narrative you have new signal for via mcp__cabinet__update_memory (curated, ≤200 lines).',
         '4. Reflection pass: candidate lessons via mcp__cabinet__add_lesson (evidence + confidence required; escalations will be rejected).',
-        '5. Finish with a render_widget briefing card summarizing the week and 3 focus points.',
+        '5. Promotion pass: call mcp__cabinet__list_promotable_lessons. For each one, decide its destination — domain "platform" goes in PLATFORM.md, ' +
+          'every other domain (including a missing one — use judgment on the lesson\'s content to place it) goes in PREFERENCES.md. Read the target ' +
+          'file first and merge/de-duplicate against what\'s already there rather than blindly appending — you may reword or combine lessons into the ' +
+          "existing prose. Write via mcp__cabinet__update_memory, then call mcp__cabinet__promote_lesson only after that write succeeds. If none are " +
+          'eligible, say so and do nothing — do not lower the bar to manufacture a promotion.',
+        '6. Finish with a render_widget briefing card summarizing the week and 3 focus points.',
       ].join('\n');
       await runAgentCronJob(deps.runtime, db, { threadId, kind: 'cron', deep: true, prompt });
       push(deps, 'notice', { level: 'info', text: 'Weekly review complete.', source: 'weekly' });

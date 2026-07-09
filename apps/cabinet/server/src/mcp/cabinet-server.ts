@@ -7,7 +7,7 @@ import type { Embedder } from '../embeddings/index.js';
 import type { EpisodicStore } from '../episodic/index.js';
 import type { MemoryStore } from '../memory/index.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
-import { addLesson, recallLessons, retireLesson } from '../memory/lessons.js';
+import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesson } from '../memory/lessons.js';
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../domains/food.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
@@ -276,6 +276,21 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       async ({ id, superseded }) => {
         retireLesson(ctx.episodic, id, superseded ?? false);
         return ok({ id, status: superseded ? 'superseded' : 'retired' });
+      },
+    ),
+    tool(
+      'list_promotable_lessons',
+      'List active lessons proven durable enough to graduate into always-on memory (confidence, times_applied, and age all past threshold — see promotableLessons).',
+      {},
+      async () => ok(promotableLessons(ctx.episodic)),
+    ),
+    tool(
+      'promote_lesson',
+      "Mark a lesson graduated after you've written its content into a memory file (PREFERENCES.md/PLATFORM.md). Excludes it from all future recall — call this only after the update_memory write succeeds, not before.",
+      { id: z.number().int() },
+      async ({ id }) => {
+        promoteLesson(ctx.episodic, id);
+        return ok({ id, status: 'promoted' });
       },
     ),
     tool(

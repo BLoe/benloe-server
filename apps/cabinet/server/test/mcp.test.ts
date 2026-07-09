@@ -60,12 +60,31 @@ describe('cabinet MCP server', () => {
       'mcp__cabinet__log_hsa_contribution', 'mcp__cabinet__import_transactions_csv', 'mcp__cabinet__update_pantry',
       'mcp__cabinet__add_recipe', 'mcp__cabinet__upsert_task', 'mcp__cabinet__upsert_contact', 'mcp__cabinet__add_price_watch',
       'mcp__cabinet__query_db', 'mcp__cabinet__search_episodic', 'mcp__cabinet__search_documents', 'mcp__cabinet__recall_lessons',
-      'mcp__cabinet__add_lesson', 'mcp__cabinet__retire_lesson', 'mcp__cabinet__update_memory', 'mcp__cabinet__render_widget',
-      'mcp__cabinet__enqueue_approval',
+      'mcp__cabinet__add_lesson', 'mcp__cabinet__retire_lesson', 'mcp__cabinet__list_promotable_lessons', 'mcp__cabinet__promote_lesson',
+      'mcp__cabinet__update_memory', 'mcp__cabinet__render_widget', 'mcp__cabinet__enqueue_approval',
     ]) {
       expect(names, `missing ${expected}`).toContain(expected);
       expect(classifyToolUse(expected, {}).tier).toBe(4);
     }
+  });
+
+  it('list_promotable_lessons / promote_lesson: an aged+durable lesson is listed, promotion excludes it from further listing', async () => {
+    const added = await call('add_lesson', {
+      text: 'Test-only: mcp-layer promotion tool check.',
+      evidence: 'seeded for tool-layer test',
+      confidence: 0.9,
+    });
+    const { id } = JSON.parse(added.content[0]!.text);
+    ctx.episodic.db.prepare("UPDATE lesson SET created_at = datetime('now', '-8 days'), times_applied = 5 WHERE id = ?").run(id);
+
+    const listed = JSON.parse((await call('list_promotable_lessons', {})).content[0]!.text) as { id: number }[];
+    expect(listed.some((l) => l.id === id)).toBe(true);
+
+    const promoted = JSON.parse((await call('promote_lesson', { id })).content[0]!.text);
+    expect(promoted).toEqual({ id, status: 'promoted' });
+
+    const listedAfter = JSON.parse((await call('list_promotable_lessons', {})).content[0]!.text) as { id: number }[];
+    expect(listedAfter.some((l) => l.id === id)).toBe(false);
   });
 
   it('log_food handler writes and returns totals', async () => {
