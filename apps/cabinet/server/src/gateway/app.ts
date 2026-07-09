@@ -12,7 +12,8 @@ import type { EpisodicStore } from '../episodic/index.js';
 import { pendingBackfillCount } from '../episodic/index.js';
 import { recallLessons } from '../memory/lessons.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
-import { foldEvent, type MessagePart } from './fold.js';
+import type { MessagePart } from './fold.js';
+import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
 import { registerSurfaceRoutes } from './surfaces.js';
 
 export interface GatewayDeps {
@@ -29,6 +30,13 @@ export interface GatewayDeps {
   /** Auto-recall relevant lessons before a user turn (undefined in tests that don't care). */
   episodic?: EpisodicStore;
   embedder?: Embedder;
+  /**
+   * Owner/agent-authenticated manual trigger for scheduled jobs (weekly-review,
+   * morning-briefing, heartbeat, maintenance) — POST /api/admin/jobs/:name/run.
+   * Deliberately the actual Scheduler instance (or a narrow view of it), not a
+   * rebuilt copy: firing this proves the scheduler→job wiring itself.
+   */
+  scheduler?: { has(name: string): boolean; runNow(name: string): Promise<void> };
   /** curated memory store, for the Brain surface (GET/PUT /api/memory) */
   memory?: { list(): string[]; read(file: string): string; update(file: string, content: string, reason: string): void };
   /** Injectable for tests; production defaults to the real dir. */
@@ -142,9 +150,7 @@ export function buildApp(deps: GatewayDeps) {
     if (!thread) return res.status(404).json({ error: 'no such thread' });
 
     const principal = (req as AuthedRequest).principal;
-    deps.db
-      .prepare('INSERT INTO message (id, thread_id, role, parts, author) VALUES (?,?,?,?,?)')
-      .run(randomUUID(), threadId, 'user', JSON.stringify([{ type: 'text', text }]), principal?.email ?? null);
+    persistUserMessage(deps.db, threadId, text, principal?.email ?? null);
     deps.db
       .prepare("UPDATE thread SET updated_at = datetime('now'), created_by = COALESCE(created_by, ?) WHERE id = ?")
       .run(principal?.email ?? null, threadId);
@@ -156,13 +162,9 @@ export function buildApp(deps: GatewayDeps) {
       'X-Accel-Buffering': 'no',
     });
 
-    const parts: MessagePart[] = [];
-    let assistantId: string | null = null;
-    let usage: unknown = null;
+    const recorder = createTranscriptRecorder();
     const send = (e: TurnEvent) => {
-      if (e.type === 'turn-start') assistantId = e.messageId;
-      if (e.type === 'turn-end') usage = e.usage;
-      foldEvent(parts, e);
+      recorder.onEvent(e);
       res.write(encodeSse({ event: e.type, data: e }));
     };
 
@@ -195,16 +197,12 @@ export function buildApp(deps: GatewayDeps) {
       res.write(encodeSse({ event: 'error', data: { message: String((err as Error).message).slice(0, 300), retryable: true } }));
     } finally {
       clearInterval(hb);
-      if (parts.length > 0) {
-        deps.db
-          .prepare('INSERT INTO message (id, thread_id, role, parts, usage) VALUES (?,?,?,?,?)')
-          .run(assistantId ?? randomUUID(), threadId, 'assistant', JSON.stringify(parts), usage ? JSON.stringify(usage) : null);
-      }
+      recorder.persist(deps.db, threadId);
       // Auto-name a still-"untitled" thread from its opening exchange. Best
       // effort — a titling failure must never surface to the chat turn — and
       // only on the first turn, so an established title is never overwritten.
-      if (!thread.title?.trim() && parts.length > 0) {
-        const assistantText = parts
+      if (!thread.title?.trim() && recorder.parts.length > 0) {
+        const assistantText = recorder.parts
           .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
           .map((p) => p.text)
           .join(' ')
@@ -224,6 +222,27 @@ export function buildApp(deps: GatewayDeps) {
 
   app.post('/api/interrupt', (req, res) => {
     res.json({ interrupted: deps.runtime.interrupt(req.body?.threadId) });
+  });
+
+  // ---------- admin: manual job trigger (mentorship session 2) ----------
+  // Fires the exact JobSpec.run() the scheduler's own timer invokes (see
+  // Scheduler.runNow) — proves the scheduler→job wiring, not a hand-run copy
+  // of the job's logic. Async: weekly-review runs on the opus/xhigh route and
+  // can take minutes, so this returns 202 immediately rather than blocking the
+  // HTTP request; poll GET /api/threads/:id/messages on the job's system
+  // thread (e.g. sys-weekly) to see the persisted transcript land.
+  app.post('/api/admin/jobs/:name/run', (req, res) => {
+    const principal = (req as AuthedRequest).principal;
+    if (!principal || !(principal.isOwner || principal.role === 'agent')) {
+      return res.status(403).json({ error: 'owner or agent role required' });
+    }
+    if (!deps.scheduler) return res.status(503).json({ error: 'scheduler not wired' });
+    const { name } = req.params;
+    if (!deps.scheduler.has(name)) return res.status(404).json({ error: `no such job: ${name}` });
+    void deps.scheduler.runNow(name).catch((err) => {
+      console.warn(`admin job trigger: ${name} failed: ${(err as Error).message}`);
+    });
+    res.status(202).json({ ok: true, started: name });
   });
 
   // ---------- approvals ----------

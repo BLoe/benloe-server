@@ -16,10 +16,40 @@ const MAX_TIMEOUT = 2 ** 31 - 1; // setTimeout ceiling (~24.8 days)
 export class Scheduler {
   private timers = new Map<string, NodeJS.Timeout>();
   private stopped = false;
+  private inFlight = new Set<string>();
   readonly lastRun = new Map<string, Date>();
   readonly lastError = new Map<string, string>();
 
   constructor(private jobs: JobSpec[]) {}
+
+  has(name: string): boolean {
+    return this.jobs.some((j) => j.name === name);
+  }
+
+  /**
+   * Owner/agent-authenticated manual trigger (gateway/app.ts's
+   * POST /api/admin/jobs/:name/run). Runs the exact same JobSpec.run() the
+   * cron timer below invokes — not a reimplementation — so firing this
+   * proves the scheduler→job wiring itself, not just the job's own logic
+   * run by hand from a scratch script. Rejects a second concurrent trigger
+   * for the same name rather than overlapping two turns against the same
+   * system thread; the timer path (arm(), below) is untouched by this guard.
+   */
+  async runNow(name: string): Promise<void> {
+    const job = this.jobs.find((j) => j.name === name);
+    if (!job) throw new Error(`no such job: ${name}`);
+    if (this.inFlight.has(name)) throw new Error(`${name} is already running`);
+    this.inFlight.add(name);
+    try {
+      await job.run();
+      this.lastRun.set(name, new Date());
+    } catch (err) {
+      this.lastError.set(name, String((err as Error).message ?? err));
+      throw err;
+    } finally {
+      this.inFlight.delete(name);
+    }
+  }
 
   start(): void {
     this.stopped = false;
