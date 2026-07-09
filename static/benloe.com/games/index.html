@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Games - benloe.com</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        :root {
+            --primary-gradient: linear-gradient(135deg, #6b8068 0%, #4a5f4a 100%);
+            --primary-color: #4a5f4a;
+            --text-primary: #333;
+            --text-secondary: #666;
+            --bg-white: #ffffff;
+            --bg-light: #f8f9fa;
+            --border-light: #e0e0e0;
+            --shadow-light: rgba(0, 0, 0, 0.1);
+            --shadow-medium: rgba(0, 0, 0, 0.15);
+            --transition: all 0.3s ease;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-white);
+            min-height: 100vh;
+        }
+        header {
+            background: var(--primary-gradient);
+            padding: 2rem 0;
+            text-align: center;
+            box-shadow: 0 2px 20px var(--shadow-light);
+        }
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+        .back-link {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            font-size: 0.95rem;
+            display: inline-block;
+            margin-bottom: 0.5rem;
+            transition: color 0.2s;
+        }
+        .back-link:hover { color: white; }
+        h1 { font-size: 2.5rem; color: white; font-weight: 700; margin-bottom: 0.5rem; }
+        .subtitle { font-size: 1.15rem; color: rgba(255,255,255,0.85); }
+
+        main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+        }
+        .game-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+        .game-card {
+            background: var(--bg-white);
+            border-radius: 12px;
+            padding: 2rem;
+            text-decoration: none;
+            color: var(--text-primary);
+            transition: var(--transition);
+            border: 2px solid var(--border-light);
+            box-shadow: 0 4px 6px var(--shadow-light);
+            display: block;
+        }
+        .game-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 24px var(--shadow-medium);
+            border-color: var(--primary-color);
+        }
+        .game-card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
+            color: var(--primary-color);
+        }
+        .game-card p {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .tag {
+            background: var(--bg-light);
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .placeholder-card {
+            background: var(--bg-light);
+            border: 2px dashed var(--border-light);
+            border-radius: 12px;
+            padding: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            min-height: 180px;
+        }
+
+        footer {
+            background: var(--bg-light);
+            padding: 2rem 0;
+            text-align: center;
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 767px) {
+            h1 { font-size: 2rem; }
+            main { padding: 2rem 1rem; }
+            .game-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <a href="/" class="back-link">&larr; benloe.com</a>
+            <h1>Games</h1>
+            <p class="subtitle">Browser-based games built for fun</p>
+        </div>
+    </header>
+
+    <main>
+        <div class="game-grid">
+            <a href="/games/tower-defense/" class="game-card">
+                <h3>Wizard Tower Defense</h3>
+                <p>Build towers and garrison them with wizards wielding fire, ice, lightning, arcane, nature, and shadow spells. Upgrade spells through 5 levels of power to defend against dragons, golems, and wraiths.</p>
+                <div class="tags">
+                    <span class="tag">Strategy</span>
+                    <span class="tag">HTML5 Canvas</span>
+                    <span class="tag">Save/Load</span>
+                    <span class="tag">6 Wizard Types</span>
+                </div>
+            </a>
+
+            <div class="placeholder-card">
+                More games coming soon...
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>Built with curiosity and code.</p>
+    </footer>
+</body>
+</html>
