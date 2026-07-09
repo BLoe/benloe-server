@@ -7,7 +7,7 @@ import { MemoryStore } from '../src/memory/index.js';
 import { ApprovalQueue } from '../src/tiers/approvals.js';
 import { route, refusalFallback, MODELS } from '../src/runtime/router.js';
 import { TurnQueue } from '../src/runtime/queue.js';
-import { assemblePrompt, stablePrefix, VOLATILE_MARKER } from '../src/runtime/prompt.js';
+import { assemblePrompt } from '../src/runtime/prompt.js';
 import { AgentRuntime, configureAuth, type TurnEvent, type QueryFn } from '../src/runtime/agent.js';
 
 describe('router', () => {
@@ -96,24 +96,46 @@ describe('prompt assembly', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('stable prefix is byte-identical across turns at different times', () => {
+  it('systemPrompt is byte-identical across turns at different times and interlocutors', () => {
     const p1 = assemblePrompt(mem, { kind: 'user', now: new Date('2026-07-07T10:00:00Z') });
-    const p2 = assemblePrompt(mem, { kind: 'user', now: new Date('2026-07-08T22:13:45Z'), snapshot: 'protein 90g' });
-    expect(stablePrefix(p1)).toBe(stablePrefix(p2));
-    expect(p1).not.toBe(p2); // volatile differs
+    const p2 = assemblePrompt(mem, {
+      kind: 'user',
+      now: new Date('2026-07-08T22:13:45Z'),
+      snapshot: 'protein 90g',
+      interlocutor: { name: 'Benji', role: 'agent', isOwner: false },
+    });
+    expect(p1.systemPrompt).toBe(p2.systemPrompt);
+    expect(p1.turnContext).not.toBe(p2.turnContext); // per-turn context does differ
   });
 
-  it('datetime never leaks above the volatile marker', () => {
-    const p = assemblePrompt(mem, { kind: 'user', now: new Date('2026-03-15T12:00:00Z') });
-    expect(stablePrefix(p)).not.toContain('2026-03-15');
-    expect(p.slice(p.indexOf(VOLATILE_MARKER))).toContain('2026-03-15');
+  it('datetime and interlocutor never leak into systemPrompt — they live in turnContext', () => {
+    const p = assemblePrompt(mem, {
+      kind: 'user',
+      now: new Date('2026-03-15T12:00:00Z'),
+      interlocutor: { name: 'Benji', role: 'agent', isOwner: false },
+    });
+    expect(p.systemPrompt).not.toContain('2026-03-15');
+    expect(p.systemPrompt).not.toContain('Benji');
+    expect(p.turnContext).toContain('2026-03-15');
+    expect(p.turnContext).toContain('Benji');
   });
 
-  it('heartbeat prompt is minimal: identity + checklist only', () => {
+  it('domain files move into turnContext, not systemPrompt — topic selection must not bust cache', () => {
+    mem.update('domains/nutrition.md', '# nutrition notes', 'seed for test');
+    mem.update('domains/training.md', '# training notes', 'seed for test');
+    const p1 = assemblePrompt(mem, { kind: 'user', domainFiles: ['domains/nutrition.md'] });
+    const p2 = assemblePrompt(mem, { kind: 'user', domainFiles: ['domains/training.md'] });
+    expect(p1.systemPrompt).not.toContain('nutrition notes');
+    expect(p1.turnContext).toContain('nutrition notes');
+    // systemPrompt is identical even though the topic (and thus domainFiles) changed.
+    expect(p1.systemPrompt).toBe(p2.systemPrompt);
+  });
+
+  it('heartbeat systemPrompt is minimal: identity + checklist only', () => {
     const p = assemblePrompt(mem, { kind: 'heartbeat' });
-    expect(p).toContain('HEARTBEAT.md');
-    expect(p).not.toContain('PLATFORM.md');
-    expect(p.length).toBeLessThan(assemblePrompt(mem, { kind: 'user' }).length);
+    expect(p.systemPrompt).toContain('HEARTBEAT.md');
+    expect(p.systemPrompt).not.toContain('PLATFORM.md');
+    expect(p.systemPrompt.length).toBeLessThan(assemblePrompt(mem, { kind: 'user' }).systemPrompt.length);
   });
 });
 
@@ -224,6 +246,38 @@ describe('AgentRuntime.run (fake SDK)', () => {
     // usage recorded
     const usage = cabinet.db.prepare('SELECT model, input_tokens, cost_usd FROM token_usage').get() as any;
     expect(usage).toMatchObject({ input_tokens: 10, cost_usd: 0.001 });
+  });
+
+  it('systemPrompt is byte-stable across turns; per-turn context is wrapped into the message, not the system prompt', async () => {
+    const seen: { systemPrompt: string; prompt: string }[] = [];
+    const queryFn = ((args: any) => {
+      seen.push({ systemPrompt: args.options.systemPrompt, prompt: args.prompt });
+      const messages = happyScript(args.options.model);
+      return (async function* () {
+        for (const m of messages) yield m;
+      })();
+    }) as unknown as QueryFn;
+    const rt = mkRuntime(queryFn);
+
+    await rt.run({
+      threadId: 't1', prompt: 'first', kind: 'user', onEvent: () => {},
+      promptInput: { now: new Date('2026-01-01T00:00:00Z') },
+    });
+    await rt.run({
+      threadId: 't1', prompt: 'second', kind: 'user', onEvent: () => {},
+      promptInput: { now: new Date('2026-06-01T00:00:00Z') },
+    });
+
+    expect(seen).toHaveLength(2);
+    // The core invariant: byte-identical systemPrompt across turns.
+    expect(seen[0].systemPrompt).toBe(seen[1].systemPrompt);
+    expect(seen[0].systemPrompt).not.toContain('Current datetime');
+    // Per-turn data rides in the wrapped message instead.
+    expect(seen[0].prompt).toContain('<turn-context>');
+    expect(seen[0].prompt).toContain('2026-01-01');
+    expect(seen[0].prompt).toContain('first');
+    expect(seen[1].prompt).toContain('2026-06-01');
+    expect(seen[0].prompt).not.toBe(seen[1].prompt);
   });
 
   it('resumes user turns with the stored session id, not scheduled turns', async () => {

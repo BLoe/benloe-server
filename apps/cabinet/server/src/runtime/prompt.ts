@@ -1,8 +1,6 @@
 import type { MemoryStore } from '../memory/index.js';
 import type { LessonRow } from '../episodic/index.js';
 
-export const VOLATILE_MARKER = '\n\n---\n<!-- volatile: nothing above this line may vary per turn -->\n';
-
 /** Who Cabinet is speaking with this turn (identity attribution). */
 export interface Interlocutor {
   name: string;
@@ -12,15 +10,30 @@ export interface Interlocutor {
 
 export interface PromptInput {
   kind: 'user' | 'heartbeat' | 'cron';
-  /** domains/*.md files relevant to the active topic (layer 4). */
+  /** domains/*.md files relevant to the active topic — per-turn context, NOT the system prompt (topic selection varies per turn, so it can't live in the cached prefix). */
   domainFiles?: string[];
-  /** Recalled lessons for this turn (layer 5, volatile). */
+  /** Recalled lessons for this turn — per-turn context. */
   lessons?: Pick<LessonRow, 'text' | 'domain'>[];
-  /** Deterministic snapshot from query_db (layer 6, volatile). */
+  /** Deterministic snapshot from query_db — per-turn context. */
   snapshot?: string;
-  /** Who this turn's message is from (user turns only). */
+  /** Who this turn's message is from (user turns only) — per-turn context. */
   interlocutor?: Interlocutor;
   now?: Date;
+}
+
+export interface AssembledPrompt {
+  /**
+   * Passed as options.systemPrompt. MUST be byte-identical across turns
+   * (barring an actual memory-file edit) for the Agent SDK's prompt cache
+   * to hit. Nothing time-varying belongs here — no datetime, interlocutor,
+   * lessons, snapshot, or topic-selected domain files.
+   */
+  systemPrompt: string;
+  /**
+   * Everything that varies per turn, meant to be prepended to the turn's
+   * message instead of glued into the system prompt.
+   */
+  turnContext: string;
 }
 
 /** A line telling Cabinet who it's talking to, and how to stand with them. */
@@ -40,46 +53,46 @@ export function interlocutorLine(who: Interlocutor): string {
 }
 
 /**
- * Layered system prompt (§9.3): stable → volatile so the cached prefix
- * survives across turns. Layers 1–4 must be byte-identical between turns
- * unless a memory file actually changed; everything time-varying lives
- * strictly below VOLATILE_MARKER. Heartbeats get a minimal prompt.
+ * Split system prompt / per-turn context (§9.3). options.systemPrompt must
+ * be byte-identical across turns so the Agent SDK's prompt cache actually
+ * hits — verified 2026-07-09 via token_usage: before this fix, the whole
+ * assembled string (identity core AND per-turn volatile data, including a
+ * millisecond-precision timestamp) was glued into one string and passed as
+ * systemPrompt, so cache_write recurred at near-full size every turn instead
+ * of collapsing to a cache_read after the first. Everything time-varying —
+ * datetime, session kind, interlocutor, recalled lessons, today's snapshot,
+ * and topic-selected domain files (these were "stable" only in the sense of
+ * never being *marked* volatile, but topic selection varies per turn just
+ * like the clock does) — now lives in turnContext and gets prepended to the
+ * turn's message instead. Heartbeats get a minimal system prompt.
  */
-export function assemblePrompt(mem: MemoryStore, input: PromptInput): string {
+export function assemblePrompt(mem: MemoryStore, input: PromptInput): AssembledPrompt {
+  const systemPrompt =
+    input.kind === 'heartbeat'
+      ? [
+          `<memory file="IDENTITY.md">\n${mem.read('IDENTITY.md')}\n</memory>`,
+          `<memory file="HEARTBEAT.md">\n${mem.read('HEARTBEAT.md')}\n</memory>`,
+        ].join('\n\n')
+      : mem.promptCore();
+
   const now = input.now ?? new Date();
-  const volatile: string[] = [
+  const context: string[] = [
     `Current datetime: ${now.toISOString()} (America/New_York for all user-facing times).`,
     `Session kind: ${input.kind}.`,
   ];
-  if (input.interlocutor) volatile.push(interlocutorLine(input.interlocutor));
+  if (input.interlocutor) context.push(interlocutorLine(input.interlocutor));
   if (input.lessons?.length) {
-    volatile.push('Recalled lessons (situational, apply with judgment):');
-    for (const l of input.lessons) volatile.push(`- [${l.domain ?? 'general'}] ${l.text}`);
+    context.push('Recalled lessons (situational, apply with judgment):');
+    for (const l of input.lessons) context.push(`- [${l.domain ?? 'general'}] ${l.text}`);
   }
-  if (input.snapshot) volatile.push(`Today snapshot:\n${input.snapshot}`);
-
-  if (input.kind === 'heartbeat') {
-    // Minimal stable prefix: identity + checklist only (§9.3).
-    const stable = [
-      `<memory file="IDENTITY.md">\n${mem.read('IDENTITY.md')}\n</memory>`,
-      `<memory file="HEARTBEAT.md">\n${mem.read('HEARTBEAT.md')}\n</memory>`,
-    ].join('\n\n');
-    return stable + VOLATILE_MARKER + volatile.join('\n');
-  }
-
-  const stableParts = [mem.promptCore()];
+  if (input.snapshot) context.push(`Today snapshot:\n${input.snapshot}`);
   for (const f of input.domainFiles ?? []) {
     try {
-      stableParts.push(`<memory file="${f}">\n${mem.read(f)}\n</memory>`);
+      context.push(`<memory file="${f}">\n${mem.read(f)}\n</memory>`);
     } catch {
       /* missing domain file is fine */
     }
   }
-  return stableParts.join('\n\n') + VOLATILE_MARKER + volatile.join('\n');
-}
 
-/** The cacheable prefix: everything up to and including the marker. */
-export function stablePrefix(prompt: string): string {
-  const i = prompt.indexOf(VOLATILE_MARKER);
-  return i === -1 ? prompt : prompt.slice(0, i + VOLATILE_MARKER.length);
+  return { systemPrompt, turnContext: context.join('\n\n') };
 }

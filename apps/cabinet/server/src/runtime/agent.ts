@@ -151,7 +151,12 @@ export class AgentRuntime {
     this.currentThreadId = req.threadId;
     req.onEvent({ type: 'turn-start', messageId, threadId: req.threadId, model });
 
-    const systemPrompt = assemblePrompt(this.opts.memory, { kind: req.kind, ...req.promptInput });
+    // §9.3: systemPrompt must be byte-stable across turns for the SDK's
+    // prompt cache to hit — everything per-turn (datetime, interlocutor,
+    // lessons, snapshot, topic domain files) is wrapped into the message
+    // instead, never glued into the system prompt.
+    const { systemPrompt, turnContext } = assemblePrompt(this.opts.memory, { kind: req.kind, ...req.promptInput });
+    const wrappedPrompt = `<turn-context>\n${turnContext}\n</turn-context>\n\n${req.prompt}`;
 
     let sessionId: string | null = thread.sdk_session_id;
     let stopReason = 'end_turn';
@@ -159,7 +164,7 @@ export class AgentRuntime {
 
     try {
       const q = this.queryFn({
-        prompt: req.prompt,
+        prompt: wrappedPrompt,
         options: {
           model,
           effort,
