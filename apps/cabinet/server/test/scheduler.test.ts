@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, type CabinetDb } from '../src/db/index.js';
 import { ApprovalQueue } from '../src/tiers/approvals.js';
-import { EpisodicStore } from '../src/episodic/index.js';
+import { EpisodicStore, pendingBackfillCount } from '../src/episodic/index.js';
 import { Embedder } from '../src/embeddings/index.js';
 import { nextDaily, nextHeartbeat, nextWeekly, nyParts, nyWallToUtc } from '../src/scheduler/clock.js';
 import { Scheduler } from '../src/scheduler/index.js';
@@ -599,6 +600,104 @@ describe('jobs', () => {
     expect(audit).toHaveLength(1); // persists past a process restart, unlike Scheduler.lastResult
     warn.mockRestore();
     rmSync(emptyDir, { recursive: true, force: true });
+  });
+
+  describe('maintenance: conversation indexing (mentorship: Phase 3 item 3 keystone)', () => {
+    const addThread = (kind: string) => {
+      const id = kind === 'user' ? randomUUID() : `sys-${kind}-${randomUUID()}`;
+      cabinet.db.prepare('INSERT INTO thread (id, title, kind) VALUES (?,?,?)').run(id, null, kind);
+      return id;
+    };
+    const addMsg = (threadId: string, role: string, text: string) =>
+      cabinet.db
+        .prepare('INSERT INTO message (id, thread_id, role, parts) VALUES (?,?,?,?)')
+        .run(randomUUID(), threadId, role, JSON.stringify([{ type: 'text', text }]));
+
+    it('indexes a real user-thread message: embedded flips to 1, backfilled increments, and it lands in the episodic chunk store as kind=conversation, findable via searchChunks', async () => {
+      const t = addThread('user');
+      addMsg(t, 'user', 'Ben asked whether the catastrophic-shrink threshold should be forty percent.');
+
+      const res = await runMaintenance(deps);
+      expect(res.backfilled).toBe(1);
+      const row = cabinet.db.prepare('SELECT embedded FROM message').get() as { embedded: number };
+      expect(row.embedded).toBe(1);
+
+      const [vector] = await deps.embedder.embed(['catastrophic shrink threshold forty percent']);
+      const hits = deps.episodic.searchChunks(vector!, 5, 'conversation');
+      expect(hits.some((h) => h.text.includes('catastrophic-shrink threshold'))).toBe(true);
+    }, MODEL_TIMEOUT);
+
+    it('excludes sys-* thread messages (heartbeat/briefing/checkin/weekly narration, not conversational memory) — flagged embedded=1 without being indexed', async () => {
+      const t = addThread('heartbeat');
+      addMsg(t, 'assistant', 'HEARTBEAT_OK — this is exactly the kind of audit narration that must not pollute recall.');
+
+      const res = await runMaintenance(deps);
+      expect(res.backfilled).toBe(0); // never selected as a candidate at all
+      const row = cabinet.db.prepare('SELECT embedded FROM message').get() as { embedded: number };
+      expect(row.embedded).toBe(0); // never touched — excluded by the WHERE clause itself, not skip-but-flag
+    }, MODEL_TIMEOUT);
+
+    it('excludes role=system messages within an otherwise-eligible user thread', async () => {
+      const t = addThread('user');
+      addMsg(t, 'system', 'An internal system-role message that should never be indexed.');
+
+      const res = await runMaintenance(deps);
+      expect(res.backfilled).toBe(0);
+    }, MODEL_TIMEOUT);
+
+    it('skip-but-flag: a message whose extracted text is under the 15-char floor is flagged embedded=1 without being indexed, and is never reselected', async () => {
+      const t = addThread('user');
+      addMsg(t, 'user', 'ok'); // 2 chars, well under the floor
+
+      const res = await runMaintenance(deps);
+      expect(res.backfilled).toBe(0); // looked at, not indexed
+      const row = cabinet.db.prepare('SELECT embedded FROM message').get() as { embedded: number };
+      expect(row.embedded).toBe(1); // flagged done anyway — never rescanned
+
+      const again = await runMaintenance(deps);
+      expect(again.backfilled).toBe(0); // confirms it wasn't silently reselected on a second run
+    }, MODEL_TIMEOUT);
+
+    it('a message embed failure is logged with the row id, leaves embedded=0, and stops that table\'s batch — same discipline as journal_entry\'s', async () => {
+      const t = addThread('user');
+      addMsg(t, 'user', 'a real message long enough to clear the fifteen character floor easily');
+      const brokenEmbedder = { embed: async () => { throw new Error('embedding process exited (code 1)'); } } as unknown as Embedder;
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const res = await runMaintenance({ ...deps, embedder: brokenEmbedder });
+
+      expect(res.backfilled).toBe(0);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('backfill: embed failed for message id='));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('embedding process exited (code 1)'));
+      const row = cabinet.db.prepare('SELECT embedded FROM message').get() as { embedded: number };
+      expect(row.embedded).toBe(0); // left for tomorrow's retry, not silently marked done
+      warn.mockRestore();
+    }, MODEL_TIMEOUT);
+
+    it('a >50-row backlog drains over multiple nightly runs rather than being silently capped forever', async () => {
+      const t = addThread('user');
+      for (let i = 0; i < 55; i++) addMsg(t, 'user', `distinct real message number ${i} long enough to clear the floor`);
+
+      const first = await runMaintenance(deps); // the existing 50-row LIMIT per table per run
+      expect(first.backfilled).toBe(50);
+      const pendingAfterFirst = (cabinet.db.prepare('SELECT COUNT(*) n FROM message WHERE embedded = 0').get() as { n: number }).n;
+      expect(pendingAfterFirst).toBe(5);
+
+      const second = await runMaintenance(deps);
+      expect(second.backfilled).toBe(5);
+      const pendingAfterSecond = (cabinet.db.prepare('SELECT COUNT(*) n FROM message WHERE embedded = 0').get() as { n: number }).n;
+      expect(pendingAfterSecond).toBe(0); // fully drained, not stuck
+    }, MODEL_TIMEOUT);
+
+    it('pendingBackfillCount never counts a permanently-excluded sys-* thread message as "pending" — it would sit at embedded=0 forever and falsely inflate the number', () => {
+      const sys = addThread('heartbeat');
+      addMsg(sys, 'assistant', 'HEARTBEAT_OK, permanently excluded, permanently embedded=0.');
+      expect(pendingBackfillCount(cabinet.db)).toBe(0);
+
+      const user = addThread('user');
+      addMsg(user, 'user', 'a real message that IS genuinely pending backfill');
+      expect(pendingBackfillCount(cabinet.db)).toBe(1); // only the real one counts
+    });
   });
 
   it(

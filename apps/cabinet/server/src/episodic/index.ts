@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { EMBEDDING_DIMS, chunkText, type Embedder } from '../embeddings/index.js';
+import { extractText, type MessagePart } from '../gateway/fold.js';
 
 export type ChunkKind = 'conversation' | 'journal' | 'document';
 
@@ -32,12 +33,27 @@ export interface EmbeddableTable {
   table: string;
   /** INTEGER flag column on that table: 0 = not yet embedded, 1 = embedded. */
   flagColumn: string;
-  /** Column holding the free text to embed. */
+  /** Column holding the free text to embed (or, with `extract`, the raw value to transform). */
   textColumn: string;
   /** episodic chunk kind these rows are indexed as. */
   kind: ChunkKind;
   /** Builds the episodic chunk.source_ref for a given row id. */
   sourceRef: (id: number) => string;
+  /**
+   * Extra SQL predicate ANDed onto `{flagColumn} = 0`, scoped to columns on
+   * `table` itself (no joins — keeps this a plain string safely appended in
+   * both the backfill candidate query and pendingBackfillCount below, so a
+   * permanently-excluded row is excluded from BOTH and never inflates the
+   * "pending" count by sitting at flagColumn=0 forever, uncounted-but-visible).
+   */
+  where?: string;
+  /**
+   * Transform the raw `textColumn` value into what to embed, or null to
+   * skip-but-flag (the caller sets flagColumn=1 anyway — e.g. too short to
+   * be worth a vector, not an error). Absent = use the raw value as-is
+   * (journal_entry's original, unchanged behavior).
+   */
+  extract?: (raw: string) => string | null;
 }
 
 /**
@@ -52,13 +68,39 @@ export interface EmbeddableTable {
  */
 export const EMBEDDABLE_TABLES: EmbeddableTable[] = [
   { table: 'journal_entry', flagColumn: 'embedded', textColumn: 'body', kind: 'journal', sourceRef: (id) => `journal:${id}` },
+  {
+    table: 'message',
+    flagColumn: 'embedded',
+    textColumn: 'parts',
+    kind: 'conversation',
+    sourceRef: (id) => `message:${id}`,
+    // sys-* thread ids are exactly and only systemThread()'s cron/heartbeat
+    // threads (scheduler/jobs.ts) — audit-shaped narration, not conversational
+    // memory. Cheaper and more robust than joining to thread.kind: no join
+    // needed, and it doesn't depend on kind semantics staying what they are today.
+    where: "thread_id NOT LIKE 'sys-%' AND role IN ('user','assistant')",
+    extract: (raw) => {
+      let parts: MessagePart[];
+      try {
+        parts = JSON.parse(raw) as MessagePart[];
+      } catch {
+        return null; // malformed parts JSON — skip-but-flag, don't retry forever
+      }
+      const text = extractText(parts);
+      // A floor, not a hard rule: drops tool-call-only turns and bare acks
+      // ("ok", "thanks") as recall anchors while keeping short-but-real
+      // replies ("yes, do it") that still carry meaning.
+      return text.length >= 15 ? text : null;
+    },
+  },
 ];
 
 /** Sum of not-yet-embedded rows across every table in EMBEDDABLE_TABLES — the "is the embed pipeline caught up?" number. */
 export function pendingBackfillCount(db: Database.Database): number {
   let total = 0;
   for (const t of EMBEDDABLE_TABLES) {
-    const row = db.prepare(`SELECT COUNT(*) AS n FROM ${t.table} WHERE ${t.flagColumn} = 0`).get() as { n: number };
+    const where = t.where ? ` AND ${t.where}` : '';
+    const row = db.prepare(`SELECT COUNT(*) AS n FROM ${t.table} WHERE ${t.flagColumn} = 0${where}`).get() as { n: number };
     total += row.n;
   }
   return total;

@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import type { AgentRuntime, TurnEvent } from '../runtime/agent.js';
 import type { PromptInput } from '../runtime/prompt.js';
 import type { TurnKind } from '../runtime/queue.js';
-import { foldEvent, type MessagePart } from './fold.js';
+import { extractText, foldEvent, type MessagePart } from './fold.js';
 
 /**
  * Folds a turn's events into a persisted assistant message — the same
@@ -95,10 +95,5 @@ export async function runAgentCronJob(
   } finally {
     recorder.persist(db, opts.threadId);
   }
-  const text = recorder.parts
-    .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
-    .map((p) => p.text)
-    .join(' ')
-    .trim();
-  return { parts: recorder.parts, text };
+  return { parts: recorder.parts, text: extractText(recorder.parts as MessagePart[]) };
 }

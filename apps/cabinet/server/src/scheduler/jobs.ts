@@ -270,15 +270,23 @@ export async function runMaintenance(deps: JobDeps): Promise<{ backups: string[]
 
   // Embedding backfill for rows that missed indexing (§14). Loops over every
   // table in EMBEDDABLE_TABLES so a new embedding domain needs one registry
-  // entry there, not a new copy of this loop.
+  // entry there, not a new copy of this loop. `extract` (when present) can
+  // return null to mean "looked at, not worth indexing" (too short, or a
+  // parse failure) — flagged done either way so it's never rescanned forever.
   let backfilled = 0;
   for (const t of EMBEDDABLE_TABLES) {
+    const where = t.where ? ` AND ${t.where}` : '';
     const pending = db
-      .prepare(`SELECT id, ${t.textColumn} AS text FROM ${t.table} WHERE ${t.flagColumn} = 0 LIMIT 50`)
+      .prepare(`SELECT id, ${t.textColumn} AS text FROM ${t.table} WHERE ${t.flagColumn} = 0${where} LIMIT 50`)
       .all() as { id: number; text: string }[];
     for (const row of pending) {
+      const text = t.extract ? t.extract(row.text) : row.text;
+      if (text === null) {
+        db.prepare(`UPDATE ${t.table} SET ${t.flagColumn} = 1 WHERE id = ?`).run(row.id);
+        continue; // skip-but-flag: not an error, just nothing worth a vector
+      }
       try {
-        await deps.episodic.indexText(deps.embedder, t.kind, t.sourceRef(row.id), null, row.text);
+        await deps.episodic.indexText(deps.embedder, t.kind, t.sourceRef(row.id), null, text);
         db.prepare(`UPDATE ${t.table} SET ${t.flagColumn} = 1 WHERE id = ?`).run(row.id);
         backfilled++;
       } catch (err) {
