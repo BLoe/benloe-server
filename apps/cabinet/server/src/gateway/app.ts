@@ -7,8 +7,10 @@ import type Database from 'better-sqlite3';
 import type { EventEmitter } from 'node:events';
 import type { AgentRuntime, TurnEvent } from '../runtime/agent.js';
 import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
-import type { EmbedderStatus } from '../embeddings/index.js';
+import type { Embedder, EmbedderStatus } from '../embeddings/index.js';
+import type { EpisodicStore } from '../episodic/index.js';
 import { pendingBackfillCount } from '../episodic/index.js';
+import { recallLessons } from '../memory/lessons.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import { foldEvent, type MessagePart } from './fold.js';
 import { registerSurfaceRoutes } from './surfaces.js';
@@ -24,6 +26,9 @@ export interface GatewayDeps {
   authServiceUrl?: string;
   /** healthz extras */
   embedderStatus?: () => EmbedderStatus;
+  /** Auto-recall relevant lessons before a user turn (undefined in tests that don't care). */
+  episodic?: EpisodicStore;
+  embedder?: Embedder;
   /** curated memory store, for the Brain surface (GET/PUT /api/memory) */
   memory?: { list(): string[]; read(file: string): string; update(file: string, content: string, reason: string): void };
   /** Injectable for tests; production defaults to the real dir. */
@@ -161,14 +166,30 @@ export function buildApp(deps: GatewayDeps) {
       res.write(encodeSse({ event: e.type, data: e }));
     };
 
+    // Auto-recall (§7.3 follow-up, 2026-07-09): a lesson sitting in the store
+    // changed nothing about a future turn unless something proactively
+    // recalled it — nothing did. Recall against the current user message
+    // (symmetric with jobs.ts's snapshot pattern) and let recallLessons'
+    // relevance cutoff decide what's worth injecting. Embedder down/crashed
+    // must not break the turn — log and proceed lesson-less.
+    let lessons: Awaited<ReturnType<typeof recallLessons>> = [];
+    if (deps.episodic && deps.embedder) {
+      try {
+        lessons = await recallLessons(deps.episodic, deps.embedder, text);
+      } catch (err) {
+        console.warn(`chat: lesson recall failed for thread ${threadId}: ${(err as Error).message}`);
+      }
+    }
+
     const hb = setInterval(() => res.write(SSE_HEARTBEAT), 25_000);
     try {
       await deps.runtime.run({
         threadId, prompt: text, kind: 'user', onEvent: send,
-        // Tell Cabinet who it's talking to (Ben vs an agent like Benji).
-        promptInput: principal
-          ? { interlocutor: { name: principal.name ?? principal.email, role: principal.role, isOwner: principal.isOwner } }
-          : undefined,
+        promptInput: {
+          // Tell Cabinet who it's talking to (Ben vs an agent like Benji).
+          ...(principal ? { interlocutor: { name: principal.name ?? principal.email, role: principal.role, isOwner: principal.isOwner } } : {}),
+          ...(lessons.length ? { lessons: lessons.map((l) => ({ text: l.text, domain: l.domain })) } : {}),
+        },
       });
     } catch (err) {
       res.write(encodeSse({ event: 'error', data: { message: String((err as Error).message).slice(0, 300), retryable: true } }));
