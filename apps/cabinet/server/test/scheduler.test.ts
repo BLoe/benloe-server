@@ -107,6 +107,28 @@ describe('Scheduler', () => {
     s.stop();
   });
 
+  it('a success after a prior failure clears the stale lastError (timer path) — the signal must reflect the MOST RECENT run', async () => {
+    let calls = 0;
+    const s = new Scheduler([
+      {
+        name: 'flaky',
+        next: (from) => new Date(from.getTime() + 1000),
+        run: async () => {
+          calls++;
+          if (calls === 1) throw new Error('boom');
+        },
+      },
+    ]);
+    s.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(s.lastError.get('flaky')).toBe('boom');
+    await vi.advanceTimersByTimeAsync(1000); // second fire succeeds
+    expect(calls).toBe(2);
+    expect(s.lastError.get('flaky')).toBeUndefined(); // not still "boom"
+    expect(s.lastRun.get('flaky')).toBeInstanceOf(Date);
+    s.stop();
+  });
+
   describe('runNow (manual trigger)', () => {
     it('invokes the exact same JobSpec.run() the timer would — not a rebuilt copy', async () => {
       let calls = 0;
@@ -142,6 +164,90 @@ describe('Scheduler', () => {
       resolveFirst();
       await first;
       expect(starts).toBe(1);
+    });
+
+    it('a success after a prior failure clears the stale lastError (runNow path)', async () => {
+      let calls = 0;
+      const s = new Scheduler([
+        {
+          name: 'x',
+          next: () => null,
+          run: async () => {
+            calls++;
+            if (calls === 1) throw new Error('boom');
+          },
+        },
+      ]);
+      await expect(s.runNow('x')).rejects.toThrow('boom');
+      expect(s.lastError.get('x')).toBe('boom');
+      await s.runNow('x');
+      expect(s.lastError.get('x')).toBeUndefined();
+    });
+
+    it('stashes a job\'s resolved value in lastResult, verbatim, only when it returns something', async () => {
+      const s = new Scheduler([
+        { name: 'reports', next: () => null, run: async () => ({ backups: ['a'], backfilled: 2 }) },
+        { name: 'silent', next: () => null, run: async () => {} },
+      ]);
+      await s.runNow('reports');
+      await s.runNow('silent');
+      expect(s.lastResult.get('reports')).toEqual({ backups: ['a'], backfilled: 2 });
+      expect(s.lastResult.has('silent')).toBe(false);
+    });
+  });
+
+  describe('jobsHealth (mentorship: observability audit, phase 2 #1)', () => {
+    it('a never-run job reports lastRun: null but a populated nextFireAt — "scheduled, hasn\'t fired" vs "should have run and didn\'t"', () => {
+      const s = new Scheduler([{ name: 'briefing', next: (from) => new Date(from.getTime() + 60_000), run: async () => {} }]);
+      const health = s.jobsHealth();
+      expect(health.briefing).toEqual({
+        lastRun: null,
+        lastError: null,
+        nextFireAt: expect.any(String),
+        lastResult: null,
+      });
+    });
+
+    it('a disabled job (next() → null) reports nextFireAt: null too', () => {
+      const s = new Scheduler([{ name: 'off', next: () => null, run: async () => {} }]);
+      expect(s.jobsHealth().off?.nextFireAt).toBeNull();
+    });
+
+    it('after a successful run, lastRun is an ISO string and lastError stays null', async () => {
+      const s = new Scheduler([{ name: 'heartbeat', next: () => null, run: async () => {} }]);
+      await s.runNow('heartbeat');
+      const entry = s.jobsHealth().heartbeat!;
+      expect(entry.lastRun).toEqual(expect.any(String));
+      expect(new Date(entry.lastRun!).toString()).not.toBe('Invalid Date');
+      expect(entry.lastError).toBeNull();
+    });
+
+    it('failed-then-succeeded: lastError clears back to null on the healthz snapshot, not stuck on the stale error', async () => {
+      let calls = 0;
+      const s = new Scheduler([
+        {
+          name: 'weekly-review',
+          next: () => null,
+          run: async () => {
+            calls++;
+            if (calls === 1) throw new Error('opus refused');
+          },
+        },
+      ]);
+      await expect(s.runNow('weekly-review')).rejects.toThrow('opus refused');
+      expect(s.jobsHealth()['weekly-review']!.lastError).toBe('opus refused');
+      await s.runNow('weekly-review');
+      expect(s.jobsHealth()['weekly-review']!.lastError).toBeNull();
+    });
+
+    it('carries a job\'s lastResult through to the snapshot — the maintenance zero-backups acceptance bar', async () => {
+      const s = new Scheduler([
+        { name: 'maintenance', next: () => null, run: async () => ({ backups: [], backfilled: 0, expired: 0 }) },
+      ]);
+      await s.runNow('maintenance');
+      const entry = s.jobsHealth().maintenance!;
+      expect(entry.lastRun).toEqual(expect.any(String)); // ran successfully...
+      expect(entry.lastResult).toEqual({ backups: [], backfilled: 0, expired: 0 }); // ...but produced nothing — distinct from a run with backups
     });
   });
 });
@@ -421,4 +527,26 @@ describe('jobs', () => {
     expect((cabinet.db.prepare('SELECT embedded FROM journal_entry').get() as { embedded: number }).embedded).toBe(0);
     warn.mockRestore();
   });
+
+  it('maintenance: completing without throwing but producing zero backups is warned + recorded distinctly — not indistinguishable from a healthy run', async () => {
+    const emptyDir = mkdtempSync(join(tmpdir(), 'cabinet-empty-')); // neither cabinet.db nor episodic.db exists here
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await runMaintenance({ ...deps, dataDir: emptyDir });
+    expect(res.backups).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('maintenance: zero backups produced'));
+    const audit = cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='maintenance-zero-backups'").all();
+    expect(audit).toHaveLength(1); // persists past a process restart, unlike Scheduler.lastResult
+    warn.mockRestore();
+    rmSync(emptyDir, { recursive: true, force: true });
+  });
+
+  it(
+    "maintenance's JobSpec.run() resolves to (does not discard) runMaintenance's result — Scheduler.lastResult depends on this not being void",
+    async () => {
+      const jobs = buildJobs(deps);
+      const result = await jobs.find((j) => j.name === 'maintenance')!.run();
+      expect(result).toMatchObject({ backups: expect.any(Array), backfilled: expect.any(Number), expired: expect.any(Number) });
+    },
+    MODEL_TIMEOUT,
+  );
 });

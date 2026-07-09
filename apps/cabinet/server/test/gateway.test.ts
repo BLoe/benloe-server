@@ -181,6 +181,78 @@ describe('auth wall', () => {
     expect(body.embedder.state).toBe('ready');
     expect(body.embedder.pendingBackfill).toBe(1); // the un-embedded row, not the embedded one
   });
+
+  describe('/api/healthz.jobs (mentorship: observability audit, phase 2 #1)', () => {
+    type JobsHealth = Record<string, { lastRun: string | null; lastError: string | null; nextFireAt: string | null; lastResult: unknown }>;
+    function withJobsHealth(jobsHealth: () => JobsHealth) {
+      const app = buildApp({
+        db: cabinet.db,
+        runtime: fakeRuntime() as never,
+        approvals,
+        widgetBus,
+        ownerEmail: OWNER,
+        authFetch: fakeAuthFetch,
+        scheduler: { has: () => true, runNow: async () => {}, jobsHealth },
+      });
+      server = app.listen(0, '127.0.0.1');
+      return new Promise<void>((r) => {
+        server.once('listening', () => {
+          base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+          r();
+        });
+      });
+    }
+
+    it('carries the scheduler\'s per-job snapshot verbatim', async () => {
+      await withJobsHealth(() => ({
+        heartbeat: { lastRun: '2026-07-09T10:00:00.000Z', lastError: null, nextFireAt: '2026-07-09T10:30:00.000Z', lastResult: null },
+        maintenance: { lastRun: '2026-07-09T07:00:00.000Z', lastError: null, nextFireAt: '2026-07-10T07:00:00.000Z', lastResult: { backups: ['/x/2026-07-09-cabinet.db'], backfilled: 3, expired: 0 } },
+      }));
+      const body = await (await asOwner('/api/healthz')).json();
+      expect(body.jobs.heartbeat).toEqual({ lastRun: '2026-07-09T10:00:00.000Z', lastError: null, nextFireAt: '2026-07-09T10:30:00.000Z', lastResult: null });
+      expect(body.jobs.maintenance.lastResult).toEqual({ backups: ['/x/2026-07-09-cabinet.db'], backfilled: 3, expired: 0 });
+    });
+
+    it('a never-fired job reads lastRun: null with nextFireAt populated — distinguishable from "should have run and didn\'t"', async () => {
+      await withJobsHealth(() => ({
+        'weekly-review': { lastRun: null, lastError: null, nextFireAt: '2026-07-12T13:00:00.000Z', lastResult: null },
+      }));
+      const body = await (await asOwner('/api/healthz')).json();
+      expect(body.jobs['weekly-review']).toEqual({ lastRun: null, lastError: null, nextFireAt: '2026-07-12T13:00:00.000Z', lastResult: null });
+    });
+
+    it('the maintenance zero-backups acceptance bar: lastRun present + lastResult.backups empty reads distinctly from a healthy run, from healthz alone', async () => {
+      await withJobsHealth(() => ({
+        maintenance: { lastRun: '2026-07-09T07:00:00.000Z', lastError: null, nextFireAt: '2026-07-10T07:00:00.000Z', lastResult: { backups: [], backfilled: 0, expired: 0 } },
+      }));
+      const body = await (await asOwner('/api/healthz')).json();
+      expect(body.jobs.maintenance.lastRun).not.toBeNull(); // it ran...
+      expect(body.jobs.maintenance.lastResult.backups).toEqual([]); // ...but shipped nothing — not silently equivalent to success
+    });
+
+    it('jobs is {} when no scheduler is wired (e.g. CABINET_SCHEDULER=off) — not a missing field or a throw', async () => {
+      await startApp(); // default fixture never passes `scheduler`
+      const body = await (await asOwner('/api/healthz')).json();
+      expect(body.jobs).toEqual({});
+    });
+
+    it('jobs is {} when a scheduler is wired but predates jobsHealth (e.g. the admin-trigger-only fakes elsewhere in this file)', async () => {
+      const app = buildApp({
+        db: cabinet.db,
+        runtime: fakeRuntime() as never,
+        approvals,
+        widgetBus,
+        ownerEmail: OWNER,
+        authFetch: fakeAuthFetch,
+        scheduler: { has: () => true, runNow: async () => {} }, // no jobsHealth
+      });
+      server = app.listen(0, '127.0.0.1');
+      await new Promise((r) => server.once('listening', r));
+      base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const body = await (await asOwner('/api/healthz')).json();
+      expect(body.jobs).toEqual({});
+    });
+  });
 });
 
 describe('admin job trigger', () => {

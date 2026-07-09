@@ -36,7 +36,20 @@ export interface GatewayDeps {
    * Deliberately the actual Scheduler instance (or a narrow view of it), not a
    * rebuilt copy: firing this proves the scheduler→job wiring itself.
    */
-  scheduler?: { has(name: string): boolean; runNow(name: string): Promise<void> };
+  scheduler?: {
+    has(name: string): boolean;
+    runNow(name: string): Promise<void>;
+    /**
+     * Optional (not just for typing convenience): several gateway tests build
+     * a narrow scheduler fake for the admin-trigger endpoint that predates
+     * this method and has no reason to grow it. The real production
+     * Scheduler always implements it — see scheduler/index.ts.
+     */
+    jobsHealth?(): Record<
+      string,
+      { lastRun: string | null; lastError: string | null; nextFireAt: string | null; lastResult: unknown }
+    >;
+  };
   /** healthz.buildMarker — the actually-built commit SHA (index.ts reads dist/build-info.json once at startup, written by scripts/write-build-info.mjs at build time). 'unknown' when absent (e.g. a dev `npm run dev` run, or tests). */
   buildMarker?: string;
   /** curated memory store, for the Brain surface (GET/PUT /api/memory) */
@@ -418,6 +431,14 @@ export function buildApp(deps: GatewayDeps) {
       db: dbOk,
       authMode: deps.runtime.authMode,
       embedder,
+      // Per-job {lastRun, lastError, nextFireAt, lastResult} for every cron
+      // job the scheduler holds (heartbeat, morning-briefing, evening-checkin,
+      // weekly-review, maintenance) — closes the "silent cron death" class
+      // observability audit flagged: the embedder was the only pipeline with
+      // a real alive/dead signal, every scheduled job was ambiguous. Reuses
+      // Scheduler's own tracking verbatim (see jobsHealth) — {} when no
+      // scheduler is wired (e.g. CABINET_SCHEDULER=off).
+      jobs: deps.scheduler?.jobsHealth?.() ?? {},
       // The commit actually compiled into this running dist/ (see index.ts's
       // readBuildInfo + scripts/write-build-info.mjs) — deploy verification
       // is now a one-line healthz read instead of bundle-grep + process-
