@@ -58,7 +58,7 @@ describe('cabinet MCP server', () => {
       'mcp__cabinet__log_food', 'mcp__cabinet__log_workout', 'mcp__cabinet__log_body_metric', 'mcp__cabinet__log_mood',
       'mcp__cabinet__add_journal', 'mcp__cabinet__log_claim', 'mcp__cabinet__log_lab', 'mcp__cabinet__log_medication',
       'mcp__cabinet__log_hsa_contribution', 'mcp__cabinet__import_transactions_csv', 'mcp__cabinet__update_pantry',
-      'mcp__cabinet__add_recipe', 'mcp__cabinet__upsert_task', 'mcp__cabinet__upsert_contact', 'mcp__cabinet__add_price_watch',
+      'mcp__cabinet__add_recipe', 'mcp__cabinet__upsert_task', 'mcp__cabinet__upsert_contact', 'mcp__cabinet__upsert_goal', 'mcp__cabinet__add_price_watch',
       'mcp__cabinet__query_db', 'mcp__cabinet__search_episodic', 'mcp__cabinet__search_documents', 'mcp__cabinet__recall_lessons',
       'mcp__cabinet__add_lesson', 'mcp__cabinet__retire_lesson', 'mcp__cabinet__list_promotable_lessons', 'mcp__cabinet__promote_lesson',
       'mcp__cabinet__update_memory', 'mcp__cabinet__render_widget', 'mcp__cabinet__enqueue_approval',
@@ -142,6 +142,18 @@ describe('cabinet MCP server', () => {
       .get() as { decision: string; result: string };
     expect(row.decision).toBe('REFUSED');
     expect(row.result).toContain('shrank');
+  });
+
+  it('upsert_goal creates then supersedes via the tool surface, and rejects an empty goal', async () => {
+    const first = JSON.parse((await call('upsert_goal', { domain: 'nutrition', title: 'protein', target_value: 165, unit: 'g' })).content[0]!.text);
+    expect(first.supersededPrevious).toBeNull();
+
+    const second = JSON.parse((await call('upsert_goal', { domain: 'nutrition', title: 'Protein', target_value: 185, unit: 'g' })).content[0]!.text);
+    expect(second.supersededPrevious).toEqual({ id: first.id, target_value: 165, unit: 'g', cadence: null });
+
+    const bad = await call('upsert_goal', { domain: 'training', title: 'vague' });
+    expect(bad.isError).toBe(true);
+    expect(bad.content[0]!.text).toContain('target_value or a cadence');
   });
 
   it(

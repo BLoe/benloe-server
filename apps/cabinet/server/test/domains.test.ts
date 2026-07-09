@@ -6,7 +6,7 @@ import { openDb, type CabinetDb } from '../src/db/index.js';
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../src/domains/food.js';
 import { ewma, logBodyMetric, logWorkout, weightTrend } from '../src/domains/training.js';
 import { accumulators, logClaim, logHsaContribution, logLab, logMedication, medicationsLow, seedInsurancePlan } from '../src/domains/healthcare.js';
-import { addJournal, addPriceWatch, importTransactionsCsv, logMood, upsertContact, upsertTask } from '../src/domains/misc.js';
+import { addJournal, addPriceWatch, importTransactionsCsv, logMood, upsertContact, upsertGoal, upsertTask } from '../src/domains/misc.js';
 
 let dir: string;
 let cabinet: CabinetDb;
@@ -166,5 +166,62 @@ describe('admin & social', () => {
     for (const t of ['mood_log', 'journal_entry', 'price_watch']) {
       expect((cabinet.db.prepare(`SELECT COUNT(*) n FROM ${t}`).get() as { n: number }).n).toBe(1);
     }
+  });
+});
+
+describe('goals (bi-temporal supersede — mentorship item 4)', () => {
+  it('creates a new goal with no prior to supersede', () => {
+    const res = upsertGoal(cabinet.db, { domain: 'nutrition', title: 'protein', target_value: 165, unit: 'g' });
+    expect(res.supersededPrevious).toBeNull();
+    const row = cabinet.db.prepare('SELECT domain, title, target_value, unit, active FROM goal WHERE id=?').get(res.id);
+    expect(row).toEqual({ domain: 'nutrition', title: 'protein', target_value: 165, unit: 'g', active: 1 });
+  });
+
+  it('supersedes an existing goal for the same (domain, normalized title): old row deactivated, new row active, old value returned', () => {
+    const first = upsertGoal(cabinet.db, { domain: 'nutrition', title: 'Protein', target_value: 165, unit: 'g' });
+    const second = upsertGoal(cabinet.db, { domain: 'nutrition', title: '  protein  ', target_value: 185, unit: 'g' });
+    expect(second.supersededPrevious).toEqual({ id: first.id, target_value: 165, unit: 'g', cadence: null });
+    expect(second.id).not.toBe(first.id);
+
+    const oldRow = cabinet.db.prepare('SELECT active FROM goal WHERE id=?').get(first.id) as { active: number };
+    expect(oldRow.active).toBe(0);
+    const newRow = cabinet.db.prepare('SELECT active, target_value FROM goal WHERE id=?').get(second.id) as { active: number; target_value: number };
+    expect(newRow).toEqual({ active: 1, target_value: 185 });
+  });
+
+  it('an exact-normalized-title match does not cross domains or match a different title', () => {
+    upsertGoal(cabinet.db, { domain: 'nutrition', title: 'protein', target_value: 165, unit: 'g' });
+    const trainingProtein = upsertGoal(cabinet.db, { domain: 'training', title: 'protein', target_value: 200, unit: 'g' });
+    expect(trainingProtein.supersededPrevious).toBeNull(); // different domain, not superseded
+
+    const calories = upsertGoal(cabinet.db, { domain: 'nutrition', title: 'calories', target_value: 2200, unit: 'kcal' });
+    expect(calories.supersededPrevious).toBeNull(); // different title, not superseded
+
+    // both nutrition rows (protein, calories) still active — a fuzzy match would have wrongly touched one
+    const activeNutrition = cabinet.db.prepare("SELECT COUNT(*) n FROM goal WHERE domain='nutrition' AND active=1").get() as { n: number };
+    expect(activeNutrition.n).toBe(2);
+  });
+
+  it('history is preserved — both rows still exist after supersession, only `active` differs', () => {
+    const first = upsertGoal(cabinet.db, { domain: 'training', title: 'squat 1RM', target_value: 225, unit: 'lb' });
+    const second = upsertGoal(cabinet.db, { domain: 'training', title: 'squat 1RM', target_value: 245, unit: 'lb' });
+    const rows = cabinet.db
+      .prepare("SELECT id, target_value, active FROM goal WHERE domain='training' AND lower(title)='squat 1rm' ORDER BY created_at")
+      .all();
+    expect(rows).toEqual([
+      { id: first.id, target_value: 225, active: 0 },
+      { id: second.id, target_value: 245, active: 1 },
+    ]);
+  });
+
+  it('accepts a cadence-only habit goal with no target_value', () => {
+    const res = upsertGoal(cabinet.db, { domain: 'training', title: 'lifting sessions', cadence: '4x/week' });
+    const row = cabinet.db.prepare('SELECT target_value, cadence FROM goal WHERE id=?').get(res.id);
+    expect(row).toEqual({ target_value: null, cadence: '4x/week' });
+  });
+
+  it('rejects a goal with neither target_value nor cadence — an empty goal tracks nothing', () => {
+    expect(() => upsertGoal(cabinet.db, { domain: 'training', title: 'vague intention' })).toThrow(/target_value or a cadence/);
+    expect((cabinet.db.prepare("SELECT COUNT(*) n FROM goal WHERE title='vague intention'").get() as { n: number }).n).toBe(0);
   });
 });

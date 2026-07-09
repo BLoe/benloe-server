@@ -114,3 +114,47 @@ export function addPriceWatch(db: Database.Database, w: { item: string; url?: st
     .run(w.item, w.url ?? null, w.target_price ?? null);
   return Number(lastInsertRowid);
 }
+
+// ---------- goals (bi-temporal: supersede, don't overwrite — mentorship item 4) ----------
+export interface GoalPrior { id: number; target_value: number | null; unit: string | null; cadence: string | null }
+export interface GoalUpsertResult { id: number; supersededPrevious: GoalPrior | null }
+
+/**
+ * Structured, machine-readable goals (target_value/unit/cadence) — the ones
+ * a Vitals dial compares "today's number" against (see surfaces.ts's
+ * goalTarget()). Deliberately distinct from GOALS.md, which stays
+ * narrative/qualitative context for the prompt, not a number a dial tracks.
+ *
+ * "The same goal" = (domain, normalized title) — exact match, not fuzzy.
+ * goalTarget()'s LIKE-based read is safe to be loose because the caller
+ * controls the search term (surfaces.ts's own code); a WRITE that deactivates
+ * a row must not risk silently superseding the wrong goal via substring
+ * fuzziness (e.g. "bench 1RM" matching "bench 1RM warm-up").
+ *
+ * Bi-temporal history needs no new column: `created_at` (already on the
+ * table) stamps when a row became the belief; the next row for the same
+ * (domain, title) — if any — marks, by its own created_at, when it stopped
+ * being one. No superseded_at needed unless that becomes a hot lookup.
+ */
+export function upsertGoal(
+  db: Database.Database,
+  g: { domain: string; title: string; target_value?: number; unit?: string; cadence?: string },
+): GoalUpsertResult {
+  if (g.target_value === undefined && g.cadence === undefined) {
+    throw new Error('a goal needs at least a target_value or a cadence — an empty goal row tracks nothing');
+  }
+  const normalizedTitle = g.title.trim().toLowerCase();
+  const run = db.transaction((): GoalUpsertResult => {
+    const prior = db
+      .prepare(`SELECT id, target_value, unit, cadence FROM goal WHERE active = 1 AND domain = ? AND lower(trim(title)) = ?`)
+      .get(g.domain, normalizedTitle) as GoalPrior | undefined;
+    if (prior) {
+      db.prepare('UPDATE goal SET active = 0 WHERE id = ?').run(prior.id);
+    }
+    const { lastInsertRowid } = db
+      .prepare('INSERT INTO goal (title, domain, target_value, unit, cadence, active) VALUES (?,?,?,?,?,1)')
+      .run(g.title, g.domain, g.target_value ?? null, g.unit ?? null, g.cadence ?? null);
+    return { id: Number(lastInsertRowid), supersededPrevious: prior ?? null };
+  });
+  return run();
+}
