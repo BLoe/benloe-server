@@ -175,6 +175,33 @@ describe('cabinet MCP server', () => {
     MODEL_TIMEOUT,
   );
 
+  it(
+    'search_episodic and search_documents each log to retrieval_log (mentorship: Phase 3 item 3) with the caller, real k, and normalized {id,distance,kind} hits',
+    async () => {
+      await call('add_journal', { body: 'A journal entry so search_episodic has something to find besides an empty corpus.' });
+
+      const epRes = await call('search_episodic', { query: 'journal entry about something', k: 5 });
+      expect(JSON.parse(epRes.content[0]!.text)).toBeInstanceOf(Array);
+      const epRow = cabinet.db.prepare("SELECT caller, k, query_text FROM retrieval_log WHERE caller='search_episodic' ORDER BY id DESC LIMIT 1").get() as {
+        caller: string; k: number; query_text: string;
+      };
+      expect(epRow).toEqual({ caller: 'search_episodic', k: 5, query_text: 'journal entry about something' });
+
+      await call('search_documents', { query: 'insurance SPD deductible', k: 3 });
+      const docRow = cabinet.db.prepare("SELECT caller, k FROM retrieval_log WHERE caller='search_documents' ORDER BY id DESC LIMIT 1").get() as {
+        caller: string; k: number;
+      };
+      expect(docRow).toEqual({ caller: 'search_documents', k: 3 });
+    },
+    MODEL_TIMEOUT,
+  );
+
+  it('search_episodic defaults k to 6 in the log when the caller omits it', async () => {
+    await call('search_episodic', { query: 'anything' });
+    const row = cabinet.db.prepare("SELECT k FROM retrieval_log WHERE caller='search_episodic' ORDER BY id DESC LIMIT 1").get() as { k: number };
+    expect(row.k).toBe(6);
+  });
+
   it('render_widget emits on the bus', async () => {
     const seen: unknown[] = [];
     ctx.widgetBus.on('widget', (w) => seen.push(w));

@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3';
 import { queryReadonly, QueryGuardError } from '../db/index.js';
 import type { Embedder } from '../embeddings/index.js';
 import type { EpisodicStore } from '../episodic/index.js';
+import { logRetrieval } from '../episodic/retrieval-log.js';
 import type { MemoryStore } from '../memory/index.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesson } from '../memory/lessons.js';
@@ -262,7 +263,15 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       { query: z.string(), kind: z.enum(['conversation', 'journal', 'document']).optional(), k: z.number().int().max(20).optional() },
       async ({ query, kind, k }) => {
         const [v] = await ctx.embedder.embed([query]);
-        return ok(ctx.episodic.searchChunks(v!, k ?? 6, kind));
+        const kEff = k ?? 6;
+        const hits = ctx.episodic.searchChunks(v!, kEff, kind);
+        logRetrieval(ctx.db, {
+          caller: 'search_episodic',
+          queryText: query,
+          k: kEff,
+          results: hits.map((h) => ({ id: h.id, distance: h.distance, kind: h.kind })),
+        });
+        return ok(hits);
       },
     ),
     tool(
@@ -271,14 +280,22 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       { query: z.string(), k: z.number().int().max(20).optional() },
       async ({ query, k }) => {
         const [v] = await ctx.embedder.embed([query]);
-        return ok(ctx.episodic.searchChunks(v!, k ?? 6, 'document'));
+        const kEff = k ?? 6;
+        const hits = ctx.episodic.searchChunks(v!, kEff, 'document');
+        logRetrieval(ctx.db, {
+          caller: 'search_documents',
+          queryText: query,
+          k: kEff,
+          results: hits.map((h) => ({ id: h.id, distance: h.distance, kind: h.kind })),
+        });
+        return ok(hits);
       },
     ),
     tool(
       'recall_lessons',
       'Recall the most relevant active lessons for the current context.',
       { context: z.string(), k: z.number().int().max(10).optional() },
-      async ({ context, k }) => ok(await recallLessons(ctx.episodic, ctx.embedder, context, k ?? 4)),
+      async ({ context, k }) => ok(await recallLessons(ctx.episodic, ctx.embedder, context, k ?? 4, ctx.db)),
     ),
     tool(
       'add_lesson',

@@ -182,6 +182,15 @@ describe('auth wall', () => {
     expect(body.embedder.pendingBackfill).toBe(1); // the un-embedded row, not the embedded one
   });
 
+  it('/api/healthz.retrievalLog reflects the row count — "is the instrumentation harness actually accumulating" (mentorship: Phase 3 item 3)', async () => {
+    await startApp();
+    expect((await (await asOwner('/api/healthz')).json()).retrievalLog).toBe(0);
+    cabinet.db
+      .prepare("INSERT INTO retrieval_log (caller, query_text, k, results, result_count) VALUES ('recallLessons','x',4,'[]',0)")
+      .run();
+    expect((await (await asOwner('/api/healthz')).json()).retrievalLog).toBe(1);
+  });
+
   describe('/api/healthz.jobs (mentorship: observability audit, phase 2 #1)', () => {
     type JobsHealth = Record<string, { lastRun: string | null; lastError: string | null; nextFireAt: string | null; lastResult: unknown }>;
     function withJobsHealth(jobsHealth: () => JobsHealth) {

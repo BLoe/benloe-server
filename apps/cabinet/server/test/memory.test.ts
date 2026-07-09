@@ -6,6 +6,7 @@ import { MemoryStore, MemoryError } from '../src/memory/index.js';
 import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesson, validateLesson } from '../src/memory/lessons.js';
 import { Embedder } from '../src/embeddings/index.js';
 import { EpisodicStore } from '../src/episodic/index.js';
+import { openDb, type CabinetDb } from '../src/db/index.js';
 
 const MODEL_TIMEOUT = 300_000;
 
@@ -270,5 +271,58 @@ describe('lesson store round-trip', () => {
       confidence: 0.95,
     });
     expect('rejected' in res).toBe(true);
+  });
+});
+
+describe('recallLessons retrieval-log instrumentation (mentorship: Phase 3 item 3)', () => {
+  let cabinetDir: string;
+  let cabinet: CabinetDb;
+  let episodic: EpisodicStore;
+  let embedder: Embedder;
+
+  beforeAll(() => {
+    cabinetDir = mkdtempSync(join(tmpdir(), 'cabinet-retrieval-log-lessons-'));
+    cabinet = openDb(join(cabinetDir, 'cabinet.db'));
+    episodic = new EpisodicStore(join(cabinetDir, 'episodic.db'));
+    embedder = new Embedder();
+  });
+
+  afterAll(async () => {
+    await embedder.close();
+    episodic.close();
+    cabinet.close();
+    rmSync(cabinetDir, { recursive: true, force: true });
+  });
+
+  it(
+    'logs the RAW hits (before the relevance-cutoff filter) when a db is passed — a future scorer eval needs the near-misses too',
+    async () => {
+      await addLesson(episodic, embedder, {
+        text: 'Ben logs weight most consistently right after waking up.',
+        domain: 'training',
+        evidence: 'body_metric timestamps 2026-06',
+        confidence: 0.8,
+      });
+      const recalled = await recallLessons(episodic, embedder, 'when does Ben usually weigh in', 4, cabinet.db);
+
+      const row = cabinet.db.prepare("SELECT caller, k, results, result_count FROM retrieval_log WHERE caller = 'recallLessons'").get() as {
+        caller: string; k: number; results: string; result_count: number;
+      };
+      expect(row.caller).toBe('recallLessons');
+      expect(row.k).toBe(4);
+      const logged = JSON.parse(row.results) as { id: number; distance: number; kind: string }[];
+      // logged count is the raw KNN hit count, which may exceed what recallLessons returns after its own cutoff
+      expect(logged.length).toBeGreaterThanOrEqual(recalled.length);
+      expect(logged.every((h) => h.kind === 'lesson')).toBe(true);
+      expect(logged.every((h) => typeof h.distance === 'number')).toBe(true);
+    },
+    MODEL_TIMEOUT,
+  );
+
+  it('omitting db does not throw and does not log anything — backward compatible for callers that don\'t care about the harness', async () => {
+    const before = (cabinet.db.prepare('SELECT COUNT(*) n FROM retrieval_log').get() as { n: number }).n;
+    await expect(recallLessons(episodic, embedder, 'some other query', 3)).resolves.toBeDefined();
+    const after = (cabinet.db.prepare('SELECT COUNT(*) n FROM retrieval_log').get() as { n: number }).n;
+    expect(after).toBe(before);
   });
 });
