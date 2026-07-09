@@ -1,6 +1,8 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import { randomUUID } from 'node:crypto';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { join, resolve as resolvePath, sep, extname } from 'node:path';
 import type Database from 'better-sqlite3';
 import type { EventEmitter } from 'node:events';
 import type { AgentRuntime, TurnEvent } from '../runtime/agent.js';
@@ -22,6 +24,8 @@ export interface GatewayDeps {
   embedderAlive?: () => boolean;
   /** curated memory store, for the Brain surface (GET/PUT /api/memory) */
   memory?: { list(): string[]; read(file: string): string; update(file: string, content: string, reason: string): void };
+  /** Injectable for tests; production defaults to the real dir. */
+  reviewShotsDir?: string;
 }
 
 export interface Principal {
@@ -295,6 +299,62 @@ export function buildApp(deps: GatewayDeps) {
       return { window: id, ...r, cacheReadWriteRatio };
     });
     res.json({ authMode: deps.runtime.authMode, windows: rows });
+  });
+
+  // ---------- review screenshots ----------
+  // Durable, authenticated way for a peer (e.g. benji) to retrieve
+  // screenshots this agent takes during dev-server QA — they live on the
+  // VPS filesystem and are otherwise unreachable. Read-only, scoped to one
+  // directory and two extensions; nothing here writes or deletes.
+  const REVIEW_SHOTS_DIR = resolvePath(deps.reviewShotsDir ?? '/srv/benloe/data/cabinet/review-screenshots');
+  // No `/` or `\` in the charset at all, so no filename can smuggle a path
+  // segment (encoded or not) — ".." only functions as a traversal token
+  // when it's its own segment between separators.
+  const SHOT_NAME_RE = /^[A-Za-z0-9._-]+\.(png|jpe?g)$/;
+  const SHOT_CONTENT_TYPE: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg' };
+
+  app.get('/api/review-shots', (_req, res) => {
+    let names: string[];
+    try {
+      names = readdirSync(REVIEW_SHOTS_DIR);
+    } catch {
+      return res.json({ shots: [] }); // dir doesn't exist yet — not an error
+    }
+    const shots = names
+      .filter((n) => SHOT_NAME_RE.test(n))
+      .flatMap((name) => {
+        try {
+          const st = statSync(join(REVIEW_SHOTS_DIR, name));
+          return st.isFile() ? [{ name, size: st.size, mtime: st.mtime.toISOString() }] : [];
+        } catch {
+          return []; // deleted between readdir and stat — skip, don't 500
+        }
+      })
+      .sort((a, b) => b.mtime.localeCompare(a.mtime));
+    res.json({ shots });
+  });
+
+  app.get('/api/review-shots/:name', (req, res) => {
+    const name = req.params.name ?? '';
+    // Layer 1: charset allowlist rejects any path separator outright.
+    if (!SHOT_NAME_RE.test(name)) return res.status(400).json({ error: 'invalid name' });
+    const filePath = resolvePath(REVIEW_SHOTS_DIR, name);
+    // Layer 2: resolve-and-verify the result actually lands inside the dir.
+    // Belt-and-suspenders over layer 1 — survives a future regex loosening.
+    if (!filePath.startsWith(REVIEW_SHOTS_DIR + sep)) {
+      return res.status(400).json({ error: 'invalid path' });
+    }
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(filePath);
+    } catch {
+      return res.status(404).json({ error: 'not found' });
+    }
+    if (!st.isFile()) return res.status(404).json({ error: 'not found' });
+    const ext = extname(name).slice(1).toLowerCase();
+    res.setHeader('Content-Type', SHOT_CONTENT_TYPE[ext] ?? 'application/octet-stream');
+    res.setHeader('Cache-Control', 'no-store'); // ephemeral QA artifacts, never cached
+    res.send(readFileSync(filePath));
   });
 
   app.get('/api/healthz', (_req, res) => {
