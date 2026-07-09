@@ -11,7 +11,7 @@ import type { AgentRuntime } from '../runtime/agent.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { EMBEDDABLE_TABLES, type EpisodicStore } from '../episodic/index.js';
 import type { Embedder } from '../embeddings/index.js';
-import { createTranscriptRecorder, persistUserMessage } from '../gateway/transcript.js';
+import { runAgentCronJob } from '../gateway/transcript.js';
 import { nextDaily, nextHeartbeat, nextWeekly } from './clock.js';
 import type { JobSpec } from './index.js';
 
@@ -121,18 +121,14 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
         return; // zero model cost
       }
       const threadId = systemThread(db, 'sys-heartbeat', 'heartbeat', 'Heartbeat');
-      let text = '';
-      await deps.runtime.run({
+      const { text } = await runAgentCronJob(deps.runtime, db, {
         threadId,
         kind: 'heartbeat',
         prompt: 'Work through HEARTBEAT.md against the findings in your snapshot. If anything needs Ben, write one short nudge. If not, reply HEARTBEAT_OK.',
         promptInput: { snapshot: findings.join('\n') },
-        onEvent: (e) => {
-          if (e.type === 'text-delta') text += e.delta;
-        },
       });
-      if (!text.includes('HEARTBEAT_OK') && text.trim()) {
-        push(deps, 'notice', { level: 'info', text: text.trim().slice(0, 500), source: 'heartbeat' });
+      if (!text.includes('HEARTBEAT_OK') && text) {
+        push(deps, 'notice', { level: 'info', text: text.slice(0, 500), source: 'heartbeat' });
       }
     },
   };
@@ -151,13 +147,12 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
         pendingApprovals: deps.approvals.pending().length,
       };
       const threadId = systemThread(db, 'sys-briefing', 'cron', 'Briefings');
-      await deps.runtime.run({
+      await runAgentCronJob(deps.runtime, db, {
         threadId,
         kind: 'cron',
         prompt:
           'Assemble the morning briefing from the deterministic snapshot below. Call mcp__cabinet__render_widget with widgetType "briefing" and a sectioned data payload, then write a 2-3 sentence narrative. Numbers must come from the snapshot verbatim.',
         promptInput: { snapshot: JSON.stringify(assembly) },
-        onEvent: () => {},
       });
       push(deps, 'notice', { level: 'info', text: 'Morning briefing ready.', source: 'briefing' });
     },
@@ -188,17 +183,7 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
         '4. Reflection pass: candidate lessons via mcp__cabinet__add_lesson (evidence + confidence required; escalations will be rejected).',
         '5. Finish with a render_widget briefing card summarizing the week and 3 focus points.',
       ].join('\n');
-      persistUserMessage(db, threadId, prompt);
-      // A job that git-commits memory rewrites and adds lessons must leave a
-      // reviewable trace when it does something wrong, not just its side
-      // effects — recorder.persist runs in `finally` so a mid-run failure
-      // still leaves whatever transcript accumulated, not silence.
-      const recorder = createTranscriptRecorder();
-      try {
-        await deps.runtime.run({ threadId, kind: 'cron', deep: true, prompt, onEvent: recorder.onEvent });
-      } finally {
-        recorder.persist(db, threadId);
-      }
+      await runAgentCronJob(deps.runtime, db, { threadId, kind: 'cron', deep: true, prompt });
       push(deps, 'notice', { level: 'info', text: 'Weekly review complete.', source: 'weekly' });
     },
   };
