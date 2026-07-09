@@ -18,9 +18,31 @@ if (proc.getuid?.() === 0) {
   process.exit(1);
 }
 
+// setuid() above drops our effective uid to claude-worker, but Node never
+// touches process.env on privilege drop — HOME is still whatever the root
+// pm2 daemon had (HOME=/root) when it forked us. The Claude Agent SDK's
+// bash tool captures process.env verbatim when it builds a session's shell
+// snapshot, so every bash tool call inherited the wrong HOME (wrong ~,
+// `git fetch` failing to write .git/FETCH_HEAD, etc.) unless the caller
+// prefixed HOME=... by hand. Fix it before AgentRuntime/the SDK is ever
+// touched below. os.userInfo().homedir queries the OS user database by
+// *effective uid* directly — unlike os.homedir(), it does not consult
+// $HOME — so it reports the right directory even though $HOME is still
+// wrong at this point.
+try {
+  const correctHome = userInfo().homedir;
+  if (correctHome && process.env.HOME !== correctHome) {
+    process.env.HOME = correctHome;
+  }
+} catch {
+  // Best-effort: if the user database lookup fails, leave HOME as-is
+  // rather than crash startup over it.
+}
+
 import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { userInfo } from 'node:os';
 import { openDb } from './db/index.js';
 import { Embedder } from './embeddings/index.js';
 import { EpisodicStore } from './episodic/index.js';
