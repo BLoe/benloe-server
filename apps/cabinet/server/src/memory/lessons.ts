@@ -94,3 +94,32 @@ export async function recallLessons(
 export function retireLesson(store: EpisodicStore, id: number, superseded = false): void {
   store.setLessonStatus(id, superseded ? 'superseded' : 'retired');
 }
+
+/**
+ * Promotion criteria (§ lessons-graduation, 2026-07-09): a conjunction, not
+ * any single signal. minAgeDays is load-bearing — it's the only gate immune
+ * to same-day recall bursts. Deliberately no domain requirement here: a
+ * missing domain must not permanently block graduation (see
+ * EpisodicStore.listPromotableLessons and the weekly-review promotion step,
+ * which routes null-domain lessons by judgment instead).
+ */
+export const PROMOTION_MIN_CONFIDENCE = 0.75;
+export const PROMOTION_MIN_TIMES_APPLIED = 3;
+export const PROMOTION_MIN_AGE_DAYS = 7;
+
+/** Lessons proven durable enough to graduate from situational recall into always-on memory (PREFERENCES.md / PLATFORM.md). */
+export function promotableLessons(store: EpisodicStore): LessonRow[] {
+  return store.listPromotableLessons(PROMOTION_MIN_CONFIDENCE, PROMOTION_MIN_TIMES_APPLIED, PROMOTION_MIN_AGE_DAYS);
+}
+
+/**
+ * Marks a lesson graduated. Deliberately a separate action from retireLesson
+ * — 'retired'/'superseded' mean "wrong or stale, discard"; 'promoted' means
+ * "correct, and now permanently in the system prompt via a memory file, so
+ * situational recall would be redundant." Reuses searchLessons'/
+ * listPromotableLessons' existing status='active' filter as the double-
+ * injection guard — no new exclusion logic needed.
+ */
+export function promoteLesson(store: EpisodicStore, id: number): void {
+  store.setLessonStatus(id, 'promoted');
+}
