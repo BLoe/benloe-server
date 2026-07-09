@@ -10,6 +10,7 @@ import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
 import type { Embedder, EmbedderStatus } from '../embeddings/index.js';
 import type { EpisodicStore } from '../episodic/index.js';
 import { pendingBackfillCount } from '../episodic/index.js';
+import { retrievalLogCount } from '../episodic/retrieval-log.js';
 import { recallLessons } from '../memory/lessons.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import type { MessagePart } from './fold.js';
@@ -192,7 +193,7 @@ export function buildApp(deps: GatewayDeps) {
     let lessons: Awaited<ReturnType<typeof recallLessons>> = [];
     if (deps.episodic && deps.embedder) {
       try {
-        lessons = await recallLessons(deps.episodic, deps.embedder, text);
+        lessons = await recallLessons(deps.episodic, deps.embedder, text, 4, deps.db);
       } catch (err) {
         console.warn(`chat: lesson recall failed for thread ${threadId}: ${(err as Error).message}`);
       }
@@ -439,6 +440,10 @@ export function buildApp(deps: GatewayDeps) {
       // Scheduler's own tracking verbatim (see jobsHealth) — {} when no
       // scheduler is wired (e.g. CABINET_SCHEDULER=off).
       jobs: deps.scheduler?.jobsHealth?.() ?? {},
+      // "Is the retrieval instrumentation harness actually accumulating
+      // data?" (§ mentorship Phase 3, item 3) — a bare row count, not the
+      // log's content; just enough to watch it grow off a near-empty corpus.
+      retrievalLog: retrievalLogCount(deps.db),
       // The commit actually compiled into this running dist/ (see index.ts's
       // readBuildInfo + scripts/write-build-info.mjs) — deploy verification
       // is now a one-line healthz read instead of bundle-grep + process-

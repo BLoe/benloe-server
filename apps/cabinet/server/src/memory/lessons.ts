@@ -1,5 +1,7 @@
+import type Database from 'better-sqlite3';
 import type { Embedder } from '../embeddings/index.js';
 import type { EpisodicStore, LessonRow } from '../episodic/index.js';
+import { logRetrieval } from '../episodic/retrieval-log.js';
 
 export interface LessonCandidate {
   text: string;
@@ -77,15 +79,33 @@ export const LESSON_INJECT_MAX = 3;
  * is meant to mean "shaped a turn" — so only lessons that survive the
  * relevance cutoff (and therefore get returned/injected) are marked used;
  * a weak KNN hit that gets discarded here must not count as applied.
+ *
+ * `db` (cabinet.db, not episodic.db) is for retrieval_log instrumentation
+ * only (§ mentorship Phase 3, item 3) — optional so a caller that doesn't
+ * care about the harness (or a test with no cabinet.db in scope) can omit
+ * it; both real call sites (the /api/chat auto-recall and the recall_lessons
+ * MCP tool) always have one and always pass it, so this is the one hook that
+ * covers both. Logs the RAW hits (before the relevance-cutoff filter below),
+ * not just what got returned — a future scorer eval needs the near-misses
+ * too, not only what already passed today's cutoff.
  */
 export async function recallLessons(
   store: EpisodicStore,
   embedder: Embedder,
   context: string,
   k = 4,
+  db?: Database.Database,
 ): Promise<(LessonRow & { distance: number })[]> {
   const [vector] = await embedder.embed([context]);
   const hits = store.searchLessons(vector!, k);
+  if (db) {
+    logRetrieval(db, {
+      caller: 'recallLessons',
+      queryText: context,
+      k,
+      results: hits.map((h) => ({ id: h.id, distance: h.distance, kind: 'lesson' })),
+    });
+  }
   const relevant = hits.filter((h) => h.distance <= LESSON_RELEVANCE_MAX_DISTANCE).slice(0, LESSON_INJECT_MAX);
   for (const h of relevant) store.markLessonUsed(h.id);
   return relevant;
