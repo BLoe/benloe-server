@@ -58,7 +58,8 @@ describe('cabinet MCP server', () => {
       'mcp__cabinet__log_food', 'mcp__cabinet__log_workout', 'mcp__cabinet__log_body_metric', 'mcp__cabinet__log_mood',
       'mcp__cabinet__add_journal', 'mcp__cabinet__log_claim', 'mcp__cabinet__log_lab', 'mcp__cabinet__log_medication',
       'mcp__cabinet__log_hsa_contribution', 'mcp__cabinet__import_transactions_csv', 'mcp__cabinet__update_pantry',
-      'mcp__cabinet__add_recipe', 'mcp__cabinet__upsert_task', 'mcp__cabinet__upsert_contact', 'mcp__cabinet__upsert_goal', 'mcp__cabinet__add_price_watch',
+      'mcp__cabinet__add_recipe', 'mcp__cabinet__upsert_task', 'mcp__cabinet__upsert_contact', 'mcp__cabinet__upsert_goal',
+      'mcp__cabinet__upsert_constraint', 'mcp__cabinet__list_constraints', 'mcp__cabinet__add_price_watch',
       'mcp__cabinet__query_db', 'mcp__cabinet__search_episodic', 'mcp__cabinet__search_documents', 'mcp__cabinet__recall_lessons',
       'mcp__cabinet__add_lesson', 'mcp__cabinet__retire_lesson', 'mcp__cabinet__list_promotable_lessons', 'mcp__cabinet__promote_lesson',
       'mcp__cabinet__update_memory', 'mcp__cabinet__render_widget', 'mcp__cabinet__enqueue_approval',
@@ -154,6 +155,26 @@ describe('cabinet MCP server', () => {
     const bad = await call('upsert_goal', { domain: 'training', title: 'vague' });
     expect(bad.isError).toBe(true);
     expect(bad.content[0]!.text).toContain('target_value or a cadence');
+  });
+
+  it('upsert_constraint + list_constraints round-trip through the tool surface, including the confirmedNone contradiction guard', async () => {
+    const real = JSON.parse(
+      (await call('upsert_constraint', { kind: 'physical', subject: 'conventional deadlift', severity: 'contraindicated', note: 'L4/L5', source: 'onboarding-interview' })).content[0]!.text,
+    );
+    expect(real.supersededPrevious).toBeNull();
+
+    const listed = JSON.parse((await call('list_constraints', { kind: 'physical' })).content[0]!.text);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].subject).toBe('conventional deadlift');
+
+    const contradiction = await call('upsert_constraint', { kind: 'physical', confirmedNone: true });
+    expect(contradiction.isError).toBe(true);
+    expect(contradiction.content[0]!.text).toContain('already on file');
+
+    const sentinel = JSON.parse((await call('upsert_constraint', { kind: 'dietary', confirmedNone: true })).content[0]!.text);
+    expect(sentinel.supersededPrevious).toBeNull();
+    const dietaryListed = JSON.parse((await call('list_constraints', { kind: 'dietary' })).content[0]!.text);
+    expect(dietaryListed).toEqual([expect.objectContaining({ is_none_confirmation: 1, subject: null })]);
   });
 
   it(

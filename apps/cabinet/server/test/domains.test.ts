@@ -6,7 +6,10 @@ import { openDb, type CabinetDb } from '../src/db/index.js';
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../src/domains/food.js';
 import { ewma, logBodyMetric, logWorkout, weightTrend } from '../src/domains/training.js';
 import { accumulators, logClaim, logHsaContribution, logLab, logMedication, medicationsLow, seedInsurancePlan } from '../src/domains/healthcare.js';
-import { addJournal, addPriceWatch, importTransactionsCsv, logMood, upsertContact, upsertGoal, upsertTask } from '../src/domains/misc.js';
+import {
+  addJournal, addPriceWatch, importTransactionsCsv, listConstraints, logMood,
+  upsertConstraint, upsertContact, upsertGoal, upsertTask,
+} from '../src/domains/misc.js';
 
 let dir: string;
 let cabinet: CabinetDb;
@@ -223,5 +226,92 @@ describe('goals (bi-temporal supersede — mentorship item 4)', () => {
   it('rejects a goal with neither target_value nor cadence — an empty goal tracks nothing', () => {
     expect(() => upsertGoal(cabinet.db, { domain: 'training', title: 'vague intention' })).toThrow(/target_value or a cadence/);
     expect((cabinet.db.prepare("SELECT COUNT(*) n FROM goal WHERE title='vague intention'").get() as { n: number }).n).toBe(0);
+  });
+});
+
+describe('hard_constraint (dietary + physical safety gates — mentorship Phase B)', () => {
+  it('the DB-level CHECK rejects a real (non-none) row with a null subject, independent of any app-layer guard', () => {
+    expect(() =>
+      cabinet.db.prepare("INSERT INTO hard_constraint (kind, is_none_confirmation, subject) VALUES ('dietary', 0, NULL)").run(),
+    ).toThrow(/CHECK constraint failed/);
+  });
+
+  it('upsertConstraint also rejects a real constraint with no subject, before ever reaching SQL', () => {
+    expect(() => upsertConstraint(cabinet.db, { kind: 'dietary' })).toThrow(/needs a subject/);
+  });
+
+  it('confirmedNone writes a distinguishable sentinel row (is_none_confirmation=1, subject=null)', () => {
+    const res = upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true, source: 'onboarding-interview' });
+    const row = cabinet.db.prepare('SELECT kind, subject, is_none_confirmation, active, source FROM hard_constraint WHERE id=?').get(res.id);
+    expect(row).toEqual({ kind: 'dietary', subject: null, is_none_confirmation: 1, active: 1, source: 'onboarding-interview' });
+  });
+
+  it('three distinguishable states via listConstraints: never-asked (no rows), confirmed-none (sentinel), has-constraints (real rows)', () => {
+    expect(listConstraints(cabinet.db, 'dietary')).toEqual([]); // never asked
+
+    upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true });
+    const confirmedNoneState = listConstraints(cabinet.db, 'dietary');
+    expect(confirmedNoneState).toHaveLength(1);
+    expect(confirmedNoneState[0]!.is_none_confirmation).toBe(1);
+
+    // a real constraint for physical must not affect dietary's state
+    upsertConstraint(cabinet.db, { kind: 'physical', subject: 'conventional deadlift', severity: 'contraindicated', note: 'L4/L5 — avoid axial loading' });
+    expect(listConstraints(cabinet.db, 'dietary')).toHaveLength(1); // unchanged
+    const physicalState = listConstraints(cabinet.db, 'physical');
+    expect(physicalState).toHaveLength(1);
+    expect(physicalState[0]!.is_none_confirmation).toBe(0);
+    expect(physicalState[0]!.subject).toBe('conventional deadlift');
+  });
+
+  it('re-confirming none for the same kind is idempotent — no duplicate sentinel row', () => {
+    const first = upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true });
+    const second = upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true });
+    expect(second.id).toBe(first.id);
+    expect((cabinet.db.prepare("SELECT COUNT(*) n FROM hard_constraint WHERE kind='dietary'").get() as { n: number }).n).toBe(1);
+  });
+
+  it('confirmedNone refuses when real active constraints already exist for that kind — a contradictory signal, not silently papered over', () => {
+    upsertConstraint(cabinet.db, { kind: 'dietary', subject: 'shellfish', severity: 'allergy' });
+    expect(() => upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true })).toThrow(/already on file/);
+    // the real constraint is untouched, and no sentinel was inserted
+    expect(listConstraints(cabinet.db, 'dietary')).toHaveLength(1);
+  });
+
+  it('a real constraint deactivates a stale "confirmed none" sentinel for the same kind — the two states must never both be active', () => {
+    upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true });
+    upsertConstraint(cabinet.db, { kind: 'dietary', subject: 'gluten', severity: 'intolerance' });
+    const rows = listConstraints(cabinet.db, 'dietary');
+    expect(rows).toHaveLength(1); // sentinel retired, only the real constraint reads as active
+    expect(rows[0]!.subject).toBe('gluten');
+  });
+
+  it('supersedes an existing real constraint for the same (kind, normalized subject): old row deactivated, new active, history preserved', () => {
+    const first = upsertConstraint(cabinet.db, { kind: 'physical', subject: 'Overhead Press', severity: 'caution', note: 'shoulder — light only' });
+    const second = upsertConstraint(cabinet.db, { kind: 'physical', subject: '  overhead press  ', severity: 'contraindicated', note: 'cleared to caution only after PT' });
+    expect(second.supersededPrevious).toEqual({ id: first.id, subject: 'Overhead Press', severity: 'caution' });
+
+    const rows = cabinet.db
+      .prepare("SELECT id, active, severity FROM hard_constraint WHERE kind='physical' AND lower(subject)='overhead press' ORDER BY created_at")
+      .all();
+    expect(rows).toEqual([
+      { id: first.id, active: 0, severity: 'caution' },
+      { id: second.id, active: 1, severity: 'contraindicated' },
+    ]);
+  });
+
+  it('active=0 retires a constraint without deleting it — direct deactivation stays queryable, just excluded from listConstraints', () => {
+    const res = upsertConstraint(cabinet.db, { kind: 'dietary', subject: 'lactose', severity: 'intolerance' });
+    cabinet.db.prepare('UPDATE hard_constraint SET active = 0 WHERE id = ?').run(res.id);
+    expect(listConstraints(cabinet.db, 'dietary')).toEqual([]);
+    const stillThere = cabinet.db.prepare('SELECT subject FROM hard_constraint WHERE id=?').get(res.id) as { subject: string };
+    expect(stillThere.subject).toBe('lactose'); // retired, not deleted
+  });
+
+  it('both kinds round-trip real constraints correctly and independently', () => {
+    upsertConstraint(cabinet.db, { kind: 'dietary', subject: 'peanuts', severity: 'allergy', note: 'carries an epipen' });
+    upsertConstraint(cabinet.db, { kind: 'physical', subject: 'loaded spinal flexion', severity: 'contraindicated', note: 'L4/L5 — avoid entirely' });
+    const all = listConstraints(cabinet.db);
+    expect(all).toHaveLength(2);
+    expect(all.map((r) => r.kind).sort()).toEqual(['dietary', 'physical']);
   });
 });

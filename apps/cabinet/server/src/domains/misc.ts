@@ -158,3 +158,118 @@ export function upsertGoal(
   });
   return run();
 }
+
+// ---------- hard constraints (dietary + physical — mentorship Phase B, onboarding interview) ----------
+export interface HardConstraintRow {
+  id: number;
+  kind: 'dietary' | 'physical';
+  subject: string | null;
+  severity: string | null;
+  note: string | null;
+  is_none_confirmation: number;
+  active: number;
+  source: string | null;
+  created_at: string;
+}
+export interface ConstraintPrior { id: number; subject: string | null; severity: string | null }
+export interface ConstraintUpsertResult { id: number; supersededPrevious: ConstraintPrior | null }
+
+/**
+ * Hard planning gates — an allergen to never suggest, a movement/load to
+ * never program — kept structured (not narrative) specifically because
+ * domains/health.md and domains/nutrition.md get wholesale-rewritten by
+ * weekly-review under a line budget: an acceptable compression risk for
+ * soft preferences, not for a safety-relevant hard rule. Soft context (how
+ * Ben feels about an old injury, food he just doesn't love) still belongs in
+ * those narrative files — this table holds only the machine-durable gates.
+ *
+ * Two call shapes, both transactional and self-healing against each other:
+ *  - confirmedNone: true — "asked, confirmed no constraints of this kind."
+ *    Idempotent (a second confirmation for the same kind is a no-op, not a
+ *    duplicate sentinel row) and refuses if real active constraints already
+ *    exist for that kind (a contradictory signal — the caller should retire
+ *    those first if that's really the intent, not silently paper over them).
+ *  - a real constraint (subject given) — matches an existing ACTIVE row for
+ *    the same (kind, normalized subject) and supersedes it (old row
+ *    deactivated, kept for history — same bi-temporal pattern as upsertGoal),
+ *    and ALSO deactivates any stale "confirmed none" sentinel for that kind,
+ *    since a real constraint contradicts a prior "none" — the two states
+ *    must never both read as active at once.
+ */
+export function upsertConstraint(
+  db: Database.Database,
+  c: { kind: 'dietary' | 'physical'; subject?: string; severity?: string; note?: string; confirmedNone?: boolean; source?: string },
+): ConstraintUpsertResult {
+  if (c.confirmedNone) {
+    if (c.subject) throw new Error('confirmedNone and subject are mutually exclusive — a "no constraints" confirmation cannot also name a subject');
+    return confirmNoConstraints(db, c.kind, c.source);
+  }
+  if (!c.subject || !c.subject.trim()) {
+    throw new Error('a real constraint needs a subject (the allergen/substance, or the restricted movement/load) — or pass confirmedNone: true');
+  }
+  return upsertRealConstraint(db, c as { kind: 'dietary' | 'physical'; subject: string; severity?: string; note?: string; source?: string });
+}
+
+function confirmNoConstraints(db: Database.Database, kind: 'dietary' | 'physical', source?: string): ConstraintUpsertResult {
+  const run = db.transaction((): ConstraintUpsertResult => {
+    const existingSentinel = db
+      .prepare('SELECT id FROM hard_constraint WHERE kind = ? AND is_none_confirmation = 1 AND active = 1')
+      .get(kind) as { id: number } | undefined;
+    if (existingSentinel) return { id: existingSentinel.id, supersededPrevious: null }; // idempotent — no duplicate sentinel
+
+    const realActive = db
+      .prepare('SELECT COUNT(*) n FROM hard_constraint WHERE kind = ? AND is_none_confirmation = 0 AND active = 1')
+      .get(kind) as { n: number };
+    if (realActive.n > 0) {
+      throw new Error(
+        `refusing to confirm "no ${kind} constraints" — ${realActive.n} active ${kind} constraint(s) already on file; retire those first if that's really the intent`,
+      );
+    }
+
+    const { lastInsertRowid } = db
+      .prepare('INSERT INTO hard_constraint (kind, is_none_confirmation, source) VALUES (?, 1, ?)')
+      .run(kind, source ?? null);
+    return { id: Number(lastInsertRowid), supersededPrevious: null };
+  });
+  return run();
+}
+
+function upsertRealConstraint(
+  db: Database.Database,
+  c: { kind: 'dietary' | 'physical'; subject: string; severity?: string; note?: string; source?: string },
+): ConstraintUpsertResult {
+  const normalizedSubject = c.subject.trim().toLowerCase();
+  const run = db.transaction((): ConstraintUpsertResult => {
+    // A real constraint contradicts any "confirmed none" sentinel for this kind.
+    db.prepare('UPDATE hard_constraint SET active = 0 WHERE kind = ? AND is_none_confirmation = 1 AND active = 1').run(c.kind);
+
+    const prior = db
+      .prepare(
+        'SELECT id, subject, severity FROM hard_constraint WHERE kind = ? AND is_none_confirmation = 0 AND active = 1 AND lower(trim(subject)) = ?',
+      )
+      .get(c.kind, normalizedSubject) as ConstraintPrior | undefined;
+    if (prior) {
+      db.prepare('UPDATE hard_constraint SET active = 0 WHERE id = ?').run(prior.id);
+    }
+
+    const { lastInsertRowid } = db
+      .prepare('INSERT INTO hard_constraint (kind, subject, severity, note, source) VALUES (?,?,?,?,?)')
+      .run(c.kind, c.subject.trim(), c.severity ?? null, c.note ?? null, c.source ?? null);
+    return { id: Number(lastInsertRowid), supersededPrevious: prior ?? null };
+  });
+  return run();
+}
+
+/**
+ * All active rows for a kind (or every kind) — the read path an interview or
+ * a future C/D planner uses to answer "what must I respect." Three states
+ * are distinguishable from the result alone: no rows = never asked; one row
+ * with is_none_confirmation=1 = confirmed none; rows with
+ * is_none_confirmation=0 = real constraints to respect.
+ */
+export function listConstraints(db: Database.Database, kind?: 'dietary' | 'physical'): HardConstraintRow[] {
+  const rows = kind
+    ? db.prepare('SELECT * FROM hard_constraint WHERE active = 1 AND kind = ? ORDER BY created_at').all(kind)
+    : db.prepare('SELECT * FROM hard_constraint WHERE active = 1 ORDER BY kind, created_at').all();
+  return rows as HardConstraintRow[];
+}
