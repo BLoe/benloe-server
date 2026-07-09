@@ -1,5 +1,6 @@
 import type {
   CabinetApi, TodayView, DomainId, DomainView, OpsFeed, MemoryView, RecallResponse, HealthInfo, ThreadSummary, ChatMessage, InstrumentSpec,
+  UsageView, UsageRollingView,
 } from './contracts.js';
 
 /* Deterministic mock data in Cabinet's voice — lets Movement 2 surfaces build
@@ -89,6 +90,33 @@ const ops: OpsFeed = {
   ],
 };
 
+// Tells tonight's real story: cache_write held ~40k/day for a week (a
+// cache-busting bug in the prompt layering), then collapsed to ~800 today
+// once it was fixed — cache_read stayed high (still reusing the prefix),
+// so the read:write ratio jumps from ~1x to ~75x. The 5h window numbers
+// echo the actual measured before/after from tonight's verification.
+const usage: UsageView = {
+  authMode: 'subscription',
+  byDay: [
+    { day: '2026-07-09', model: 'claude-sonnet-5', input: 1200, output: 900, cache_read: 58000, cache_write: 780, cost_usd: 0.31, turns: 9 },
+    { day: '2026-07-08', model: 'claude-sonnet-5', input: 8300, output: 4150, cache_read: 40500, cache_write: 41000, cost_usd: 1.43, turns: 21 },
+    { day: '2026-07-07', model: 'claude-sonnet-5', input: 9100, output: 4550, cache_read: 46000, cache_write: 43200, cost_usd: 1.61, turns: 26 },
+    { day: '2026-07-06', model: 'claude-sonnet-5', input: 7400, output: 3700, cache_read: 36500, cache_write: 38900, cost_usd: 1.29, turns: 18 },
+    { day: '2026-07-05', model: 'claude-sonnet-5', input: 8600, output: 4300, cache_read: 44000, cache_write: 41800, cost_usd: 1.51, turns: 24 },
+    { day: '2026-07-04', model: 'claude-sonnet-5', input: 7900, output: 3950, cache_read: 38000, cache_write: 40200, cost_usd: 1.38, turns: 19 },
+    { day: '2026-07-03', model: 'claude-sonnet-5', input: 8200, output: 4100, cache_read: 41000, cache_write: 39500, cost_usd: 1.42, turns: 22 },
+  ],
+};
+
+const usageRolling: UsageRollingView = {
+  authMode: 'subscription',
+  windows: [
+    { window: '5h', input: 480, output: 360, cache_read: 29200, cache_write: 245, cost_usd: 0.06, turns: 3, cacheReadWriteRatio: 119.18 },
+    { window: '24h', input: 1200, output: 900, cache_read: 58000, cache_write: 780, cost_usd: 0.31, turns: 9, cacheReadWriteRatio: 74.36 },
+    { window: '7d', input: 50700, output: 25650, cache_read: 304000, cache_write: 245380, cost_usd: 8.95, turns: 139, cacheReadWriteRatio: 1.24 },
+  ],
+};
+
 const memory: MemoryView = {
   files: [
     { name: 'IDENTITY.md', content: '# IDENTITY — who Cabinet is\n\nCabinet is Ben’s chief of staff on the benloe.com nexus…', updatedAt: '2026-07-08T05:00:00-04:00', editable: true },
@@ -135,6 +163,8 @@ export const mockApi: CabinetApi = {
   domain: (id) => delay(DOMAIN_DATA[id]),
   ops: (filter) => delay<OpsFeed>({ entries: ops.entries.filter((e) => (filter?.kind ? e.kind === filter.kind : true)) }),
   revertOp: () => delay({ ok: true }),
+  usage: () => delay(usage),
+  usageRolling: () => delay(usageRolling),
   memory: () => delay(memory),
   saveMemoryFile: () => delay({ ok: true }),
   recall: (q) => delay(recallFor(q)),
