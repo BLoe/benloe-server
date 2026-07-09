@@ -248,15 +248,53 @@ export function buildApp(deps: GatewayDeps) {
   });
 
   // ---------- usage & health ----------
+  // "Why did we spike" — by day and model, over a 30-day trailing window.
   app.get('/api/usage', (_req, res) => {
     const byDay = deps.db
       .prepare(
         `SELECT date(ts) day, model, SUM(input_tokens) input, SUM(output_tokens) output,
-                SUM(cache_read) cache_read, SUM(COALESCE(cost_usd,0)) cost_usd, COUNT(*) turns
+                SUM(cache_read) cache_read, SUM(cache_write) cache_write, SUM(COALESCE(cost_usd,0)) cost_usd, COUNT(*) turns
          FROM token_usage WHERE ts > datetime('now','-30 days') GROUP BY day, model ORDER BY day DESC`,
       )
       .all();
     res.json({ authMode: deps.runtime.authMode, byDay });
+  });
+
+  // "Are we near a wall" — fixed rolling windows that map to how Max plan
+  // limits actually gate (rolling 5h window + a weekly cap; 24h/7d give
+  // context around the 5h number). Kept as a separate endpoint from
+  // /api/usage on purpose: distinct question, distinct shape, cleaner than
+  // a mode param on one route.
+  app.get('/api/usage/rolling', (_req, res) => {
+    const windows: { id: '5h' | '24h' | '7d'; modifier: string }[] = [
+      { id: '5h', modifier: '-5 hours' },
+      { id: '24h', modifier: '-24 hours' },
+      { id: '7d', modifier: '-7 days' },
+    ];
+    const rows = windows.map(({ id, modifier }) => {
+      const r = deps.db
+        .prepare(
+          `SELECT COALESCE(SUM(input_tokens),0) input, COALESCE(SUM(output_tokens),0) output,
+                  COALESCE(SUM(cache_read),0) cache_read, COALESCE(SUM(cache_write),0) cache_write,
+                  COALESCE(SUM(cost_usd),0) cost_usd, COUNT(*) turns
+           FROM token_usage WHERE ts > datetime('now', ?)`,
+        )
+        .get(modifier) as {
+        input: number;
+        output: number;
+        cache_read: number;
+        cache_write: number;
+        cost_usd: number;
+        turns: number;
+      };
+      // Cache-read:cache-write ratio — the health headline. High is good
+      // (mostly reusing a stable prefix); collapsing toward 1 is the
+      // regression signal (system prompt/context churning every turn).
+      // null, not 0/Infinity, when there's no write to divide by yet.
+      const cacheReadWriteRatio = r.cache_write > 0 ? Number((r.cache_read / r.cache_write).toFixed(2)) : null;
+      return { window: id, ...r, cacheReadWriteRatio };
+    });
+    res.json({ authMode: deps.runtime.authMode, windows: rows });
   });
 
   app.get('/api/healthz', (_req, res) => {

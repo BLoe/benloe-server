@@ -172,6 +172,83 @@ describe('jobs', () => {
     expect(runtimeCalls[0]).toMatchObject({ kind: 'heartbeat' });
   });
 
+  describe('usage budget alert (piggybacks on heartbeat, SQL-only)', () => {
+    const ENV_KEY = 'CABINET_USAGE_ALERT_TOKENS';
+    let prevEnv: string | undefined;
+
+    beforeEach(() => {
+      prevEnv = process.env[ENV_KEY];
+    });
+    afterEach(() => {
+      if (prevEnv === undefined) delete process.env[ENV_KEY];
+      else process.env[ENV_KEY] = prevEnv;
+    });
+
+    function capturePushes(): { event: string; data: unknown }[] {
+      const events: { event: string; data: unknown }[] = [];
+      deps.widgetBus.on('push', (n: { event: string; data: unknown }) => events.push(n));
+      return events;
+    }
+
+    function seedTokens(input: number, output: number, cacheWrite: number, cacheRead = 0) {
+      cabinet.db
+        .prepare(
+          `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, thread_id)
+           VALUES (datetime('now'), ?, ?, ?, ?, 'user', 't1')`,
+        )
+        .run(input, output, cacheRead, cacheWrite);
+    }
+
+    it('stays quiet below threshold', async () => {
+      process.env[ENV_KEY] = '1000';
+      seedTokens(100, 100, 100); // total 300 < 1000
+      const events = capturePushes();
+      await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
+      expect(events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage')).toHaveLength(0);
+    });
+
+    it('excludes cache_read from the threshold sum (a cache-healthy chat should not trip it)', async () => {
+      process.env[ENV_KEY] = '1000';
+      seedTokens(100, 100, 100, 500_000); // huge cache_read, but input+output+cache_write = 300 < 1000
+      const events = capturePushes();
+      await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
+      expect(events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage')).toHaveLength(0);
+    });
+
+    it('fires a warn notice once threshold is crossed', async () => {
+      process.env[ENV_KEY] = '250';
+      seedTokens(100, 100, 100); // total 300 >= 250
+      const events = capturePushes();
+      await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
+      const alerts = events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage');
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]!.data).toMatchObject({ level: 'warn' });
+      const audit = cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='usage-budget-alert'").all();
+      expect(audit).toHaveLength(1);
+    });
+
+    it('debounces: does not re-alert on the next heartbeat tick within the same window', async () => {
+      process.env[ENV_KEY] = '250';
+      seedTokens(100, 100, 100);
+      const events = capturePushes();
+      const heartbeat = buildJobs(deps).find((j) => j.name === 'heartbeat')!;
+      await heartbeat.run();
+      await heartbeat.run(); // simulates the next 30-minute tick with usage still elevated
+      const alerts = events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage');
+      expect(alerts).toHaveLength(1); // fired once, not twice
+      const audit = cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='usage-budget-alert'").all();
+      expect(audit).toHaveLength(1);
+    });
+
+    it('CABINET_USAGE_ALERT_TOKENS=0 disables the check entirely', async () => {
+      process.env[ENV_KEY] = '0';
+      seedTokens(10_000_000, 0, 0); // would trip any sane default
+      const events = capturePushes();
+      await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
+      expect(events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage')).toHaveLength(0);
+    });
+  });
+
   it('weekly review runs deep; briefing runs cron with deterministic snapshot', async () => {
     const jobs = buildJobs(deps);
     await jobs.find((j) => j.name === 'weekly-review')!.run();

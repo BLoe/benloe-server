@@ -26,6 +26,58 @@ export interface JobDeps {
 
 const push = (deps: JobDeps, event: string, data: unknown) => deps.widgetBus.emit('push', { event, data });
 
+/**
+ * Soft usage-budget alert (v1: simple absolute threshold).
+ *
+ * Metric = input_tokens + output_tokens + cache_write, summed over the
+ * trailing 5h window (the window Max plan rate limits actually gate on).
+ * cache_read is deliberately excluded: on a cache-healthy thread it's the
+ * biggest number by far (tens of thousands of tokens per turn just from
+ * re-reading a stable system-prompt prefix) but reflects reused, not fresh,
+ * work — folding it in would make a long, cheap, perfectly healthy chat
+ * look like a runaway session and drown the signal in noise.
+ *
+ * Default threshold (500k/5h) is a deliberately generous "you're really
+ * leaning on it" backstop, not a measured cap — Anthropic doesn't publish
+ * exact Max-plan token limits, so there's no authoritative number to encode.
+ * Tune via CABINET_USAGE_ALERT_TOKENS once real 429 behavior gives a signal;
+ * set to 0 to disable.
+ *
+ * v2 (not built here): an anomaly-relative trigger — e.g. "this 5h window
+ * is Nx the 7-day-median 5h window" — would adapt automatically instead of
+ * requiring a hand-tuned constant. Worth it once there's enough history to
+ * compute a meaningful median.
+ */
+const USAGE_ALERT_TOOL = 'usage-budget-alert';
+
+function checkUsageBudget(deps: JobDeps): void {
+  const threshold = Number(process.env.CABINET_USAGE_ALERT_TOKENS ?? 500_000);
+  if (!(threshold > 0)) return; // 0 or unset-to-non-positive disables the check
+
+  const row = deps.db
+    .prepare(
+      `SELECT COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0) + COALESCE(SUM(cache_write),0) AS total
+       FROM token_usage WHERE ts > datetime('now','-5 hours')`,
+    )
+    .get() as { total: number };
+  if (row.total < threshold) return;
+
+  // Debounce: fire once per rolling window, not once per heartbeat (every 30m).
+  const alreadyAlerted = deps.db
+    .prepare(`SELECT 1 FROM action_audit WHERE tool = ? AND ts > datetime('now','-5 hours') LIMIT 1`)
+    .get(USAGE_ALERT_TOOL);
+  if (alreadyAlerted) return;
+
+  deps.db
+    .prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES (?, 'ALERTED', 'heartbeat')")
+    .run(USAGE_ALERT_TOOL);
+  push(deps, 'notice', {
+    level: 'warn',
+    text: `Usage is running hot: ${row.total.toLocaleString()} tokens in the last 5h (threshold ${threshold.toLocaleString()}). Worth a look before you hit a wall.`,
+    source: 'usage',
+  });
+}
+
 /** Get-or-create the singleton system thread for a scheduled job kind. */
 function systemThread(db: Database.Database, id: string, kind: 'heartbeat' | 'cron', title: string): string {
   db.prepare('INSERT OR IGNORE INTO thread (id, title, kind) VALUES (?,?,?)').run(id, title, kind);
@@ -61,6 +113,7 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     name: 'heartbeat',
     next: (from) => nextHeartbeat(30, from),
     run: async () => {
+      checkUsageBudget(deps); // SQL-only, zero model cost — runs every tick regardless of findings
       const findings = heartbeatFindings(db);
       if (findings.length === 0) {
         db.prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES ('heartbeat','HEARTBEAT_OK','heartbeat')").run();
