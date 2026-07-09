@@ -76,6 +76,15 @@ export class EpisodicStore {
   }
 
   searchChunks(vector: Float32Array, k = 6, kind?: ChunkKind): ChunkHit[] {
+    // vec_chunk has no notion of `kind`, so a kind filter is applied after the KNN
+    // fetch. A fixed over-fetch multiplier (previously k*3) silently under-returns
+    // whenever the target kind is a minority of the corpus — e.g. one big document
+    // import can push conversation chunks entirely outside a small candidate window,
+    // and the caller gets fewer than k results (or none) with no indication why.
+    // Guarantee correctness by bounding the candidate pool by the true row count
+    // instead of guessing a multiplier. Cheap at personal-journal scale.
+    const pool = kind ? this.countRows('chunk') : k;
+    if (pool === 0) return [];
     const rows = this.db
       .prepare(
         `SELECT c.id, c.kind, c.source_ref AS sourceRef, c.local_day AS localDay, c.text, v.distance
@@ -83,9 +92,13 @@ export class EpisodicStore {
          WHERE v.embedding MATCH ? AND v.k = ?
          ORDER BY v.distance`,
       )
-      .all(EpisodicStore.asBuffer(vector), k * 3) as ChunkHit[];
+      .all(EpisodicStore.asBuffer(vector), Math.max(pool, k)) as ChunkHit[];
     const filtered = kind ? rows.filter((r) => r.kind === kind) : rows;
     return filtered.slice(0, k);
+  }
+
+  private countRows(table: 'chunk' | 'lesson'): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
   }
 
   /** Chunk + embed + insert a whole text; returns chunk ids. */
@@ -122,6 +135,11 @@ export class EpisodicStore {
   }
 
   searchLessons(vector: Float32Array, k = 4): (LessonRow & { distance: number })[] {
+    // Same class of bug as searchChunks: retired/superseded lessons pushed a fixed
+    // k*3 window below the true top-k active lessons whenever they outnumbered
+    // active ones. Bound by the true row count instead of guessing.
+    const pool = this.countRows('lesson');
+    if (pool === 0) return [];
     const rows = this.db
       .prepare(
         `SELECT l.*, v.distance
@@ -129,7 +147,7 @@ export class EpisodicStore {
          WHERE v.embedding MATCH ? AND v.k = ?
          ORDER BY v.distance`,
       )
-      .all(EpisodicStore.asBuffer(vector), k * 3) as (LessonRow & { distance: number })[];
+      .all(EpisodicStore.asBuffer(vector), Math.max(pool, k)) as (LessonRow & { distance: number })[];
     return rows.filter((r) => r.status === 'active').slice(0, k);
   }
 
