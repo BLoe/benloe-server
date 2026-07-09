@@ -11,7 +11,7 @@ cabinet.benloe.com {
 
     # the Cabinet v2 SPA
     handle {
-        root * /srv/benloe/apps/pals/web/dist
+        root * /srv/benloe/apps/cabinet/web/dist
         try_files {path} /index.html
         file_server
     }

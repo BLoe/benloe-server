@@ -1,7 +1,7 @@
 # Cabinet v2 — Acceptance Report
 
 > Built 2026-07-08 via the loop-driven three-movement plan
-> (`docs/cabinet-v2-build-plan.md`). Design: `docs/pals-v2-design.md`.
+> (`docs/cabinet-v2-build-plan.md`). Design: `docs/cabinet-v2-design.md`.
 > **Status: complete and green. Not yet deployed live — cutover is Ben's call.**
 
 ## What was built
@@ -37,14 +37,14 @@ Three movements, cut along dependency lines for quality:
    the payoff of freezing the foundation before fanning out.
 3. **Integration + critique + polish (serial, A12–A15)** — mounted the surfaces,
    adversarially reviewed desktop + mobile (caught & fixed a mobile rail-stretch
-   bug on every surface, a cramped mobile command bar, and stale PALS branding),
+   bug on every surface, a cramped mobile command bar, and stale Cabinet branding),
    cleared the dead V1 frontend, and landed full green.
 
 ## Evidence
 
 - **Tests:** server **196** (13 files) · web **52** (10 files) — all green.
-- **Typecheck:** `tsc --noEmit` clean in both `apps/pals/web` and
-  `apps/pals/server`.
+- **Typecheck:** `tsc --noEmit` clean in both `apps/cabinet/web` and
+  `apps/cabinet/server`.
 - **Production build:** `npm run build` succeeds —
   `index.js 233.5 kB (73.7 kB gzip)`, `index.css 32.5 kB (6.4 kB gzip)`,
   59→59 modules.
@@ -59,20 +59,20 @@ Three movements, cut along dependency lines for quality:
 - **Not deployed.** The v2 app is built and green but **not cut over**.
   **DEPLOYED** 2026-07-08 to `cabinet.benloe.com` (Caddy serves `dist/`, proxies
   `/api/*` + `/healthz` to `:3008`), replacing the design tour. Restarting
-  `pals-api` onto the v2 build also activated the v2 endpoints, the SOUL/VOICE
+  `cabinet-api` onto the v2 build also activated the v2 endpoints, the SOUL/VOICE
   personality, and the autonomous gate.
 - **The mock is dev-only** and can never ship: production builds gate it on
   `import.meta.env.DEV`, so `npm run build` always uses the real, Artanis-walled
   API (mock data is dead-code-eliminated). `npm run dev` uses mock by default
   (`VITE_CABINET_MOCK=false` opts out) for backendless UI work.
 - **Personality + autonomy** (SOUL/VOICE, execute-and-audit gate) are committed
-  but only take effect on the running process at the next `pals-api` restart —
+  but only take effect on the running process at the next `cabinet-api` restart —
   also Ben-gated.
 
 ## Notes / residuals
 
 - `marked` + `dompurify` are now unused deps (only the removed V1 markdown used
-  them) — safe to drop from `apps/pals/web/package.json` at some point; harmless
+  them) — safe to drop from `apps/cabinet/web/package.json` at some point; harmless
   (tree-shaken from the build) until then.
 - The Domains/Today attention + narrative copy is real-data-driven but the
   *voice* of narratives sharpens once the live agent (SOUL/VOICE) generates them
