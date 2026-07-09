@@ -68,6 +68,37 @@
   outline-offset: 2px;
 }
 
+/* ---- usage card: cache health headline + rolling windows ---- */
+.ops-usage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.ops-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-4);
+}
+
+/* Cache health is the headline — give it visual primacy by spanning two
+   columns wherever there's room, so it reads bigger than the three window
+   cards next to it. */
+.ops-usage-grid > :first-child {
+  grid-column: span 2;
+}
+
+@media (max-width: 560px) {
+  .ops-usage-grid > :first-child {
+    grid-column: span 1;
+  }
+}
+
+.ops-usage-cost {
+  font-size: var(--fs-fine);
+  color: var(--linen-faint);
+}
+
 /* ---- states ---- */
 .ops-loading {
   color: var(--linen-faint);

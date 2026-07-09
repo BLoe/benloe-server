@@ -106,6 +106,24 @@ export interface RecallResponse { query: string; results: RecallResult[]; }
 export type PresenceState = 'idle' | 'working' | 'thinking' | 'offline';
 export interface HealthInfo { ok: boolean; authMode: string; presence: PresenceState; presenceMeta: string; }
 
+/* ---------- usage (Ops surface: "why did we spike" / "are we near a wall") ---------- */
+export interface UsageDay {
+  day: string; model: string;
+  input: number; output: number; cache_read: number; cache_write: number;
+  cost_usd: number; turns: number;
+}
+export interface UsageView { authMode: string; byDay: UsageDay[]; }
+
+export type UsageWindowId = '5h' | '24h' | '7d';
+export interface UsageWindow {
+  window: UsageWindowId;
+  input: number; output: number; cache_read: number; cache_write: number;
+  cost_usd: number; turns: number;
+  /** cache_read / cache_write, rounded to 2dp. null when there's been no write to divide by yet. */
+  cacheReadWriteRatio: number | null;
+}
+export interface UsageRollingView { authMode: string; windows: UsageWindow[]; }
+
 /* ============================================================================
    The single interface both the mock and the real (fetch) client implement.
    Surfaces depend ONLY on this.
@@ -116,6 +134,8 @@ export interface CabinetApi {
   domain(id: DomainId): Promise<DomainView>;
   ops(filter?: { kind?: OpsKind; domain?: string }): Promise<OpsFeed>;
   revertOp(id: string): Promise<{ ok: boolean }>;
+  usage(): Promise<UsageView>;
+  usageRolling(): Promise<UsageRollingView>;
   memory(): Promise<MemoryView>;
   saveMemoryFile(name: string, content: string): Promise<{ ok: boolean }>;
   recall(query: string): Promise<RecallResponse>;

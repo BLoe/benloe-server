@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/cabinet.js';
-import type { OpsEntry, OpsKind } from '../lib/cabinet.js';
-import { SectionLabel } from '../components/instruments/index.js';
+import type { OpsEntry, OpsKind, UsageDay, UsageWindow, InstrumentSpec } from '../lib/cabinet.js';
+import { Instrument, SectionLabel } from '../components/instruments/index.js';
 import './ops.css';
 
 /**
@@ -40,11 +40,100 @@ const EMPTY_COPY: Record<Filter, string> = {
   cron: 'No scheduled work has run in this window.',
 };
 
+/* ---------- usage card: "is the system healthy" + "are we near a wall" ---------- */
+
+const WINDOW_LABEL: Record<UsageWindow['window'], string> = { '5h': '5h window', '24h': '24h window', '7d': '7d window' };
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function fmtRatio(r: number | null): string {
+  if (r === null) return '—';
+  return r >= 100 ? `${Math.round(r)}×` : `${r.toFixed(1)}×`;
+}
+
+/** High read:write is healthy (reusing a stable prefix); collapsing toward
+ *  1 is the regression signal — the cache is being busted every turn. */
+function ratioTone(r: number | null): 'default' | 'ok' | 'warn' | 'crit' {
+  if (r === null) return 'default';
+  if (r >= 20) return 'ok';
+  if (r >= 5) return 'warn';
+  return 'crit';
+}
+
+/** Sum multi-model rows per day, then the last 7 distinct days oldest→newest
+ *  — chronological so the sparkline reads left-to-right and today lands on
+ *  the emphasized final point. */
+function cacheWriteTrend(byDay: UsageDay[]): number[] {
+  const perDay = new Map<string, number>();
+  for (const row of byDay) perDay.set(row.day, (perDay.get(row.day) ?? 0) + row.cache_write);
+  return [...perDay.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-7).map(([, v]) => v);
+}
+
+function buildUsageSpecs(byDay: UsageDay[], windows: UsageWindow[]): { specs: InstrumentSpec[]; costLine: string } | null {
+  if (windows.length === 0) return null;
+  const byId = Object.fromEntries(windows.map((w) => [w.window, w])) as Record<UsageWindow['window'], UsageWindow>;
+  // Headline ratio: prefer the freshest window that actually has data.
+  const headline = byId['5h']?.cacheReadWriteRatio ?? byId['24h']?.cacheReadWriteRatio ?? byId['7d']?.cacheReadWriteRatio ?? null;
+  const tone = ratioTone(headline);
+  const trend = cacheWriteTrend(byDay);
+  const headlineWindow = byId['5h'] ?? byId['24h'] ?? byId['7d'];
+
+  const specs: InstrumentSpec[] = [
+    {
+      kind: 'stat',
+      label: 'Cache health',
+      tag: headline === null ? undefined : tone === 'ok' ? 'reusing well' : tone === 'warn' ? 'watch it' : 'churning',
+      tagTone: tone === 'default' ? undefined : tone,
+      big: fmtRatio(headline),
+      unit: 'read : write',
+      sub: headlineWindow ? `${fmtTokens(headlineWindow.cache_read)} read / ${fmtTokens(headlineWindow.cache_write)} write` : 'no data yet',
+      tone,
+      points: trend.length > 1 ? trend : undefined,
+      pointsColor: tone === 'ok' ? 'var(--patina)' : tone === 'crit' ? 'var(--vermilion)' : 'var(--brass)',
+    },
+    ...(['5h', '24h', '7d'] as const).map((id): InstrumentSpec => {
+      const w = byId[id];
+      const fresh = w ? w.input + w.output + w.cache_write : 0;
+      return {
+        kind: 'stat',
+        label: WINDOW_LABEL[id],
+        big: fmtTokens(fresh),
+        unit: 'tokens fresh',
+        sub: w ? `${fmtTokens(w.cache_read)} reused via cache · ${w.turns} turn${w.turns === 1 ? '' : 's'}` : 'no data yet',
+      };
+    }),
+  ];
+
+  const dayCost = byId['24h']?.cost_usd ?? 0;
+  const costLine = `API-rate equivalent (24h): $${dayCost.toFixed(2)} — you're on Max, not billed per-token.`;
+  return { specs, costLine };
+}
+
 export function Ops() {
   const [filter, setFilter] = useState<Filter>('all');
   const [entries, setEntries] = useState<OpsEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [reverting, setReverting] = useState<Record<string, boolean>>({});
+  const [usage, setUsage] = useState<{ specs: InstrumentSpec[]; costLine: string } | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([api.usage(), api.usageRolling()])
+      .then(([byDayView, rollingView]) => {
+        if (!live) return;
+        setUsage(buildUsageSpecs(byDayView.byDay, rollingView.windows));
+      })
+      .catch(() => {
+        if (live) setUsage(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -108,6 +197,18 @@ export function Ops() {
           ))}
         </nav>
       </header>
+
+      {usage && (
+        <section className="ops-usage" aria-label="Usage">
+          <SectionLabel>Usage</SectionLabel>
+          <div className="ops-usage-grid">
+            {usage.specs.map((spec, i) => (
+              <Instrument key={`usage-${i}`} spec={spec} />
+            ))}
+          </div>
+          <p className="ops-usage-cost data">{usage.costLine}</p>
+        </section>
+      )}
 
       {loading && !entries ? (
         <p className="ops-loading data">Pulling the ledger…</p>
