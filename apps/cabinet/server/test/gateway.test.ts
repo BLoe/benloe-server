@@ -11,8 +11,12 @@ import { buildApp } from '../src/gateway/app.js';
 import { createSseParser, encodeSse, type SseEvent } from '../src/gateway/sse.js';
 import { foldEvent, type MessagePart } from '../src/gateway/fold.js';
 import type { TurnEvent } from '../src/runtime/agent.js';
+import { EpisodicStore } from '../src/episodic/index.js';
+import { Embedder } from '../src/embeddings/index.js';
+import { addLesson } from '../src/memory/lessons.js';
 
 const OWNER = 'below413@gmail.com';
+const MODEL_TIMEOUT = 300_000;
 
 // Fake artanis: token "owner" → Ben, token "guest" → someone else, anything else → 401.
 const fakeAuthFetch = (async (url: string | URL, init?: RequestInit) => {
@@ -252,6 +256,68 @@ describe('chat stream', () => {
     await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'hi' }) }));
     expect(deps_thread(id).title).toBeNull();
   });
+
+  it(
+    '/api/chat auto-recalls a relevant lesson into promptInput.lessons and filters an irrelevant one',
+    async () => {
+      const episodicDir = mkdtempSync(join(tmpdir(), 'cabinet-lessons-'));
+      const episodic = new EpisodicStore(join(episodicDir, 'episodic.db'));
+      const embedder = new Embedder();
+      try {
+        await addLesson(episodic, embedder, {
+          text: 'Ben prefers high-protein dinners on lifting days.',
+          domain: 'nutrition',
+          evidence: 'meal logs 2026-06',
+          confidence: 0.8,
+        });
+
+        let capturedPromptInput: { lessons?: { text: string; domain: string | null }[] } | undefined;
+        const runtime = {
+          authMode: 'subscription' as const,
+          queue: { depth: 0 },
+          interrupt: () => true,
+          titleFor: async () => null,
+          run: async (req: { promptInput?: typeof capturedPromptInput; onEvent: (e: TurnEvent) => void }) => {
+            capturedPromptInput = req.promptInput;
+            req.onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+            return { stopReason: 'success' as const, sessionId: 's1' };
+          },
+        };
+        const app = buildApp({
+          db: cabinet.db,
+          runtime: runtime as never,
+          approvals,
+          widgetBus,
+          ownerEmail: OWNER,
+          authFetch: fakeAuthFetch,
+          episodic,
+          embedder,
+        });
+        server = app.listen(0, '127.0.0.1');
+        await new Promise((r) => server.once('listening', r));
+        base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+        const { id } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+
+        // On-topic turn: the lesson should clear the relevance cutoff and get injected.
+        await collectSse(
+          await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'what should I eat tonight after lifting?' }) }),
+        );
+        expect(capturedPromptInput?.lessons).toEqual([{ text: 'Ben prefers high-protein dinners on lifting days.', domain: 'nutrition' }]);
+
+        // Off-topic turn: same lesson exists, but it's a weak match and must be filtered out, not injected.
+        await collectSse(
+          await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'how much is left on my HSA deductible this year?' }) }),
+        );
+        expect(capturedPromptInput?.lessons).toBeUndefined();
+      } finally {
+        await embedder.close();
+        episodic.close();
+        rmSync(episodicDir, { recursive: true, force: true });
+      }
+    },
+    MODEL_TIMEOUT,
+  );
 
   it('rejects unknown threads and empty text', async () => {
     await startApp();

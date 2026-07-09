@@ -104,6 +104,8 @@ const app = buildApp({
   widgetBus,
   ownerEmail: OWNER,
   embedderStatus: () => embedder.status(),
+  episodic,
+  embedder,
   memory,
 });
 
