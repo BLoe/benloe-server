@@ -1,8 +1,8 @@
-# PALS v2 — Personal Agent for the benloe.com Nexus
+# Cabinet v2 — Personal Agent for the benloe.com Nexus
 ## Architecture & Implementation Specification (v2.0, July 2026)
 ### Designed from the ground up for this server, to be built in one continuous pass by Claude Code
 
-**What this document is.** A complete rewrite of `AgentArchitecture.md` (v1), re-grounded in the actual machine it runs on. v1 was researched from the outside and specced a server that doesn't exist (nginx, DigitalOcean 4GB, `/opt/pals`, systemd app management, a from-scratch passkey auth system, a Python embedding sidecar, `benleo.com`). v2 is written against the real benloe.com nexus: Caddy, PM2, the artanis auth service, the `/srv/benloe` monorepo, 8GB/4-core, Node 24, and an existing unprivileged `claude-worker` user. It also adds the capability v1 omitted entirely — **agentic dev tools (bash, file read/write, deploys) so the agent can build and operate things on this server** — governed by the same autonomy-tier machinery. It is written to be executed top-to-bottom by Claude Code in a single build, no phases.
+**What this document is.** A complete rewrite of `AgentArchitecture.md` (v1), re-grounded in the actual machine it runs on. v1 was researched from the outside and specced a server that doesn't exist (nginx, DigitalOcean 4GB, `/opt/cabinet`, systemd app management, a from-scratch passkey auth system, a Python embedding sidecar, `benleo.com`). v2 is written against the real benloe.com nexus: Caddy, PM2, the artanis auth service, the `/srv/benloe` monorepo, 8GB/4-core, Node 24, and an existing unprivileged `claude-worker` user. It also adds the capability v1 omitted entirely — **agentic dev tools (bash, file read/write, deploys) so the agent can build and operate things on this server** — governed by the same autonomy-tier machinery. It is written to be executed top-to-bottom by Claude Code in a single build, no phases.
 
 ---
 
@@ -10,16 +10,16 @@
 
 | Area | v1 said | v2 says | Why |
 |---|---|---|---|
-| Domain | `pals.benleo.com` | `pals.benloe.com` | Typo throughout v1 |
+| Domain | `cabinet.benleo.com` | `cabinet.benloe.com` | Typo throughout v1 |
 | Reverse proxy | nginx + certbot | **Caddy** drop-in file in `infra/caddy/` | It's what runs here; TLS is automatic |
-| Process mgmt | systemd units in `/opt/pals` | **PM2** app in `/srv/benloe/apps/pals`, monorepo convention | Platform convention; one less management plane |
+| Process mgmt | systemd units in `/opt/cabinet` | **PM2** app in `/srv/benloe/apps/cabinet`, monorepo convention | Platform convention; one less management plane |
 | Auth | New passkey/WebAuthn + password system | **artanis** magic-link cookie + owner-email allowlist | Auth service already exists and every app here uses it; don't build a second one |
 | Embeddings | Python FastAPI sidecar (sentence-transformers) | **In-process Node** via `@huggingface/transformers` v4 (ONNX, CPU) in a worker thread | Kills an entire service; verified bge-small-en-v1.5 runs 384-dim on CPU in Node with zero Python |
 | Frontend | Next.js + assistant-ui + Vercel AI SDK | **Vite + React + Tailwind, hand-rolled chat UI and SSE protocol**, with a test suite | Platform preference (Vite); we control both ends of the wire; dependencies only where we can't/shouldn't maintain the code ourselves |
 | Models | Haiku 4.5 / Sonnet 4.6 / Opus 4.8 | **Haiku 4.5 / Sonnet 5 / Opus 4.8**, with **Fable 5** as explicit opt-in escalation | Sonnet 4.6 is previous-gen; Sonnet 5 (`claude-sonnet-5`) is the current daily driver |
 | Claude auth | Subscription OAuth token, assumed stable | **Dual-path**: subscription OAuth token *and* `ANTHROPIC_API_KEY`, switchable by env var, with automatic fallback | Policy is verifiably in flux (June 15 credit-pool change paused on its start date); parts of current docs say the Agent SDK requires API-key auth. Wire both; verify live at build |
 | Dev capability | None | **Full agentic toolset** (Bash/Read/Write/Edit/Glob/Grep + deploy privops), tier-governed | Ben's explicit requirement: the agent builds things on this server |
-| Memory location | `memory/` inside the app, git-pushed | **`/srv/benloe/data/pals/`** (gitignored), own private local git repo | The benloe-server repo is **public**; personal/health data must never land in it |
+| Memory location | `memory/` inside the app, git-pushed | **`/srv/benloe/data/cabinet/`** (gitignored), own private local git repo | The benloe-server repo is **public**; personal/health data must never land in it |
 | Privilege | implied root | **Runs as `claude-worker`** (uid 1000), root actions only via an audited, root-owned privops wrapper | An internet-reachable agent with shell tools must not be root |
 
 What v1 got right and v2 keeps wholesale: the three-layer memory split (SQL facts / curated markdown / vector episodic), consequence-based autonomy tiers enforced in the tool layer, deterministic writes so logging never depends on a model call, model routing + prompt caching as first-order cost controls, serialized turns, heartbeat + cron proactivity, JSONL-inspectable everything, and the full eight life domains.
@@ -32,7 +32,7 @@ Facts the design builds on, verified on the box on 2026-07-07:
 
 - **Host:** Ubuntu, kernel 6.17, 4 vCPU, 7.8 GB RAM (~6.5 GB available), 136 GB free disk. No swap (not needed at this RAM; embeddings are ~130 MB resident).
 - **Ingress:** Caddy. `benloe.com` static + `import /srv/benloe/infra/caddy/*` for subdomains. TLS automatic.
-- **Apps:** PM2 (root daemon): artanis-auth :3002, weights-api :3003, dada-api :3004, fantasy-hawk-api :3005, yahoo-fantasy-mcp :3006, fitness-api :3007, gamenight :3000/:3001. **Port 3008 is free → PALS gateway.**
+- **Apps:** PM2 (root daemon): artanis-auth :3002, weights-api :3003, dada-api :3004, fantasy-hawk-api :3005, yahoo-fantasy-mcp :3006, fitness-api :3007, gamenight :3000/:3001. **Port 3008 is free → Cabinet gateway.**
 - **Auth:** artanis issues a `.benloe.com`-scoped httpOnly JWT cookie (`token`) after magic-link login. Apps validate by calling `GET http://localhost:3002/api/auth/me` with the cookie (see `apps/weights-api/src/middleware/auth.ts` — the canonical middleware).
 - **Secrets:** `/srv/benloe/.env` (never committed). Contains, among others, `ANTHROPIC_API_KEY` (already present) and `MCP_TOKEN_SECRET` for the Yahoo MCP.
 - **Data:** SQLite files in `/srv/benloe/data/` (gitignored). better-sqlite3 already in use (yahoo-fantasy-mcp). sqlite3 CLI 3.46 installed.
@@ -43,9 +43,9 @@ Facts the design builds on, verified on the box on 2026-07-07:
 
 ---
 
-## 2. What PALS is
+## 2. What Cabinet is
 
-A single-user, always-on personal assistant for Ben at `pals.benloe.com`: a streaming, mobile-installable PWA chat app backed by a gateway that embeds the **Claude Agent SDK**. It logs and reasons across eight life domains (food/nutrition, training/body, healthcare ops, mind/recovery, money, life admin, social/leisure, cross-domain intelligence), holds three-layer long-term memory, acts proactively on a heartbeat + cron schedule, and — new in v2 — **works as a platform engineer on this server**: it can read the monorepo, write code, build, test, deploy, and operate the other benloe.com apps through tier-gated dev tools.
+A single-user, always-on personal assistant for Ben at `cabinet.benloe.com`: a streaming, mobile-installable PWA chat app backed by a gateway that embeds the **Claude Agent SDK**. It logs and reasons across eight life domains (food/nutrition, training/body, healthcare ops, mind/recovery, money, life admin, social/leisure, cross-domain intelligence), holds three-layer long-term memory, acts proactively on a heartbeat + cron schedule, and — new in v2 — **works as a platform engineer on this server**: it can read the monorepo, write code, build, test, deploy, and operate the other benloe.com apps through tier-gated dev tools.
 
 ### 2.1 Design principles (v1's seven, amended)
 
@@ -63,7 +63,7 @@ A single-user, always-on personal assistant for Ben at `pals.benloe.com`: a stre
 
 ## 3. Feature specification
 
-Domains 3.1–3.8 carry over from v1 §2 essentially unchanged in *what* they do (natural-language + photo food logging with macro estimates; workout/PR/volume tracking with EWMA weight trend; benefits Q&A over plan documents, deductible/OOP accumulators, meds/labs; sleep + mood check-ins and journaling; read-only money tracking with the hard rule that PALS never moves money; calendar/tasks/document vault/price watching; birthdays/keep-in-touch/reading/fantasy basketball via the existing Yahoo MCP; morning briefing / evening check-in / weekly review / anomaly nudges). Consult v1 §2 for the worked interaction examples — they remain the product bar. What changes is the substrate they run on (this document) and one **new domain**:
+Domains 3.1–3.8 carry over from v1 §2 essentially unchanged in *what* they do (natural-language + photo food logging with macro estimates; workout/PR/volume tracking with EWMA weight trend; benefits Q&A over plan documents, deductible/OOP accumulators, meds/labs; sleep + mood check-ins and journaling; read-only money tracking with the hard rule that Cabinet never moves money; calendar/tasks/document vault/price watching; birthdays/keep-in-touch/reading/fantasy basketball via the existing Yahoo MCP; morning briefing / evening check-in / weekly review / anomaly nudges). Consult v1 §2 for the worked interaction examples — they remain the product bar. What changes is the substrate they run on (this document) and one **new domain**:
 
 ### 3.9 Platform engineering (new)
 
@@ -76,7 +76,7 @@ Domains 3.1–3.8 carry over from v1 §2 essentially unchanged in *what* they do
 Example interaction:
 
 > **Ben:** the dada site should have a button that regenerates the image. build it and deploy.
-> **PALS:** Done. I added a "regenerate" button to `static/dada.benloe.com/index.html` wired to the existing `POST /api/generate` on dada-api :3004, rebuilt nothing (static site), and verified with a curl that the endpoint responds. Committed as `dada: add regenerate button` (not pushed — say the word and I'll push, that's approval-gated). 🔧 *2 files changed · view diff*
+> **Cabinet:** Done. I added a "regenerate" button to `static/dada.benloe.com/index.html` wired to the existing `POST /api/generate` on dada-api :3004, rebuilt nothing (static site), and verified with a curl that the endpoint responds. Committed as `dada: add regenerate button` (not pushed — say the word and I'll push, that's approval-gated). 🔧 *2 files changed · view diff*
 
 ---
 
@@ -90,14 +90,14 @@ Example interaction:
         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │ Caddy                                                        │
-│  pals.benloe.com {                                           │
+│  cabinet.benloe.com {                                           │
 │    /api/*  → 127.0.0.1:3008 (SSE-friendly)                   │
-│    /*      → static /srv/benloe/apps/pals/web/dist           │
+│    /*      → static /srv/benloe/apps/cabinet/web/dist           │
 │  }                                                           │
 └──────────────────────────┬───────────────────────────────────┘
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ PALS GATEWAY  (Node/TS, Express, :3008, runs as claude-worker)│
+│ Cabinet GATEWAY  (Node/TS, Express, :3008, runs as claude-worker)│
 │  • artanis auth middleware + owner-email allowlist           │
 │  • Threads/messages API + hand-rolled SSE chat stream        │
 │  • Serialized turn queue (one agent turn at a time)          │
@@ -109,8 +109,8 @@ Example interaction:
         │ Agent SDK query()             │ better-sqlite3
         ▼                               ▼
 ┌────────────────────────┐   ┌─────────────────────────────────┐
-│ AGENT RUNTIME          │   │ DATA  /srv/benloe/data/pals/    │
-│ @anthropic-ai/         │   │  pals.db      (facts, threads)  │
+│ AGENT RUNTIME          │   │ DATA  /srv/benloe/data/cabinet/    │
+│ @anthropic-ai/         │   │  cabinet.db      (facts, threads)  │
 │   claude-agent-sdk     │   │  episodic.db  (sqlite-vec)      │
 │ model routing per turn │   │  memory/      (markdown, git)   │
 │ session resume per     │   │  documents/ photos/ backups/    │
@@ -130,13 +130,13 @@ Example interaction:
 │                  google-workspace, apple-health, plaid       │
 │                  (config-activated when creds are present)   │
 │  Privops:        sudo /srv/benloe/infra/scripts/             │
-│                  pals-privops.sh  (pm2 restart, caddy reload)│
+│                  cabinet-privops.sh  (pm2 restart, caddy reload)│
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ### 4.2 Gateway
 
-Long-lived Node/TypeScript Express process, PM2-managed as `pals-api`, bound to `127.0.0.1:3008`, running as `claude-worker`.
+Long-lived Node/TypeScript Express process, PM2-managed as `cabinet-api`, bound to `127.0.0.1:3008`, running as `claude-worker`.
 
 Endpoints:
 
@@ -157,7 +157,7 @@ Endpoints:
 
 ```ts
 // server/src/middleware/auth.ts — same shape as weights-api, plus owner pinning
-const OWNER = process.env.PALS_OWNER_EMAIL; // below413@gmail.com
+const OWNER = process.env.CABINET_OWNER_EMAIL; // below413@gmail.com
 export async function authenticate(req, res, next) {
   const token = req.cookies.token;
   if (!token) return res.status(401).json({ error: 'Authentication required' });
@@ -167,7 +167,7 @@ export async function authenticate(req, res, next) {
   if (!r.ok) return res.status(401).json({ error: 'Authentication failed' });
   const { user } = await r.json();
   if (!user || user.email !== OWNER) {
-    return res.status(403).json({ error: 'Not authorized for PALS' }); // single-user, hard wall
+    return res.status(403).json({ error: 'Not authorized for Cabinet' }); // single-user, hard wall
   }
   req.user = user;
   next();
@@ -187,7 +187,7 @@ const q = query({
     model: route(turn),                  // 'claude-haiku-4-5' | 'claude-sonnet-5' | 'claude-opus-4-8' | 'claude-fable-5'
     resume: thread.sdkSessionId,         // per-thread continuity across process restarts
     cwd: '/srv/benloe',
-    additionalDirectories: ['/srv/benloe/data/pals'],
+    additionalDirectories: ['/srv/benloe/data/cabinet'],
     systemPrompt: assemblePrompt(turn),  // layered, cache-stable prefix (§9.3)
     // ⚠ VALIDATED PITFALL: a tool listed bare in allowedTools is auto-approved
     // BEFORE canUseTool is consulted (the SDK warns: CAN_USE_TOOL_SHADOWED).
@@ -199,7 +199,7 @@ const q = query({
     hooks: { PreToolUse: [auditHook] },  // audit EVERY call, incl. the narrow echo-grade
                                          // "safe read-only" class the CLI auto-approves
                                          // without consulting canUseTool (validated)
-    mcpServers: { pals: palsMcpServer, yahoo: yahooMcp, ...externalMcps },
+    mcpServers: { cabinet: cabinetMcpServer, yahoo: yahooMcp, ...externalMcps },
     maxTurns: turn.kind === 'heartbeat' ? 6 : 40,
     includePartialMessages: true,        // stream deltas for the UI
     settingSources: [],                  // fully programmatic; ignore filesystem settings
@@ -216,7 +216,7 @@ const q = query({
 
 Two complementary stores, by design:
 
-1. **`pals.db` `thread` + `message` tables** — the UI's source of truth. Every user message, assistant message (as ordered typed parts: text, tool-run, widget, approval-ref), and turn usage row is written here as the stream happens. History rendering, search, and thread lists never touch SDK internals.
+1. **`cabinet.db` `thread` + `message` tables** — the UI's source of truth. Every user message, assistant message (as ordered typed parts: text, tool-run, widget, approval-ref), and turn usage row is written here as the stream happens. History rendering, search, and thread lists never touch SDK internals.
 2. **SDK session transcripts** (JSONL under the `claude-worker` home) — the *agent's* source of truth for `resume`. The gateway treats these as an implementation detail; if a session is lost, the thread falls back to a fresh session seeded with a summary of recent `message` rows.
 
 Threads are cheap; Ben can keep one long-running "main" thread and spin topical ones. Compaction is the SDK's job; durable facts are protected because they live in SQLite/markdown, not in the context window (Principle 2).
@@ -225,7 +225,7 @@ Threads are cheap; Ben can keep one long-running "main" thread and spin topical 
 
 ## 5. Data model
 
-`/srv/benloe/data/pals/pals.db`, WAL mode, `foreign_keys=ON`. Timestamps ISO-8601 UTC; `local_day` derived in `America/New_York`. The v1 §4 domain schema is adopted **verbatim** — `food_log`, `pantry_item`, `recipe`, `recipe_ingredient`, `grocery_list_item`, `workout`, `workout_set`, `body_metric`, `health_daily`, `mood_log`, `journal_entry`, `goal`, `habit_event`, `insurance_plan`, `claim`, `prior_auth`, `medication`, `lab_result`, `hsa_contribution`, `account`, `transaction_row`, `budget`, `holding`, `subscription`, `task`, `document`, `price_watch`, `contact`, `reading_item`, `approval`, `action_audit`, `token_usage` — with these v2 additions:
+`/srv/benloe/data/cabinet/cabinet.db`, WAL mode, `foreign_keys=ON`. Timestamps ISO-8601 UTC; `local_day` derived in `America/New_York`. The v1 §4 domain schema is adopted **verbatim** — `food_log`, `pantry_item`, `recipe`, `recipe_ingredient`, `grocery_list_item`, `workout`, `workout_set`, `body_metric`, `health_daily`, `mood_log`, `journal_entry`, `goal`, `habit_event`, `insurance_plan`, `claim`, `prior_auth`, `medication`, `lab_result`, `hsa_contribution`, `account`, `transaction_row`, `budget`, `holding`, `subscription`, `task`, `document`, `price_watch`, `contact`, `reading_item`, `approval`, `action_audit`, `token_usage` — with these v2 additions:
 
 ```sql
 -- ========== CHAT (new in v2) ==========
@@ -267,11 +267,11 @@ Five tiers, enforced in `canUseTool` (never only in the prompt). The engine clas
 
 | Tier | Behavior | Life-domain actions | Dev/platform actions |
 |---|---|---|---|
-| **4 — Autonomous** | Execute, audit-log | Read any PALS data; `log_*`; `query_db`; memory ops; analyses; briefings; web search/fetch; price checks | `Read`/`Glob`/`Grep` anywhere allowed; read-only Bash (`git status/log/diff`, `ls`, `cat` non-secret, `pm2 list` via privops, log tails); read other apps' DBs |
+| **4 — Autonomous** | Execute, audit-log | Read any Cabinet data; `log_*`; `query_db`; memory ops; analyses; briefings; web search/fetch; price checks | `Read`/`Glob`/`Grep` anywhere allowed; read-only Bash (`git status/log/diff`, `ls`, `cat` non-secret, `pm2 list` via privops, log tails); read other apps' DBs |
 | **3 — Notify-after** | Execute, then tell Ben | Calendar events on Ben's own calendar; create tasks; set fantasy lineup; grocery staples | `Write`/`Edit` under `/srv/benloe/{apps,static}/**` (minus Tier-0 paths); `npm install/build/test`; `git add/commit`; `pm2 restart <existing app>` via privops |
 | **2 — Approve-before** | Approval packet; blocked await | Send email/message to a third party; fantasy waiver claim; any purchase | `git push` (public repo!); Caddy site file changes + reload; **new** PM2 service; schema migrations on other apps' DBs; deleting files outside the current task's diff |
 | **1 — Human-only** | Draft/recommend only, never execute | Trades, payments, medical appointments | `apt`, kernel/OS changes, ufw, DNS |
-| **0 — Blocked** | Tool call rejected with explanation | Bulk-delete memory; disable guardrails | Touch `apps/artanis/**`, `apps/pals/server/**` (self-modification), `/srv/benloe/.env`, `infra/systemd/**`, `/etc/**`, `~/.ssh`, other apps' DB **writes**, `claude-worker` credentials |
+| **0 — Blocked** | Tool call rejected with explanation | Bulk-delete memory; disable guardrails | Touch `apps/artanis/**`, `apps/cabinet/server/**` (self-modification), `/srv/benloe/.env`, `infra/systemd/**`, `/etc/**`, `~/.ssh`, other apps' DB **writes**, `claude-worker` credentials |
 
 Mechanics:
 
@@ -293,7 +293,7 @@ As v1 §5.1. The agent never "remembers" a number in prose; `log_*` tools write 
 
 ### 7.2 Layer 2 — curated markdown
 
-`/srv/benloe/data/pals/memory/` — **outside the public repo**, its own local git repo (committed on every `update_memory`, optionally pushed to a *private* GitHub remote if Ben configures one):
+`/srv/benloe/data/cabinet/memory/` — **outside the public repo**, its own local git repo (committed on every `update_memory`, optionally pushed to a *private* GitHub remote if Ben configures one):
 
 ```
 memory/
@@ -321,7 +321,7 @@ Discipline unchanged from v1: curated files stay curated; daily detail goes to S
 
 ## 8. Tool catalog
 
-**In-process MCP tools** (via `tool()` + `createSdkMcpServer`, zod schemas, exposed as `mcp__pals__*`):
+**In-process MCP tools** (via `tool()` + `createSdkMcpServer`, zod schemas, exposed as `mcp__cabinet__*`):
 
 - Logging (Tier 4): `log_food`, `log_workout`, `log_body_metric`, `log_mood`, `add_journal`, `log_claim`, `log_lab`, `log_medication`, `log_hsa_contribution`, `import_transactions_csv`, `update_pantry`, `add_recipe`, `upsert_task`, `upsert_contact`, `add_price_watch`.
 - Read (Tier 4): `query_db` (SELECT-only), `search_episodic`, `recall_lessons`, `search_documents` (RAG over the vault: PDFs → text → chunks → episodic index with `kind='document'`).
@@ -337,7 +337,7 @@ Discipline unchanged from v1: curated files stay curated; daily detail goes to S
 - `apple-health` → Health Auto Export ingestion into `health_daily`.
 - `plaid` → read-only balances/transactions/holdings (Tier 4 read; there is no write).
 
-**Privops** (the only sudo surface, §13.2): `pals-privops.sh pm2-restart <app>` (Tier 3), `pals-privops.sh pm2-start <ecosystem-under-/srv/benloe/apps>` (Tier 2), `pals-privops.sh caddy-reload` (Tier 2, always preceded by `caddy validate`).
+**Privops** (the only sudo surface, §13.2): `cabinet-privops.sh pm2-restart <app>` (Tier 3), `cabinet-privops.sh pm2-start <ecosystem-under-/srv/benloe/apps>` (Tier 2), `cabinet-privops.sh caddy-reload` (Tier 2, always preceded by `caddy validate`).
 
 ---
 
@@ -347,8 +347,8 @@ Discipline unchanged from v1: curated files stay curated; daily detail goes to S
 
 Verified timeline (July 2026): Anthropic blocked third-party harnesses (OpenClaw et al.) from subscription limits on **2026-04-04**; announced "Agent SDK credits" in May; the **2026-06-15** plan to move all non-interactive Agent SDK usage to separate monthly credits ($20 Pro / $100 Max 5x / $200 Max 20x) was **paused on its start date**. Today, Agent SDK usage under subscriptions works as before — but some current docs assert the SDK requires API-key auth under consumer ToS, and Anthropic has signaled the change may return with notice. Conclusion: **treat auth as a runtime configuration, not an architectural assumption.**
 
-- `PALS_CLAUDE_AUTH=subscription` → inject `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, stored in `/srv/benloe/.env`) into the SDK subprocess env.
-- `PALS_CLAUDE_AUTH=api` → inject `ANTHROPIC_API_KEY` (already present in `.env`).
+- `CABINET_CLAUDE_AUTH=subscription` → inject `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, stored in `/srv/benloe/.env`) into the SDK subprocess env.
+- `CABINET_CLAUDE_AUTH=api` → inject `ANTHROPIC_API_KEY` (already present in `.env`).
 - **Startup probe**: one cheap Haiku call; on 401/403/policy error in subscription mode, log loudly, flip to `api` for the session, and surface a banner in the UI. The `/healthz` endpoint reports which mode is live.
 - Build-time step: run `claude setup-token` interactively (Ben), store the token, test both modes, document which one stuck.
 
@@ -441,54 +441,54 @@ The same event vocabulary flows on `GET /api/events` for out-of-band pushes (bri
 ### 13.1 Layout, PM2, Caddy
 
 ```
-/srv/benloe/apps/pals/
+/srv/benloe/apps/cabinet/
   server/        # gateway + runtime + tools (TS → dist/)
   web/           # Vite PWA (→ dist/, served by Caddy)
   ecosystem.config.js
   package.json   # npm workspaces: server, web
-/srv/benloe/data/pals/          # gitignored: pals.db, episodic.db, memory/(git), documents/, photos/, backups/
-/srv/benloe/infra/caddy/pals.benloe.com
-/srv/benloe/infra/scripts/pals-privops.sh   # root-owned
+/srv/benloe/data/cabinet/          # gitignored: cabinet.db, episodic.db, memory/(git), documents/, photos/, backups/
+/srv/benloe/infra/caddy/cabinet.benloe.com
+/srv/benloe/infra/scripts/cabinet-privops.sh   # root-owned
 ```
 
 `ecosystem.config.js` (PM2 root daemon reads secrets, spawns unprivileged):
 
 ```js
 module.exports = { apps: [{
-  name: 'pals-api',
+  name: 'cabinet-api',
   script: './server/dist/index.js',
-  cwd: '/srv/benloe/apps/pals',
+  cwd: '/srv/benloe/apps/cabinet',
   uid: 'claude-worker', gid: 'claude-worker',        // ← privilege separation
   env: {
     NODE_ENV: 'production', PORT: 3008,
-    PALS_OWNER_EMAIL: 'below413@gmail.com',
-    PALS_CLAUDE_AUTH: env.PALS_CLAUDE_AUTH,          // 'subscription' | 'api'
+    CABINET_OWNER_EMAIL: 'below413@gmail.com',
+    CABINET_CLAUDE_AUTH: env.CABINET_CLAUDE_AUTH,          // 'subscription' | 'api'
     CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
     ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
-    PALS_DATA_DIR: '/srv/benloe/data/pals',
+    CABINET_DATA_DIR: '/srv/benloe/data/cabinet',
     HOME: '/home/claude-worker',                     // SDK session storage
-    CLAUDE_CONFIG_DIR: '/home/claude-worker/.pals-claude',
+    CLAUDE_CONFIG_DIR: '/home/claude-worker/.cabinet-claude',
     // ↑ mandatory isolation (validated): without it, ambient Claude settings
     //   files (permission allow rules) can shadow canUseTool entirely.
   },
   max_memory_restart: '1200M',                       // embedder headroom
-  error_file: '/srv/benloe/logs/pals-api-err.log',
-  out_file: '/srv/benloe/logs/pals-api-out.log',
+  error_file: '/srv/benloe/logs/cabinet-api-err.log',
+  out_file: '/srv/benloe/logs/cabinet-api-out.log',
   time: true,
 }]};
 ```
 
-`infra/caddy/pals.benloe.com`:
+`infra/caddy/cabinet.benloe.com`:
 
 ```caddy
-pals.benloe.com {
+cabinet.benloe.com {
     handle /api/* {
         reverse_proxy 127.0.0.1:3008 {
             flush_interval -1          # SSE: no buffering
         }
     }
     handle {
-        root * /srv/benloe/apps/pals/web/dist
+        root * /srv/benloe/apps/cabinet/web/dist
         try_files {path} /index.html
         file_server
     }
@@ -499,28 +499,28 @@ pals.benloe.com {
         X-Frame-Options DENY
         Referrer-Policy strict-origin-when-cross-origin
     }
-    log { output file /var/log/caddy/pals.benloe.com.log }
+    log { output file /var/log/caddy/cabinet.benloe.com.log }
 }
 ```
 
 ### 13.2 Privilege separation & privops
 
-- `pals-api` runs as `claude-worker` (uid 1000), which owns `/srv/benloe` — so the agent can read/build/write apps and its own data **without** being able to touch `/etc`, `/root`, systemd, or root-owned secrets.
+- `cabinet-api` runs as `claude-worker` (uid 1000), which owns `/srv/benloe` — so the agent can read/build/write apps and its own data **without** being able to touch `/etc`, `/root`, systemd, or root-owned secrets.
 - **`/srv/benloe/.env` is re-owned `root:root` mode 600** (hardening fix — it's currently `claude-worker`-owned, which would hand the agent every platform secret). PM2's root daemon still reads it in ecosystem configs; all existing apps run as root and are unaffected. The agent process receives only the env vars its ecosystem entry injects.
-- Root actions go through **one wrapper**, `/srv/benloe/infra/scripts/pals-privops.sh` — root-owned, 755, non-writable by claude-worker (note: it must live outside claude-worker-writable dirs or be immutable; we place the *canonical* copy at `/usr/local/sbin/pals-privops` root-owned and keep the repo copy as source) — which validates arguments against hard patterns before acting:
+- Root actions go through **one wrapper**, `/srv/benloe/infra/scripts/cabinet-privops.sh` — root-owned, 755, non-writable by claude-worker (note: it must live outside claude-worker-writable dirs or be immutable; we place the *canonical* copy at `/usr/local/sbin/cabinet-privops` root-owned and keep the repo copy as source) — which validates arguments against hard patterns before acting:
   - `pm2-restart <name>` — name must match an existing PM2 app.
   - `pm2-start <path>` — path must be `/srv/benloe/apps/*/ecosystem.config.js`; **still Tier 2** at the gate.
   - `caddy-reload` — runs `caddy validate` first; refuses on failure.
   - Everything else: exit 1.
-- Sudoers (`/etc/sudoers.d/pals`): `claude-worker ALL=(root) NOPASSWD: /usr/local/sbin/pals-privops`. Nothing else.
+- Sudoers (`/etc/sudoers.d/cabinet`): `claude-worker ALL=(root) NOPASSWD: /usr/local/sbin/cabinet-privops`. Nothing else.
 - The SDK subprocess inherits `claude-worker`; even `permissionMode` misconfiguration cannot cross the unix boundary.
 
 ### 13.3 Hardening recommendations (server-wide, part of this build)
 
 1. `chown root:root /srv/benloe/.env` — **done 2026-07-07** during pre-build validation; was `claude-worker`-owned, which would have handed the agent every platform secret.
-2. Keep ufw/fail2ban/SSH state as-is (already good); add fail2ban jail for repeated 401/403s on `pals.benloe.com` via the Caddy log (defense against magic-link/cookie brute-forcing at the artanis layer too).
+2. Keep ufw/fail2ban/SSH state as-is (already good); add fail2ban jail for repeated 401/403s on `cabinet.benloe.com` via the Caddy log (defense against magic-link/cookie brute-forcing at the artanis layer too).
 3. `/root/.claude/.credentials.json` stays root-only (already 600); the agent never sees Ben's interactive Claude credentials — its own token is injected per-process.
-4. Backups (03:00 job): `sqlite3 .backup` + tar of `memory/`, `documents/`, thread exports → `age`-encrypted → off-box (rclone target Ben configures; until then, encrypted copies rotate locally in `data/pals/backups/`, 30 daily + 12 monthly). A restore drill is part of acceptance testing.
+4. Backups (03:00 job): `sqlite3 .backup` + tar of `memory/`, `documents/`, thread exports → `age`-encrypted → off-box (rclone target Ben configures; until then, encrypted copies rotate locally in `data/cabinet/backups/`, 30 daily + 12 monthly). A restore drill is part of acceptance testing.
 5. Prompt-injection posture: all web/MCP/email-derived content is data, not instructions; tier gates fire on *actions* regardless of what fetched content asks; Tier-2 can never be auto-approved by content; approval packets always show the exact payload so Ben approves what will actually run.
 6. OS updates: already covered by the 7-day-delay apt system — the agent is Tier-1 on apt and must not touch it.
 
@@ -548,14 +548,14 @@ pals.benloe.com {
 
 Dependency-ordered; each step lands with its tests. No phases, no deferred features — external-service integrations (Google, Plaid, Apple Health) ship fully wired and activate the moment their credentials appear in `.env`, because those credentials are OAuth dances only Ben can perform.
 
-1. **Scaffold & permissions.** `apps/pals/{server,web}` workspaces; `data/pals/` dirs (+ `memory/` git init); confirm gitignore covers them; `chown root:root /srv/benloe/.env`; sudoers + install `pals-privops` to `/usr/local/sbin`; add `.env` keys (`PALS_CLAUDE_AUTH`, `PALS_OWNER_EMAIL`, `CLAUDE_CODE_OAUTH_TOKEN` placeholder).
+1. **Scaffold & permissions.** `apps/cabinet/{server,web}` workspaces; `data/cabinet/` dirs (+ `memory/` git init); confirm gitignore covers them; `chown root:root /srv/benloe/.env`; sudoers + install `cabinet-privops` to `/usr/local/sbin`; add `.env` keys (`CABINET_CLAUDE_AUTH`, `CABINET_OWNER_EMAIL`, `CLAUDE_CODE_OAUTH_TOKEN` placeholder).
 2. **DB layer.** Migration runner + full DDL (v1 domain schema + §5 chat tables); db module (WAL, FK, readonly `query_db` guard). *Tests: migrations idempotent; SELECT-guard rejects writes/PRAGMA/ATTACH/multi-statement.*
 3. **Embeddings + episodic.** Worker-thread embedder (`Xenova/bge-small-en-v1.5`), episodic store on sqlite-vec, chunker, backfill job. *Tests: 384-dim output, KNN round-trip, worker crash recovery.*
 4. **Memory layer.** Template markdown files; `update_memory`/`add_lesson`/`recall_lessons`/`search_episodic` tools; lesson governance validator. *Tests: escalation-lesson rejection; git commit on write.*
 5. **Tier engine.** Bash classifier, path resolver, tier table, approval queue (DB + await/resolve), `canUseTool` gate. *Tests are the heart of the build: table-driven cases for every row of §6 including compound commands, symlink traversal, privops args, expiry.*
 6. **Agent runtime.** SDK wrapper: model router, prompt assembler (cache-stable layering), turn queue, session resume, usage recorder, auth dual-path + startup probe, Fable-refusal fallback. *Tests: routing, queue serialization, prompt stability across turns (byte-identical prefix).*
 7. **Domain tools.** All `log_*`/read tools from §8 with macro estimation, EWMA, accumulators, PR detection. *Tests: accumulator math, EWMA, daily totals.*
-8. **In-process MCP server + external MCP wiring.** `createSdkMcpServer` with everything; yahoo MCP registration against :3006; config-gated google/plaid/apple-health registrations + `docs/pals-integrations.md` setup guide for each credential dance.
+8. **In-process MCP server + external MCP wiring.** `createSdkMcpServer` with everything; yahoo MCP registration against :3006; config-gated google/plaid/apple-health registrations + `docs/cabinet-integrations.md` setup guide for each credential dance.
 9. **Gateway HTTP.** Express app, artanis+allowlist middleware, threads/messages/approvals/usage/healthz routes, SSE encoder, `/api/events` channel, interrupt. *Tests: auth wall (wrong email = 403), SSE encode/parse round-trip, approval resolve path.*
 10. **Scheduler.** Hand-rolled next-occurrence scheduler + the five jobs; heartbeat escalation path; maintenance job incl. encrypted backups. *Tests: DST boundaries (Mar/Nov), defer-while-busy, no stacking.*
 11. **Web UI.** Vite scaffold, `useThread` + stream parser, all components/widgets from §12.3, PWA manifest + SW, usage dashboard. *Tests: hook folding logic against recorded streams; parser fuzz.*
@@ -577,7 +577,7 @@ Acceptance is done when every §14 failure mode has been induced or simulated on
 
 ## Appendix B — pre-build validation results (experiments run on this box, 2026-07-07)
 
-Agent SDK `0.3.202`, tiny Haiku probes (~$0.10 total metered + a few subscription turns). All in `/home/claude-worker/pals-auth-test/`.
+Agent SDK `0.3.202`, tiny Haiku probes (~$0.10 total metered + a few subscription turns). All in `/home/claude-worker/cabinet-auth-test/`.
 
 | # | Question | Result |
 |---|---|---|

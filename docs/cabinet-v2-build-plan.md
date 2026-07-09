@@ -3,7 +3,7 @@
 > The authoritative spec the `/loop` build follows. Durable across context
 > compaction and plan-limit interruptions: the loop reads this file + the task
 > list each iteration, so any restart resumes exactly where it left off.
-> Design source: `docs/pals-v2-design.md`. Tour feedback locked the direction.
+> Design source: `docs/cabinet-v2-design.md`. Tour feedback locked the direction.
 
 ## Prime directives (never violate)
 1. **Build the complete system.** No de-scoping, no "simplify for now," no
@@ -38,8 +38,8 @@
 ---
 
 ## MOVEMENT 1 — Foundation (serial · this model · freeze the substrate)
-Rebuild lives in `apps/pals/web` (new v2 surface); server changes in
-`apps/pals/server/src/gateway`.
+Rebuild lives in `apps/cabinet/web` (new v2 surface); server changes in
+`apps/cabinet/server/src/gateway`.
 
 - **A1 · Design tokens & base styles.** Campaign-desk token system (walnut/brass/
   paper/patina/vermilion; serif/mono/sans; space/radius/motion) as CSS custom

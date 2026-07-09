@@ -1,4 +1,4 @@
-# PALS — Personal Autonomous Life System
+# Cabinet — Personal Autonomous Life System
 ## Architecture & UX Engineering Specification (v1.0, July 2026)
 ### An implementation-ready design document for a fully autonomous personal life assistant
 
@@ -20,11 +20,11 @@
 
 ### 1.1 What we are building
 
-PALS is a single-user, always-on personal life assistant for Ben — a 39-year-old senior engineer in the East Village. It lives at a subdomain of benleo.com (`pals.benleo.com`), presents as a streaming, mobile-first PWA chat app, and runs on the existing DigitalOcean droplet. It logs and reasons across eight life domains (food/nutrition, training/body, healthcare ops, mind/recovery, money, life admin, social/leisure, and cross-domain intelligence), holds long-term memory, and proactively acts on Ben's behalf under a bounded autonomy model.
+Cabinet is a single-user, always-on personal life assistant for Ben — a 39-year-old senior engineer in the East Village. It lives at a subdomain of benleo.com (`cabinet.benleo.com`), presents as a streaming, mobile-first PWA chat app, and runs on the existing DigitalOcean droplet. It logs and reasons across eight life domains (food/nutrition, training/body, healthcare ops, mind/recovery, money, life admin, social/leisure, and cross-domain intelligence), holds long-term memory, and proactively acts on Ben's behalf under a bounded autonomy model.
 
 ### 1.2 Seven first-principles design decisions
 
-**Principle 1 — The model is the runtime; everything else is plumbing.** Following OpenClaw's core insight, the LLM provides intelligence and the surrounding system provides *execution environment*: sessions, memory, tool sandboxing, scheduling, and routing. We never expose the raw model to user input directly; a gateway process mediates every turn. This is why PALS is structured as gateway → agent runtime → tools, not as a thin chat wrapper. (For context on why this template is battle-tested: OpenClaw hit 34,168 GitHub stars in its first 48 hours around Jan 30, 2026, reaching ~106,000, then ~157K within 60 days and 250K+ by ~April — the most-starred non-aggregator software project on GitHub. Its patterns are the most stress-tested personal-agent patterns in existence.)
+**Principle 1 — The model is the runtime; everything else is plumbing.** Following OpenClaw's core insight, the LLM provides intelligence and the surrounding system provides *execution environment*: sessions, memory, tool sandboxing, scheduling, and routing. We never expose the raw model to user input directly; a gateway process mediates every turn. This is why Cabinet is structured as gateway → agent runtime → tools, not as a thin chat wrapper. (For context on why this template is battle-tested: OpenClaw hit 34,168 GitHub stars in its first 48 hours around Jan 30, 2026, reaching ~106,000, then ~157K within 60 days and 250K+ by ~April — the most-starred non-aggregator software project on GitHub. Its patterns are the most stress-tested personal-agent patterns in existence.)
 
 **Principle 2 — Store facts as facts, prose as prose, and experiences as embeddings.** The biggest architectural error in personal-agent design is putting everything into a vector store. Quantified data ("172.4 lbs on 2026-07-03", "38g protein at lunch") must be queried with SQL aggregations, joins, and time windows — embeddings cannot sum a column or compute a 7-day rolling average. Preferences and narrative ("Ben is cutting; targets 185g protein/day; hates cardio") belong in curated markdown that is cheap to read, human-editable, and diffable. Only *episodic recall* ("what did we decide about the dentist?") and *accumulated insights* genuinely need semantic search. This three-way split is a deliberate rejection of one-size-fits-all RAG, and it's exactly the declarative/evidence/procedural decomposition the 2026 agent-memory literature converged on.
 
@@ -58,13 +58,13 @@ Each domain below is specified to implementable detail: the data captured, the t
 
 **Example interaction:**
 > **Ben:** [photo of a burrito bowl] logging lunch
-> **PALS:** Logged: chipotle-style bowl — ~710 kcal, 46g protein, 68g carbs, 28g fat (medium confidence; assumed double chicken + brown rice + no cheese per your usual). That puts you at 112g protein / 185g target with dinner to go. Want me to bias tonight's plan high-protein?
+> **Cabinet:** Logged: chipotle-style bowl — ~710 kcal, 46g protein, 68g carbs, 28g fat (medium confidence; assumed double chicken + brown rice + no cheese per your usual). That puts you at 112g protein / 185g target with dinner to go. Want me to bias tonight's plan high-protein?
 
 ### 2.2 Training & Body
 
 - **Workout logging** (sets/reps/RPE), free-text or structured ("bench 3x5 @ 185, RPE 8").
 - **PR history and volume tracking** per lift and muscle group, with weekly tonnage.
-- **Programming for non-trainer days:** progression, deload detection, and injury-aware substitutions (from a substitution table + memory of Ben's injuries). PALS is explicit that it is not a certified trainer and flags when a human coach is warranted.
+- **Programming for non-trainer days:** progression, deload detection, and injury-aware substitutions (from a substitution table + memory of Ben's injuries). Cabinet is explicit that it is not a certified trainer and flags when a human coach is warranted.
 - **Weight-trend smoothing:** exponentially-weighted moving average to strip daily water-weight noise; reports trend, not single points.
 - **Apple Health / wearable ingestion:** steps, active energy, cardio, HRV, recovery — via the Health Auto Export pipeline (see §5/§7).
 
@@ -73,12 +73,12 @@ Each domain below is specified to implementable detail: the data captured, the t
 - **Benefits Q&A over actual plan documents.** Ben's plan is an **Anthem HSA 3300 HDHP** — a $3,300-deductible HSA-qualified high-deductible plan. RAG over the uploaded SPD/benefits PDFs in the document vault answers "is a dermatology visit covered before deductible?"
 - **Deductible / out-of-pocket accumulator tracking.** Running totals against plan limits, updated as claims/EOBs are logged.
 - **Claims / EOB logging**, prior-auth status tracking, appointment prep question lists, post-visit notes.
-- **HSA contribution strategy.** PALS knows the **2026 IRS HSA limits per IRS Rev. Proc. 2025-19 (released May 1, 2025): self-only $4,400 contribution; $1,000 age-55+ catch-up; HDHP minimum deductible $1,700; OOP max $8,500**, and the already-published **2027 limits per IRS Revenue Procedure 2026-24 (released May 29, 2026): self-only $4,500; HDHP minimum deductible $1,750; OOP max $8,700**, and tracks Ben's YTD contributions against the limit, nudging before year-end. (Ben, 39, is not yet catch-up eligible; PALS notes the age-55 milestone. Design note: a $3,300 self-only deductible comfortably exceeds the 2026 self-only minimum of $1,700, so it is a valid HSA-qualified HDHP; confirm from the plan document whether the $3,300 is a self-only or family deductible — $3,300 would fall *below* the 2026 family minimum of $3,400 and would need re-checking if it is a family tier.)
+- **HSA contribution strategy.** Cabinet knows the **2026 IRS HSA limits per IRS Rev. Proc. 2025-19 (released May 1, 2025): self-only $4,400 contribution; $1,000 age-55+ catch-up; HDHP minimum deductible $1,700; OOP max $8,500**, and the already-published **2027 limits per IRS Revenue Procedure 2026-24 (released May 29, 2026): self-only $4,500; HDHP minimum deductible $1,750; OOP max $8,700**, and tracks Ben's YTD contributions against the limit, nudging before year-end. (Ben, 39, is not yet catch-up eligible; Cabinet notes the age-55 milestone. Design note: a $3,300 self-only deductible comfortably exceeds the 2026 self-only minimum of $1,700, so it is a valid HSA-qualified HDHP; confirm from the plan document whether the $3,300 is a self-only or family deductible — $3,300 would fall *below* the 2026 family minimum of $3,400 and would need re-checking if it is a family tier.)
 - **Medication/supplement schedules** with refill nudges (days-of-supply countdown).
 - **Labs trended over time** (e.g., LDL, A1c, vitamin D) with reference ranges.
 
 **Example:**
-> **PALS (proactive):** Heads up — your Anthem EOB for the 6/18 PT visit posted. You've now hit $2,140 of your $3,300 deductible for 2026. Two more PT visits and you're likely through it; after that most visits shift to coinsurance. Also: you've put $2,900 into your HSA — $1,500 of headroom left before the $4,400 cap. Want me to model maxing it by December?
+> **Cabinet (proactive):** Heads up — your Anthem EOB for the 6/18 PT visit posted. You've now hit $2,140 of your $3,300 deductible for 2026. Two more PT visits and you're likely through it; after that most visits shift to coinsurance. Also: you've put $2,900 into your HSA — $1,500 of headroom left before the $4,400 cap. Want me to model maxing it by December?
 
 ### 2.4 Mind & Recovery
 
@@ -91,7 +91,7 @@ Each domain below is specified to implementable detail: the data captured, the t
 
 - **Spend tracking** via Plaid (read-only) or CSV import.
 - **Budget vs. actual**, subscription audit (recurring-charge detection), portfolio monitoring with allocation-drift detection, rebalancing suggestions, tax-loss-harvesting flags, contribution reminders, tax-document organization.
-- **Hard rule: all financial data is read-only. PALS recommends; Ben executes every trade and payment.** Trades and payments are Tier-1 (never executed by the agent, full stop).
+- **Hard rule: all financial data is read-only. Cabinet recommends; Ben executes every trade and payment.** Trades and payments are Tier-1 (never executed by the agent, full stop).
 
 ### 2.6 Life Admin
 
@@ -121,14 +121,14 @@ Each domain below is specified to implementable detail: the data captured, the t
 
 ```
                          ┌───────────────────────────────────────────┐
-   iPhone / Desktop      │            pals.benleo.com (PWA)           │
+   iPhone / Desktop      │            cabinet.benleo.com (PWA)           │
    (installed PWA)  ────► │   assistant-ui + Vercel AI SDK front end   │
                          └───────────────────┬───────────────────────┘
                                              │ HTTPS / SSE (streaming)
                                              ▼
    ┌──────────────────────────────────────────────────────────────────────┐
    │                        nginx (reverse proxy, TLS)                      │
-   │   pals.benleo.com → :8787   |   benleo.com → existing   |   yahoomcp   │
+   │   cabinet.benleo.com → :8787   |   benleo.com → existing   |   yahoomcp   │
    └───────────────────────────────┬──────────────────────────────────────┘
                                     ▼
    ┌──────────────────────────────────────────────────────────────────────┐
@@ -143,7 +143,7 @@ Each domain below is specified to implementable detail: the data captured, the t
                    ▼                                        ▼
    ┌───────────────────────────────┐        ┌──────────────────────────────┐
    │   AGENT RUNTIME               │        │   MEMORY & DATA LAYER          │
-   │   Claude Agent SDK / claude -p│        │  (1) pals.db  (SQLite)         │
+   │   Claude Agent SDK / claude -p│        │  (1) cabinet.db  (SQLite)         │
    │   OAuth (CLAUDE_CODE_OAUTH_   │        │  (2) memory/*.md  (curated)    │
    │        TOKEN, Max sub)        │        │  (3) episodic.db (sqlite-vec)  │
    │   - layered system prompt     │◄──────►│  (4) embed service (bge-small) │
@@ -192,7 +192,7 @@ The runtime wraps the **Claude Agent SDK** (TypeScript, `@anthropic-ai/claude-ag
 
 | Layer | Store | Contents | Access pattern | Why this store |
 |---|---|---|---|---|
-| **Structured / quantified** | `pals.db` (SQLite) | Every measurable fact: food logs, workouts, weight, sleep, mood, claims, meds, labs, transactions, tasks, contacts | Deterministic SQL via `query_db` tool | Aggregation, joins, time-windows, exactness. Embeddings cannot compute a 7-day protein average. |
+| **Structured / quantified** | `cabinet.db` (SQLite) | Every measurable fact: food logs, workouts, weight, sleep, mood, claims, meds, labs, transactions, tasks, contacts | Deterministic SQL via `query_db` tool | Aggregation, joins, time-windows, exactness. Embeddings cannot compute a 7-day protein average. |
 | **Curated semantic / narrative** | `memory/*.md` | Preferences, goals, personas, standing orders, per-domain narrative summaries | Loaded into system prompt (small, stable files) or read on demand | Cheap, diffable, human-editable, cache-friendly. This is the OpenClaw `MEMORY.md`/`CLAUDE.md` pattern. |
 | **Episodic + lessons** | `episodic.db` (SQLite + `sqlite-vec`) | Chunked past-conversation snippets; accumulated "lessons learned" insights | Vector search via `search_episodic` / `recall_lessons` tools | Only genuinely semantic recall needs embeddings. Governed reflection bank. |
 
@@ -224,13 +224,13 @@ Five tiers, decided per-action by the policy engine. This is enforced in the too
 
 ### 3.8 What "full autonomy" realistically is in mid-2026
 
-Research reality check: production personal agents in 2026 do not run truly unsupervised on high-consequence actions. The dominant deployed pattern is **"supervised autonomy"** — Tier-3/Tier-4 for the vast majority of actions (read, log, analyze, remind, draft) with a consequence-gated approval layer for the few irreversible ones. The failure modes that make full hands-off autonomy unsafe (agents looping, sending wrong messages, over-spending) are well documented, and the OpenClaw "Wild West" security critique (§1.2, Karpathy) is exactly why. PALS is spec'd to the practical ceiling: it *feels* fully autonomous day-to-day because ~95% of what it does is Tier-3/4, while the irreversible 5% stays gated. This is the correct target, not a limitation.
+Research reality check: production personal agents in 2026 do not run truly unsupervised on high-consequence actions. The dominant deployed pattern is **"supervised autonomy"** — Tier-3/Tier-4 for the vast majority of actions (read, log, analyze, remind, draft) with a consequence-gated approval layer for the few irreversible ones. The failure modes that make full hands-off autonomy unsafe (agents looping, sending wrong messages, over-spending) are well documented, and the OpenClaw "Wild West" security critique (§1.2, Karpathy) is exactly why. Cabinet is spec'd to the practical ceiling: it *feels* fully autonomous day-to-day because ~95% of what it does is Tier-3/4, while the irreversible 5% stays gated. This is the correct target, not a limitation.
 
 ---
 
 ## 4. Data Model — SQLite Schema DDL
 
-`pals.db` uses SQLite with WAL mode (`PRAGMA journal_mode=WAL`) for concurrent read during writes, and `PRAGMA foreign_keys=ON`. All timestamps are ISO-8601 UTC text; local-day derivations use `America/New_York`. Selected core tables (representative, not exhaustive — Claude Code should extend following these patterns):
+`cabinet.db` uses SQLite with WAL mode (`PRAGMA journal_mode=WAL`) for concurrent read during writes, and `PRAGMA foreign_keys=ON`. All timestamps are ISO-8601 UTC text; local-day derivations use `America/New_York`. Selected core tables (representative, not exhaustive — Claude Code should extend following these patterns):
 
 ```sql
 -- ========== FOOD & NUTRITION ==========
@@ -519,7 +519,7 @@ Directory `memory/` (git-versioned):
 
 ```
 memory/
-  IDENTITY.md        # Who PALS is, tone, boundaries (the persona/SOUL)
+  IDENTITY.md        # Who Cabinet is, tone, boundaries (the persona/SOUL)
   USER.md            # Ben: age, location, job, family, high-level context
   PREFERENCES.md     # Food dislikes, training style, comms tone, UI prefs
   GOALS.md           # Current active goals & targets (protein 185g, cut to 175lb)
@@ -735,17 +735,17 @@ Browser `POST /api/chat` → gateway enqueues turn → Agent SDK `query()` strea
 
 ### 10.1 Target box & resource budget
 
-DigitalOcean droplet, Ubuntu, **$48/mo tier**. This is either 8GB/4vCPU (standard) or 4GB/2vCPU (premium-Intel/AMD) — PALS is spec'd to fit the **4GB floor** so it works on either. It coexists with existing benleo.com and the Yahoo Fantasy MCP.
+DigitalOcean droplet, Ubuntu, **$48/mo tier**. This is either 8GB/4vCPU (standard) or 4GB/2vCPU (premium-Intel/AMD) — Cabinet is spec'd to fit the **4GB floor** so it works on either. It coexists with existing benleo.com and the Yahoo Fantasy MCP.
 
 Resource budget (fits 4GB):
 | Component | RAM (typical) | Notes |
 |---|---|---|
 | Existing benleo.com + nginx | ~150–300MB | already resident |
 | Yahoo Fantasy MCP | ~80–150MB | already resident |
-| PALS gateway (Node/TS) | ~200–400MB | main process |
+| Cabinet gateway (Node/TS) | ~200–400MB | main process |
 | Claude Code / Agent SDK subprocess | ~150–300MB | spawned per active turn; serialized so ≤1 at a time |
 | Embedding sidecar (Python, bge-small) | ~350–500MB | model resident; memory-capped via systemd |
-| SQLite (pals.db + episodic.db) | negligible RAM; on-disk | WAL |
+| SQLite (cabinet.db + episodic.db) | negligible RAM; on-disk | WAL |
 | External MCP servers (Google/Plaid/Health, on-demand) | ~50–120MB each, short-lived | spawned as needed |
 | **Headroom / OS** | remainder | add 2GB swap for safety |
 
@@ -754,13 +754,13 @@ CPU: embedding of a day's chunks is a few seconds on CPU; agent turns are networ
 ### 10.2 Directory layout
 
 ```
-/opt/pals/
+/opt/cabinet/
   gateway/            # Node/TS gateway + agent runtime (built)
   web/                # Next.js PWA (built static + SSR)
   embed/              # Python embedding sidecar
   memory/             # curated markdown (git repo)
   data/
-    pals.db  episodic.db  threads/*.jsonl
+    cabinet.db  episodic.db  threads/*.jsonl
     documents/  photos/   backups/
   config/
     .env              # secrets (0600): CLAUDE_CODE_OAUTH_TOKEN, session secret,
@@ -773,14 +773,14 @@ CPU: embedding of a day's chunks is a few seconds on CPU; agent turns are networ
 **Recommendation: systemd units, not Docker**, for this box. Rationale: the droplet already runs services directly; the workload is a few long-lived processes (gateway, embed sidecar) plus short-lived spawns; Docker adds image + daemon overhead that matters on a 4GB box; systemd gives us clean process supervision, resource caps (`MemoryMax=`), auto-restart, and journald logging with zero container overhead. (If Ben later wants isolation, containerizing the embed sidecar is the one place it'd help — but it's not needed for v1.)
 
 Units:
-- `pals-gateway.service` — `Restart=always`, `MemoryMax=700M`, `EnvironmentFile=/opt/pals/config/.env`, `After=network.target`.
-- `pals-embed.service` — `Restart=always`, `MemoryMax=700M`, binds `127.0.0.1:8799`.
-- `pals-web.service` — Next.js server (or serve static build via nginx directly).
+- `cabinet-gateway.service` — `Restart=always`, `MemoryMax=700M`, `EnvironmentFile=/opt/cabinet/config/.env`, `After=network.target`.
+- `cabinet-embed.service` — `Restart=always`, `MemoryMax=700M`, binds `127.0.0.1:8799`.
+- `cabinet-web.service` — Next.js server (or serve static build via nginx directly).
 - Scheduling via **node-cron inside the gateway** (keeps schedule logic with the agent) — with the heavy weekly Opus review run as a **systemd timer that spawns an isolated `claude -p`** to isolate its memory footprint. Heartbeat + daily routines run in-process.
 
 ### 10.4 nginx
 
-Add a server block for `pals.benleo.com` proxying to `127.0.0.1:8787`, with SSE-friendly settings (`proxy_buffering off;`, long `proxy_read_timeout`), reusing the existing certbot setup. `pals.benleo.com` gets its own Let's Encrypt cert (`certbot --nginx -d pals.benleo.com`).
+Add a server block for `cabinet.benleo.com` proxying to `127.0.0.1:8787`, with SSE-friendly settings (`proxy_buffering off;`, long `proxy_read_timeout`), reusing the existing certbot setup. `cabinet.benleo.com` gets its own Let's Encrypt cert (`certbot --nginx -d cabinet.benleo.com`).
 
 ### 10.5 SSL, backups, monitoring
 
@@ -825,8 +825,8 @@ Holding health + financial data raises the bar. Controls:
 
 This is **build sequencing**, not product phasing — execute top to bottom.
 
-1. **Provisioning & auth spine.** Create `/opt/pals` layout; install Node LTS, Python, sqlite + sqlite-vec, bge-small model; generate `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`; write `.env` (0600); add 2GB swap; ufw + SSH hardening.
-2. **Data layer.** Create `pals.db` with the full §4 schema; create `episodic.db` with sqlite-vec tables; seed `insurance_plan` with the Anthem HSA 3300 HDHP row and the 2026 IRS limits ($4,400 self-only contribution, $1,700 min deductible, $8,500 OOP max per Rev. Proc. 2025-19); write DB access module with WAL + SELECT-only `query_db` allowlist.
+1. **Provisioning & auth spine.** Create `/opt/cabinet` layout; install Node LTS, Python, sqlite + sqlite-vec, bge-small model; generate `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`; write `.env` (0600); add 2GB swap; ufw + SSH hardening.
+2. **Data layer.** Create `cabinet.db` with the full §4 schema; create `episodic.db` with sqlite-vec tables; seed `insurance_plan` with the Anthem HSA 3300 HDHP row and the 2026 IRS limits ($4,400 self-only contribution, $1,700 min deductible, $8,500 OOP max per Rev. Proc. 2025-19); write DB access module with WAL + SELECT-only `query_db` allowlist.
 3. **Embedding sidecar.** FastAPI + sentence-transformers `bge-small-en-v1.5` on `127.0.0.1:8799`; `/embed` + `/healthz`; systemd unit with `MemoryMax`.
 4. **Memory layer.** Create `memory/*.md` from templates (IDENTITY, USER, PREFERENCES, GOALS, STANDING_ORDERS, HEARTBEAT, domains/*); init as git repo; `update_memory`/`add_lesson`/`recall_lessons`/`search_episodic` tools + chunk/embed pipeline.
 5. **Gateway + agent runtime core.** Node/TS gateway: HTTP+SSE server, serialized turn queue, Agent SDK integration with OAuth auth, layered system-prompt assembler, prompt-cache breakpoints, model routing. Get a single streaming text turn working end-to-end from a curl.
@@ -837,14 +837,14 @@ This is **build sequencing**, not product phasing — execute top to bottom.
 10. **Scheduler & proactive routines.** node-cron heartbeat (Haiku, isolated/light) + `HEARTBEAT.md`; daily briefing (6:30) and evening check-in (20:30) on Sonnet; weekly review (Opus) as a systemd timer spawning isolated `claude -p`; 3am maintenance (backup/checkpoint/embed-backfill).
 11. **Web UI / PWA.** Next.js + assistant-ui + Vercel AI SDK; SSE wired to gateway UI-message-stream; passkey/password auth; PWA manifest + service worker; widget components (macro ring, weight chart, pantry/grocery, briefing, approval card, mood check-in).
 12. **Reflection & lessons governance.** Wire the weekly reflection pass; lesson evaluation/evidence/lifecycle/governance validation; promotion of high-value lessons into Layer-2 files.
-13. **Resilience & ops.** Backoff/fallback logic, token-budget throttle at 80%, `/healthz`, uptime alert, encrypted off-box backups, token-expiry warning, nginx `pals.benleo.com` block + certbot cert.
+13. **Resilience & ops.** Backoff/fallback logic, token-budget throttle at 80%, `/healthz`, uptime alert, encrypted off-box backups, token-expiry warning, nginx `cabinet.benleo.com` block + certbot cert.
 14. **Hardening pass.** Prompt-injection review of all content-ingesting tools; confirm Tier-0/1 are structurally blocked; verify SELECT-only enforcement; end-to-end autonomy-tier tests including approval expiry; restore-from-backup drill.
 
 ---
 
 ## Appendix A — Key external facts this design depends on (verify before/at build)
 
-- **Third-party-harness ban:** Anthropic enforced blocking third-party harnesses (OpenClaw etc.) from Claude subscription limits on **April 4, 2026**; first-party subscription-authenticated Agent SDK / `claude -p` via `claude setup-token` remains supported. The planned **June 15, 2026** move of non-interactive usage to a separate monthly credit ($20 Pro / $100 Max 5x / $200 Max 20x) was **paused on the day it was to take effect** — nothing changed, but Anthropic signaled it may revisit. Design for portability (the `ANTHROPIC_API_KEY` overflow path) so a future policy change doesn't brick PALS.
+- **Third-party-harness ban:** Anthropic enforced blocking third-party harnesses (OpenClaw etc.) from Claude subscription limits on **April 4, 2026**; first-party subscription-authenticated Agent SDK / `claude -p` via `claude setup-token` remains supported. The planned **June 15, 2026** move of non-interactive usage to a separate monthly credit ($20 Pro / $100 Max 5x / $200 Max 20x) was **paused on the day it was to take effect** — nothing changed, but Anthropic signaled it may revisit. Design for portability (the `ANTHROPIC_API_KEY` overflow path) so a future policy change doesn't brick Cabinet.
 - **Model prices (per MTok, July 2026):** Haiku 4.5 ~$1/$5; Sonnet 4.6 $3/$15; Opus 4.8 $5/$25; Fable 5 ~$10/$50 (subscription inclusion ended June 22, 2026). Prompt-cache reads 0.1×, 5-min writes 1.25×, 1-hr writes 2×.
 - **Max 20x sizing (directional):** ~220,000 tokens per 5-hour window; ~240–480 Sonnet-hours + ~24–40 Opus-hours weekly. Exact hour figures are no longer officially published — monitor `token_usage`.
 - **IRS HSA/HDHP limits:** 2026 (Rev. Proc. 2025-19) — self-only contribution $4,400, catch-up $1,000, min deductible $1,700, OOP max $8,500. 2027 (Rev. Proc. 2026-24) — self-only $4,500, min deductible $1,750, OOP max $8,700. A $3,300 self-only deductible is a valid HSA-qualified HDHP for 2026.

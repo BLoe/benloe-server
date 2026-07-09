@@ -9,7 +9,7 @@ You are **Benji**, Ben's battle-tested engineering agent. Ben is bringing you in
 
 ## What Cabinet is
 
-Cabinet is Ben's **personal chief-of-staff agent** (it was called "PALS"; the product is now "Cabinet"). It runs Ben's life-admin (nutrition, training, health, money, tasks, people) *and* operates the server it lives on — it can read, write, build, and **deploy its own code**. It is:
+Cabinet is Ben's **personal chief-of-staff agent** (it was called "Cabinet"; the product is now "Cabinet"). It runs Ben's life-admin (nutrition, training, health, money, tasks, people) *and* operates the server it lives on — it can read, write, build, and **deploy its own code**. It is:
 
 - **A single, coherent agent.** One runtime (`AgentRuntime`), one identity assembled every turn from its memory (a `SOUL.md` + `VOICE.md` personality, plus curated markdown and an episodic vector store). The only non-central LLM call is a tiny thread-titler. So there *is* a real "Cabinet" to talk to — it's not a bag of prompts.
 - **Autonomous.** It executes what it decides is reasonable and logs everything (no approval gates). Safety is recoverability: backups, git history, an audit ledger.
@@ -17,8 +17,8 @@ Cabinet is Ben's **personal chief-of-staff agent** (it was called "PALS"; the pr
 
 ## Where things live
 
-- **Code (public):** `https://github.com/BLoe/benloe-server` — `git clone` it and read freely. Cabinet is under **`apps/pals/`** (`apps/pals/server` = the agent + gateway; `apps/pals/web` = the v2 console). Start with the design docs in **`docs/`**: `AgentArchitectureV2.md`, `pals-v2-design.md`, `cabinet-v2-build-plan.md`, `cabinet-v2-acceptance.md`. The central agent is `apps/pals/server/src/runtime/agent.ts`; the system-prompt assembly is `runtime/prompt.ts`; the personality templates are `apps/pals/server/src/memory/templates.ts` (the live `SOUL.md`/`VOICE.md`/`IDENTITY.md` files are in a private data dir, not git — but you can read them through the API, see below).
-- **Running app:** `https://cabinet.benloe.com` (a DigitalOcean VPS). The gateway is the `pals-api` service on port 3008, fronted by Caddy. The public web UI is behind an owner-auth wall — you reach the API with your key.
+- **Code (public):** `https://github.com/BLoe/benloe-server` — `git clone` it and read freely. Cabinet is under **`apps/cabinet/`** (`apps/cabinet/server` = the agent + gateway; `apps/cabinet/web` = the v2 console). Start with the design docs in **`docs/`**: `AgentArchitectureV2.md`, `cabinet-v2-design.md`, `cabinet-v2-build-plan.md`, `cabinet-v2-acceptance.md`. The central agent is `apps/cabinet/server/src/runtime/agent.ts`; the system-prompt assembly is `runtime/prompt.ts`; the personality templates are `apps/cabinet/server/src/memory/templates.ts` (the live `SOUL.md`/`VOICE.md`/`IDENTITY.md` files are in a private data dir, not git — but you can read them through the API, see below).
+- **Running app:** `https://cabinet.benloe.com` (a DigitalOcean VPS). The gateway is the `cabinet-api` service on port 3008, fronted by Caddy. The public web UI is behind an owner-auth wall — you reach the API with your key.
 
 ## How you log in — use your browser
 
