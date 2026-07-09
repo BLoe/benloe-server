@@ -55,16 +55,44 @@ describe('Embedder', () => {
   );
 
   it(
-    'recovers after a worker crash',
+    'recovers after a worker crash — status() disambiguates crashed from never_started',
     async () => {
+      // Warm from the previous test.
+      expect(embedder.status().state).toBe('ready');
+
       await embedder.terminateForTest();
       expect(embedder.alive).toBe(false);
+      const crashed = embedder.status();
+      // The case that was indistinguishable before this fix: a bare boolean
+      // couldn't tell "never spawned" from "spawned, then died." Now it's
+      // an explicit state, plus a reason a fresh embedder never has.
+      expect(crashed.state).toBe('crashed');
+      expect(crashed.state).not.toBe('never_started');
+      expect(crashed.lastError).not.toBeNull();
+
       const [v] = await embedder.embed(['recovery probe']);
       expect(v).toHaveLength(EMBEDDING_DIMS);
       expect(embedder.alive).toBe(true);
+      const ready = embedder.status();
+      expect(ready.state).toBe('ready');
+      expect(ready.lastError).toBeNull(); // cleared on successful recovery
     },
     MODEL_TIMEOUT,
   );
+
+  it('a fresh embedder reports never_started with no error — the other half of the disambiguation', () => {
+    const fresh = new Embedder();
+    const status = fresh.status();
+    expect(status.state).toBe('never_started');
+    expect(status.lastError).toBeNull();
+    expect(fresh.alive).toBe(false);
+  });
+
+  it('terminateForTest on a never-started embedder is a no-op (nothing to crash)', async () => {
+    const fresh = new Embedder();
+    await fresh.terminateForTest();
+    expect(fresh.status().state).toBe('never_started');
+  });
 });
 
 describe('EpisodicStore', () => {

@@ -103,7 +103,7 @@ const app = buildApp({
   approvals,
   widgetBus,
   ownerEmail: OWNER,
-  embedderAlive: () => embedder.alive,
+  embedderStatus: () => embedder.status(),
   memory,
 });
 

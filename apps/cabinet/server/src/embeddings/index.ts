@@ -9,6 +9,22 @@ interface Pending {
 }
 
 /**
+ * Lifecycle of the embedding child process. Plain `child !== null` used to
+ * stand in for "alive," which conflated "never spawned" with "spawned, then
+ * crashed" (both leave `child === null`) — indistinguishable from the
+ * outside. This makes the four real states explicit.
+ */
+export type EmbedderState = 'never_started' | 'starting' | 'ready' | 'crashed';
+
+export interface EmbedderStatus {
+  state: EmbedderState;
+  /** Reason for the most recent crash; null once healthy again. */
+  lastError: string | null;
+  /** ISO timestamp of the last state transition. */
+  since: string;
+}
+
+/**
  * In-process embedder (§7.3): one child process hosting bge-small-en-v1.5.
  * A child process rather than a worker thread because onnxruntime-node's
  * native addon refuses to load twice in one process — child respawn is the
@@ -18,10 +34,21 @@ interface Pending {
 export class Embedder {
   private child: ChildProcess | null = null;
   private ready: Promise<void> | null = null;
+  private state: EmbedderState = 'never_started';
+  private lastError: string | null = null;
+  private since: string = new Date().toISOString();
+
   private pending = new Map<number, Pending>();
   private nextId = 1;
 
+  private transition(state: EmbedderState, lastError: string | null = null): void {
+    this.state = state;
+    this.lastError = lastError;
+    this.since = new Date().toISOString();
+  }
+
   private spawn(): Promise<void> {
+    this.transition('starting');
     const child = fork(fileURLToPath(new URL('./worker.mjs', import.meta.url)), [], {
       serialization: 'advanced',
       stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
@@ -32,6 +59,7 @@ export class Embedder {
       const onFirst = (msg: { ready?: boolean }) => {
         if (msg.ready) {
           child.off('message', onFirst);
+          this.transition('ready');
           resolveReady();
         }
       };
@@ -56,6 +84,7 @@ export class Embedder {
       if (this.child === child) {
         this.child = null;
         this.ready = null;
+        this.transition('crashed', why);
       }
     };
     child.on('error', (err) => failAll(`embedding process error: ${err.message}`));
@@ -75,8 +104,13 @@ export class Embedder {
     });
   }
 
+  /** Unambiguous lifecycle snapshot — see EmbedderState. */
+  status(): EmbedderStatus {
+    return { state: this.state, lastError: this.lastError, since: this.since };
+  }
+
   get alive(): boolean {
-    return this.child !== null;
+    return this.state === 'ready';
   }
 
   /** Test hook: hard-kill the child to exercise crash recovery. */
@@ -88,6 +122,11 @@ export class Embedder {
       const gone = new Promise((r) => child.once('exit', r));
       child.kill('SIGKILL');
       await gone;
+      // The exit handler installed in spawn() no-ops here (it guards on
+      // `this.child === child`, which we already cleared above, to avoid a
+      // stale prior child's delayed exit clobbering a newer one's state) —
+      // so this hook drives the crashed transition itself.
+      this.transition('crashed', 'terminated for test');
     }
   }
 

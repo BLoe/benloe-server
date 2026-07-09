@@ -7,6 +7,7 @@ import type Database from 'better-sqlite3';
 import type { EventEmitter } from 'node:events';
 import type { AgentRuntime, TurnEvent } from '../runtime/agent.js';
 import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
+import type { EmbedderStatus } from '../embeddings/index.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import { foldEvent, type MessagePart } from './fold.js';
 import { registerSurfaceRoutes } from './surfaces.js';
@@ -21,7 +22,7 @@ export interface GatewayDeps {
   authFetch?: typeof fetch;
   authServiceUrl?: string;
   /** healthz extras */
-  embedderAlive?: () => boolean;
+  embedderStatus?: () => EmbedderStatus;
   /** curated memory store, for the Brain surface (GET/PUT /api/memory) */
   memory?: { list(): string[]; read(file: string): string; update(file: string, content: string, reason: string): void };
   /** Injectable for tests; production defaults to the real dir. */
@@ -368,7 +369,7 @@ export function buildApp(deps: GatewayDeps) {
       ok: dbOk,
       db: dbOk,
       authMode: deps.runtime.authMode,
-      embedder: deps.embedderAlive?.() ?? null,
+      embedder: deps.embedderStatus?.() ?? null,
       // Throwaway marker proving a self-deploy actually landed the new bundle
       // (not just a bare restart of the old one) — benji/Ben verification,
       // 2026-07-09. Safe to remove once the loop's been proven once.
