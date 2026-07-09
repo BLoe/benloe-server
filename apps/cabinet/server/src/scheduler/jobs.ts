@@ -196,9 +196,11 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
   const maintenance: JobSpec = {
     name: 'maintenance',
     next: (from) => nextDaily(3, 0, from),
-    run: async () => {
-      await runMaintenance(deps);
-    },
+    // Return (not discard) the result — Scheduler.lastResult carries it onto
+    // /api/healthz.jobs.maintenance.lastResult so "ran, produced backups" and
+    // "ran, produced nothing" read as distinct states instead of both
+    // collapsing into a bare successful lastRun timestamp.
+    run: () => runMaintenance(deps),
   };
 
   return [heartbeat, briefing, checkin, weekly, maintenance];
@@ -230,6 +232,18 @@ export async function runMaintenance(deps: JobDeps): Promise<{ backups: string[]
       rmSync(f);
       backups[backups.indexOf(f)] = `${f}.gpg`;
     }
+  }
+
+  // A run that completes without throwing but ships zero backups (e.g. both
+  // dataDir/{cabinet.db,episodic.db} were missing) must not look identical to
+  // a healthy night on healthz — that's the exact "well-designed house, no
+  // one living in it" gap this pass exists to close. This action_audit row is
+  // the persisted half of the signal (survives a process restart, unlike
+  // Scheduler.lastResult, which is in-memory only); the console.warn is the
+  // immediate paper trail, same pattern as the backfill catch below.
+  if (backups.length === 0) {
+    console.warn(`maintenance: zero backups produced (dataDir=${dataDir})`);
+    db.prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES ('maintenance-zero-backups','WARNED','cron')").run();
   }
 
   // Rotation: keep the newest 30 daily backups per database file.
