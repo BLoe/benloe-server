@@ -8,6 +8,7 @@ import type { EventEmitter } from 'node:events';
 import type { AgentRuntime, TurnEvent } from '../runtime/agent.js';
 import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
 import type { EmbedderStatus } from '../embeddings/index.js';
+import { pendingBackfillCount } from '../episodic/index.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import { foldEvent, type MessagePart } from './fold.js';
 import { registerSurfaceRoutes } from './surfaces.js';
@@ -365,11 +366,16 @@ export function buildApp(deps: GatewayDeps) {
       dbOk = true;
     } catch { /* stays false */ }
     const depth = deps.runtime.queue.depth;
+    // One health signal, not two: pendingBackfill lives inside embedder so a
+    // single object answers "alive AND caught up?" — a ready embedder with a
+    // growing pendingBackfill is exactly the silent-rot state this guards.
+    const embedderStatus = deps.embedderStatus?.();
+    const embedder = embedderStatus ? { ...embedderStatus, pendingBackfill: pendingBackfillCount(deps.db) } : null;
     res.json({
       ok: dbOk,
       db: dbOk,
       authMode: deps.runtime.authMode,
-      embedder: deps.embedderStatus?.() ?? null,
+      embedder,
       // Throwaway marker proving a self-deploy actually landed the new bundle
       // (not just a bare restart of the old one) — benji/Ben verification,
       // 2026-07-09. Safe to remove once the loop's been proven once.

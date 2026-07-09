@@ -9,7 +9,7 @@ import { weightTrend } from '../domains/training.js';
 import { dailyTotals } from '../domains/food.js';
 import type { AgentRuntime } from '../runtime/agent.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
-import type { EpisodicStore } from '../episodic/index.js';
+import { EMBEDDABLE_TABLES, type EpisodicStore } from '../episodic/index.js';
 import type { Embedder } from '../embeddings/index.js';
 import { nextDaily, nextHeartbeat, nextWeekly } from './clock.js';
 import type { JobSpec } from './index.js';
@@ -242,16 +242,25 @@ export async function runMaintenance(deps: JobDeps): Promise<{ backups: string[]
     for (const stale of files.slice(0, Math.max(0, files.length - 30))) rmSync(join(backupDir, stale));
   }
 
-  // Embedding backfill for journals that missed indexing (§14).
-  const pending = db.prepare('SELECT id, body FROM journal_entry WHERE embedded = 0 LIMIT 50').all() as { id: number; body: string }[];
+  // Embedding backfill for rows that missed indexing (§14). Loops over every
+  // table in EMBEDDABLE_TABLES so a new embedding domain needs one registry
+  // entry there, not a new copy of this loop.
   let backfilled = 0;
-  for (const j of pending) {
-    try {
-      await deps.episodic.indexText(deps.embedder, 'journal', `journal:${j.id}`, null, j.body);
-      db.prepare('UPDATE journal_entry SET embedded = 1 WHERE id = ?').run(j.id);
-      backfilled++;
-    } catch {
-      break; // embedder down — try again tomorrow
+  for (const t of EMBEDDABLE_TABLES) {
+    const pending = db
+      .prepare(`SELECT id, ${t.textColumn} AS text FROM ${t.table} WHERE ${t.flagColumn} = 0 LIMIT 50`)
+      .all() as { id: number; text: string }[];
+    for (const row of pending) {
+      try {
+        await deps.episodic.indexText(deps.embedder, t.kind, t.sourceRef(row.id), null, row.text);
+        db.prepare(`UPDATE ${t.table} SET ${t.flagColumn} = 1 WHERE id = ?`).run(row.id);
+        backfilled++;
+      } catch (err) {
+        // Embedder down mid-backfill: must not fail silently — this warn is
+        // the paper trail between now and tomorrow's retry.
+        console.warn(`backfill: embed failed for ${t.table} id=${row.id}: ${(err as Error).message}`);
+        break; // stop this table's batch — try again tomorrow
+      }
     }
   }
 
