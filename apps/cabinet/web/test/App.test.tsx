@@ -10,6 +10,7 @@ vi.mock('../src/lib/cabinet.js', async (importOriginal) => {
     greeting: 'Good morning, Ben.', greetingAccent: 'A quiet day', read: 'All set today.',
     attention: [], vitals: [{ kind: 'dial', label: 'Nutrition · today', value: 1, max: 2 }],
     overnight: null, sweptAt: '2026-07-08T06:06:00-04:00',
+    briefing: null, checkin: null,
   };
   const api = {
     health: async () => ({ ok: true, authMode: 'subscription', presence: 'idle', presenceMeta: 'idle · queue 0' }),
@@ -17,6 +18,8 @@ vi.mock('../src/lib/cabinet.js', async (importOriginal) => {
     domain: async (id: string) => ({ id, label: id, instruments: [], narrative: 'x', log: [] }),
     ops: async () => ({ entries: [] }),
     revertOp: async () => ({ ok: true }),
+    usage: async () => ({ authMode: 'subscription', byDay: [] }),
+    usageRolling: async () => ({ authMode: 'subscription', windows: [] }),
     memory: async () => ({ files: [], lessons: [] }),
     saveMemoryFile: async () => ({ ok: true }),
     recall: async (q: string) => ({ query: q, results: [] }),

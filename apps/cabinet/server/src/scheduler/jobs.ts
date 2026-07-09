@@ -11,7 +11,8 @@ import type { AgentRuntime } from '../runtime/agent.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { EMBEDDABLE_TABLES, type EpisodicStore } from '../episodic/index.js';
 import type { Embedder } from '../embeddings/index.js';
-import { runAgentCronJob } from '../gateway/transcript.js';
+import { persistAssistantMessage, runAgentCronJob } from '../gateway/transcript.js';
+import type { InstrumentSpec } from '../gateway/surfaces.js';
 import { nextDaily, nextHeartbeat, nextWeekly } from './clock.js';
 import type { JobSpec } from './index.js';
 
@@ -163,10 +164,25 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     next: (from) => nextDaily(20, 30, from),
     run: async () => {
       const totals = dailyTotals(db);
-      push(deps, 'widget', {
-        widgetType: 'checkin',
-        data: { date: totals.local_day, macros: totals, prompt: 'How was today? Tap mood / energy / stress.' },
-      });
+      const vitals: InstrumentSpec[] = [
+        {
+          kind: 'stat', label: 'Protein · tonight',
+          big: String(Math.round(totals.protein_g)), unit: 'g',
+          sub: `${Math.round(totals.kcal)} kcal · ${totals.entries} meal${totals.entries === 1 ? '' : 's'}`,
+        },
+      ];
+      const prompt = 'How was today? Tap mood / energy / stress.';
+      const payload = { vitals, prompt };
+      // Durable write (mentorship: Today surface, briefing/checkin durability)
+      // — no agent turn here on purpose (deliberately cheap, SQL-only, same
+      // spirit as heartbeat's zero-model-cost path), so this goes straight to
+      // the message table instead of through runAgentCronJob. Same INSERT
+      // persistAssistantMessage every other path uses, not a second one.
+      const threadId = systemThread(db, 'sys-checkin', 'cron', 'Evening check-in');
+      persistAssistantMessage(db, threadId, [{ type: 'widget', widgetType: 'checkin', data: payload }]);
+      // Ephemeral live push, unchanged in spirit — kept for a future SSE
+      // consumer; the durable write above is what actually closes the gap.
+      push(deps, 'widget', payload);
     },
   };
 

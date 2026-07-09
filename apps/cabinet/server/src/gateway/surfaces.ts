@@ -15,6 +15,7 @@ import { localDay } from '../db/index.js';
 import { dailyTotals } from '../domains/food.js';
 import { weightTrend } from '../domains/training.js';
 import { medicationsLow } from '../domains/healthcare.js';
+import type { MessagePart } from './fold.js';
 
 interface MemoryLike {
   list(): string[];
@@ -33,7 +34,11 @@ const REVERSIBLE = /write|edit|title|update|log_|add_|upsert|import|render|memor
 type Severity = 'ok' | 'warn' | 'crit';
 type Tone = 'default' | 'ok' | 'warn' | 'crit';
 
-type InstrumentSpec =
+// Exported (not just a local mirror) — scheduler/jobs.ts's evening-checkin
+// job builds its InstrumentSpec[] payload against this same shape, a
+// type-only import with no runtime coupling, so Today's card renderer and
+// the job that produces its data can never silently drift out of sync.
+export type InstrumentSpec =
   | { kind: 'dial'; label: string; value: number; max: number; unit?: string; sub?: string; tag?: string; tagTone?: Severity }
   | { kind: 'rule'; label: string; readout: string; unit?: string; points?: number[]; markerPct?: number; tag?: string; tagTone?: Severity }
   | { kind: 'ring'; label: string; value: number; max: number; center?: string; sub?: string; tag?: string; tagTone?: Severity }
@@ -47,6 +52,59 @@ interface AttentionItem {
 }
 interface OvernightNote { count: number; summary: string; }
 interface LogEntry { id: string; at: string; text: string; meta?: string; }
+interface BriefingOutput { at: string; isCurrent: boolean; narrative: string; }
+interface CheckinOutput { at: string; isCurrent: boolean; vitals: InstrumentSpec[]; prompt: string; }
+
+/* ---------- durable cron output (mentorship: Today surface, briefing/checkin durability) ----------
+   morning-briefing and evening-checkin persist to well-known system threads
+   (sys-briefing, sys-checkin — see scheduler/jobs.ts) instead of relying on
+   a live SSE push nobody may be connected for. This is the one shared read
+   path both latestBriefing/latestCheckin below build on — same discipline as
+   runAgentCronJob being the one shared *write* path for agent-turn jobs. */
+
+function latestAssistantMessage(db: Database.Database, threadId: string): { createdAt: string; parts: MessagePart[] } | null {
+  const row = db
+    .prepare(`SELECT parts, created_at FROM message WHERE thread_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 1`)
+    .get(threadId) as { parts: string; created_at: string } | undefined;
+  if (!row) return null;
+  try {
+    return { createdAt: row.created_at, parts: JSON.parse(row.parts) as MessagePart[] };
+  } catch (err) {
+    // Should never happen — we control every writer of this column — but a
+    // malformed blob must not 500 the whole Today surface, and silence would
+    // make it indistinguishable from "no briefing yet." Log enough to find it.
+    console.warn(`latestAssistantMessage: unparseable parts for thread ${threadId}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/** SQLite `datetime('now')` stamps are UTC "YYYY-MM-DD HH:MM:SS" — reparse as ISO before comparing/emitting. */
+function toIso(sqliteUtc: string): string {
+  return new Date(`${sqliteUtc.replace(' ', 'T')}Z`).toISOString();
+}
+
+function latestBriefing(db: Database.Database, today: string): BriefingOutput | null {
+  const msg = latestAssistantMessage(db, 'sys-briefing');
+  if (!msg) return null;
+  const narrative = msg.parts
+    .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+    .map((p) => p.text)
+    .join(' ')
+    .trim();
+  if (!narrative) return null; // a turn that only called tools, no prose to lead with — treat as absent
+  return { at: toIso(msg.createdAt), isCurrent: localDay(new Date(toIso(msg.createdAt))) === today, narrative };
+}
+
+function latestCheckin(db: Database.Database, today: string): CheckinOutput | null {
+  const msg = latestAssistantMessage(db, 'sys-checkin');
+  if (!msg) return null;
+  const widget = msg.parts.find(
+    (p): p is Extract<MessagePart, { type: 'widget' }> => p.type === 'widget' && p.widgetType === 'checkin',
+  );
+  const data = widget?.data as { vitals?: InstrumentSpec[]; prompt?: string } | undefined;
+  if (!data?.vitals) return null;
+  return { at: toIso(msg.createdAt), isCurrent: localDay(new Date(toIso(msg.createdAt))) === today, vitals: data.vitals, prompt: data.prompt ?? '' };
+}
 
 /* ---------- date helpers ---------- */
 /** Monday-start ISO week for a 'YYYY-MM-DD' local_day. */
@@ -223,6 +281,11 @@ function todayView(db: Database.Database) {
     vitals,
     overnight,
     sweptAt: overnightRows[0]?.ts ? new Date(`${overnightRows[0].ts.replace(' ', 'T')}Z`).toISOString() : new Date().toISOString(),
+    // The real morning-briefing/evening-checkin output, durable (see
+    // latestBriefing/latestCheckin above) — greeting/read above stay as the
+    // fallback the frontend renders only when these are null.
+    briefing: latestBriefing(db, today),
+    checkin: latestCheckin(db, today),
   };
 }
 

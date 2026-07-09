@@ -31,6 +31,17 @@ const today: TodayView = {
   vitals,
   overnight: { count: 3, summary: 'backed up your data, indexed 2 journal entries, titled a thread' },
   sweptAt: '2026-07-08T06:06:00-04:00',
+  briefing: {
+    at: '2026-07-08T10:32:00.000Z',
+    isCurrent: true,
+    narrative: 'Protein three mornings straight and weight still drifting down — you’re set up well. The only real items are a refill that runs out Saturday and dining running hot with a week left in the cycle.',
+  },
+  checkin: {
+    at: '2026-07-08T00:32:00.000Z',
+    isCurrent: true,
+    vitals: [{ kind: 'stat', label: 'Protein · tonight', big: '162', unit: 'g', sub: '2,180 kcal · 4 meals' }],
+    prompt: 'How was today? Tap mood / energy / stress.',
+  },
 };
 
 const DOMAIN_DATA: Record<DomainId, DomainView> = {

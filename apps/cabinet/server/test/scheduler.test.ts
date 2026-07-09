@@ -12,7 +12,7 @@ import { Scheduler } from '../src/scheduler/index.js';
 import { buildJobs, heartbeatFindings, runMaintenance, type JobDeps } from '../src/scheduler/jobs.js';
 import { addJournal, upsertTask } from '../src/domains/misc.js';
 import { logMedication } from '../src/domains/healthcare.js';
-import { updatePantry } from '../src/domains/food.js';
+import { logFood, updatePantry } from '../src/domains/food.js';
 
 const MODEL_TIMEOUT = 300_000;
 
@@ -472,6 +472,67 @@ describe('jobs', () => {
       { type: 'text', text: 'Reviewed the week: no domain has real data yet.' },
       { type: 'tool-run', toolId: 't1', name: 'mcp__cabinet__query_db', input: { sql: 'select 1' }, output: '[]', isError: false, done: true },
     ]);
+  });
+
+  it('morning-briefing persists a real transcript (prompt + folded narrative/widget) on sys-briefing — mentorship: Today surface durability, this was the untested gap the audit found', async () => {
+    const scriptedRuntime = {
+      run: async (req: { onEvent: (e: unknown) => void }) => {
+        req.onEvent({ type: 'turn-start', messageId: 'm1', threadId: 'sys-briefing', model: 'claude-haiku-4-5' });
+        req.onEvent({ type: 'widget', widgetType: 'briefing', data: { sections: [] } });
+        req.onEvent({ type: 'text-delta', delta: 'Quiet start — nothing urgent, protein target is on track.' });
+        req.onEvent({ type: 'turn-end', usage: { output_tokens: 12 }, sessionId: 's1', stopReason: 'success' });
+        return { stopReason: 'success', sessionId: 's1' };
+      },
+    };
+    const jobs = buildJobs({ ...deps, runtime: scriptedRuntime as never });
+    await jobs.find((j) => j.name === 'morning-briefing')!.run();
+
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-briefing' ORDER BY created_at").all() as {
+      role: string;
+      parts: string;
+    }[];
+    expect(rows.map((r) => r.role)).toEqual(['user', 'assistant']);
+    expect(JSON.parse(rows[1]!.parts)).toEqual([
+      { type: 'widget', widgetType: 'briefing', data: { sections: [] } },
+      { type: 'text', text: 'Quiet start — nothing urgent, protein target is on track.' },
+    ]);
+  });
+
+  it('evening-checkin persists an InstrumentSpec-shaped widget message on sys-checkin — no agent turn involved, so this goes straight to the message table', async () => {
+    logFood(cabinet.db, { description: 'dinner', kcal: 620, protein_g: 42 });
+    const jobs = buildJobs(deps);
+    await jobs.find((j) => j.name === 'evening-checkin')!.run();
+
+    // no agent turn — evening-checkin never calls runtime.run()
+    expect(runtimeCalls).toEqual([]);
+
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-checkin' ORDER BY created_at").all() as {
+      role: string;
+      parts: string;
+    }[];
+    expect(rows).toHaveLength(1); // assistant-only — no fabricated user prompt for a job with no real turn
+    expect(rows[0]!.role).toBe('assistant');
+    const parts = JSON.parse(rows[0]!.parts);
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toMatchObject({ type: 'widget', widgetType: 'checkin' });
+    expect(parts[0].data.vitals).toEqual([
+      { kind: 'stat', label: 'Protein · tonight', big: '42', unit: 'g', sub: '620 kcal · 1 meal' },
+    ]);
+    expect(parts[0].data.prompt).toBe('How was today? Tap mood / energy / stress.');
+  });
+
+  it('evening-checkin still fires its ephemeral widgetBus push, same payload as the durable write', async () => {
+    const events: { event: string; data: unknown }[] = [];
+    deps.widgetBus.on('push', (n: { event: string; data: unknown }) => events.push(n));
+    const jobs = buildJobs(deps);
+    await jobs.find((j) => j.name === 'evening-checkin')!.run();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event).toBe('widget');
+    const persisted = JSON.parse(
+      (cabinet.db.prepare("SELECT parts FROM message WHERE thread_id = 'sys-checkin'").get() as { parts: string }).parts,
+    )[0].data;
+    expect(events[0]!.data).toEqual(persisted); // one payload shape, not two drifting copies
   });
 
   it('weekly-review still persists the partial transcript if the turn throws mid-run', async () => {

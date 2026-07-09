@@ -41,6 +41,35 @@
   max-width: 64ch;
 }
 
+/* 1b — briefing: real narrative state (mentorship: Today surface durability).
+   .label already gives the mono/uppercase/tracked eyebrow treatment — this
+   just adds the flex row for the trailing stale tag. */
+.today__briefing-cap {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.today__stale-tag {
+  color: var(--warn);
+}
+
+.today__briefing--real.is-stale .today__briefing-narrative {
+  color: var(--linen-dim);
+}
+
+/* checkin — a supporting card, not a second hero */
+.today__checkin-time {
+  font-family: var(--mono);
+  font-size: var(--fs-fine);
+  color: var(--linen-faint);
+}
+
+.today__checkin-prompt {
+  font-size: var(--fs-sm);
+  color: var(--linen-dim);
+}
+
 /* 2 — sections ----------------------------------------------------------- */
 .today__section {
   display: flex;

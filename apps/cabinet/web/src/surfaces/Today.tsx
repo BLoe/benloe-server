@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type TodayView, type AttentionItem, type AttentionAction } from '../lib/cabinet.js';
+import { api, type TodayView, type AttentionItem, type AttentionAction, type BriefingOutput, type CheckinOutput } from '../lib/cabinet.js';
 import { Instrument, Card, SectionLabel } from '../components/instruments/index.js';
 import './today.css';
 
@@ -13,6 +13,28 @@ function sweptAgo(iso: string): string {
   if (mins < 60) return `${mins} minutes ago`;
   const hrs = Math.round(mins / 60);
   return hrs === 1 ? 'an hour ago' : `${hrs} hours ago`;
+}
+
+/**
+ * NY-local clock, e.g. "6:32 AM" — the always-on timestamp that anchors the
+ * real briefing/checkin as a fact about a specific moment, not a silent
+ * stand-in for "right now" (mentorship: Today surface durability, staleness
+ * as a first-class visual state). Deliberately duplicates surfaces.ts's
+ * formatClock rather than sharing it — this file's own header note on
+ * TodayView documents the server/web boundary as hand-mirrored on purpose.
+ */
+function formatClock(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
+  } catch {
+    return iso.slice(11, 16);
+  }
+}
+
+function daysAgo(iso: string): number {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 0;
+  return Math.max(1, Math.round((Date.now() - then) / 86_400_000));
 }
 
 /**
@@ -66,18 +88,20 @@ export function Today({ onNavigate }: { onNavigate?: (surface: 'ops') => void })
     );
   }
 
-  const { greeting, greetingAccent, read, attention, vitals, overnight, sweptAt } = view;
+  const { greeting, greetingAccent, read, attention, vitals, overnight, sweptAt, briefing, checkin } = view;
+
+  // Cosmetic ordering only (no correctness dependency, unlike briefing/checkin's
+  // server-computed isCurrent) — the checkin card is promoted directly under
+  // the hero once evening's underway, otherwise it sits after Vitals.
+  const evening = new Date().getHours() >= 17;
+  const checkinCard = checkin && <CheckinCard checkin={checkin} />;
 
   return (
     <div className="today">
-      {/* 1 — the briefing */}
-      <header className="today__briefing">
-        <h1>
-          {greeting}
-          {greetingAccent && <em className="today__accent"> {greetingAccent}</em>}
-        </h1>
-        <p className="today__read voice">{read}</p>
-      </header>
+      {/* 1 — the hero: real briefing when it exists, template as the true empty state */}
+      <BriefingHero briefing={briefing} greeting={greeting} greetingAccent={greetingAccent} read={read} />
+
+      {evening && checkinCard}
 
       {/* 2 — what needs you */}
       <section className="today__section">
@@ -107,6 +131,8 @@ export function Today({ onNavigate }: { onNavigate?: (surface: 'ops') => void })
         </section>
       )}
 
+      {!evening && checkinCard}
+
       {/* 4 — overnight */}
       {overnight && (
         <p className="today__overnight">
@@ -118,6 +144,75 @@ export function Today({ onNavigate }: { onNavigate?: (surface: 'ops') => void })
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * The hero narrative zone. Three explicit states, never a silent/faked one
+ * (mentorship: Today surface durability):
+ *  - real + current  → the actual briefing narrative, always-on timestamp eyebrow
+ *  - real + stale     → same narrative, demoted color + an explicit "days ago" label
+ *  - absent           → today's original template block, byte-for-byte — the
+ *                        true empty state; never silently swapped in for real content.
+ */
+function BriefingHero({
+  briefing,
+  greeting,
+  greetingAccent,
+  read,
+}: {
+  briefing: BriefingOutput | null;
+  greeting: string;
+  greetingAccent?: string;
+  read: string;
+}) {
+  if (!briefing) {
+    return (
+      <header className="today__briefing">
+        <h1>
+          {greeting}
+          {greetingAccent && <em className="today__accent"> {greetingAccent}</em>}
+        </h1>
+        <p className="today__read voice">{read}</p>
+      </header>
+    );
+  }
+  const stale = !briefing.isCurrent;
+  return (
+    <header className={`today__briefing today__briefing--real${stale ? ' is-stale' : ''}`}>
+      <div className="today__briefing-cap label">
+        <span>Briefing · {formatClock(briefing.at)}</span>
+        {stale && (
+          <span className="today__stale-tag">
+            last briefing: {daysAgo(briefing.at)} day{daysAgo(briefing.at) === 1 ? '' : 's'} ago
+          </span>
+        )}
+      </div>
+      <p className="today__read voice today__briefing-narrative">{briefing.narrative}</p>
+    </header>
+  );
+}
+
+/**
+ * Supporting card, not a second hero (checkin is a metrics widget, not a
+ * narrative — confirmed against scheduler/jobs.ts before this shape was
+ * agreed). Omitted entirely by the caller when absent — a "no check-in yet"
+ * placeholder would compete for attention a supporting element hasn't earned.
+ */
+function CheckinCard({ checkin }: { checkin: CheckinOutput }) {
+  return (
+    <section className="today__section today__checkin">
+      <div className="section-label">
+        <span>Check-in</span>
+        {checkin.isCurrent && <span className="today__checkin-time">{formatClock(checkin.at)}</span>}
+      </div>
+      <div className="today__vitals">
+        {checkin.vitals.map((spec, i) => (
+          <Instrument key={`${spec.kind}-${spec.label}-${i}`} spec={spec} />
+        ))}
+      </div>
+      <p className="today__checkin-prompt voice">{checkin.prompt}</p>
+    </section>
   );
 }
 
