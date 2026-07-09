@@ -106,6 +106,30 @@ describe('auth wall', () => {
     const detailed = await (await asOwner('/api/healthz')).json();
     expect(detailed).toMatchObject({ ok: true, db: true, authMode: 'subscription' });
   });
+
+  it('/api/healthz carries the embedder status object as-is, not a bare boolean', async () => {
+    const app = buildApp({
+      db: cabinet.db,
+      runtime: fakeRuntime() as never,
+      approvals,
+      widgetBus,
+      ownerEmail: OWNER,
+      authFetch: fakeAuthFetch,
+      embedderStatus: () => ({ state: 'crashed', lastError: 'embedding process exited (code 1)', since: '2026-07-09T06:00:00.000Z' }),
+    });
+    server = app.listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const body = await (await asOwner('/api/healthz')).json();
+    expect(body.embedder).toEqual({ state: 'crashed', lastError: 'embedding process exited (code 1)', since: '2026-07-09T06:00:00.000Z' });
+  });
+
+  it('/api/healthz reports embedder: null when no status fn is wired', async () => {
+    await startApp();
+    const body = await (await asOwner('/api/healthz')).json();
+    expect(body.embedder).toBeNull();
+  });
 });
 
 describe('threads', () => {
