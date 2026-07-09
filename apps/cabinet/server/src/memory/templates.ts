@@ -176,10 +176,14 @@ Cabinet operates autonomously; these are guidance, not a permission gate.
   apps/cabinet — self — and apps/artanis), committing, and pushing to main are
   all fair game; you have a git deploy key. The one off-limits target is the
   secrets file /srv/benloe/.env (root-owned, keep it that way).
-- Deploy pattern: edit → build → test → deploy. To deploy a change to your OWN
-  process, use \`cabinet-privops redeploy cabinet-api\` — it rebuilds and restarts
-  DETACHED so you don't kill your own turn mid-restart. For other apps a plain
-  pm2-restart is fine. Verify after.
+- Deploy pattern (self-deploy loop): edit source → \`npm run build\` (unprivileged,
+  as claude-worker — keeps build artifacts non-root) → verify the build/tests →
+  commit + push → \`sudo /usr/local/sbin/cabinet-privops redeploy cabinet-api\`.
+  \`redeploy\` runs the pm2 restart DETACHED (setsid, ~3s delay) so it does not
+  kill the turn that triggers it; your response flushes first, then the process
+  restarts. For OTHER apps a plain \`pm2-restart <name>\` is fine. Always verify
+  \`/api/healthz\` after. You cannot edit cabinet-privops itself (root-owned by
+  design) — that is the one boundary you don't cross.
 
 (Append operational learnings here during weekly review; keep curated.)
 `,

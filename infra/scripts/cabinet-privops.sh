@@ -45,9 +45,22 @@ case "$cmd" in
     /usr/bin/caddy validate --config /etc/caddy/Caddyfile >&2
     exec /usr/bin/systemctl reload caddy
     ;;
+  redeploy)
+    name="${1:-}"
+    [[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || { echo "invalid app name" >&2; exit 1; }
+    "$PM2" jlist | grep -q "\"name\":\"$name\"" || { echo "unknown app: $name" >&2; exit 1; }
+    log "redeploy $name (detached restart scheduled)"
+    # setsid reparents the restarter to init (pid 1) in a new session, so when
+    # pm2 tears down THIS app's process tree (which includes the agent turn that
+    # invoked us) the restarter survives and completes. The short delay lets the
+    # agent's HTTP/SSE response flush before its own process dies.
+    setsid bash -c "sleep 3; '$PM2' restart '$name' --update-env >> '$LOG' 2>&1" </dev/null >>"$LOG" 2>&1 &
+    echo "redeploy: $name scheduled for detached restart in ~3s"
+    exit 0
+    ;;
   *)
     echo "cabinet-privops: unknown or missing subcommand: '$cmd'" >&2
-    echo "usage: cabinet-privops {pm2-list|pm2-restart <name>|pm2-start <path>|pm2-save|caddy-reload}" >&2
+    echo "usage: cabinet-privops {pm2-list|pm2-restart <name>|pm2-start <path>|pm2-save|caddy-reload|redeploy <name>}" >&2
     exit 1
     ;;
 esac
