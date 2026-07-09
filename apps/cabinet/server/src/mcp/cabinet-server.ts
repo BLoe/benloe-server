@@ -12,7 +12,10 @@ import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesso
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../domains/food.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
-import { addJournal, addPriceWatch, importTransactionsCsv, logMood, upsertContact, upsertGoal, upsertTask } from '../domains/misc.js';
+import {
+  addJournal, addPriceWatch, importTransactionsCsv, listConstraints, logMood,
+  upsertConstraint, upsertContact, upsertGoal, upsertTask,
+} from '../domains/misc.js';
 
 export interface CabinetToolContext {
   db: Database.Database;
@@ -237,6 +240,37 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
           return fail((err as Error).message);
         }
       },
+    ),
+    tool(
+      'upsert_constraint',
+      'Record a HARD planning constraint — an allergen/substance to never suggest (kind: dietary) or a movement/load to never program (kind: physical). ' +
+        'This is for machine-durable safety gates, NOT soft preferences — "dislikes cilantro" or "wants to get back to heavy lifting eventually" belongs in ' +
+        'update_memory on domains/nutrition.md or domains/health.md instead (narrative, fine to lose nuance in a rewrite). A hard constraint is not. ' +
+        'Two ways to call this: (1) give `subject` (+ optional severity/note) to record a real constraint — matches an existing active one for the same ' +
+        '(kind, subject) and supersedes it, full history preserved. (2) pass confirmedNone: true (no subject) after explicitly asking and confirming Ben has ' +
+        'no constraints of that kind — idempotent, and distinguishable from never having asked at all via list_constraints.',
+      {
+        kind: z.enum(['dietary', 'physical']),
+        subject: z.string().optional(),
+        severity: z.string().optional(),
+        note: z.string().optional(),
+        confirmedNone: z.boolean().optional(),
+        source: z.string().optional(),
+      },
+      async (args) => {
+        try {
+          return ok(upsertConstraint(ctx.db, args));
+        } catch (err) {
+          return fail((err as Error).message);
+        }
+      },
+    ),
+    tool(
+      'list_constraints',
+      'List active hard constraints (dietary and/or physical) — what a plan must respect. Omit kind for both. Reading this is how you tell apart three ' +
+        'states: no rows for a kind = never asked; one row with is_none_confirmation=true = asked, confirmed none; rows with real subjects = must-respect constraints.',
+      { kind: z.enum(['dietary', 'physical']).optional() },
+      async ({ kind }) => ok(listConstraints(ctx.db, kind)),
     ),
     tool(
       'add_price_watch',
