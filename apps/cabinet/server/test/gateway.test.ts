@@ -9,7 +9,7 @@ import { openDb, type CabinetDb } from '../src/db/index.js';
 import { ApprovalQueue } from '../src/tiers/approvals.js';
 import { buildApp } from '../src/gateway/app.js';
 import { createSseParser, encodeSse, type SseEvent } from '../src/gateway/sse.js';
-import { foldEvent, type MessagePart } from '../src/gateway/fold.js';
+import { extractText, foldEvent, type MessagePart } from '../src/gateway/fold.js';
 import type { TurnEvent } from '../src/runtime/agent.js';
 import { EpisodicStore } from '../src/episodic/index.js';
 import { Embedder } from '../src/embeddings/index.js';
@@ -594,5 +594,28 @@ describe('foldEvent', () => {
     expect((parts[3] as { packet: { id: string } }).packet.id).toBe('ap1');
     expect((parts[0] as { text: string }).text).toBe('ab');
     expect((parts[1] as { done: boolean }).done).toBe(true);
+  });
+});
+
+describe('extractText (mentorship: Phase 3 item 3 keystone — conversation indexing)', () => {
+  it('joins every text part\'s prose, in order', () => {
+    expect(extractText([{ type: 'text', text: 'hello' }, { type: 'text', text: 'world' }])).toBe('hello world');
+  });
+
+  it('excludes tool-run, widget, notice, and approval parts — only prose is embeddable', () => {
+    const packet = { id: 'ap1', tier: 2, action: 'x', payload: 'x', reasoning: 'r', confidence: null, reversibility: null, threadId: null, expiresAt: '2026-07-08T00:00:00Z' };
+    const parts: MessagePart[] = [
+      { type: 'text', text: 'the real content' },
+      { type: 'tool-run', toolId: 't1', name: 'Bash', input: {}, output: 'ls output', isError: false, done: true },
+      { type: 'widget', widgetType: 'macro-ring', data: { p: 1 } },
+      { type: 'notice', level: 'info', text: 'a notice' },
+      { type: 'approval', packet },
+    ];
+    expect(extractText(parts)).toBe('the real content');
+  });
+
+  it('returns an empty string for an empty or all-non-text parts array', () => {
+    expect(extractText([])).toBe('');
+    expect(extractText([{ type: 'widget', widgetType: 'checkin', data: {} }])).toBe('');
   });
 });

@@ -13,6 +13,28 @@ export type MessagePart =
   | { type: 'approval'; packet: ApprovalPacket }
   | { type: 'notice'; level: string; text: string };
 
+/**
+ * The one text-extraction rule for a folded parts array: join every text
+ * part's prose, dropping tool-run/notice/widget/approval parts (structured,
+ * not prose — embedding a render_widget JSON blob or a tool's raw output
+ * would pollute a vector space, not enrich it). Shared by transcript.ts's
+ * runAgentCronJob and the conversation-indexing backfill (episodic/index.ts)
+ * so there is exactly one definition of "what counts as a message's real
+ * text," not two independently-drifting copies. Lives here rather than in
+ * gateway/transcript.ts because this module has zero real (non-type-only)
+ * runtime imports of its own — importing FROM it can never create a cycle,
+ * which mattered for episodic/index.ts pulling it in (episodic already has a
+ * type-only edge back from runtime/prompt.ts's LessonRow import; this stays
+ * a real value import without turning that into an actual runtime cycle).
+ */
+export function extractText(parts: MessagePart[]): string {
+  return parts
+    .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+    .map((p) => p.text)
+    .join(' ')
+    .trim();
+}
+
 export function foldEvent(parts: MessagePart[], e: TurnEvent | { type: 'widget'; widgetType: string; data: unknown }): MessagePart[] {
   switch (e.type) {
     case 'text-delta': {

@@ -14,6 +14,7 @@ import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import { openDb } from '../db/index.js';
 import { configureAuth } from '../runtime/agent.js';
 import { generateTitle } from '../runtime/titler.js';
+import { extractText as extractTextFromParts, type MessagePart } from '../gateway/fold.js';
 
 // Only the direct `node backfill-titles.js` invocation runs the script; when a
 // test imports the helpers below, none of the executable machinery (privilege
@@ -36,15 +37,16 @@ if (IS_ENTRY && proc.getuid?.() === 0) {
   }
 }
 
-/** Concatenate the text parts of a persisted message row's parts JSON. */
+/**
+ * Concatenate the text parts of a persisted message row's parts JSON.
+ * Delegates to gateway/fold.ts's extractText — the one canonical "what
+ * counts as a message's real text" rule (also used by transcript.ts and the
+ * conversation-indexing backfill, episodic/index.ts) — this wrapper only
+ * adds the raw-JSON-string parse/catch this script's callers need.
+ */
 export function extractText(partsJson: string): string {
   try {
-    const parts = JSON.parse(partsJson) as { type: string; text?: string }[];
-    return parts
-      .filter((p) => p.type === 'text' && typeof p.text === 'string')
-      .map((p) => p.text)
-      .join(' ')
-      .trim();
+    return extractTextFromParts(JSON.parse(partsJson) as MessagePart[]);
   } catch {
     return '';
   }
