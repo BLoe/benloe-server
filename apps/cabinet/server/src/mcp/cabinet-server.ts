@@ -11,7 +11,7 @@ import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesso
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../domains/food.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
-import { addJournal, addPriceWatch, importTransactionsCsv, logMood, upsertContact, upsertTask } from '../domains/misc.js';
+import { addJournal, addPriceWatch, importTransactionsCsv, logMood, upsertContact, upsertGoal, upsertTask } from '../domains/misc.js';
 
 export interface CabinetToolContext {
   db: Database.Database;
@@ -216,6 +216,26 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         notes: z.string().optional(),
       },
       async (args) => ok({ id: upsertContact(ctx.db, args) }),
+    ),
+    tool(
+      'upsert_goal',
+      'Set a structured, measurable goal (target_value+unit and/or cadence) — the number a Vitals dial tracks against, e.g. "protein >= 185 g/day". ' +
+        'Matches an existing goal by (domain, title) exact match and supersedes it (old row kept, deactivated — full history preserved) rather than overwriting. ' +
+        'For narrative/qualitative goals ("get back to consistent lifting after the injury"), use update_memory on GOALS.md instead — this tool is for numbers a dial can compare against, not prose.',
+      {
+        domain: z.string(),
+        title: z.string(),
+        target_value: z.number().optional(),
+        unit: z.string().optional(),
+        cadence: z.string().optional(),
+      },
+      async (args) => {
+        try {
+          return ok(upsertGoal(ctx.db, args));
+        } catch (err) {
+          return fail((err as Error).message);
+        }
+      },
     ),
     tool(
       'add_price_watch',
