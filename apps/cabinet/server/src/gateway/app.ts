@@ -271,6 +271,10 @@ export function buildApp(deps: GatewayDeps) {
       db: dbOk,
       authMode: deps.runtime.authMode,
       embedder: deps.embedderAlive?.() ?? null,
+      // Throwaway marker proving a self-deploy actually landed the new bundle
+      // (not just a bare restart of the old one) — benji/Ben verification,
+      // 2026-07-09. Safe to remove once the loop's been proven once.
+      buildMarker: 'selfdeploy-20260709T034633Z-eb732e',
       queueDepth: depth,
       pendingApprovals: deps.approvals.pending().length,
       // presence for the v2 strip
