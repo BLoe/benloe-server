@@ -16,11 +16,14 @@ import { dailyTotals } from '../domains/food.js';
 import { weightTrend } from '../domains/training.js';
 import { medicationsLow } from '../domains/healthcare.js';
 import type { MessagePart } from './fold.js';
+import type { MemoryHistoryEntry } from '../memory/index.js';
 
 interface MemoryLike {
   list(): string[];
   read(file: string): string;
   update(file: string, content: string, reason: string): void;
+  /** Optional: narrower test fakes predate this and have no reason to grow it — the real MemoryStore always implements it. */
+  history?(file: string, limit?: number): MemoryHistoryEntry[];
 }
 export interface SurfaceDeps {
   db: Database.Database;
@@ -541,7 +544,20 @@ export function registerSurfaceRoutes(app: Express, deps: SurfaceDeps): void {
     if (!deps.memory) return res.json({ files: [], lessons: [] });
     const files = deps.memory.list()
       .filter((f) => !f.startsWith('domains/'))
-      .map((name) => ({ name, content: deps.memory!.read(name), updatedAt: null, editable: name !== 'STANDING_ORDERS.md' }));
+      .map((name) => {
+        // history() is the real paper trail (mentorship: item 5) — a diff is
+        // one read away here instead of an SSH session. updatedAt used to be
+        // hardcoded null (a permanent "never edited" lie in the Brain UI for
+        // files that plainly had been); it's the latest commit's date now.
+        const history = deps.memory!.history?.(name) ?? [];
+        return {
+          name,
+          content: deps.memory!.read(name),
+          updatedAt: history[0]?.at ?? null,
+          editable: name !== 'STANDING_ORDERS.md',
+          history,
+        };
+      });
     res.json({ files, lessons: [] });
   });
 
