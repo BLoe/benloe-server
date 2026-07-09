@@ -11,6 +11,7 @@ import type { AgentRuntime } from '../runtime/agent.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { EMBEDDABLE_TABLES, type EpisodicStore } from '../episodic/index.js';
 import type { Embedder } from '../embeddings/index.js';
+import { createTranscriptRecorder, persistUserMessage } from '../gateway/transcript.js';
 import { nextDaily, nextHeartbeat, nextWeekly } from './clock.js';
 import type { JobSpec } from './index.js';
 
@@ -179,20 +180,25 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     next: (from) => nextWeekly(0, 9, 0, from), // Sunday 09:00 NY
     run: async () => {
       const threadId = systemThread(db, 'sys-weekly', 'cron', 'Weekly review');
-      await deps.runtime.run({
-        threadId,
-        kind: 'cron',
-        deep: true,
-        prompt: [
-          'Run the weekly review (§11):',
-          '1. Use mcp__cabinet__query_db for cross-domain correlations (sleep×mood, protein×training days, spend by category, weight trend).',
-          '2. Goal progress against GOALS.md.',
-          '3. Rewrite each domains/*.md narrative you have new signal for via mcp__cabinet__update_memory (curated, ≤200 lines).',
-          '4. Reflection pass: candidate lessons via mcp__cabinet__add_lesson (evidence + confidence required; escalations will be rejected).',
-          '5. Finish with a render_widget briefing card summarizing the week and 3 focus points.',
-        ].join('\n'),
-        onEvent: () => {},
-      });
+      const prompt = [
+        'Run the weekly review (§11):',
+        '1. Use mcp__cabinet__query_db for cross-domain correlations (sleep×mood, protein×training days, spend by category, weight trend).',
+        '2. Goal progress against GOALS.md.',
+        '3. Rewrite each domains/*.md narrative you have new signal for via mcp__cabinet__update_memory (curated, ≤200 lines).',
+        '4. Reflection pass: candidate lessons via mcp__cabinet__add_lesson (evidence + confidence required; escalations will be rejected).',
+        '5. Finish with a render_widget briefing card summarizing the week and 3 focus points.',
+      ].join('\n');
+      persistUserMessage(db, threadId, prompt);
+      // A job that git-commits memory rewrites and adds lessons must leave a
+      // reviewable trace when it does something wrong, not just its side
+      // effects — recorder.persist runs in `finally` so a mid-run failure
+      // still leaves whatever transcript accumulated, not silence.
+      const recorder = createTranscriptRecorder();
+      try {
+        await deps.runtime.run({ threadId, kind: 'cron', deep: true, prompt, onEvent: recorder.onEvent });
+      } finally {
+        recorder.persist(db, threadId);
+      }
       push(deps, 'notice', { level: 'info', text: 'Weekly review complete.', source: 'weekly' });
     },
   };

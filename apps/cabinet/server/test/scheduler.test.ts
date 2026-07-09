@@ -106,6 +106,44 @@ describe('Scheduler', () => {
     expect(calls).toBe(2);
     s.stop();
   });
+
+  describe('runNow (manual trigger)', () => {
+    it('invokes the exact same JobSpec.run() the timer would — not a rebuilt copy', async () => {
+      let calls = 0;
+      const job = { name: 'weekly-review', next: () => null, run: async () => { calls++; } };
+      const s = new Scheduler([job]);
+      expect(s.has('weekly-review')).toBe(true);
+      expect(s.has('no-such-job')).toBe(false);
+
+      await s.runNow('weekly-review');
+      expect(calls).toBe(1);
+      expect(s.lastRun.get('weekly-review')).toBeInstanceOf(Date);
+    });
+
+    it('rejects an unknown job name', async () => {
+      const s = new Scheduler([{ name: 'x', next: () => null, run: async () => {} }]);
+      await expect(s.runNow('nope')).rejects.toThrow('no such job: nope');
+    });
+
+    it('records lastError and rethrows when the job fails', async () => {
+      const s = new Scheduler([{ name: 'x', next: () => null, run: async () => { throw new Error('boom'); } }]);
+      await expect(s.runNow('x')).rejects.toThrow('boom');
+      expect(s.lastError.get('x')).toBe('boom');
+    });
+
+    it('rejects a second concurrent trigger for the same job instead of overlapping it', async () => {
+      let resolveFirst!: () => void;
+      const gate = new Promise<void>((r) => { resolveFirst = r; });
+      let starts = 0;
+      const s = new Scheduler([{ name: 'slow', next: () => null, run: async () => { starts++; await gate; } }]);
+      const first = s.runNow('slow');
+      await Promise.resolve(); // let the first call register itself as in-flight
+      await expect(s.runNow('slow')).rejects.toThrow('slow is already running');
+      resolveFirst();
+      await first;
+      expect(starts).toBe(1);
+    });
+  });
 });
 
 describe('jobs', () => {
@@ -256,6 +294,51 @@ describe('jobs', () => {
     expect(runtimeCalls[0]).toMatchObject({ kind: 'cron', deep: true });
     expect(runtimeCalls[1]!.kind).toBe('cron');
     expect(runtimeCalls[1]!.deep).toBeUndefined();
+  });
+
+  it('weekly-review persists a real transcript (prompt + folded assistant reply) on sys-weekly — not onEvent: () => {} discarding it', async () => {
+    const scriptedRuntime = {
+      run: async (req: { onEvent: (e: unknown) => void }) => {
+        req.onEvent({ type: 'turn-start', messageId: 'm1', threadId: 'sys-weekly', model: 'claude-opus-4-8' });
+        req.onEvent({ type: 'text-delta', delta: 'Reviewed the week: no domain has real data yet.' });
+        req.onEvent({ type: 'tool-start', toolId: 't1', name: 'mcp__cabinet__query_db', input: { sql: 'select 1' } });
+        req.onEvent({ type: 'tool-end', toolId: 't1', output: '[]', isError: false });
+        req.onEvent({ type: 'turn-end', usage: { output_tokens: 5 }, sessionId: 's1', stopReason: 'success' });
+        return { stopReason: 'success', sessionId: 's1' };
+      },
+    };
+    const jobs = buildJobs({ ...deps, runtime: scriptedRuntime as never });
+    await jobs.find((j) => j.name === 'weekly-review')!.run();
+
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-weekly' ORDER BY created_at").all() as {
+      role: string;
+      parts: string;
+    }[];
+    expect(rows.map((r) => r.role)).toEqual(['user', 'assistant']);
+    expect(JSON.parse(rows[0]!.parts)).toEqual([{ type: 'text', text: expect.stringContaining('Run the weekly review') }]);
+    expect(JSON.parse(rows[1]!.parts)).toEqual([
+      { type: 'text', text: 'Reviewed the week: no domain has real data yet.' },
+      { type: 'tool-run', toolId: 't1', name: 'mcp__cabinet__query_db', input: { sql: 'select 1' }, output: '[]', isError: false, done: true },
+    ]);
+  });
+
+  it('weekly-review still persists the partial transcript if the turn throws mid-run', async () => {
+    const throwingRuntime = {
+      run: async (req: { onEvent: (e: unknown) => void }) => {
+        req.onEvent({ type: 'turn-start', messageId: 'm1', threadId: 'sys-weekly', model: 'claude-opus-4-8' });
+        req.onEvent({ type: 'text-delta', delta: 'Partial output before the SDK crashed.' });
+        throw new Error('sdk crashed mid-turn');
+      },
+    };
+    const jobs = buildJobs({ ...deps, runtime: throwingRuntime as never });
+    await expect(jobs.find((j) => j.name === 'weekly-review')!.run()).rejects.toThrow('sdk crashed mid-turn');
+
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-weekly' ORDER BY created_at").all() as {
+      role: string;
+      parts: string;
+    }[];
+    expect(rows.map((r) => r.role)).toEqual(['user', 'assistant']);
+    expect(JSON.parse(rows[1]!.parts)).toEqual([{ type: 'text', text: 'Partial output before the SDK crashed.' }]);
   });
 
   it(

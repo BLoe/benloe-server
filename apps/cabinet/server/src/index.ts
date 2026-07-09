@@ -97,6 +97,14 @@ const runtime = new AgentRuntime({
   mcpServers: { cabinet: cabinetMcp, ...buildExternalMcpServers(process.env) },
 });
 
+// Built unconditionally (constructing it arms nothing — only .start() does)
+// so it can back both the real cron timers below AND the authenticated
+// manual trigger (gateway/app.ts's POST /api/admin/jobs/:name/run), which
+// needs the exact same JobSpec array the timers use, not a rebuilt copy.
+const scheduler = new Scheduler(
+  buildJobs({ db: cabinet.db, runtime, approvals, widgetBus, episodic, embedder, dataDir: DATA_DIR }),
+);
+
 const app = buildApp({
   db: cabinet.db,
   runtime,
@@ -107,6 +115,7 @@ const app = buildApp({
   episodic,
   embedder,
   memory,
+  scheduler,
 });
 
 app.listen(PORT, '127.0.0.1', () => {
@@ -118,9 +127,6 @@ approvals.expireOverdue();
 
 // Proactive routines (§11) — CABINET_SCHEDULER=off for tests/dev.
 if (process.env.CABINET_SCHEDULER !== 'off') {
-  const scheduler = new Scheduler(
-    buildJobs({ db: cabinet.db, runtime, approvals, widgetBus, episodic, embedder, dataDir: DATA_DIR }),
-  );
   scheduler.start();
   console.log('scheduler armed:', JSON.stringify(scheduler.nextFireTimes()));
 }

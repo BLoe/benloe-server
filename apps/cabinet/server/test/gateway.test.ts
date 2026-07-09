@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -159,6 +159,75 @@ describe('auth wall', () => {
     const body = await (await asOwner('/api/healthz')).json();
     expect(body.embedder.state).toBe('ready');
     expect(body.embedder.pendingBackfill).toBe(1); // the un-embedded row, not the embedded one
+  });
+});
+
+describe('admin job trigger', () => {
+  function withScheduler(scheduler: { has(name: string): boolean; runNow(name: string): Promise<void> }) {
+    const app = buildApp({
+      db: cabinet.db,
+      runtime: fakeRuntime() as never,
+      approvals,
+      widgetBus,
+      ownerEmail: OWNER,
+      authFetch: fakeAuthFetch,
+      scheduler,
+    });
+    server = app.listen(0, '127.0.0.1');
+    return new Promise<void>((r) => {
+      server.once('listening', () => {
+        base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        r();
+      });
+    });
+  }
+
+  it('owner can trigger a named job; runs the exact scheduler-held job, not a rebuilt copy', async () => {
+    const calls: string[] = [];
+    await withScheduler({ has: (n) => n === 'weekly-review', runNow: async (n) => { calls.push(n); } });
+    const res = await asOwner('/api/admin/jobs/weekly-review/run', { method: 'POST' });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ ok: true, started: 'weekly-review' });
+    // runNow is fired async (not awaited by the handler) — give its microtask a tick.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toEqual(['weekly-review']);
+  });
+
+  it('an agent peer (e.g. benji) can trigger a job too — not owner-only', async () => {
+    const calls: string[] = [];
+    await withScheduler({ has: () => true, runNow: async (n) => { calls.push(n); } });
+    const res = await fetch(base + '/api/admin/jobs/heartbeat/run', { method: 'POST', headers: { Authorization: 'Bearer agk_benji_test' } });
+    expect(res.status).toBe(202);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toEqual(['heartbeat']);
+  });
+
+  it('a non-owner, non-agent principal is refused', async () => {
+    await withScheduler({ has: () => true, runNow: async () => {} });
+    const res = await fetch(base + '/api/admin/jobs/heartbeat/run', { method: 'POST', headers: { Cookie: 'token=guest' } });
+    expect(res.status).toBe(403);
+  });
+
+  it('unknown job name is 404, not a silent no-op', async () => {
+    await withScheduler({ has: () => false, runNow: async () => {} });
+    const res = await asOwner('/api/admin/jobs/not-a-job/run', { method: 'POST' });
+    expect(res.status).toBe(404);
+  });
+
+  it('503s when no scheduler is wired (e.g. CABINET_SCHEDULER=off)', async () => {
+    await startApp(); // default fixture never passes `scheduler`
+    const res = await asOwner('/api/admin/jobs/weekly-review/run', { method: 'POST' });
+    expect(res.status).toBe(503);
+  });
+
+  it('a job that throws asynchronously is logged, not left to crash the process', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await withScheduler({ has: () => true, runNow: async () => { throw new Error('opus refused'); } });
+    const res = await asOwner('/api/admin/jobs/weekly-review/run', { method: 'POST' });
+    expect(res.status).toBe(202); // the HTTP call already returned before the job finished
+    await new Promise((r) => setTimeout(r, 10));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('admin job trigger: weekly-review failed: opus refused'));
+    warn.mockRestore();
   });
 });
 
