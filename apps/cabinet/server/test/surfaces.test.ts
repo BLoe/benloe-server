@@ -69,6 +69,76 @@ describe('surface endpoints — frozen contract', () => {
     expect(t.overnight).toBeNull();
   });
 
+  describe('/api/today.briefing / .checkin (mentorship: durable Today surface)', () => {
+    /** SQLite datetime('now')-style UTC stamp, matching what persistAssistantMessage's INSERT default produces. */
+    const sqliteUtc = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
+    const seedThread = (id: string, kind = 'cron') => cabinet.db.prepare('INSERT INTO thread (id, title, kind) VALUES (?,?,?)').run(id, id, kind);
+    const seedMessage = (threadId: string, parts: unknown, createdAt: Date) =>
+      cabinet.db
+        .prepare('INSERT INTO message (id, thread_id, role, parts, created_at) VALUES (?,?,?,?,?)')
+        .run(`${threadId}-${createdAt.getTime()}`, threadId, 'assistant', JSON.stringify(parts), sqliteUtc(createdAt));
+
+    it('both are null when neither job has ever run', async () => {
+      const t = await (await owner('/api/today')).json();
+      expect(t.briefing).toBeNull();
+      expect(t.checkin).toBeNull();
+    });
+
+    it('briefing is populated and isCurrent when sys-briefing has a fresh text part', async () => {
+      seedThread('sys-briefing');
+      seedMessage('sys-briefing', [{ type: 'widget', widgetType: 'briefing', data: { sections: [] } }, { type: 'text', text: 'Quiet day, nothing urgent.' }], new Date());
+      const t = await (await owner('/api/today')).json();
+      expect(t.briefing).toMatchObject({ isCurrent: true, narrative: 'Quiet day, nothing urgent.' });
+      expect(new Date(t.briefing.at).toString()).not.toBe('Invalid Date');
+    });
+
+    it('briefing is stale (isCurrent: false) but still returned, not silently swapped for the template', async () => {
+      seedThread('sys-briefing');
+      seedMessage('sys-briefing', [{ type: 'text', text: 'Two days old.' }], new Date(Date.now() - 2 * 86_400_000));
+      const t = await (await owner('/api/today')).json();
+      expect(t.briefing).toMatchObject({ isCurrent: false, narrative: 'Two days old.' });
+    });
+
+    it('briefing is null when the persisted turn has no text part (tool calls only, nothing to lead with)', async () => {
+      seedThread('sys-briefing');
+      seedMessage('sys-briefing', [{ type: 'tool-run', toolId: 't1', name: 'x', input: {}, output: '', isError: false, done: true }], new Date());
+      const t = await (await owner('/api/today')).json();
+      expect(t.briefing).toBeNull();
+    });
+
+    it('checkin is populated and isCurrent when sys-checkin has a fresh checkin widget', async () => {
+      seedThread('sys-checkin');
+      const vitals = [{ kind: 'stat', label: 'Protein · tonight', big: '90', unit: 'g', sub: '1400 kcal · 2 meals' }];
+      seedMessage('sys-checkin', [{ type: 'widget', widgetType: 'checkin', data: { vitals, prompt: 'How was today?' } }], new Date());
+      const t = await (await owner('/api/today')).json();
+      expect(t.checkin).toMatchObject({ isCurrent: true, vitals, prompt: 'How was today?' });
+    });
+
+    it('checkin is stale (isCurrent: false) when yesterday\'s check-in is the only one on record', async () => {
+      seedThread('sys-checkin');
+      const vitals = [{ kind: 'stat', label: 'Protein · tonight', big: '50', unit: 'g', sub: '800 kcal · 1 meal' }];
+      seedMessage('sys-checkin', [{ type: 'widget', widgetType: 'checkin', data: { vitals, prompt: 'How was today?' } }], new Date(Date.now() - 2 * 86_400_000));
+      const t = await (await owner('/api/today')).json();
+      expect(t.checkin).toMatchObject({ isCurrent: false });
+    });
+
+    it('checkin is null when the widget lacks a vitals array (malformed/unexpected shape) rather than throwing', async () => {
+      seedThread('sys-checkin');
+      seedMessage('sys-checkin', [{ type: 'widget', widgetType: 'checkin', data: { prompt: 'oops, no vitals' } }], new Date());
+      const t = await (await owner('/api/today')).json();
+      expect(t.checkin).toBeNull();
+    });
+
+    it('the template greeting/read fields are unchanged and still present alongside briefing/checkin — they remain the frontend\'s fallback', async () => {
+      seedThread('sys-briefing');
+      seedMessage('sys-briefing', [{ type: 'text', text: 'Real narrative.' }], new Date());
+      const t = await (await owner('/api/today')).json();
+      expect(t.greeting).toBe('Good morning, Ben.');
+      expect(typeof t.read).toBe('string');
+      expect(t.briefing.narrative).toBe('Real narrative.');
+    });
+  });
+
   it('GET /api/today surfaces a real attention item for a low medication', async () => {
     cabinet.db.prepare(
       `INSERT INTO medication (name, dose, schedule, days_supply, last_filled_on, refills_left, active) VALUES (?,?,?,?,?,?,1)`,

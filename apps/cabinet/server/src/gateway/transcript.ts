@@ -13,6 +13,23 @@ import { foldEvent, type MessagePart } from './fold.js';
  * A job that git-commits memory rewrites and adds lessons must leave a
  * reviewable trace when it does something wrong, not just its side effects.
  */
+/**
+ * The one INSERT for an assistant-role message — every path that writes one
+ * (a live turn's folded parts, or a deterministic job with no turn at all,
+ * e.g. evening-checkin) goes through here instead of hand-rolling the SQL a
+ * second time. No-ops on an empty parts array (nothing worth persisting).
+ */
+export function persistAssistantMessage(
+  db: Database.Database,
+  threadId: string,
+  parts: MessagePart[],
+  opts: { id?: string; usage?: unknown } = {},
+): void {
+  if (parts.length === 0) return;
+  db.prepare('INSERT INTO message (id, thread_id, role, parts, usage) VALUES (?,?,?,?,?)')
+    .run(opts.id ?? randomUUID(), threadId, 'assistant', JSON.stringify(parts), opts.usage ? JSON.stringify(opts.usage) : null);
+}
+
 export function createTranscriptRecorder(): {
   /** Live reference (mutated by onEvent) — e.g. for auto-titling off the folded text, same as /api/chat always read. */
   parts: readonly MessagePart[];
@@ -31,9 +48,7 @@ export function createTranscriptRecorder(): {
       foldEvent(parts, e);
     },
     persist(db, threadId) {
-      if (parts.length === 0) return;
-      db.prepare('INSERT INTO message (id, thread_id, role, parts, usage) VALUES (?,?,?,?,?)')
-        .run(assistantId ?? randomUUID(), threadId, 'assistant', JSON.stringify(parts), usage ? JSON.stringify(usage) : null);
+      persistAssistantMessage(db, threadId, parts, { id: assistantId ?? undefined, usage });
     },
   };
 }

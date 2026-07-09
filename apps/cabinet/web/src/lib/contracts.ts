@@ -50,14 +50,20 @@ export interface AttentionItem {
   title: string; meta?: string; detail: string; actions: AttentionAction[];
 }
 export interface OvernightNote { count: number; summary: string; }
+/** The real morning-briefing narrative, durably read from sys-briefing — null when the job has never fired. */
+export interface BriefingOutput { at: string; isCurrent: boolean; narrative: string; }
+/** The real evening-checkin output, durably read from sys-checkin — null when the job has never fired. */
+export interface CheckinOutput { at: string; isCurrent: boolean; vitals: InstrumentSpec[]; prompt: string; }
 export interface TodayView {
-  greeting: string;        // "Good morning, Ben."
+  greeting: string;        // "Good morning, Ben." — the fallback/empty-state template, used only when briefing is null
   greetingAccent?: string; // italic brass clause, e.g. "A quiet day"
-  read: string;            // the voice — the agent's read of the day
+  read: string;            // the fallback template's supporting line
   attention: AttentionItem[];
   vitals: InstrumentSpec[];
   overnight: OvernightNote | null;
   sweptAt: string;         // ISO
+  briefing: BriefingOutput | null;
+  checkin: CheckinOutput | null;
 }
 
 /* ---------- domains ---------- */
