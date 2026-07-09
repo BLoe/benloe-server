@@ -278,4 +278,18 @@ describe('jobs', () => {
     },
     MODEL_TIMEOUT,
   );
+
+  it('maintenance: a failed embed during backfill is logged (not swallowed) and leaves the row for tomorrow', async () => {
+    addJournal(cabinet.db, 'a pending journal entry that will fail to embed');
+    const brokenEmbedder = { embed: async () => { throw new Error('embedding process exited (code 1)'); } } as unknown as Embedder;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await runMaintenance({ ...deps, embedder: brokenEmbedder });
+
+    expect(res.backfilled).toBe(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('backfill: embed failed for journal_entry id='));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('embedding process exited (code 1)'));
+    expect((cabinet.db.prepare('SELECT embedded FROM journal_entry').get() as { embedded: number }).embedded).toBe(0);
+    warn.mockRestore();
+  });
 });

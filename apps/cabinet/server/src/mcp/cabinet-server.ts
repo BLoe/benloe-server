@@ -92,8 +92,11 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         try {
           await ctx.episodic.indexText(ctx.embedder, 'journal', `journal:${id}`, null, body);
           ctx.db.prepare('UPDATE journal_entry SET embedded = 1 WHERE id = ?').run(id);
-        } catch {
-          /* embedder down: backfill job will catch it (§14) */
+        } catch (err) {
+          // Embedder down or crashed mid-embed: leave embedded=0, the nightly
+          // backfill (jobs.ts, §14) will retry. Must not fail silently — this
+          // warn is the only signal anyone gets before that backfill runs.
+          console.warn(`add_journal: embed failed for journal_entry id=${id}: ${(err as Error).message}`);
         }
         return ok({ id });
       },

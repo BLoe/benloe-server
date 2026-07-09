@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -72,6 +72,24 @@ describe('cabinet MCP server', () => {
     const r = await call('log_food', { description: 'test bowl', kcal: 500, protein_g: 40 });
     const parsed = JSON.parse(r.content[0]!.text);
     expect(parsed.totals.protein_g).toBe(40);
+  });
+
+  it('add_journal: an embed failure is logged, not swallowed, and the write still succeeds with embedded=0', async () => {
+    const original = ctx.embedder;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    ctx.embedder = { embed: async () => { throw new Error('embedding process exited (code 1)'); } } as unknown as Embedder;
+    try {
+      const r = await call('add_journal', { body: 'a note that will fail to embed' });
+      const { id } = JSON.parse(r.content[0]!.text);
+      expect(r.isError).toBeUndefined(); // the journal write itself isn't lost when embedding fails
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(`add_journal: embed failed for journal_entry id=${id}`));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('embedding process exited (code 1)'));
+      const row = cabinet.db.prepare('SELECT embedded FROM journal_entry WHERE id = ?').get(id) as { embedded: number };
+      expect(row.embedded).toBe(0);
+    } finally {
+      ctx.embedder = original;
+      warn.mockRestore();
+    }
   });
 
   it('query_db enforces the SELECT-only guard through the tool surface', async () => {

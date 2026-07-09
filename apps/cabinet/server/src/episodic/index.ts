@@ -23,6 +23,43 @@ export interface LessonRow {
   times_applied: number;
 }
 
+export interface EmbeddableTable {
+  /** cabinet.db table name holding the raw text. */
+  table: string;
+  /** INTEGER flag column on that table: 0 = not yet embedded, 1 = embedded. */
+  flagColumn: string;
+  /** Column holding the free text to embed. */
+  textColumn: string;
+  /** episodic chunk kind these rows are indexed as. */
+  kind: ChunkKind;
+  /** Builds the episodic chunk.source_ref for a given row id. */
+  sourceRef: (id: number) => string;
+}
+
+/**
+ * Registry of every cabinet.db table that feeds the episodic embedder, paired
+ * with the flag column marking "already embedded." Single edit point: a
+ * domain that starts embedding text appends one entry here — the nightly
+ * backfill job (scheduler/jobs.ts) and the healthz pendingBackfill count
+ * (gateway/app.ts) both derive from this list instead of each hardcoding
+ * journal_entry. Table/column names below are our own trusted constants, not
+ * user input, so string-interpolating them into SQL (in the two consumers
+ * above) is safe.
+ */
+export const EMBEDDABLE_TABLES: EmbeddableTable[] = [
+  { table: 'journal_entry', flagColumn: 'embedded', textColumn: 'body', kind: 'journal', sourceRef: (id) => `journal:${id}` },
+];
+
+/** Sum of not-yet-embedded rows across every table in EMBEDDABLE_TABLES — the "is the embed pipeline caught up?" number. */
+export function pendingBackfillCount(db: Database.Database): number {
+  let total = 0;
+  for (const t of EMBEDDABLE_TABLES) {
+    const row = db.prepare(`SELECT COUNT(*) AS n FROM ${t.table} WHERE ${t.flagColumn} = 0`).get() as { n: number };
+    total += row.n;
+  }
+  return total;
+}
+
 /** episodic.db: vector recall for conversations/journals/documents + the lesson bank. */
 export class EpisodicStore {
   readonly db: Database.Database;
