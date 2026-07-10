@@ -1,6 +1,5 @@
 import type Database from 'better-sqlite3';
-import { logFood, updatePantry } from './food.js';
-import { convert } from './units.js';
+import { logFood, decrementPantryFor } from './food.js';
 
 /**
  * Meal-plan spine (Phase C, build 2) — the set of `meal_plan_entry` rows over
@@ -206,24 +205,14 @@ export function consumePlanEntry(db: Database.Database, entryId: number, opts?: 
         continue;
       }
       const required = ing.quantity * scale;
-      const pantryRow = db
-        .prepare('SELECT id, name, quantity, unit FROM pantry_item WHERE lower(name) = lower(?) ORDER BY id ASC LIMIT 1')
-        .get(ing.name) as { id: number; name: string; quantity: number | null; unit: string | null } | undefined;
-      if (!pantryRow) {
-        notDecremented.push({ name: ing.name, required, unit: ing.unit, reason: `'${ing.name}' is not in the pantry` });
+      // build 6: the pantry lookup + convert() + updatePantry(quantityDelta) sequence
+      // now lives once in decrementPantryFor — reused here instead of duplicated.
+      const result = decrementPantryFor(db, { name: ing.name, quantity: required, unit: ing.unit });
+      if (!result.ok) {
+        notDecremented.push({ name: ing.name, required, unit: ing.unit, reason: result.reason });
         continue;
       }
-      if (pantryRow.unit === null) {
-        notDecremented.push({ name: ing.name, required, unit: ing.unit, reason: `pantry stock for '${ing.name}' has no recorded unit` });
-        continue;
-      }
-      const converted = convert(required, ing.unit, pantryRow.unit, ing.name);
-      if (!converted.ok) {
-        notDecremented.push({ name: ing.name, required, unit: ing.unit, reason: converted.reason });
-        continue;
-      }
-      updatePantry(db, { name: pantryRow.name, quantityDelta: -converted.value });
-      decremented.push({ name: pantryRow.name, amount: converted.value, unit: pantryRow.unit });
+      decremented.push({ name: result.name, amount: result.amount, unit: result.unit });
     }
 
     db.prepare("UPDATE meal_plan_entry SET status = 'eaten' WHERE id = ?").run(entry.id);
