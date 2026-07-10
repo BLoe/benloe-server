@@ -12,6 +12,8 @@ export interface FoodEntry {
   confidence?: 'high' | 'medium' | 'low';
   source?: 'text' | 'photo' | 'recipe' | 'restaurant';
   photo_path?: string;
+  /** links this entry back to the recipe it was logged from (consumePlanEntry, domains/mealplan.ts) — the column existed since 001_init but nothing wrote it until build 5. */
+  recipe_id?: number;
   when?: Date;
 }
 
@@ -30,13 +32,13 @@ export function logFood(db: Database.Database, e: FoodEntry): { id: number; tota
   const day = localDay(when);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO food_log (eaten_at, local_day, meal, description, kcal, protein_g, carbs_g, fat_g, fiber_g, confidence, source, photo_path)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO food_log (eaten_at, local_day, meal, description, kcal, protein_g, carbs_g, fat_g, fiber_g, confidence, source, photo_path, recipe_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       when.toISOString(), day, e.meal ?? null, e.description,
       e.kcal ?? null, e.protein_g ?? null, e.carbs_g ?? null, e.fat_g ?? null, e.fiber_g ?? null,
-      e.confidence ?? 'medium', e.source ?? 'text', e.photo_path ?? null,
+      e.confidence ?? 'medium', e.source ?? 'text', e.photo_path ?? null, e.recipe_id ?? null,
     );
   return { id: Number(lastInsertRowid), totals: dailyTotals(db, day) };
 }
