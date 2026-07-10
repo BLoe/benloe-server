@@ -9,7 +9,7 @@ import { logRetrieval } from '../episodic/retrieval-log.js';
 import type { MemoryStore } from '../memory/index.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesson } from '../memory/lessons.js';
-import { dailyTotals, logFood, updatePantry, addRecipe } from '../domains/food.js';
+import { dailyTotals, logFood, updatePantry, addRecipe, decrementPantryFor } from '../domains/food.js';
 import { planMeal, listMealPlan, updatePlanEntry, removePlanEntry, consumePlanEntry } from '../domains/mealplan.js';
 import { generateShoppingList, listGroceryList } from '../domains/shopping.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
@@ -177,6 +177,12 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         is_staple: z.boolean().optional(),
       },
       async (args) => ok(updatePantry(ctx.db, args)),
+    ),
+    tool(
+      'decrement_pantry_for',
+      "Decrement a pantry item by (quantity, unit), converting into the pantry row's own stored unit first — for ad-hoc food-from-stock ('I ate 200ml of milk' against a pantry row stored in litres) without doing the unit math yourself. Never guesses: no matching row, no recorded unit, or an unconvertible unit returns a reason and leaves the row untouched. For a plain add/subtract already in the pantry row's own unit, use update_pantry's quantityDelta instead.",
+      { name: z.string(), quantity: z.number(), unit: z.string() },
+      async (args) => ok(decrementPantryFor(ctx.db, args)),
     ),
     tool(
       'add_recipe',
