@@ -11,6 +11,7 @@ import type { ApprovalQueue } from '../tiers/approvals.js';
 import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesson } from '../memory/lessons.js';
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../domains/food.js';
 import { planMeal, listMealPlan, updatePlanEntry, removePlanEntry } from '../domains/mealplan.js';
+import { generateShoppingList, listGroceryList } from '../domains/shopping.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
 import {
@@ -227,6 +228,18 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       'Delete a meal-plan entry outright (e.g. the plan changed before anything was eaten).',
       { id: z.number() },
       async ({ id }) => ok(removePlanEntry(ctx.db, id)),
+    ),
+    tool(
+      'generate_shopping_list',
+      "Compute meal-plan ingredient requirements over [fromDay, toDay] minus current pantry stock, and REPLACE the plan-derived rows in the grocery list with the shortfalls ('staple'/'manual' rows are untouched). Never guesses across unit families — anything it can't cleanly convert (missing density, count-unit mismatch, ...) comes back in needsReview instead of a wrong number.",
+      { fromDay: z.string(), toDay: z.string() },
+      async ({ fromDay, toDay }) => ok(generateShoppingList(ctx.db, { fromDay, toDay })),
+    ),
+    tool(
+      'list_grocery_list',
+      'List the full grocery list (mealplan-derived + staple + manual rows), ordered by source then name.',
+      {},
+      async () => ok({ items: listGroceryList(ctx.db) }),
     ),
     tool(
       'upsert_task',
