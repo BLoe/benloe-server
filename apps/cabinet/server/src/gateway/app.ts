@@ -12,6 +12,7 @@ import type { EpisodicStore } from '../episodic/index.js';
 import { pendingBackfillCount } from '../episodic/index.js';
 import { retrievalLogCount } from '../episodic/retrieval-log.js';
 import { recallLessons } from '../memory/lessons.js';
+import { profileGap } from '../domains/profile.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import type { MessagePart } from './fold.js';
 import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
@@ -199,6 +200,21 @@ export function buildApp(deps: GatewayDeps) {
       }
     }
 
+    // Profile-completeness check (mentorship Phase B) — cheap (a few indexed
+    // COUNT queries + 3 file reads), self-quieting once genuinely complete.
+    // When there's a gap, load ONBOARDING.md alongside it in the same turn
+    // so the interview discipline (bright-line rules, the both-kinds-
+    // sentinel requirement) is present the moment the gap is surfaced, not
+    // just a bare "something's missing" note with no guidance attached.
+    let profileGapText: string | null = null;
+    if (deps.memory) {
+      try {
+        profileGapText = profileGap(deps.db, deps.memory);
+      } catch (err) {
+        console.warn(`chat: profile completeness check failed for thread ${threadId}: ${(err as Error).message}`);
+      }
+    }
+
     const hb = setInterval(() => res.write(SSE_HEARTBEAT), 25_000);
     try {
       await deps.runtime.run({
@@ -207,6 +223,7 @@ export function buildApp(deps: GatewayDeps) {
           // Tell Cabinet who it's talking to (Ben vs an agent like Benji).
           ...(principal ? { interlocutor: { name: principal.name ?? principal.email, role: principal.role, isOwner: principal.isOwner } } : {}),
           ...(lessons.length ? { lessons: lessons.map((l) => ({ text: l.text, domain: l.domain })) } : {}),
+          ...(profileGapText ? { profileGap: profileGapText, domainFiles: ['ONBOARDING.md'] } : {}),
         },
       });
     } catch (err) {

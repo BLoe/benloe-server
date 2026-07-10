@@ -163,6 +163,110 @@ Cabinet operates autonomously; these are guidance, not a permission gate.
 - If nothing needs attention, reply HEARTBEAT_OK.
 `,
 
+  'ONBOARDING.md': `# ONBOARDING — the profile interview
+
+Loaded automatically (via domainFiles) only when the profile-completeness
+check finds a gap — see domains/profile.ts's profileGap(). If you're reading
+this, Ben's structured profile is missing something planning needs. This is
+instruction, not narrative — it's not in the domains/ set weekly-review
+rewrites.
+
+## When to run this
+Only when it's a natural moment — Ben opened a real conversation, not mid a
+task-focused turn. Don't derail an unrelated request to force this. If the
+gap is real and the moment isn't right, a brief one-line mention ("your
+profile's missing a few things — want to fill them in sometime?") beats
+hijacking the turn.
+
+## Topic order
+1. Baseline — current weight, body-fat estimate if known, resting HR, BP if
+   known. -> log_body_metric, one call per metric.
+2. Goals — target weight, pace, protein target, calorie targets, steps
+   floor, strength intent. -> upsert_goal for anything with a real number or
+   cadence; qualitative goals (e.g. "maintain strength, no PR chase") go to
+   GOALS.md via update_memory only, not upsert_goal.
+3. Physical constraints — old injuries, current limitations, anything that
+   changes what's safe to program. -> see the hard-constraint rule below.
+4. Dietary constraints — allergies, intolerances, anything a meal
+   suggestion must never violate. -> see the hard-constraint rule below.
+5. Routine — fixed weekly commitments (e.g. a trainer schedule), general
+   training pattern, food pattern/prep style. -> narrative only, see the
+   scope boundary below.
+
+Ask one topic at a time. Free-form questions, not a rigid form — follow up
+naturally on anything that needs depth (an injury's specifics, a food
+dislike's severity).
+
+## Confirm before persisting
+This is foundational data everything downstream plans from — a wrong number
+or a missed constraint has real blast radius. Before writing anything from a
+topic, reflect back what you heard in plain language and get an explicit
+confirmation ("so: L4/L5 issue, no barbell back squat or conventional
+deadlift, ever — that right?") before calling the tool. Don't persist
+tentative or unconfirmed answers.
+
+## The bright-line test: structured vs. narrative
+If it can hurt him or break a plan, it's structured (goal / body_metric /
+hard_constraint). If it only shapes flavor or tone, it's narrative (the
+domains/*.md files, GOALS.md, USER.md).
+
+Worked example (the case that got this rule written): "mild lactose
+sensitivity, fine with hard cheese and Greek yogurt, avoids drinking milk"
+is NOT a soft preference — a future meal suggestion with a cream sauce or a
+milk-based recipe would violate it. That's a plan breaking, even if mildly.
+It is a real hard_constraint row (kind: dietary), not a line in
+nutrition.md. Compare: "dislikes cilantro, prefers Mediterranean food" IS a
+soft preference — no plan is broken by ignoring it, only its quality
+suffers. That's narrative.
+
+## The hard-constraint rule — BOTH kinds, ALWAYS an explicit answer
+For dietary AND physical constraints, you must record an answer either way
+— there is no "nothing to report, move on" option:
+- If real constraints exist: write them as hard_constraint rows (one call
+  per constraint via upsert_constraint — subject + severity + note).
+- If the user confirms there are none: write the confirmed-none sentinel —
+  upsert_constraint({kind, confirmedNone: true}) — do NOT just leave the
+  category empty and move to the next topic.
+
+An empty category is NOT a completed answer. It means you haven't actually
+asked yet, or asked and forgot to record it — the completeness gate cannot
+tell those apart from an empty table, which is exactly why the sentinel
+exists. Two worked examples:
+- Real constraints found (this actually happened): asked about food,
+  learned about a mild lactose sensitivity -> wrote a real dietary
+  hard_constraint row for it (see above).
+- Genuinely none: asked, the user confirms no allergies or restrictions of
+  any kind -> still write upsert_constraint({kind: 'dietary', confirmedNone:
+  true}) — the interview is not done for that topic until this call
+  happens, even though there's nothing substantive to say.
+
+The very first version of this interview got this wrong for dietary: no
+allergies were found, and the interview moved on without ever calling
+upsert_constraint — leaving the dietary category silently empty,
+indistinguishable from never having asked. Don't repeat that.
+
+## Scope boundary: routine
+A fixed weekly commitment (e.g. "trainer Tue/Thu 6:30am") is narrative only
+— write it into domains/training.md via update_memory. Do NOT also create a
+task/reminder row for it. Nothing in this system currently expands a
+recurring task into calendar instances, so a standing commitment modeled as
+a task sits open forever with no due date, permanently inflating the open-
+task count with something that can never be resolved. If a later phase
+needs to compute around a fixed schedule programmatically, that's a
+deliberate, separate piece of work — not something to improvise here.
+
+## Done means the gate says done — not your own judgment
+Before declaring the interview complete, actually check (query_db, or wait
+for the next turn's profile-completeness line in context) that every
+dimension is satisfied: active goal rows, a body_metric baseline,
+domains/health.md + domains/training.md + domains/nutrition.md each no
+longer template content, and BOTH hard_constraint kinds (dietary, physical)
+with at least one active row each — real or sentinel. Don't rely on your own
+recollection of what you asked; check the actual persisted state. If
+something's still missing, say so plainly and either continue or note it as
+an open item — don't declare "done enough" on a half-empty profile.
+`,
+
   'PLATFORM.md': `# PLATFORM — operating this server
 
 - Monorepo /srv/benloe (public GitHub repo BLoe/benloe-server). Apps under

@@ -40,6 +40,17 @@ function structuralCheck(after: string): string | null {
   return null;
 }
 
+/**
+ * Is `content` still byte-equivalent to the untouched seed template for
+ * `file`? Exported (not just internal to the drift guard) — mentorship
+ * Phase B's profileGap() reuses this exact check to decide whether
+ * domains/health.md etc. have received real onboarding content yet, rather
+ * than re-deriving the same comparison a second way.
+ */
+export function isStillTemplate(file: string, content: string): boolean {
+  return content.trim() === (MEMORY_TEMPLATES[file] ?? '').trim();
+}
+
 /** null = the write is fine; a string = the reason it's refused. */
 function shrinkCheck(before: string, after: string): string | null {
   const trimmedAfter = after.trim();
@@ -143,8 +154,7 @@ export class MemoryStore {
       // legitimately replaces most of it — that's the intended lifecycle,
       // not corruption. Once a file holds real (non-template) content, a
       // later catastrophic shrink is exactly the failure mode this guards.
-      const stillTemplate = before.trim() === (MEMORY_TEMPLATES[file] ?? '').trim();
-      if (!stillTemplate) {
+      if (!isStillTemplate(file, before)) {
         const shrink = shrinkCheck(before, content);
         if (shrink) throw new MemoryError(`refusing to write ${file}: ${shrink}`);
       }
