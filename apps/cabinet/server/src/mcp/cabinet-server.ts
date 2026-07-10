@@ -10,7 +10,7 @@ import type { MemoryStore } from '../memory/index.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesson } from '../memory/lessons.js';
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../domains/food.js';
-import { planMeal, listMealPlan, updatePlanEntry, removePlanEntry } from '../domains/mealplan.js';
+import { planMeal, listMealPlan, updatePlanEntry, removePlanEntry, consumePlanEntry } from '../domains/mealplan.js';
 import { generateShoppingList, listGroceryList } from '../domains/shopping.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
@@ -228,6 +228,12 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       'Delete a meal-plan entry outright (e.g. the plan changed before anything was eaten).',
       { id: z.number() },
       async ({ id }) => ok(removePlanEntry(ctx.db, id)),
+    ),
+    tool(
+      'consume_plan_entry',
+      "Consume a planned meal: log the food entry, decrement matching pantry stock (unit-converted), and mark it 'eaten' — atomically, so a failure never leaves food logged without the pantry decremented or vice versa. Calling this twice on the same entry is a safe no-op (alreadyEaten). Ingredients that can't be auto-decremented (no pantry match, no density, unit mismatch) come back in notDecremented, not a guess.",
+      { entryId: z.number(), localDay: z.string().optional() },
+      async ({ entryId, localDay }) => ok(consumePlanEntry(ctx.db, entryId, { localDay })),
     ),
     tool(
       'generate_shopping_list',
