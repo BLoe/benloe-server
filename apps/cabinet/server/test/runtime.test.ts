@@ -137,6 +137,23 @@ describe('prompt assembly', () => {
     expect(p.systemPrompt).not.toContain('PLATFORM.md');
     expect(p.systemPrompt.length).toBeLessThan(assemblePrompt(mem, { kind: 'user' }).systemPrompt.length);
   });
+
+  it('profileGap lands in turnContext, not systemPrompt (mentorship Phase B) — same cache-stability rule as everything else per-turn', () => {
+    const p1 = assemblePrompt(mem, { kind: 'user' });
+    const p2 = assemblePrompt(mem, { kind: 'user', profileGap: 'still need: dietary constraints' });
+    expect(p2.turnContext).toContain('still need: dietary constraints');
+    expect(p2.systemPrompt).not.toContain('still need');
+    expect(p1.systemPrompt).toBe(p2.systemPrompt);
+  });
+
+  it('ONBOARDING.md loads into turnContext only when the caller sets domainFiles for it — mirrors how gateway/app.ts pairs profileGap with domainFiles: ["ONBOARDING.md"]', () => {
+    const withGap = assemblePrompt(mem, { kind: 'user', profileGap: 'still need: goals', domainFiles: ['ONBOARDING.md'] });
+    expect(withGap.turnContext).toContain('ONBOARDING.md');
+    expect(withGap.turnContext).toContain('bright-line test'); // real seed content, not just the filename tag
+
+    const withoutGap = assemblePrompt(mem, { kind: 'user' });
+    expect(withoutGap.turnContext).not.toContain('ONBOARDING.md');
+  });
 });
 
 describe('configureAuth (§9.1)', () => {

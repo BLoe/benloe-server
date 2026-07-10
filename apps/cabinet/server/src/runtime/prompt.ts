@@ -16,6 +16,14 @@ export interface PromptInput {
   lessons?: Pick<LessonRow, 'text' | 'domain'>[];
   /** Deterministic snapshot from query_db — per-turn context. */
   snapshot?: string;
+  /**
+   * Profile-completeness gap (domains/profile.ts's profileGap()) — per-turn
+   * context, mentorship Phase B. Non-null only when Ben's structured profile
+   * is missing something; the caller (gateway/app.ts's /api/chat) is also
+   * expected to set domainFiles: ['ONBOARDING.md'] alongside this so the
+   * interview discipline loads in the same turn the gap is surfaced.
+   */
+  profileGap?: string;
   /** Who this turn's message is from (user turns only) — per-turn context. */
   interlocutor?: Interlocutor;
   now?: Date;
@@ -86,6 +94,7 @@ export function assemblePrompt(mem: MemoryStore, input: PromptInput): AssembledP
     for (const l of input.lessons) context.push(`- [${l.domain ?? 'general'}] ${l.text}`);
   }
   if (input.snapshot) context.push(`Today snapshot:\n${input.snapshot}`);
+  if (input.profileGap) context.push(`Profile completeness check: ${input.profileGap}`);
   for (const f of input.domainFiles ?? []) {
     try {
       context.push(`<memory file="${f}">\n${mem.read(f)}\n</memory>`);

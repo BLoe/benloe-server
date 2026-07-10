@@ -14,6 +14,9 @@ import type { TurnEvent } from '../src/runtime/agent.js';
 import { EpisodicStore } from '../src/episodic/index.js';
 import { Embedder } from '../src/embeddings/index.js';
 import { addLesson } from '../src/memory/lessons.js';
+import { MemoryStore } from '../src/memory/index.js';
+import { upsertConstraint, upsertGoal } from '../src/domains/misc.js';
+import { logBodyMetric } from '../src/domains/training.js';
 
 const OWNER = 'below413@gmail.com';
 const MODEL_TIMEOUT = 300_000;
@@ -489,6 +492,52 @@ describe('chat stream', () => {
     },
     MODEL_TIMEOUT,
   );
+
+  it('/api/chat carries profileGap + domainFiles: ["ONBOARDING.md"] into promptInput when the profile is incomplete, and omits both once it is not (mentorship Phase B)', async () => {
+    const memDir = mkdtempSync(join(tmpdir(), 'cabinet-profile-chat-'));
+    const memory = new MemoryStore(memDir);
+    memory.ensureTemplates();
+    try {
+      let capturedPromptInput: { profileGap?: string; domainFiles?: string[] } | undefined;
+      const runtime = {
+        authMode: 'subscription' as const,
+        queue: { depth: 0 },
+        interrupt: () => true,
+        titleFor: async () => null,
+        run: async (req: { promptInput?: typeof capturedPromptInput; onEvent: (e: TurnEvent) => void }) => {
+          capturedPromptInput = req.promptInput;
+          req.onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+          return { stopReason: 'success' as const, sessionId: 's1' };
+        },
+      };
+      const app = buildApp({ db: cabinet.db, runtime: runtime as never, approvals, widgetBus, ownerEmail: OWNER, authFetch: fakeAuthFetch, memory });
+      server = app.listen(0, '127.0.0.1');
+      await new Promise((r) => server.once('listening', r));
+      base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+      const { id } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+
+      // Fresh profile — incomplete.
+      await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'hey' }) }));
+      expect(capturedPromptInput?.profileGap).toContain('still need');
+      expect(capturedPromptInput?.domainFiles).toEqual(['ONBOARDING.md']);
+
+      // Fill every dimension via sentinels — now complete.
+      upsertGoal(cabinet.db, { domain: 'nutrition', title: 'protein', target_value: 180, unit: 'g' });
+      logBodyMetric(cabinet.db, { metric: 'weight_lb', value: 198 });
+      memory.update('domains/health.md', '# Health\n\nreal content', 'seed');
+      memory.update('domains/training.md', '# Training\n\nreal content', 'seed');
+      memory.update('domains/nutrition.md', '# Nutrition\n\nreal content', 'seed');
+      upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true });
+      upsertConstraint(cabinet.db, { kind: 'physical', confirmedNone: true });
+
+      await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'hey again' }) }));
+      expect(capturedPromptInput?.profileGap).toBeUndefined();
+      expect(capturedPromptInput?.domainFiles).toBeUndefined();
+    } finally {
+      rmSync(memDir, { recursive: true, force: true });
+    }
+  });
 
   it('rejects unknown threads and empty text', async () => {
     await startApp();
