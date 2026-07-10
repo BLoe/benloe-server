@@ -10,6 +10,7 @@ import type { MemoryStore } from '../memory/index.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesson } from '../memory/lessons.js';
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../domains/food.js';
+import { planMeal, listMealPlan, updatePlanEntry, removePlanEntry } from '../domains/mealplan.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
 import {
@@ -191,6 +192,41 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         ingredients: z.array(z.object({ name: z.string(), quantity: z.number().optional(), unit: z.string().optional() })).optional(),
       },
       async (args) => ok({ id: addRecipe(ctx.db, args) }),
+    ),
+    tool(
+      'plan_meal',
+      'Add a planned meal to the meal plan (a date range of entries — there is no separate "plan" object). Exactly one of recipeId or adHocDescription.',
+      {
+        localDay: z.string(),
+        meal: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
+        recipeId: z.number().optional(),
+        adHocDescription: z.string().optional(),
+        servings: z.number().optional(),
+      },
+      async (args) => ok({ id: planMeal(ctx.db, args) }),
+    ),
+    tool(
+      'list_meal_plan',
+      'List planned meals in [fromDay, toDay] (inclusive), ordered by day then meal slot, with joined recipe title + per-serving macros.',
+      { fromDay: z.string(), toDay: z.string() },
+      async ({ fromDay, toDay }) => ok({ entries: listMealPlan(ctx.db, { fromDay, toDay }) }),
+    ),
+    tool(
+      'update_plan_entry',
+      "Patch a meal-plan entry — mark it 'eaten' or 'skipped', adjust servings, or move its meal slot.",
+      {
+        id: z.number(),
+        servings: z.number().optional(),
+        status: z.enum(['planned', 'eaten', 'skipped']).optional(),
+        meal: z.enum(['breakfast', 'lunch', 'dinner', 'snack']).optional(),
+      },
+      async ({ id, ...patch }) => ok(updatePlanEntry(ctx.db, id, patch)),
+    ),
+    tool(
+      'remove_plan_entry',
+      'Delete a meal-plan entry outright (e.g. the plan changed before anything was eaten).',
+      { id: z.number() },
+      async ({ id }) => ok(removePlanEntry(ctx.db, id)),
     ),
     tool(
       'upsert_task',
