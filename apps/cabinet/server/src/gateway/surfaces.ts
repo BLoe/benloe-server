@@ -15,7 +15,6 @@ import { localDay } from '../db/index.js';
 import { dailyTotals } from '../domains/food.js';
 import { weightTrend } from '../domains/training.js';
 import { medicationsLow } from '../domains/healthcare.js';
-import { isTrainingDay } from '../domains/activity.js';
 import type { MessagePart } from './fold.js';
 import type { MemoryHistoryEntry } from '../memory/index.js';
 
@@ -140,20 +139,17 @@ function markerPctFor(points: number[], latest: number | null): number | undefin
 }
 /**
  * A goal's target_value by fuzzy title match — real-ish in the absence of a
- * stricter goal→metric link. Day-type-aware (Phase D build 3, closes Phase B
- * FINDING 1): a goal tagged day_type='training'/'rest' only resolves on a
- * matching day; `(day_type IS NULL) ASC` prefers an exact day-type match
- * over an all-day (NULL) row when both exist, so the two calorie goals
- * resolve correctly while a plain goal (protein, steps — day_type NULL)
- * still matches regardless of which dayType is passed.
+ * stricter goal→metric link. Single-target lookup: Phase D build 3 made this
+ * day-type-aware to fix Phase B FINDING 1 (two colliding calorie goals,
+ * training/rest); build 4 reverted that when Ben's actual routine (heavy
+ * lifts 2x/week, cardio every day) collapsed the training/rest binary and
+ * the model simplified to one calorie target. There's exactly one active
+ * calorie goal now, so the id-DESC collision FINDING 1 fixed is moot.
  */
-export function goalTarget(db: Database.Database, domain: string, titleLike: string, dayType: 'training' | 'rest', fallback: number): number {
+export function goalTarget(db: Database.Database, domain: string, titleLike: string, fallback: number): number {
   const row = db
-    .prepare(
-      `SELECT target_value FROM goal WHERE active = 1 AND domain = ? AND lower(title) LIKE ? AND (day_type = ? OR day_type IS NULL)
-       ORDER BY (day_type IS NULL) ASC, id DESC LIMIT 1`,
-    )
-    .get(domain, `%${titleLike}%`, dayType) as { target_value: number | null } | undefined;
+    .prepare(`SELECT target_value FROM goal WHERE active = 1 AND domain = ? AND lower(title) LIKE ? ORDER BY id DESC LIMIT 1`)
+    .get(domain, `%${titleLike}%`) as { target_value: number | null } | undefined;
   return row?.target_value ?? fallback;
 }
 
@@ -161,12 +157,11 @@ export function goalTarget(db: Database.Database, domain: string, titleLike: str
 function todayView(db: Database.Database) {
   const today = localDay();
   const monthStart = startOfMonth(today);
-  const dayType = isTrainingDay(db, today) ? 'training' : 'rest';
 
   // Nutrition
   const totals = dailyTotals(db, today);
-  const proteinTarget = goalTarget(db, 'nutrition', 'protein', dayType, 165);
-  const kcalTarget = goalTarget(db, 'nutrition', 'calor', dayType, 2200);
+  const proteinTarget = goalTarget(db, 'nutrition', 'protein', 165);
+  const kcalTarget = goalTarget(db, 'nutrition', 'calor', 2200);
 
   // Weight
   const wt = weightTrend(db, 7);
@@ -318,9 +313,8 @@ function domainView(id: string, db: Database.Database) {
 
   if (id === 'nutrition') {
     const totals = dailyTotals(db, today);
-    const dayType = isTrainingDay(db, today) ? 'training' : 'rest';
-    const proteinTarget = goalTarget(db, 'nutrition', 'protein', dayType, 165);
-    const kcalTarget = goalTarget(db, 'nutrition', 'calor', dayType, 2200);
+    const proteinTarget = goalTarget(db, 'nutrition', 'protein', 165);
+    const kcalTarget = goalTarget(db, 'nutrition', 'calor', 2200);
     const wt = weightTrend(db, 30);
     const points = wt.points.map((p) => p.value);
     const instruments: InstrumentSpec[] = [
