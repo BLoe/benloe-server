@@ -7,14 +7,24 @@ export const HSA_LIMITS: Record<number, { selfOnly: number; catchUp55: number; m
   2027: { selfOnly: 4500, catchUp55: 1000, minDeductible: 1750, oopMax: 8700 },
 };
 
-export function seedInsurancePlan(db: Database.Database): number {
-  const existing = db.prepare("SELECT id FROM insurance_plan WHERE plan_year = 2026").get() as { id: number } | undefined;
+/**
+ * Ensures a placeholder insurance_plan row exists for the given year so
+ * callers that need a plan id (e.g. log_claim's fallback) never fail for
+ * want of one — but seeds no real plan details. Ben's actual plan
+ * (name/deductible/OOP max) gets filled in fresh via onboarding/an explicit
+ * UPDATE, not baked into this code seed. Idempotent per plan_year, same as
+ * before.
+ */
+export function seedInsurancePlan(db: Database.Database, planYear: number = new Date().getFullYear()): number {
+  const existing = db.prepare('SELECT id FROM insurance_plan WHERE plan_year = ?').get(planYear) as
+    | { id: number }
+    | undefined;
   if (existing) return existing.id;
   const { lastInsertRowid } = db
     .prepare(
       'INSERT INTO insurance_plan (plan_name, plan_year, deductible_individual, oop_max_individual) VALUES (?,?,?,?)',
     )
-    .run('Anthem HSA 3300 HDHP', 2026, 3300, HSA_LIMITS[2026]!.oopMax);
+    .run('Unset — update via onboarding', planYear, null, null);
   return Number(lastInsertRowid);
 }
 

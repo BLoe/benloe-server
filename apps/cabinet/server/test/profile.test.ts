@@ -24,15 +24,38 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-type Dimension = 'goal' | 'metric' | 'health' | 'training' | 'nutrition' | 'dietary' | 'physical';
+type Dimension =
+  | 'goal'
+  | 'metric'
+  | 'user'
+  | 'health'
+  | 'training'
+  | 'nutrition'
+  | 'mind'
+  | 'money'
+  | 'admin'
+  | 'social'
+  | 'dietary'
+  | 'physical';
+
+const NARRATIVE_DIMENSIONS: Record<string, string> = {
+  user: 'USER.md',
+  health: 'domains/health.md',
+  training: 'domains/training.md',
+  nutrition: 'domains/nutrition.md',
+  mind: 'domains/mind.md',
+  money: 'domains/money.md',
+  admin: 'domains/admin.md',
+  social: 'domains/social.md',
+};
 
 /** Fills every completeness dimension except `skip` — dietary/physical are filled via the confirmedNone sentinel, not a real row. */
 function fillEverythingExcept(skip: Dimension | null) {
   if (skip !== 'goal') upsertGoal(cabinet.db, { domain: 'nutrition', title: 'protein', target_value: 180, unit: 'g' });
   if (skip !== 'metric') logBodyMetric(cabinet.db, { metric: 'weight_lb', value: 198 });
-  if (skip !== 'health') memory.update('domains/health.md', '# Health\n\nreal onboarding content, not the seed template.', 'seed');
-  if (skip !== 'training') memory.update('domains/training.md', '# Training\n\nreal onboarding content, not the seed template.', 'seed');
-  if (skip !== 'nutrition') memory.update('domains/nutrition.md', '# Nutrition\n\nreal onboarding content, not the seed template.', 'seed');
+  for (const [dim, file] of Object.entries(NARRATIVE_DIMENSIONS)) {
+    if (skip !== dim) memory.update(file, `# ${file}\n\nreal onboarding content, not the seed template.`, 'seed');
+  }
   if (skip !== 'dietary') upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true });
   if (skip !== 'physical') upsertConstraint(cabinet.db, { kind: 'physical', confirmedNone: true });
 }
@@ -63,13 +86,23 @@ describe('profileGap (mentorship Phase B: onboarding completeness gate)', () => 
     expect(profileGap(cabinet.db, memory)).toBeNull();
   });
 
-  it.each<Dimension>(['goal', 'metric', 'health', 'training', 'nutrition', 'dietary', 'physical'])(
-    'stays non-null when only %s is missing',
-    (skip) => {
-      fillEverythingExcept(skip);
-      expect(profileGap(cabinet.db, memory)).not.toBeNull();
-    },
-  );
+  it.each<Dimension>([
+    'goal',
+    'metric',
+    'user',
+    'health',
+    'training',
+    'nutrition',
+    'mind',
+    'money',
+    'admin',
+    'social',
+    'dietary',
+    'physical',
+  ])('stays non-null when only %s is missing', (skip) => {
+    fillEverythingExcept(skip);
+    expect(profileGap(cabinet.db, memory)).not.toBeNull();
+  });
 
   it('mentions the specific missing dimension by name, not just "incomplete"', () => {
     fillEverythingExcept('physical');

@@ -88,8 +88,13 @@ describe('training', () => {
 
 describe('healthcare accumulators', () => {
   it('claims accumulate toward deductible and OOP; denied claims excluded', () => {
-    const planId = seedInsurancePlan(cabinet.db);
-    logClaim(cabinet.db, { planId, applied_to_deductible: 900, applied_to_oop: 900 });
+    // Accumulator math under test, not seedInsurancePlan's content (that's a
+    // blank placeholder by design — see healthcare.ts) — insert a plan with
+    // explicit test limits directly.
+    const { lastInsertRowid: planId } = cabinet.db
+      .prepare('INSERT INTO insurance_plan (plan_name, plan_year, deductible_individual, oop_max_individual) VALUES (?,?,?,?)')
+      .run('Test Plan', 2026, 3300, 8500);
+    logClaim(cabinet.db, { planId: Number(planId), applied_to_deductible: 900, applied_to_oop: 900 });
     logClaim(cabinet.db, { planId, applied_to_deductible: 1240, applied_to_oop: 1240 });
     logClaim(cabinet.db, { planId, applied_to_deductible: 5000, applied_to_oop: 5000, status: 'denied' });
     const acc = accumulators(cabinet.db, planId);

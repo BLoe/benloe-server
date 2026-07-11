@@ -526,9 +526,14 @@ describe('chat stream', () => {
       // Fill every dimension via sentinels — now complete.
       upsertGoal(cabinet.db, { domain: 'nutrition', title: 'protein', target_value: 180, unit: 'g' });
       logBodyMetric(cabinet.db, { metric: 'weight_lb', value: 198 });
+      memory.update('USER.md', '# USER\n\nreal content', 'seed');
       memory.update('domains/health.md', '# Health\n\nreal content', 'seed');
       memory.update('domains/training.md', '# Training\n\nreal content', 'seed');
       memory.update('domains/nutrition.md', '# Nutrition\n\nreal content', 'seed');
+      memory.update('domains/mind.md', '# Mind\n\nreal content', 'seed');
+      memory.update('domains/money.md', '# Money\n\nreal content', 'seed');
+      memory.update('domains/admin.md', '# Admin\n\nreal content', 'seed');
+      memory.update('domains/social.md', '# Social\n\nreal content', 'seed');
       upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true });
       upsertConstraint(cabinet.db, { kind: 'physical', confirmedNone: true });
 

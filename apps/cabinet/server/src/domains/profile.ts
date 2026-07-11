@@ -7,21 +7,44 @@ interface MemoryReadable {
   read(file: string): string;
 }
 
-const NARRATIVE_FILES = ['domains/health.md', 'domains/training.md', 'domains/nutrition.md'];
+/**
+ * Whole-person scope (broadened from the original health/training/nutrition-
+ * only check): USER.md itself (background/role/family/work context — the
+ * file that used to be hand-seeded with Ben's specifics is now a blank
+ * template by design, so it needs the same completeness gate everything else
+ * gets) plus every rolling-narrative domain that has a real person behind it.
+ * domains/platform.md is deliberately excluded — that file is about Cabinet
+ * operating the server, not about Ben, so it has no onboarding interview
+ * question and would never stop being "template" from an interview alone.
+ */
+const NARRATIVE_FILES = [
+  'USER.md',
+  'domains/health.md',
+  'domains/training.md',
+  'domains/nutrition.md',
+  'domains/mind.md',
+  'domains/money.md',
+  'domains/admin.md',
+  'domains/social.md',
+];
 
 /**
  * Deterministic completeness pre-check (mirrors heartbeatFindings' SQL-only
  * shape, scheduler/jobs.ts) — mentorship Phase B: is there enough of a
  * profile to plan from? Returns a human-readable "still need: ..." string
  * when incomplete, null when complete. Cheap (a few indexed COUNT queries +
- * 3 file reads) — safe to call on every /api/chat turn; self-quieting once
+ * 8 file reads) — safe to call on every /api/chat turn; self-quieting once
  * genuinely complete, so there's no reason to ever gate this off.
  *
  * Each dimension mirrors a design decision made explicit during Phase B:
  * - goal / body_metric: at least one row, no specific title/metric required
  *   — presence is the signal, not which ones (Ben's actual goals vary).
- * - the three domains/*.md files: isStillTemplate(), the exact check the
- *   drift guard already uses — reused, not re-derived a second way.
+ * - NARRATIVE_FILES: isStillTemplate(), the exact check the drift guard
+ *   already uses — reused, not re-derived a second way. Broadened from the
+ *   original three health/fitness files to whole-person scope (see the
+ *   NARRATIVE_FILES comment) so the interview surfaces a gap in, say, money
+ *   or life-admin context exactly the same way it does for a missing body
+ *   metric — not just fitness.
  * - hard_constraint, BOTH kinds independently: satisfied by a real
  *   constraint row OR the confirmed-none sentinel — either counts. Once any
  *   row exists for a kind, the topic has unambiguously been asked about;

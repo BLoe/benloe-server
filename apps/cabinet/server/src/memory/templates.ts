@@ -116,14 +116,9 @@ security, money at risk — cut the dryness and be terse and exact.
 
   'USER.md': `# USER — Ben
 
-- Senior engineer (15+ years), East Village, NYC. Timezone America/New_York.
-- Runs the benloe.com nexus (this VPS): experimental apps, monorepo, public
-  repo — code is public, secrets and personal data are not.
-- Values: fast iteration, learning by building, hand-rolled code with tests
-  over dependencies, boring technology, working code over perfect code.
-- Health plan: Anthem HSA 3300 HDHP (verify details against SPD when uploaded).
-
-(Enrich over time: family, recurring commitments, preferences that prove stable.)
+(Blank slate — fill in via the onboarding interview: background, role,
+location, timezone, values, family, work context, recurring commitments,
+preferences that prove stable.)
 `,
 
   'PREFERENCES.md': `# PREFERENCES
@@ -179,23 +174,44 @@ profile's missing a few things — want to fill them in sometime?") beats
 hijacking the turn.
 
 ## Topic order
-1. Baseline — current weight, body-fat estimate if known, resting HR, BP if
+Whole-person, not just health/fitness — profileGap() checks USER.md and every
+domain below, so a real interview covers all of it, not just the body-metric
+topics that used to be the whole scope.
+
+1. About Ben — background/role, location + timezone, family, work context,
+   values, anything that shapes how Cabinet should read his patterns. ->
+   USER.md via update_memory (narrative only — no structured table for this).
+2. Baseline — current weight, body-fat estimate if known, resting HR, BP if
    known. -> log_body_metric, one call per metric.
-2. Goals — target weight, pace, protein target, calorie targets, steps
+3. Goals — target weight, pace, protein target, calorie targets, steps
    floor, strength intent. -> upsert_goal for anything with a real number or
    cadence; qualitative goals (e.g. "maintain strength, no PR chase") go to
    GOALS.md via update_memory only, not upsert_goal.
-3. Physical constraints — old injuries, current limitations, anything that
+4. Physical constraints — old injuries, current limitations, anything that
    changes what's safe to program. -> see the hard-constraint rule below.
-4. Dietary constraints — allergies, intolerances, anything a meal
+5. Dietary constraints — allergies, intolerances, anything a meal
    suggestion must never violate. -> see the hard-constraint rule below.
-5. Routine — fixed weekly commitments (e.g. a trainer schedule), general
+6. Routine — fixed weekly commitments (e.g. a trainer schedule), general
    training pattern, food pattern/prep style. -> narrative only, see the
    scope boundary below.
+7. Mind — stress/energy baseline, anything that shapes how a mood check-in
+   or a busy-week nudge should read. -> domains/mind.md via update_memory.
+8. Money — accounts/budgeting approach at a level Cabinet should plan
+   around (not full financial statements), any standing money goals. ->
+   domains/money.md via update_memory; a real number with a cadence still
+   goes to upsert_goal, same rule as topic 3.
+9. Life admin — recurring commitments, subscriptions, anything that
+   generates a recurring task Cabinet should expect. -> domains/admin.md
+   via update_memory.
+10. Social — people worth tracking (birthdays, keep-in-touch cadence) ->
+    upsert_contact per person; general social context/patterns ->
+    domains/social.md via update_memory.
 
 Ask one topic at a time. Free-form questions, not a rigid form — follow up
 naturally on anything that needs depth (an injury's specifics, a food
-dislike's severity).
+dislike's severity). Not every topic needs the same depth — "About Ben" and
+"Money" in particular can be a few sentences, not an interrogation; get
+enough that USER.md/domains/money.md stop reading as templates, then move on.
 
 ## Confirm before persisting
 This is foundational data everything downstream plans from — a wrong number
@@ -258,11 +274,12 @@ deliberate, separate piece of work — not something to improvise here.
 ## Done means the gate says done — not your own judgment
 Before declaring the interview complete, actually check (query_db, or wait
 for the next turn's profile-completeness line in context) that every
-dimension is satisfied: active goal rows, a body_metric baseline,
-domains/health.md + domains/training.md + domains/nutrition.md each no
-longer template content, and BOTH hard_constraint kinds (dietary, physical)
-with at least one active row each — real or sentinel. Don't rely on your own
-recollection of what you asked; check the actual persisted state. If
+dimension is satisfied: active goal rows, a body_metric baseline, USER.md +
+domains/health.md + domains/training.md + domains/nutrition.md +
+domains/mind.md + domains/money.md + domains/admin.md + domains/social.md
+each no longer template content, and BOTH hard_constraint kinds (dietary,
+physical) with at least one active row each — real or sentinel. Don't rely on
+your own recollection of what you asked; check the actual persisted state. If
 something's still missing, say so plainly and either continue or note it as
 an open item — don't declare "done enough" on a half-empty profile.
 `,
