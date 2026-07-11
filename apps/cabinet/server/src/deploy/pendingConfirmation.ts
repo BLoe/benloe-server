@@ -3,10 +3,6 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { persistAssistantMessage, systemThread } from '../gateway/transcript.js';
 
-// First commit verified end-to-end through infra/scripts/cabinet-deploy.sh
-// itself (the wrapper's own inaugural shipment went out the old manual way,
-// since it couldn't confirm its own first deploy) — this comment is that
-// proof run.
 interface DeployStatus {
   targetSha: string;
   confirmedSha: string | null;
@@ -72,4 +68,48 @@ export function applyPendingDeployConfirmation(db: Database.Database, dataDir: s
     );
   }
   return true;
+}
+
+/**
+ * Wraps applyPendingDeployConfirmation in a short bounded poll, started once
+ * at process boot (index.ts). Necessary because of a chicken-and-egg baked
+ * into the design: cabinet-deploy-watch.sh can only confirm a match by
+ * polling THIS process's own /healthz — which means, by construction, it
+ * writes last-deploy.json strictly AFTER this process has already booted.
+ * A single check at import time will find nothing every single time no
+ * matter how fast the watcher runs (measured in production: the watcher's
+ * status-file write landed ~3s after this process's own pm2 created_at —
+ * i.e. after its one-shot startup check had already run and skipped).
+ * Polling for a while instead of asserting the marker is already there is
+ * what actually closes the loop.
+ *
+ * Tick-counted rather than Date.now()-deadlined so it's deterministic under
+ * fake timers in tests, and so it doesn't depend on wall-clock drift.
+ * Cheap on the vastly more common case (a boot with no pending deploy at
+ * all — crash-restart, manual pm2 restart, host reboot): an existsSync
+ * check every couple seconds, self-cancelling the moment it posts or the
+ * window elapses. `unref()`'d so it never keeps the process alive on its
+ * own.
+ */
+export function schedulePendingDeployConfirmationWatch(
+  db: Database.Database,
+  dataDir: string,
+  liveSha: string,
+  opts: { pollMs?: number; timeoutMs?: number } = {},
+): void {
+  const pollMs = opts.pollMs ?? 2000;
+  const timeoutMs = opts.timeoutMs ?? 150_000;
+  const maxTicks = Math.ceil(timeoutMs / pollMs);
+  let ticks = 0;
+  const timer = setInterval(() => {
+    ticks++;
+    let posted = false;
+    try {
+      posted = applyPendingDeployConfirmation(db, dataDir, liveSha);
+    } catch (err) {
+      console.error('pendingConfirmation: poll tick failed —', err instanceof Error ? err.message : err);
+    }
+    if (posted || ticks >= maxTicks) clearInterval(timer);
+  }, pollMs);
+  timer.unref?.();
 }
