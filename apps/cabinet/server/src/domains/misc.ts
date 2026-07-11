@@ -138,7 +138,7 @@ export interface GoalUpsertResult { id: number; supersededPrevious: GoalPrior | 
  */
 export function upsertGoal(
   db: Database.Database,
-  g: { domain: string; title: string; target_value?: number; unit?: string; cadence?: string; day_type?: 'training' | 'rest' },
+  g: { domain: string; title: string; target_value?: number; unit?: string; cadence?: string },
 ): GoalUpsertResult {
   if (g.target_value === undefined && g.cadence === undefined) {
     throw new Error('a goal needs at least a target_value or a cadence — an empty goal row tracks nothing');
@@ -152,8 +152,8 @@ export function upsertGoal(
       db.prepare('UPDATE goal SET active = 0 WHERE id = ?').run(prior.id);
     }
     const { lastInsertRowid } = db
-      .prepare('INSERT INTO goal (title, domain, target_value, unit, cadence, day_type, active) VALUES (?,?,?,?,?,?,1)')
-      .run(g.title, g.domain, g.target_value ?? null, g.unit ?? null, g.cadence ?? null, g.day_type ?? null);
+      .prepare('INSERT INTO goal (title, domain, target_value, unit, cadence, active) VALUES (?,?,?,?,?,1)')
+      .run(g.title, g.domain, g.target_value ?? null, g.unit ?? null, g.cadence ?? null);
     return { id: Number(lastInsertRowid), supersededPrevious: prior ?? null };
   });
   return run();

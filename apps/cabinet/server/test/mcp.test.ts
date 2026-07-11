@@ -69,6 +69,17 @@ describe('cabinet MCP server', () => {
     }
   });
 
+  it('log_workout: an optional localDay backdates the entry onto that local_day (build 4)', async () => {
+    const res = await call('log_workout', {
+      name: 'Backdated session',
+      sets: [{ exercise: 'Test Lift', reps: 5, weight_lb: 100 }],
+      localDay: '2026-01-15',
+    });
+    const { id } = JSON.parse(res.content[0]!.text);
+    const row = cabinet.db.prepare('SELECT local_day FROM workout WHERE id = ?').get(id) as { local_day: string };
+    expect(row.local_day).toBe('2026-01-15');
+  });
+
   it('list_promotable_lessons / promote_lesson: an aged+durable lesson is listed, promotion excludes it from further listing', async () => {
     const added = await call('add_lesson', {
       text: 'Test-only: mcp-layer promotion tool check.',
