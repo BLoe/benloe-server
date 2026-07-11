@@ -331,6 +331,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       'upsert_goal',
       'Set a structured, measurable goal (target_value+unit and/or cadence) — the number a Vitals dial tracks against, e.g. "protein >= 185 g/day". ' +
         'Matches an existing goal by (domain, title) exact match and supersedes it (old row kept, deactivated — full history preserved) rather than overwriting. ' +
+        "day_type ('training'/'rest') scopes a goal to that day type only (e.g. two separate calorie goals) — omit it for a goal that applies every day (protein, steps, weight). " +
         'For narrative/qualitative goals ("get back to consistent lifting after the injury"), use update_memory on GOALS.md instead — this tool is for numbers a dial can compare against, not prose.',
       {
         domain: z.string(),
@@ -338,6 +339,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         target_value: z.number().optional(),
         unit: z.string().optional(),
         cadence: z.string().optional(),
+        day_type: z.enum(['training', 'rest']).optional(),
       },
       async (args) => {
         try {
