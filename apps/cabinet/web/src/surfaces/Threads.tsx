@@ -31,6 +31,96 @@ function stamp(iso: string): string {
   return `${mo} ${Number(m[3])} · ${m[4]}:${m[5]}`;
 }
 
+/**
+ * A real Date from either timestamp shape a ChatMessage.created_at carries:
+ * the DB's `datetime('now')` (SQLite: "YYYY-MM-DD HH:MM:SS", space-separated,
+ * UTC, no zone marker) for history loaded from GET /api/threads/:id/messages,
+ * or a proper `Date.prototype.toISOString()` (has a trailing 'Z') for the
+ * locally-synthesized echo/live bubbles in `send()` below. Naively handing
+ * the former to `new Date()` gets silently misread as the *browser's* local
+ * zone instead of UTC — normalize first.
+ */
+export function parseServerDate(iso: string): Date {
+  const hasZone = /[Zz]|[+-]\d{2}:?\d{2}$/.test(iso);
+  return new Date(hasZone ? iso : `${iso.replace(' ', 'T')}Z`);
+}
+
+/** Calendar-day divider label, in the viewer's local timezone. */
+export function dayLabel(d: Date, now: Date): string {
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return `${MONTHS[d.getMonth() + 1] ?? ''} ${d.getDate()}`;
+}
+
+/** "just now" / "3m ago" / a 12-hour clock time — a day-divider row already
+ *  carries the date, so a run's meta row only needs to say *when today*. */
+export function relativeTime(d: Date, now: Date): string {
+  const diffMin = (now.getTime() - d.getTime()) / 60_000;
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${Math.floor(diffMin)}m ago`;
+  const h = d.getHours();
+  const hh = h % 12 || 12;
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
+/** Full precision, for the `title` hover attribute — nothing lost to the calm view. */
+export function fullStamp(iso: string): string {
+  const d = parseServerDate(iso);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${MONTHS[d.getMonth() + 1] ?? ''} ${d.getDate()}, ${d.getFullYear()} · ${hh}:${mm}`;
+}
+
+/** One run's worth of consecutive same-sender, same-calendar-day messages —
+ *  a single meta row (sender + time) up top, one `.msg-parts` block per
+ *  message underneath. A day change always breaks a run even if the sender
+ *  didn't, so `dividerLabel` only ever needs checking at run boundaries. */
+export interface RenderRun {
+  key: string;
+  identityKey: string;
+  dayKey: string;
+  dividerLabel?: string;
+  who: string;
+  fromAgent: boolean;
+  role: ChatMessage['role'];
+  timeIso: string;
+  entries: { id: string; parts: MessagePart[]; isLive?: boolean }[];
+}
+
+export function buildRenderRuns(messages: ChatMessage[], live: MessagePart[] | null, now: Date): RenderRun[] {
+  type Raw = { id: string; role: ChatMessage['role']; author?: string | null; parts: MessagePart[]; created_at: string; isLive?: boolean };
+  const all: Raw[] = messages.map((m) => ({ id: m.id, role: m.role, author: m.author, parts: m.parts, created_at: m.created_at }));
+  if (live) all.push({ id: '__live__', role: 'assistant', parts: live, created_at: now.toISOString(), isLive: true });
+
+  const runs: RenderRun[] = [];
+  for (const m of all) {
+    const date = parseServerDate(m.created_at);
+    const dayKey = date.toDateString();
+    const identityKey = `${m.role}:${m.author ?? ''}`;
+    const last = runs.at(-1);
+    if (last && last.identityKey === identityKey && last.dayKey === dayKey) {
+      last.entries.push({ id: m.id, parts: m.parts, isLive: m.isLive });
+      continue;
+    }
+    const fromAgent = m.role === 'user' && agentName(m.author) !== null;
+    runs.push({
+      key: m.id,
+      identityKey,
+      dayKey,
+      dividerLabel: !last || last.dayKey !== dayKey ? dayLabel(date, now) : undefined,
+      who: m.role === 'assistant' ? 'Cabinet' : m.role === 'system' ? 'System' : (agentName(m.author) ?? 'You'),
+      fromAgent,
+      role: m.role,
+      timeIso: m.created_at,
+      entries: [{ id: m.id, parts: m.parts, isLive: m.isLive }],
+    });
+  }
+  return runs;
+}
+
 function matches(t: ThreadSummary, needle: string): boolean {
   const hay = `${t.title ?? ''} ${t.preview ?? ''}`.toLowerCase();
   return hay.includes(needle);
@@ -193,6 +283,15 @@ function Conversation({
     bottomRef.current?.scrollIntoView?.({ block: 'end' });
   }, [messages, live]);
 
+  // Relative times ("3m ago") go stale sitting still — nudge a re-render
+  // periodically so an open conversation keeps ticking forward without
+  // needing a new message to land.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   // A composer switch (new/different thread) abandons any in-flight or
   // finished-but-unsent uploads — release their local object URLs so we
   // don't leak blob: URLs for the life of the tab. (The uploaded file itself
@@ -279,6 +378,12 @@ function Conversation({
     }
   }, [seed, messages, send, onSeedConsumed]);
 
+  // Recomputed on every render (cheap — one pass over a page of messages),
+  // deliberately not memoized: it needs to pick up the fresh `now` from the
+  // 30s tick above even when `messages`/`live` haven't changed, so "Today"
+  // and "3m ago" don't go stale in a conversation left open quietly.
+  const runs = buildRenderRuns(messages ?? [], live, new Date());
+
   return (
     <div className="reader">
       <header className="reader-head">
@@ -297,16 +402,37 @@ function Conversation({
             <p className="threads-loading data">Pulling the scrollback…</p>
           </li>
         ) : (
-          (messages ?? []).map((m) => (
-            <li key={m.id}>
-              <MessageRow message={m} />
-            </li>
-          ))
-        )}
-        {live && (
-          <li>
-            <StreamingRow parts={live} />
-          </li>
+          runs.flatMap((run) => {
+            const rows = [];
+            if (run.dividerLabel) {
+              rows.push(
+                <li key={`${run.key}-divider`} className="day-divider" role="separator" aria-label={run.dividerLabel}>
+                  <span>{run.dividerLabel}</span>
+                </li>,
+              );
+            }
+            rows.push(
+              <li key={run.key}>
+                <div className={`msg msg--${run.role}${run.fromAgent ? ' msg--agent' : ''}`}>
+                  <div className="msg-meta">
+                    <span className={`msg-who data${run.fromAgent ? ' msg-who--agent' : ''}`}>{run.who}</span>
+                    <span className="msg-when data" title={fullStamp(run.timeIso)}>
+                      {run.entries.some((e) => e.isLive) ? 'now' : relativeTime(parseServerDate(run.timeIso), new Date())}
+                    </span>
+                  </div>
+                  {run.entries.map((entry) => (
+                    <div className="msg-parts" key={entry.id}>
+                      {entry.parts.map((p, i) => (
+                        <MessagePartView key={i} part={p} />
+                      ))}
+                      {entry.isLive && <span className="msg-cursor" aria-hidden="true" />}
+                    </div>
+                  ))}
+                </div>
+              </li>,
+            );
+            return rows;
+          })
         )}
         <div ref={bottomRef} />
       </ol>
@@ -400,49 +526,98 @@ function Conversation({
 }
 
 /** The agent's local name if the author is an agent principal, else null. */
-function agentName(author?: string | null): string | null {
+export function agentName(author?: string | null): string | null {
   const m = (author ?? '').match(/^([a-z0-9-]+)@agents\.benloe\.com$/i);
   return m ? m[1]!.replace(/^\w/, (c) => c.toUpperCase()) : null;
 }
 
-function whoLabel(message: ChatMessage): string {
-  if (message.role === 'assistant') return 'Cabinet';
-  if (message.role === 'system') return 'System';
-  return agentName(message.author) ?? 'You';
+function truncate(v: unknown, n: number): string {
+  const s = typeof v === 'string' ? v : v == null ? '' : String(v);
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
-function MessageRow({ message }: { message: ChatMessage }) {
-  const fromAgent = message.role === 'user' && agentName(message.author) !== null;
-  return (
-    <div className={`msg msg--${message.role}${fromAgent ? ' msg--agent' : ''}`}>
-      <div className="msg-meta">
-        <span className={`msg-who data${fromAgent ? ' msg-who--agent' : ''}`}>{whoLabel(message)}</span>
-        <span className="msg-when data">{stamp(message.created_at)}</span>
-      </div>
-      <div className="msg-parts">
-        {message.parts.map((p, i) => (
-          <MessagePartView key={i} part={p} />
-        ))}
-      </div>
-    </div>
-  );
+/** Last path segment or two — enough to place a file without a full path dump. */
+function shortPath(v: unknown): string {
+  const s = typeof v === 'string' ? v : '';
+  const parts = s.split('/').filter(Boolean);
+  return parts.slice(-2).join('/') || s;
 }
 
-function StreamingRow({ parts }: { parts: MessagePart[] }) {
-  return (
-    <div className="msg msg--assistant msg--streaming">
-      <div className="msg-meta">
-        <span className="msg-who data">Cabinet</span>
-        <span className="msg-when data">now</span>
-      </div>
-      <div className="msg-parts">
-        {parts.map((p, i) => (
-          <MessagePartView key={i} part={p} />
-        ))}
-        <span className="msg-cursor" aria-hidden="true" />
-      </div>
-    </div>
-  );
+/**
+ * The UI is a human projection, not the model's raw transcript (§ chat-UX
+ * pass, change 2): one plain-English line per tool call, keyed by tool name,
+ * with a generic fallback for anything not worth a bespoke formatter.
+ * Deliberately covers the common judgment-write tools + the handful of
+ * built-ins Cabinet reaches for constantly (Bash/Read/Write/Edit) — not
+ * every tool in the catalog.
+ */
+const TOOL_SUMMARIES: Record<string, (i: Record<string, unknown>) => string> = {
+  // cabinet MCP tools (mcp__cabinet__* — prefix stripped before lookup)
+  log_food: (i) => `Logged food: ${truncate(i.description ?? 'entry', 60)}${i.meal ? ` (${i.meal})` : ''}`,
+  log_workout: (i) => `Logged workout${i.name ? `: ${i.name}` : ''}${Array.isArray(i.sets) ? ` — ${i.sets.length} set${i.sets.length === 1 ? '' : 's'}` : ''}`,
+  log_body_metric: (i) => `Logged ${i.metric ?? 'metric'}: ${i.value ?? ''}`,
+  log_mood: () => 'Logged a mood/energy/stress check-in',
+  upsert_goal: (i) => `Saved goal: ${i.title ?? i.domain ?? 'goal'}${i.target_value != null ? ` — ${i.target_value}${i.unit ?? ''}` : ''}`,
+  upsert_task: (i) => `${i.id != null ? 'Updated' : 'Added'} task: ${truncate(i.title, 50)}`,
+  upsert_contact: (i) => `Saved contact: ${i.name ?? ''}`,
+  upsert_constraint: (i) => (i.confirmedNone ? `Confirmed no ${i.kind ?? ''} constraints` : `Recorded ${i.kind ?? ''} constraint: ${i.subject ?? ''}`),
+  update_pantry: (i) => `Updated pantry: ${i.name ?? 'item'}${i.quantityDelta != null ? ` (${Number(i.quantityDelta) > 0 ? '+' : ''}${i.quantityDelta}${i.unit ? ` ${i.unit}` : ''})` : ''}`,
+  decrement_pantry_for: (i) => `Used ${i.quantity ?? ''}${i.unit ?? ''} of ${i.name ?? 'a pantry item'}`,
+  add_recipe: (i) => `Saved recipe: ${truncate(i.title, 50)}`,
+  plan_meal: (i) => `Planned ${i.meal ?? 'a meal'} on ${i.localDay ?? ''}${i.adHocDescription ? `: ${truncate(i.adHocDescription, 40)}` : ''}`,
+  update_plan_entry: (i) => `Updated meal plan entry${i.status ? `: marked ${i.status}` : ''}`,
+  remove_plan_entry: () => 'Removed a meal-plan entry',
+  consume_plan_entry: () => 'Logged a planned meal as eaten',
+  generate_shopping_list: () => 'Rebuilt the shopping list from the meal plan',
+  plan_activity: (i) => `Planned ${i.kind ?? 'activity'} on ${i.localDay ?? ''}${i.title ? `: ${truncate(i.title, 40)}` : ''}`,
+  update_activity_entry: (i) => `Updated activity entry${i.status ? `: marked ${i.status}` : ''}`,
+  remove_activity_entry: () => 'Removed an activity-plan entry',
+  seed_trainer_anchors: () => 'Topped up trainer-session anchors',
+  add_journal: () => 'Added a journal entry',
+  log_claim: (i) => `Logged insurance claim${i.provider ? `: ${i.provider}` : ''}`,
+  log_lab: (i) => `Logged lab result: ${i.analyte ?? ''}${i.value != null ? ` ${i.value}${i.unit ?? ''}` : ''}`,
+  log_medication: (i) => `Added medication: ${i.name ?? ''}`,
+  log_hsa_contribution: (i) => `Logged HSA contribution: $${i.amount ?? ''}`,
+  import_transactions_csv: () => 'Imported transactions',
+  add_price_watch: (i) => `Watching price: ${i.item ?? ''}`,
+  add_lesson: () => 'Stored a lesson',
+  retire_lesson: (i) => (i.superseded ? 'Marked a lesson superseded' : 'Retired a lesson'),
+  promote_lesson: () => 'Promoted a lesson into memory',
+  update_memory: (i) => `Updated memory: ${i.file ?? ''}`,
+  render_widget: (i) => `Rendered a ${i.widgetType ?? ''} card`,
+  enqueue_approval: (i) => `Asked you to confirm: ${truncate(i.action, 50)}`,
+  query_db: () => 'Queried Cabinet’s database',
+  search_episodic: (i) => `Recalled memory: “${truncate(i.query, 40)}”`,
+  search_documents: (i) => `Searched documents: “${truncate(i.query, 40)}”`,
+  recall_lessons: () => 'Recalled relevant lessons',
+  list_constraints: () => 'Checked constraints',
+  list_meal_plan: () => 'Checked the meal plan',
+  list_activity_plan: () => 'Checked the activity plan',
+  list_grocery_list: () => 'Checked the grocery list',
+  list_promotable_lessons: () => 'Checked for promotable lessons',
+  // built-ins reached for constantly during self-hosting work
+  Bash: (i) => `Ran: ${truncate(i.command, 60)}`,
+  Read: (i) => `Read ${shortPath(i.file_path ?? i.path)}`,
+  Write: (i) => `Wrote ${shortPath(i.file_path ?? i.path)}`,
+  Edit: (i) => `Edited ${shortPath(i.file_path ?? i.path)}`,
+  WebSearch: (i) => `Searched the web: “${truncate(i.query, 50)}”`,
+  WebFetch: (i) => `Fetched ${truncate(i.url, 50)}`,
+  TodoWrite: () => 'Updated the task list',
+};
+
+export function summarizeToolCall(name: string, input: unknown): string {
+  const bare = name.replace(/^mcp__cabinet__/, '');
+  const i = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+  const formatter = TOOL_SUMMARIES[bare];
+  if (formatter) {
+    try {
+      const s = formatter(i);
+      if (s.trim()) return s;
+    } catch {
+      // fall through to the generic line below
+    }
+  }
+  return `Ran ${bare.replace(/_/g, ' ')}`;
 }
 
 function MessagePartView({ part }: { part: MessagePart }) {
@@ -455,14 +630,23 @@ function MessagePartView({ part }: { part: MessagePart }) {
 
     case 'tool-run': {
       const input = safeJson(part.input);
+      const hasDetails = !!input || !!part.output;
       return (
-        <div className={`msg-tool data${part.isError ? ' is-error' : ''}${!part.done ? ' is-running' : ''}`}>
+        <div className={`msg-tool${part.isError ? ' is-error' : ''}${!part.done ? ' is-running' : ''}`}>
           <div className="msg-tool-head">
-            <span className="msg-tool-name">{part.name}</span>
-            <span className="msg-tool-state">{!part.done ? 'running…' : part.isError ? 'error' : 'ok'}</span>
+            <span className="msg-tool-summary">
+              {!part.done && <span className="msg-tool-pulse" aria-hidden="true" />}
+              {summarizeToolCall(part.name, part.input)}
+            </span>
+            <span className="msg-tool-state data">{!part.done ? 'running…' : part.isError ? 'error' : 'ok'}</span>
           </div>
-          {input && <pre className="msg-tool-io">{input}</pre>}
-          {part.output && <pre className="msg-tool-io">{part.output}</pre>}
+          {hasDetails && (
+            <details className="msg-tool-details">
+              <summary>Details · {part.name}</summary>
+              {input && <pre className="msg-tool-io data">{input}</pre>}
+              {part.output && <pre className="msg-tool-io data">{part.output}</pre>}
+            </details>
+          )}
         </div>
       );
     }
