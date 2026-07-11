@@ -12,7 +12,7 @@ import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesso
 import { dailyTotals, logFood, updatePantry, addRecipe, decrementPantryFor } from '../domains/food.js';
 import { planMeal, listMealPlan, updatePlanEntry, removePlanEntry, consumePlanEntry } from '../domains/mealplan.js';
 import { generateShoppingList, listGroceryList } from '../domains/shopping.js';
-import { planActivity, listActivityPlan, updateActivityEntry, removeActivityEntry } from '../domains/activity.js';
+import { planActivity, listActivityPlan, updateActivityEntry, removeActivityEntry, seedTrainerAnchors } from '../domains/activity.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
 import {
@@ -110,6 +110,12 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       'Delete an activity-plan entry outright (e.g. the plan changed before anything was done).',
       { id: z.number() },
       async ({ id }) => ok(removeActivityEntry(ctx.db, id)),
+    ),
+    tool(
+      'seed_trainer_anchors',
+      'Top up the fixed trainer-session anchors (Tue/Thu strength, is_anchor=1) into the activity plan for the next N weeks. Idempotent — safe to call repeatedly, never duplicates a day that already has one.',
+      { weeks: z.number().optional() },
+      async ({ weeks }) => ok(seedTrainerAnchors(ctx.db, { weeks })),
     ),
     tool(
       'log_body_metric',

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { localDay } from '../db/index.js';
 
 /**
  * Activity-plan spine (Phase D, build 1) — mirrors meal_plan_entry's shape
@@ -86,4 +87,75 @@ export function updateActivityEntry(
 export function removeActivityEntry(db: Database.Database, id: number): { deleted: boolean } {
   const r = db.prepare('DELETE FROM activity_plan_entry WHERE id = ?').run(id);
   return { deleted: r.changes > 0 };
+}
+
+// ---------- rolling trainer-anchor seeding (build 2) ----------
+
+/**
+ * noon UTC on a 'YYYY-MM-DD' local_day lands on the same America/New_York
+ * calendar day regardless of DST or the host process's own timezone (same
+ * trick consumePlanEntry uses) — midnight UTC would NOT: converted to NY
+ * (UTC-4/-5) it falls in the PREVIOUS evening, silently shifting every
+ * downstream date back one day. Anchoring at noon is what keeps
+ * addDaysLocal/weekdayOfLocalDay correct no matter where this process runs.
+ */
+function addDaysLocal(day: string, n: number): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return localDay(d);
+}
+
+/** 0=Sun..6=Sat, JS Date#getDay() convention — read via getUTCDay() off the same noon-UTC anchor, so it's host-timezone-independent. */
+function weekdayOfLocalDay(day: string): number {
+  return new Date(`${day}T12:00:00Z`).getUTCDay();
+}
+
+export interface SeedTrainerAnchorsResult {
+  created: string[];
+  alreadyPresent: string[];
+}
+
+/** Tue, Thu — JS Date#getDay() convention (Sun=0..Sat=6). Matches the fixed trainer-session routine in domains/training.md. */
+const DEFAULT_ANCHOR_WEEKDAYS = [2, 4];
+
+/**
+ * Rolling, idempotent seeding of the fixed trainer-session anchors —
+ * deliberately NOT a general recurrence engine. One fixed weekly pattern
+ * doesn't justify that infrastructure (same YAGNI call as skipping a
+ * meal_plan parent entity in Phase C). Call this periodically (e.g. from a
+ * weekly job) to top up the horizon; a day that already has a strength
+ * anchor is detected and skipped, never duplicated — safe to call as often
+ * as you like.
+ */
+export function seedTrainerAnchors(
+  db: Database.Database,
+  opts: { fromDay?: string; weeks?: number; weekdays?: number[] } = {},
+): SeedTrainerAnchorsResult {
+  const fromDay = opts.fromDay ?? localDay();
+  const weeks = opts.weeks ?? 4;
+  const weekdays = new Set(opts.weekdays ?? DEFAULT_ANCHOR_WEEKDAYS);
+
+  const exists = db.prepare(`SELECT id FROM activity_plan_entry WHERE local_day = ? AND is_anchor = 1 AND kind = 'strength' LIMIT 1`);
+
+  const created: string[] = [];
+  const alreadyPresent: string[] = [];
+  const totalDays = weeks * 7;
+  for (let i = 0; i <= totalDays; i++) {
+    const day = addDaysLocal(fromDay, i);
+    if (!weekdays.has(weekdayOfLocalDay(day))) continue;
+    if (exists.get(day)) {
+      alreadyPresent.push(day);
+      continue;
+    }
+    planActivity(db, {
+      localDay: day,
+      kind: 'strength',
+      title: 'Strength — trainer',
+      notes: '6:30–7:30am, trainer-led',
+      isAnchor: true,
+      status: 'planned',
+    });
+    created.push(day);
+  }
+  return { created, alreadyPresent };
 }
