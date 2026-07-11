@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { persistAssistantMessage, systemThread } from '../gateway/transcript.js';
 
+// First commit verified end-to-end through infra/scripts/cabinet-deploy.sh
+// itself (the wrapper's own inaugural shipment went out the old manual way,
+// since it couldn't confirm its own first deploy) — this comment is that
+// proof run.
 interface DeployStatus {
   targetSha: string;
   confirmedSha: string | null;
