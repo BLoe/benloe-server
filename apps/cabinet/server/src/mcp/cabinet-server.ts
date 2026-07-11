@@ -12,6 +12,7 @@ import { addLesson, promotableLessons, promoteLesson, recallLessons, retireLesso
 import { dailyTotals, logFood, updatePantry, addRecipe, decrementPantryFor } from '../domains/food.js';
 import { planMeal, listMealPlan, updatePlanEntry, removePlanEntry, consumePlanEntry } from '../domains/mealplan.js';
 import { generateShoppingList, listGroceryList } from '../domains/shopping.js';
+import { planActivity, listActivityPlan, updateActivityEntry, removeActivityEntry } from '../domains/activity.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
 import {
@@ -71,6 +72,44 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         ),
       },
       async (args) => ok(logWorkout(ctx.db, args)),
+    ),
+    tool(
+      'plan_activity',
+      "Add a planned activity to the activity plan (a date range of entries — there is no separate \"plan\" object, mirrors the meal plan). kind='rest' is a legitimate planned entry, not an absence.",
+      {
+        localDay: z.string(),
+        kind: z.enum(['strength', 'cardio', 'mobility', 'sport', 'rest']),
+        title: z.string().optional(),
+        notes: z.string().optional(),
+        isAnchor: z.boolean().optional(),
+        status: z.enum(['planned', 'done', 'skipped']).optional(),
+      },
+      async (args) => ok({ id: planActivity(ctx.db, args) }),
+    ),
+    tool(
+      'list_activity_plan',
+      'List planned activity in [fromDay, toDay] (inclusive), ordered by day then kind (strength<cardio<mobility<sport<rest), with the linked workout name once performed.',
+      { fromDay: z.string(), toDay: z.string() },
+      async ({ fromDay, toDay }) => ok({ entries: listActivityPlan(ctx.db, { fromDay, toDay }) }),
+    ),
+    tool(
+      'update_activity_entry',
+      "Patch an activity-plan entry — mark it 'done' or 'skipped', attach the workoutId once logged, or adjust kind/title/notes.",
+      {
+        id: z.number(),
+        kind: z.enum(['strength', 'cardio', 'mobility', 'sport', 'rest']).optional(),
+        title: z.string().optional(),
+        notes: z.string().optional(),
+        status: z.enum(['planned', 'done', 'skipped']).optional(),
+        workoutId: z.number().optional(),
+      },
+      async ({ id, ...patch }) => ok(updateActivityEntry(ctx.db, id, patch)),
+    ),
+    tool(
+      'remove_activity_entry',
+      'Delete an activity-plan entry outright (e.g. the plan changed before anything was done).',
+      { id: z.number() },
+      async ({ id }) => ok(removeActivityEntry(ctx.db, id)),
     ),
     tool(
       'log_body_metric',
