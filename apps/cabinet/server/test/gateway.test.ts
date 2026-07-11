@@ -10,6 +10,7 @@ import { ApprovalQueue } from '../src/tiers/approvals.js';
 import { buildApp } from '../src/gateway/app.js';
 import { createSseParser, encodeSse, type SseEvent } from '../src/gateway/sse.js';
 import { extractText, foldEvent, type MessagePart } from '../src/gateway/fold.js';
+import { saveAttachment } from '../src/gateway/attachments.js';
 import type { TurnEvent } from '../src/runtime/agent.js';
 import { EpisodicStore } from '../src/episodic/index.js';
 import { Embedder } from '../src/embeddings/index.js';
@@ -544,6 +545,85 @@ describe('chat stream', () => {
     expect((await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: 'x', text: 'hi' }) })).status).toBe(404);
     const { id } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
     expect((await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: '  ' }) })).status).toBe(400);
+  });
+});
+
+describe('chat + attachments (§ vision spike, 2026-07-11)', () => {
+  it('turns an attachment id into a base64 image for the turn, and persists image-then-text parts in order', async () => {
+    const attachDir = mkdtempSync(join(tmpdir(), 'cabinet-chat-attach-'));
+    try {
+      const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const { id: attId } = saveAttachment(attachDir, 'image/png', pngBytes.toString('base64'));
+      let capturedImages: { mediaType: string; base64: string }[] | undefined;
+      const runtime = {
+        authMode: 'subscription' as const,
+        queue: { depth: 0 },
+        interrupt: () => true,
+        titleFor: async () => null,
+        run: async (req: { images?: typeof capturedImages; onEvent: (e: TurnEvent) => void }) => {
+          capturedImages = req.images;
+          req.onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+          return { stopReason: 'success' as const, sessionId: 's1' };
+        },
+      };
+      const app = buildApp({
+        db: cabinet.db, runtime: runtime as never, approvals, widgetBus, ownerEmail: OWNER, authFetch: fakeAuthFetch, attachmentsDir: attachDir,
+      });
+      server = app.listen(0, '127.0.0.1');
+      await new Promise((r) => server.once('listening', r));
+      base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+      const { id: threadId } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+      await collectSse(
+        await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId, text: 'what is this?', attachments: [{ id: attId }] }) }),
+      );
+
+      expect(capturedImages).toEqual([{ mediaType: 'image/png', base64: pngBytes.toString('base64') }]);
+
+      const row = cabinet.db.prepare("SELECT parts FROM message WHERE thread_id = ? AND role = 'user'").get(threadId) as { parts: string };
+      expect(JSON.parse(row.parts)).toEqual([
+        { type: 'image', id: attId, mediaType: 'image/png' },
+        { type: 'text', text: 'what is this?' },
+      ]);
+    } finally {
+      rmSync(attachDir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows an image-only message — no caption required, attachments alone satisfy the "something to send" gate', async () => {
+    const attachDir = mkdtempSync(join(tmpdir(), 'cabinet-chat-attach2-'));
+    try {
+      const { id: attId } = saveAttachment(attachDir, 'image/jpeg', Buffer.from([1, 2, 3]).toString('base64'));
+      const app = buildApp({
+        db: cabinet.db, runtime: fakeRuntime() as never, approvals, widgetBus, ownerEmail: OWNER, authFetch: fakeAuthFetch, attachmentsDir: attachDir,
+      });
+      server = app.listen(0, '127.0.0.1');
+      await new Promise((r) => server.once('listening', r));
+      base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+      const { id: threadId } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+      const res = await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId, text: '', attachments: [{ id: attId }] }) });
+      expect(res.status).toBe(200);
+      await collectSse(res);
+
+      const row = cabinet.db.prepare("SELECT parts FROM message WHERE thread_id = ? AND role = 'user'").get(threadId) as { parts: string };
+      expect(JSON.parse(row.parts)).toEqual([{ type: 'image', id: attId, mediaType: 'image/jpeg' }]);
+    } finally {
+      rmSync(attachDir, { recursive: true, force: true });
+    }
+  });
+
+  it('400s an unknown/invalid attachment id before ever opening the SSE stream', async () => {
+    await startApp();
+    const { id } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+    const res = await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'hi', attachments: [{ id: 'nope.png' }] }) });
+    expect(res.status).toBe(400);
+  });
+
+  it('still 400s empty text with no attachments at all', async () => {
+    await startApp();
+    const { id } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+    expect((await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: '' }) })).status).toBe(400);
   });
 });
 

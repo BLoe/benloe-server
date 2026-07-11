@@ -297,6 +297,46 @@ describe('AgentRuntime.run (fake SDK)', () => {
     expect(seen[0].prompt).not.toBe(seen[1].prompt);
   });
 
+  it('§ vision spike: attaches images as an SDKUserMessage content array instead of a plain string prompt; a plain turn keeps the string', async () => {
+    const seenPrompts: unknown[] = [];
+    const queryFn = ((args: any) => {
+      seenPrompts.push(args.prompt);
+      const messages = happyScript(args.options.model);
+      return (async function* () {
+        for (const m of messages) yield m;
+      })();
+    }) as unknown as QueryFn;
+    const rt = mkRuntime(queryFn);
+
+    // No images — prompt stays the plain wrapped string, byte-for-byte the
+    // same shape as before this feature existed.
+    await rt.run({ threadId: 't1', prompt: 'plain turn', kind: 'user', onEvent: () => {} });
+    expect(typeof seenPrompts[0]).toBe('string');
+
+    // With images — prompt becomes a one-shot async iterable yielding a
+    // single SDKUserMessage whose content is [text, ...images].
+    await rt.run({
+      threadId: 't1',
+      prompt: 'what is this?',
+      kind: 'user',
+      onEvent: () => {},
+      images: [{ mediaType: 'image/png', base64: 'QUJD' }],
+    });
+    const second = seenPrompts[1] as AsyncIterable<any>;
+    expect(typeof second[Symbol.asyncIterator]).toBe('function');
+    const collected: any[] = [];
+    for await (const m of second) collected.push(m);
+    expect(collected).toHaveLength(1);
+    expect(collected[0]).toMatchObject({ type: 'user', parent_tool_use_id: null });
+    expect(collected[0].message.role).toBe('user');
+    expect(collected[0].message.content[0].type).toBe('text');
+    expect(collected[0].message.content[0].text).toContain('what is this?');
+    expect(collected[0].message.content[1]).toEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
+    });
+  });
+
   it('resumes user turns with the stored session id, not scheduled turns', async () => {
     cabinet.db.prepare("UPDATE thread SET sdk_session_id = 'prev-sess' WHERE id='t1'").run();
     const resumes: (string | undefined)[] = [];

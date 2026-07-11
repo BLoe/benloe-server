@@ -28,7 +28,9 @@ export type MessagePart =
   | { type: 'tool-run'; toolId: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean }
   | { type: 'notice'; level: 'info' | 'warn'; text: string }
   | { type: 'widget'; widgetType: string; data: unknown }
-  | { type: 'approval'; packet: ApprovalPacket };
+  | { type: 'approval'; packet: ApprovalPacket }
+  /** A composer image attachment — `id` names the file behind GET /api/attachments/:id (never inlined here). Mirrors server/src/gateway/fold.ts's MessagePart 1:1 (hand-synced, see chat.ts). */
+  | { type: 'image'; id: string; mediaType: string };
 
 export interface ApprovalPacket {
   id: string; tier: number; action: string; payload: string; reasoning: string;

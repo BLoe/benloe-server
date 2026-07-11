@@ -18,18 +18,18 @@ export type TurnEvent =
   | { type: 'turn-end'; usage: unknown; sessionId: string | null; stopReason: string }
   | { type: 'error'; message: string; retryable?: boolean };
 
-/** POST a message and pump the streamed turn into `onEvent`. */
+/** POST a message (with optional composer image attachments) and pump the streamed turn into `onEvent`. */
 export async function streamChat(
   threadId: string,
-  text: string,
+  message: { text: string; attachments?: { id: string }[] },
   onEvent: (e: TurnEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (usingMock) return mockStream(text, onEvent);
+  if (usingMock) return mockStream(message.text, onEvent, message.attachments?.length ?? 0);
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ threadId, text }),
+    body: JSON.stringify({ threadId, text: message.text, attachments: message.attachments }),
     signal,
   });
   if (res.status === 401) throw new AuthRequiredError();
@@ -44,11 +44,48 @@ export async function streamChat(
   }
 }
 
+/**
+ * Upload one composer image (paste/drop/attach) before referencing its id in
+ * streamChat — mirrors gateway/attachments.ts's server-side save. Mock mode
+ * has no backend to hit, so it hands back a synthetic id; the mock chat
+ * stream doesn't attempt to render it (dev-only rough edge, not a shipped path).
+ */
+export async function uploadAttachment(file: File): Promise<{ id: string; mediaType: string }> {
+  const dataBase64 = await fileToBase64(file);
+  if (usingMock) return { id: `mock-${dataBase64.length}-${file.name}`, mediaType: file.type };
+  const res = await fetch('/api/attachments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mediaType: file.type, dataBase64 }),
+  });
+  if (res.status === 401) throw new AuthRequiredError();
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `attachment upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+/** data: URL → bare base64 payload (strips the `data:<mime>;base64,` prefix). */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
 /** Dev-only: a simulated streamed reply so the UI works without a backend. */
-async function mockStream(text: string, onEvent: (e: TurnEvent) => void): Promise<void> {
+async function mockStream(text: string, onEvent: (e: TurnEvent) => void, attachmentCount = 0): Promise<void> {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   onEvent({ type: 'turn-start', messageId: 'mock', threadId: 'mock', model: 'claude-sonnet-5' });
-  const reply = `Noted — "${text.slice(0, 80)}". This is a simulated reply; the real Cabinet answers live when the app is deployed against the gateway.`;
+  const imageNote = attachmentCount > 0 ? ` (with ${attachmentCount} image${attachmentCount === 1 ? '' : 's'} attached)` : '';
+  const reply = `Noted — "${text.slice(0, 80)}"${imageNote}. This is a simulated reply; the real Cabinet answers live when the app is deployed against the gateway.`;
   for (const chunk of reply.match(/.{1,6}/g) ?? []) {
     await sleep(24);
     onEvent({ type: 'text-delta', delta: chunk });
