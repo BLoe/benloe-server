@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && mkdir -p dist/db && cp -r src/db/migrations dist/db/ && mkdir -p dist/embeddings && cp src/embeddings/worker.mjs dist/embeddings/ && node scripts/write-build-info.mjs",
     "dev": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "deploy": "bash ../../../infra/scripts/cabinet-deploy.sh"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.202",
