@@ -2,7 +2,9 @@ import type Database from 'better-sqlite3';
 import type { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { MemoryStore } from '../memory/index.js';
+import type { ImageMime } from '../gateway/attachments.js';
 import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
 import { buildGate, type GateContext } from '../tiers/gate.js';
 import { assemblePrompt, type PromptInput } from './prompt.js';
@@ -46,6 +48,9 @@ export interface TurnRequest {
   deep?: boolean;
   abort?: AbortController;
   promptInput?: Partial<PromptInput>;
+  /** Composer image attachments (§ vision spike, 2026-07-11) — decoded bytes
+   *  already read off disk by /api/chat, base64-ready for the turn. */
+  images?: { mediaType: ImageMime; base64: string }[];
   onEvent(e: TurnEvent): void;
 }
 
@@ -158,13 +163,44 @@ export class AgentRuntime {
     const { systemPrompt, turnContext } = assemblePrompt(this.opts.memory, { kind: req.kind, ...req.promptInput });
     const wrappedPrompt = `<turn-context>\n${turnContext}\n</turn-context>\n\n${req.prompt}`;
 
+    // Vision (§ vision spike, 2026-07-11): query()'s `prompt` accepts a plain
+    // string OR an AsyncIterable<SDKUserMessage> (sdk.d.ts) — the latter is
+    // the only way to attach ImageBlockParam content. A turn with no images
+    // keeps the plain string (byte-for-byte the same as before); a turn with
+    // images becomes a one-shot generator yielding a single user message
+    // whose content array is [text, ...images]. This is the initial-prompt
+    // form, not Query.streamInput() — we open a fresh query() every turn and
+    // resume via sdk_session_id, so there's no already-open Query to stream
+    // into.
+    const images = req.images ?? [];
+    const promptPayload: string | AsyncIterable<SDKUserMessage> =
+      images.length === 0
+        ? wrappedPrompt
+        : (async function* () {
+            const message: SDKUserMessage = {
+              type: 'user',
+              message: {
+                role: 'user',
+                content: [
+                  { type: 'text', text: wrappedPrompt },
+                  ...images.map((img) => ({
+                    type: 'image' as const,
+                    source: { type: 'base64' as const, media_type: img.mediaType, data: img.base64 },
+                  })),
+                ],
+              },
+              parent_tool_use_id: null,
+            };
+            yield message;
+          })();
+
     let sessionId: string | null = thread.sdk_session_id;
     let stopReason = 'end_turn';
     let sawRefusal = false;
 
     try {
       const q = this.queryFn({
-        prompt: wrappedPrompt,
+        prompt: promptPayload,
         options: {
           model,
           effort,

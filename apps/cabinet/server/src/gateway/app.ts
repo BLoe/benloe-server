@@ -17,6 +17,7 @@ import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import type { MessagePart } from './fold.js';
 import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
 import { registerSurfaceRoutes } from './surfaces.js';
+import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, type ImageMime } from './attachments.js';
 
 export interface GatewayDeps {
   db: Database.Database;
@@ -58,6 +59,8 @@ export interface GatewayDeps {
   memory?: { list(): string[]; read(file: string): string; update(file: string, content: string, reason: string): void };
   /** Injectable for tests; production defaults to the real dir. */
   reviewShotsDir?: string;
+  /** Composer image attachments (§ vision spike). Injectable for tests; production defaults to the real dir. */
+  attachmentsDir?: string;
 }
 
 export interface Principal {
@@ -73,7 +76,13 @@ interface AuthedRequest extends Request {
 
 export function buildApp(deps: GatewayDeps) {
   const app = express();
-  app.use(express.json({ limit: '2mb' }));
+  // 10mb, not 2mb: a base64-encoded composer image attachment (up to
+  // MAX_IMAGE_BYTES = 6mb decoded, ~8mb once base64-inflated) has to clear
+  // this global parser before Express ever reaches a route — a route-local
+  // express.json() override can't help, because this one already rejects an
+  // oversized body first. Every other endpoint's payloads are tiny; raising
+  // the ceiling costs nothing (it's a rejection threshold, not a pre-allocation).
+  app.use(express.json({ limit: '10mb' }));
   app.use(cookieParser());
 
   const authFetch = deps.authFetch ?? fetch;
@@ -155,19 +164,81 @@ export function buildApp(deps: GatewayDeps) {
     });
   });
 
+  // ---------- attachments (composer images — § vision spike, 2026-07-11) ----------
+  // Bytes live on disk under an id (uuid + extension); message.parts only
+  // ever stores that id + mediaType, never the bytes — same shape as
+  // review-shots below, for the same reason (keep DB rows small, serve
+  // through the existing /api auth wall instead of inlining base64).
+  const ATTACHMENTS_DIR = resolvePath(deps.attachmentsDir ?? '/srv/benloe/data/cabinet/chat-images');
+
+  app.post('/api/attachments', (req, res) => {
+    const { mediaType, dataBase64 } = req.body ?? {};
+    try {
+      const saved = saveAttachment(ATTACHMENTS_DIR, mediaType, dataBase64);
+      res.status(201).json(saved);
+    } catch (err) {
+      const message = err instanceof AttachmentError ? err.message : 'could not save attachment';
+      res.status(400).json({ error: message });
+    }
+  });
+
+  app.get('/api/attachments/:id', (req, res) => {
+    const id = req.params.id ?? '';
+    // Layer 1: charset allowlist rejects any path separator outright.
+    if (!ATTACHMENT_NAME_RE.test(id)) return res.status(400).json({ error: 'invalid id' });
+    const filePath = resolvePath(ATTACHMENTS_DIR, id);
+    // Layer 2: resolve-and-verify the result actually lands inside the dir.
+    if (!filePath.startsWith(ATTACHMENTS_DIR + sep)) return res.status(400).json({ error: 'invalid path' });
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(filePath);
+    } catch {
+      return res.status(404).json({ error: 'not found' });
+    }
+    res.setHeader('Content-Type', mimeFromFilename(id) ?? 'application/octet-stream');
+    // uuid filenames are never reused/overwritten — safe to cache hard once served.
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.send(bytes);
+  });
+
   // ---------- chat (the turn stream) ----------
   app.post('/api/chat', async (req, res) => {
-    const { threadId, text } = req.body ?? {};
-    if (typeof threadId !== 'string' || typeof text !== 'string' || !text.trim()) {
-      return res.status(400).json({ error: 'threadId and text required' });
+    const { threadId, text, attachments } = req.body ?? {};
+    const attachmentRefs = Array.isArray(attachments) ? attachments : [];
+    if (typeof threadId !== 'string' || typeof text !== 'string' || (!text.trim() && attachmentRefs.length === 0)) {
+      return res.status(400).json({ error: 'threadId and text (or an attachment) required' });
     }
     const thread = deps.db.prepare('SELECT id, title FROM thread WHERE id = ?').get(threadId) as
       | { id: string; title: string | null }
       | undefined;
     if (!thread) return res.status(404).json({ error: 'no such thread' });
 
+    // Resolve each referenced attachment id to bytes + mediaType now, while a
+    // plain 400 (not an SSE error mid-stream) is still possible — mirrors
+    // the /api/attachments/:id read path above, minus re-validating mime
+    // (mimeFromFilename derives it from the id itself, not client input).
+    const images: { mediaType: ImageMime; base64: string }[] = [];
+    const imageParts: MessagePart[] = [];
+    for (const ref of attachmentRefs) {
+      const id = typeof (ref as { id?: unknown })?.id === 'string' ? (ref as { id: string }).id : '';
+      if (!ATTACHMENT_NAME_RE.test(id)) return res.status(400).json({ error: `invalid attachment id: ${id}` });
+      const filePath = resolvePath(ATTACHMENTS_DIR, id);
+      if (!filePath.startsWith(ATTACHMENTS_DIR + sep)) return res.status(400).json({ error: 'invalid attachment path' });
+      const mediaType = mimeFromFilename(id);
+      if (!mediaType) return res.status(400).json({ error: `unrecognized attachment type: ${id}` });
+      let bytes: Buffer;
+      try {
+        bytes = readFileSync(filePath);
+      } catch {
+        return res.status(400).json({ error: `attachment not found: ${id}` });
+      }
+      images.push({ mediaType, base64: bytes.toString('base64') });
+      imageParts.push({ type: 'image', id, mediaType });
+    }
+
     const principal = (req as AuthedRequest).principal;
-    persistUserMessage(deps.db, threadId, text, principal?.email ?? null);
+    const userParts: MessagePart[] = [...imageParts, ...(text.trim() ? [{ type: 'text' as const, text }] : [])];
+    persistUserMessage(deps.db, threadId, userParts, principal?.email ?? null);
     deps.db
       .prepare("UPDATE thread SET updated_at = datetime('now'), created_by = COALESCE(created_by, ?) WHERE id = ?")
       .run(principal?.email ?? null, threadId);
@@ -219,6 +290,7 @@ export function buildApp(deps: GatewayDeps) {
     try {
       await deps.runtime.run({
         threadId, prompt: text, kind: 'user', onEvent: send,
+        images: images.length ? images : undefined,
         promptInput: {
           // Tell Cabinet who it's talking to (Ben vs an agent like Benji).
           ...(principal ? { interlocutor: { name: principal.name ?? principal.email, role: principal.role, isOwner: principal.isOwner } } : {}),

@@ -11,7 +11,11 @@ export type MessagePart =
   | { type: 'tool-run'; toolId: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean }
   | { type: 'widget'; widgetType: string; data: unknown }
   | { type: 'approval'; packet: ApprovalPacket }
-  | { type: 'notice'; level: string; text: string };
+  | { type: 'notice'; level: string; text: string }
+  /** A composer image attachment (§ vision spike, 2026-07-11). `id` is the
+   *  attachment's filename under the chat-images dir (gateway/attachments.ts)
+   *  — fetched on demand via GET /api/attachments/:id, never inlined here. */
+  | { type: 'image'; id: string; mediaType: string };
 
 /**
  * The one text-extraction rule for a folded parts array: join every text

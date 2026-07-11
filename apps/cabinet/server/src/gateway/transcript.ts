@@ -53,10 +53,22 @@ export function createTranscriptRecorder(): {
   };
 }
 
-/** Persists the human-readable side of a turn (a real chat message, or a cron job's prompt) so a thread reads as a real conversation. */
-export function persistUserMessage(db: Database.Database, threadId: string, text: string, author: string | null = null): void {
+/**
+ * Persists the human-readable side of a turn (a real chat message, or a cron
+ * job's prompt) so a thread reads as a real conversation. `content` is
+ * usually plain text (every cron-job caller passes a string); /api/chat
+ * passes a pre-built MessagePart[] instead when the turn carries image
+ * attachments (image parts first, then the text part — see gateway/app.ts).
+ */
+export function persistUserMessage(
+  db: Database.Database,
+  threadId: string,
+  content: string | MessagePart[],
+  author: string | null = null,
+): void {
+  const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
   db.prepare('INSERT INTO message (id, thread_id, role, parts, author) VALUES (?,?,?,?,?)')
-    .run(randomUUID(), threadId, 'user', JSON.stringify([{ type: 'text', text }]), author);
+    .run(randomUUID(), threadId, 'user', JSON.stringify(parts), author);
 }
 
 /**
