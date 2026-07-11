@@ -159,3 +159,39 @@ export function seedTrainerAnchors(
   }
   return { created, alreadyPresent };
 }
+
+// ---------- day-type signal (build 3, closes Phase B FINDING 1) ----------
+
+/**
+ * Is `day` (a 'YYYY-MM-DD' local_day) a training day? Three-tier priority,
+ * each tier only consulted when the one above has no signal:
+ *
+ * 1. PLAN INTENT — any activity_plan_entry rows for that day: training iff
+ *    at least one has kind != 'rest' AND status != 'skipped' (a real session
+ *    that's planned or already done). If every entry that day is 'rest'
+ *    kind or 'skipped' status, it's a rest day. This tier wins outright even
+ *    against tier 2 — a planned rest day with an incidental logged workout
+ *    is still a rest day; the plan is the intent, the log is just what
+ *    happened to occur.
+ * 2. LOGGED FALLBACK — no plan entry that day, but a workout was already
+ *    logged: training. Covers same-day ad-hoc sessions nobody planned.
+ * 3. WEEKDAY FALLBACK — no signal at all: reuse DEFAULT_ANCHOR_WEEKDAYS
+ *    (Tue/Thu), the same constant seedTrainerAnchors uses — deliberately not
+ *    a second hardcoded copy of the routine. Last resort only: once anchors
+ *    are seeded for a day, tier 1 already resolves it directly; this tier
+ *    only fires outside the seeded horizon or before seeding has ever run.
+ */
+export function isTrainingDay(db: Database.Database, day: string): boolean {
+  const planEntries = db.prepare(`SELECT kind, status FROM activity_plan_entry WHERE local_day = ?`).all(day) as {
+    kind: ActivityKind;
+    status: ActivityPlanStatus;
+  }[];
+  if (planEntries.length > 0) {
+    return planEntries.some((e) => e.kind !== 'rest' && e.status !== 'skipped');
+  }
+
+  const logged = db.prepare(`SELECT 1 FROM workout WHERE local_day = ? LIMIT 1`).get(day);
+  if (logged) return true;
+
+  return DEFAULT_ANCHOR_WEEKDAYS.includes(weekdayOfLocalDay(day));
+}
