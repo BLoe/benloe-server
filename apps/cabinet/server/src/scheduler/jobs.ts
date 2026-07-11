@@ -11,7 +11,7 @@ import type { AgentRuntime } from '../runtime/agent.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { EMBEDDABLE_TABLES, type EpisodicStore } from '../episodic/index.js';
 import type { Embedder } from '../embeddings/index.js';
-import { persistAssistantMessage, runAgentCronJob } from '../gateway/transcript.js';
+import { persistAssistantMessage, runAgentCronJob, systemThread } from '../gateway/transcript.js';
 import type { InstrumentSpec } from '../gateway/surfaces.js';
 import { nextDaily, nextHeartbeat, nextWeekly } from './clock.js';
 import type { JobSpec } from './index.js';
@@ -78,12 +78,6 @@ function checkUsageBudget(deps: JobDeps): void {
     text: `Usage is running hot: ${row.total.toLocaleString()} tokens in the last 5h (threshold ${threshold.toLocaleString()}). Worth a look before you hit a wall.`,
     source: 'usage',
   });
-}
-
-/** Get-or-create the singleton system thread for a scheduled job kind. */
-function systemThread(db: Database.Database, id: string, kind: 'heartbeat' | 'cron', title: string): string {
-  db.prepare('INSERT OR IGNORE INTO thread (id, title, kind) VALUES (?,?,?)').run(id, title, kind);
-  return id;
 }
 
 /**

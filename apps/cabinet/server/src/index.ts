@@ -55,6 +55,7 @@ import { buildApp } from './gateway/app.js';
 import { seedInsurancePlan } from './domains/healthcare.js';
 import { Scheduler } from './scheduler/index.js';
 import { buildJobs } from './scheduler/jobs.js';
+import { applyPendingDeployConfirmation } from './deploy/pendingConfirmation.js';
 
 const DATA_DIR = process.env.CABINET_DATA_DIR ?? '/srv/benloe/data/cabinet';
 const PORT = Number(process.env.PORT ?? 3008);
@@ -90,6 +91,7 @@ const embedder = new Embedder();
 const memory = new MemoryStore(join(DATA_DIR, 'memory'));
 memory.ensureTemplates();
 seedInsurancePlan(cabinet.db);
+applyPendingDeployConfirmation(cabinet.db, DATA_DIR, buildInfo.sha);
 
 const approvals = new ApprovalQueue(cabinet.db);
 const widgetBus = new EventEmitter();

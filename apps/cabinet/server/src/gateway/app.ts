@@ -89,7 +89,12 @@ export function buildApp(deps: GatewayDeps) {
   const authUrl = deps.authServiceUrl ?? 'http://localhost:3002';
 
   // Public liveness only — everything else sits behind the owner wall.
-  app.get('/healthz', (_req, res) => res.json({ ok: true }));
+  // buildMarker (short git sha, not a secret — repo is public) is included
+  // so infra/scripts/cabinet-deploy-watch.sh can poll a plain unauthenticated
+  // curl for deploy verification instead of standing up agent-bearer auth
+  // for a detached shell script. /api/healthz below carries the full
+  // authenticated detail.
+  app.get('/healthz', (_req, res) => res.json({ ok: true, buildMarker: deps.buildMarker ?? 'unknown' }));
 
   async function authenticate(req: AuthedRequest, res: Response, next: NextFunction) {
     try {

@@ -19,6 +19,22 @@ import { extractText, foldEvent, type MessagePart } from './fold.js';
  * e.g. evening-checkin) goes through here instead of hand-rolling the SQL a
  * second time. No-ops on an empty parts array (nothing worth persisting).
  */
+/**
+ * Get-or-create a singleton system thread by a fixed id — heartbeat/cron
+ * sentinels (sys-heartbeat, sys-briefing, sys-checkin, sys-weekly), and now
+ * sys-deploy (deploy/pendingConfirmation.ts). `kind: 'user'` is deliberate
+ * when the thread should actually surface in the normal Threads list —
+ * GET /api/threads filters `WHERE kind = 'user'`; `'heartbeat'`/`'cron'`
+ * threads are intentionally invisible there and instead surface through the
+ * dedicated Today-surface endpoints (gateway/surfaces.ts). Moved here (out
+ * of scheduler/jobs.ts, which now imports it) so a non-scheduler caller like
+ * pendingConfirmation.ts doesn't have to duplicate the INSERT OR IGNORE.
+ */
+export function systemThread(db: Database.Database, id: string, kind: 'user' | 'heartbeat' | 'cron', title: string): string {
+  db.prepare('INSERT OR IGNORE INTO thread (id, title, kind) VALUES (?,?,?)').run(id, title, kind);
+  return id;
+}
+
 export function persistAssistantMessage(
   db: Database.Database,
   threadId: string,
