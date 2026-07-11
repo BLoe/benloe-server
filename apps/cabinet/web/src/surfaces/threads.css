@@ -228,6 +228,26 @@
   gap: var(--sp-5);
 }
 
+/* ---- day divider: a calendar-day boundary between runs (change 3) ---- */
+.day-divider {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: calc(-1 * var(--sp-2)) 0;
+  color: var(--linen-faint);
+  font-size: var(--fs-cap);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-cap);
+}
+.day-divider::before,
+.day-divider::after {
+  content: '';
+  width: 32px;
+  height: 1px;
+  background: var(--rule-soft);
+}
+
 .msg {
   display: flex;
   flex-direction: column;
@@ -332,6 +352,53 @@
   max-width: 100%;
   color: var(--linen-faint);
 }
+
+/* ---- tool-run: the human-readable ledger line (change 2) ---- */
+.msg-tool-summary {
+  display: inline-flex;
+  align-items: center;
+  color: var(--linen);
+  font-size: var(--fs-sm);
+}
+
+.msg-tool-pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--sp-2);
+  border-radius: 50%;
+  background: var(--brass);
+  animation: msg-tool-pulse 1.2s ease-in-out infinite;
+}
+@keyframes msg-tool-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-tool-pulse { animation: none; opacity: 0.9; }
+}
+
+.msg-tool-details {
+  margin-top: var(--sp-2);
+}
+.msg-tool-details summary {
+  cursor: pointer;
+  font-size: var(--fs-cap);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-cap);
+  color: var(--linen-faint);
+  list-style: none;
+}
+.msg-tool-details summary::-webkit-details-marker { display: none; }
+.msg-tool-details summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 1em;
+  transition: transform 0.15s ease;
+}
+.msg-tool-details[open] summary::before { transform: rotate(90deg); }
+.msg-tool-details summary:hover { color: var(--linen-dim); }
+.msg-tool-details .msg-tool-io { padding-left: 1em; }
 
 /* ---- notices ---- */
 .msg-notice {
