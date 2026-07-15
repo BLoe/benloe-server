@@ -8,7 +8,7 @@ import { ApprovalQueue } from '../src/tiers/approvals.js';
 import { route, refusalFallback, MODELS } from '../src/runtime/router.js';
 import { TurnQueue } from '../src/runtime/queue.js';
 import { assemblePrompt } from '../src/runtime/prompt.js';
-import { AgentRuntime, configureAuth, classifyStop, MAX_AUTO_CONTINUATIONS, type TurnEvent, type QueryFn } from '../src/runtime/agent.js';
+import { AgentRuntime, configureAuth, classifyStop, MAX_AUTO_CONTINUATIONS, AGENTS, type TurnEvent, type QueryFn } from '../src/runtime/agent.js';
 
 describe('router', () => {
   it('routes by session kind', () => {
@@ -267,6 +267,15 @@ describe('AgentRuntime.run (fake SDK)', () => {
     expect(seenOptions.settingSources).toEqual([]);
     expect(typeof seenOptions.canUseTool).toBe('function');
     expect(seenOptions.hooks.PreToolUse).toBeTruthy();
+    // Track 3.1: subagents are wired in, and design-reviewer is read-only.
+    expect(seenOptions.agents).toBe(AGENTS);
+    const reviewer = seenOptions.agents['design-reviewer'];
+    expect(reviewer.model).toBe('sonnet');
+    expect(reviewer.effort).toBe('high');
+    expect(reviewer.tools).toEqual(['Read', 'Grep', 'Glob']);
+    expect(reviewer.tools).not.toContain('Edit');
+    expect(reviewer.tools).not.toContain('Write');
+    expect(reviewer.tools).not.toContain('Bash');
     // session persisted
     const row = cabinet.db.prepare("SELECT sdk_session_id FROM thread WHERE id='t1'").get() as any;
     expect(row.sdk_session_id).toBe('sess-123');

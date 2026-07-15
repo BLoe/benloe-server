@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage, AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { MemoryStore } from '../memory/index.js';
 import type { ImageMime } from '../gateway/attachments.js';
 import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
@@ -87,6 +87,49 @@ export const HARD_DENIES = [
   'Bash(wget * | *sh*)',
   'KillShell',
 ];
+
+/**
+ * Subagents (track 3.1). Options.agents was never set before this, so the
+ * Agent tool had nothing to invoke even though the gate already passes it
+ * under autonomy:'full'. `design-reviewer` is the first: a read-only critic
+ * for a UI surface's component + CSS source (a screenshot comes later — the
+ * Agent tool prompt is text-only, so image review needs its own path).
+ *
+ * model: 'sonnet' — vision-capable, fast, and the right cost/taste balance
+ * for a per-surface review loop. Escalate to 'opus' for deeper aesthetic
+ * reasoning if sonnet's critiques prove too shallow in practice.
+ */
+const DESIGN_REVIEWER_AGENT: AgentDefinition = {
+  description:
+    'Reviews a UI surface (its component + CSS source, and later a screenshot) for layout, spacing, visual hierarchy, contrast/legibility, and usability. Returns a prioritized, specific critique. Does not modify code.',
+  model: 'sonnet',
+  effort: 'high',
+  // Read-only by design — a reviewer must never edit/write/run. No
+  // Edit/Write/Bash/Agent, so it cannot touch code or spawn further work.
+  tools: ['Read', 'Grep', 'Glob'],
+  prompt: `You are a sharp, senior product designer reviewing a UI surface in Cabinet, Ben's personal operator console — a warm, dark "campaign desk": inlaid-wood browns, a single brass accent, a book serif for voice and mono for data, restraint over decoration.
+
+Judge every surface against Cabinet's actual design tokens (apps/cabinet/web/src/styles/tokens.css), not generic taste:
+- Ground/panel/inset browns (--ground, --panel, --panel-2, --inset) layer depth; --rule/--rule-soft are the only hairlines.
+- --brass and its variants are the ONE accent — Cabinet's own voice and live activity. Flag any competing accent color, gratuitous color, or brass used where it isn't meaningful (voice/liveness), not just decoration.
+- --patina (settled/positive), --vermilion (the one alert) are semantic, not decorative — flag misuse.
+- Type scale is deliberate and dense (--fs-cap through --fs-h1); flag ad-hoc font sizes or weights that don't map to the scale, and flag hierarchy that doesn't read at a glance.
+- Spacing is a strict 4px scale (--sp-1..--sp-9); flag cramped or inconsistent spacing, and flag padding/margins that don't look drawn from the scale.
+- Text sits on a dark ground: --linen/--linen-dim/--linen-faint. Flag any contrast that would be hard to read against --ground/--panel, or any pure-white/off-token color.
+
+You will be given a path (or paths) to a component's source and its CSS. Read them with your Read/Grep/Glob tools — do not guess at markup you haven't read.
+
+Always return your findings as a PRIORITIZED list, most jarring problem first. For each finding give:
+1. The specific file and selector/element it's in.
+2. What's wrong (spacing/density, alignment, visual hierarchy, contrast/legibility, wasted or cramped space — call these out explicitly by category).
+3. A concrete fix — a specific token, value, or rule change, not vague praise or "consider improving X."
+
+Be concrete and opinionated. Do not pad with praise. If a surface is genuinely fine, say so briefly and stop — do not invent findings to fill a list. You are read-only: you never edit, write, or run anything, only report.`,
+};
+
+export const AGENTS: Record<string, AgentDefinition> = {
+  'design-reviewer': DESIGN_REVIEWER_AGENT,
+};
 
 /**
  * Configure Claude auth for the SDK subprocess (§9.1, validated Appendix B).
@@ -240,6 +283,7 @@ export class AgentRuntime {
         options: {
           model,
           effort,
+          agents: AGENTS,
           cwd: this.opts.cwd ?? '/srv/benloe',
           additionalDirectories: [this.opts.dataDir ?? '/srv/benloe/data/cabinet'],
           systemPrompt,
