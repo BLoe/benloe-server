@@ -19,6 +19,23 @@ import { generateTitle } from './titler.js';
  */
 const MAX_TURNS_BY_KIND: Record<TurnKind, number> = { user: 120, cron: 12, heartbeat: 6 };
 
+/**
+ * Continuation-on-limit (build 3). A turn cut off by the SDK's maxTurns
+ * ceiling used to just end, stranding mid-work with no automatic recovery —
+ * the failure mode that cost ~30min on 2026-07-14. Bounded to this many
+ * chained auto-resumes per originating user turn; tracked via a depth
+ * counter threaded through the recursive executeTurn call, NOT a class
+ * field, so concurrent threads never share or leak continuation state.
+ */
+export const MAX_AUTO_CONTINUATIONS = 3;
+
+/** Was this turn cut off by the maxTurns ceiling, or did it end some other way (success, or any other terminal error)? */
+export type TurnOutcome = 'clean' | 'max_turns_cutoff';
+
+export function classifyStop(subtype: string | null | undefined): TurnOutcome {
+  return subtype === 'error_max_turns' ? 'max_turns_cutoff' : 'clean';
+}
+
 /** §12.2 event vocabulary — the gateway maps these 1:1 onto SSE. */
 export type TurnEvent =
   | { type: 'turn-start'; messageId: string; threadId: string; model: string }
@@ -147,8 +164,18 @@ export class AgentRuntime {
 
   private async executeTurn(
     req: TurnRequest,
-    modelOverride?: string,
+    execOpts: {
+      /** Retry a refusal on a fallback model (§14) — unrelated to continuation. */
+      modelOverride?: string;
+      /** How many auto-continuations already ran for this originating user turn. */
+      continuationDepth?: number;
+      /** num_turns reported by the previous round, to detect a stuck loop. */
+      lastNumTurns?: number;
+      /** Consecutive prior continuations that reported no new num_turns. */
+      noProgressStreak?: number;
+    } = {},
   ): Promise<{ stopReason: string; sessionId: string | null }> {
+    const { modelOverride, continuationDepth = 0, lastNumTurns, noProgressStreak = 0 } = execOpts;
     const thread = this.threadRow(req.threadId);
     const { model, effort } = modelOverride
       ? { model: modelOverride, effort: 'xhigh' as const }
@@ -204,6 +231,8 @@ export class AgentRuntime {
     let sessionId: string | null = thread.sdk_session_id;
     let stopReason = 'end_turn';
     let sawRefusal = false;
+    let lastToolName: string | null = null;
+    let numTurns: number | null = null;
 
     try {
       const q = this.queryFn({
@@ -273,6 +302,7 @@ export class AgentRuntime {
           for (const block of msg.message?.content ?? []) {
             if (block.type === 'tool_use') {
               req.onEvent({ type: 'tool-start', toolId: block.id, name: block.name, input: block.input });
+              lastToolName = block.name;
             }
           }
           continue;
@@ -291,6 +321,7 @@ export class AgentRuntime {
         }
         if (msg.type === 'result') {
           stopReason = msg.subtype ?? 'end_turn';
+          numTurns = typeof msg.num_turns === 'number' ? msg.num_turns : null;
           sawRefusal = /refusal/i.test(String(msg.result ?? '')) && msg.subtype !== 'success';
           this.recordUsage(model, req, msg);
           req.onEvent({
@@ -316,11 +347,60 @@ export class AgentRuntime {
         .run(sessionId, req.threadId);
     }
 
+    // Continuation-on-limit (build 3): see MAX_AUTO_CONTINUATIONS above for
+    // the rationale. Only kind=='user' turns auto-continue — scheduled kinds
+    // (heartbeat/cron) have much lower ceilings already and re-fire on their
+    // own schedule, so they just get the notice and stop. A stuck loop (two
+    // consecutive continuations reporting the same num_turns as the round
+    // before them — i.e. no new session activity) pauses for a human even
+    // under the depth cap.
+    if (classifyStop(stopReason) === 'max_turns_cutoff') {
+      const maxTurns = MAX_TURNS_BY_KIND[req.kind];
+      const lastActionNote = lastToolName ? ` (last action: ${lastToolName})` : '';
+      if (req.kind !== 'user' || modelOverride) {
+        req.onEvent({
+          type: 'notice',
+          level: 'warn',
+          text: `Hit the ${maxTurns}-step limit for this ${req.kind} turn${lastActionNote} — not auto-continuing.`,
+        });
+      } else {
+        const madeProgress = lastNumTurns === undefined || numTurns === null || numTurns !== lastNumTurns;
+        const streak = madeProgress ? 0 : noProgressStreak + 1;
+        if (streak >= 2) {
+          req.onEvent({
+            type: 'notice',
+            level: 'warn',
+            text: `Hit the ${maxTurns}-step limit again with no progress since the last continuation${lastActionNote} — pausing after ${streak} continuations with no progress; reply "continue" to resume.`,
+          });
+        } else if (continuationDepth >= MAX_AUTO_CONTINUATIONS) {
+          req.onEvent({
+            type: 'notice',
+            level: 'warn',
+            text: `Hit the ${maxTurns}-step limit and the auto-continue cap (${MAX_AUTO_CONTINUATIONS}/${MAX_AUTO_CONTINUATIONS})${lastActionNote} — reply "continue" to resume.`,
+          });
+        } else {
+          req.onEvent({
+            type: 'notice',
+            level: 'info',
+            text: `Hit the ${maxTurns}-step limit${lastActionNote} — auto-continuing (${continuationDepth + 1}/${MAX_AUTO_CONTINUATIONS})…`,
+          });
+          return this.executeTurn(
+            { ...req, prompt: 'Continue the previous task from where you left off.' },
+            {
+              continuationDepth: continuationDepth + 1,
+              lastNumTurns: numTurns ?? undefined,
+              noProgressStreak: streak,
+            },
+          );
+        }
+      }
+    }
+
     // Fable 5 refusal → one retry on Opus 4.8 (§14).
     const fallback = refusalFallback(model);
     if (sawRefusal && fallback && !modelOverride) {
       req.onEvent({ type: 'notice', level: 'warn', text: `Fable 5 declined; retrying on ${fallback}.` });
-      return this.executeTurn(req, fallback);
+      return this.executeTurn(req, { modelOverride: fallback });
     }
 
     return { stopReason, sessionId };

@@ -8,7 +8,7 @@ import { ApprovalQueue } from '../src/tiers/approvals.js';
 import { route, refusalFallback, MODELS } from '../src/runtime/router.js';
 import { TurnQueue } from '../src/runtime/queue.js';
 import { assemblePrompt } from '../src/runtime/prompt.js';
-import { AgentRuntime, configureAuth, type TurnEvent, type QueryFn } from '../src/runtime/agent.js';
+import { AgentRuntime, configureAuth, classifyStop, MAX_AUTO_CONTINUATIONS, type TurnEvent, type QueryFn } from '../src/runtime/agent.js';
 
 describe('router', () => {
   it('routes by session kind', () => {
@@ -27,6 +27,16 @@ describe('router', () => {
   it('fable refuses → opus fallback; others do not fall back', () => {
     expect(refusalFallback(MODELS.max)).toBe(MODELS.deep);
     expect(refusalFallback(MODELS.default)).toBeNull();
+  });
+});
+
+describe('classifyStop (build 3: continuation-on-limit)', () => {
+  it('classifies a maxTurns cutoff distinctly from a clean finish', () => {
+    expect(classifyStop('error_max_turns')).toBe('max_turns_cutoff');
+    expect(classifyStop('success')).toBe('clean');
+    expect(classifyStop('error_during_execution')).toBe('clean');
+    expect(classifyStop(null)).toBe('clean');
+    expect(classifyStop(undefined)).toBe('clean');
   });
 });
 
@@ -385,5 +395,126 @@ describe('AgentRuntime.run (fake SDK)', () => {
       rt.run({ threadId: 't1', prompt: 'x', kind: 'user', onEvent: (e) => events.push(e) }),
     ).rejects.toThrow('boom 529');
     expect(events.at(-1)).toMatchObject({ type: 'error', retryable: true });
+  });
+
+  // -------------------------------------------------------------------------
+  // Continuation-on-limit (build 3): a maxTurns cutoff on a user turn should
+  // auto-resume the SDK session, bounded, with a legible checkpoint notice.
+  // -------------------------------------------------------------------------
+  describe('continuation-on-limit', () => {
+    const cutoffMsg = (sessionId: string, numTurns: number, lastTool = 'Bash') => [
+      { type: 'system', subtype: 'init', session_id: sessionId },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: lastTool, input: {} }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'ok', is_error: false }] } },
+      { type: 'result', subtype: 'error_max_turns', result: '', num_turns: numTurns, usage: {} },
+    ];
+
+    it('a user cutoff triggers exactly one auto-continuation and resumes the session, incrementing depth', async () => {
+      const resumes: (string | undefined)[] = [];
+      let call = 0;
+      const rt = mkRuntime(
+        scriptedQuery((opts) => {
+          resumes.push(opts.resume);
+          call++;
+          if (call === 1) return cutoffMsg('sess-1', 120);
+          return happyScript(opts.model);
+        }),
+      );
+      const events: TurnEvent[] = [];
+      const res = await rt.run({ threadId: 't1', prompt: 'build the thing', kind: 'user', onEvent: (e) => events.push(e) });
+
+      expect(call).toBe(2); // original + exactly one auto-continuation
+      expect(resumes).toEqual([undefined, 'sess-1']); // 2nd call resumes the session captured from the 1st
+      expect(res.stopReason).toBe('success');
+
+      const notices = events.filter((e) => e.type === 'notice') as Extract<TurnEvent, { type: 'notice' }>[];
+      expect(notices.some((n) => /auto-continuing \(1\/3\)/.test(n.text))).toBe(true);
+      expect(notices.some((n) => /last action: Bash/.test(n.text))).toBe(true);
+    });
+
+    it('the depth cap pauses instead of continuing further', async () => {
+      let call = 0;
+      const rt = mkRuntime(
+        scriptedQuery(() => {
+          call++;
+          // Distinct num_turns each round so the no-progress guard doesn't
+          // fire first — we want to exercise the depth cap specifically.
+          return cutoffMsg('sess-cap', 120 + call);
+        }),
+      );
+      const events: TurnEvent[] = [];
+      const res = await rt.run({ threadId: 't1', prompt: 'build a lot of things', kind: 'user', onEvent: (e) => events.push(e) });
+
+      // original + MAX_AUTO_CONTINUATIONS continuations, then stop
+      expect(call).toBe(1 + MAX_AUTO_CONTINUATIONS);
+      expect(res.stopReason).toBe('error_max_turns');
+
+      const notices = events.filter((e) => e.type === 'notice') as Extract<TurnEvent, { type: 'notice' }>[];
+      expect(notices.filter((n) => /auto-continuing/.test(n.text))).toHaveLength(MAX_AUTO_CONTINUATIONS);
+      expect(notices.some((n) => /auto-continue cap \(3\/3\)/.test(n.text) && /reply "continue"/.test(n.text))).toBe(true);
+    });
+
+    it('two consecutive continuations with no new session activity pause for a human even under the depth cap', async () => {
+      let call = 0;
+      const rt = mkRuntime(
+        scriptedQuery(() => {
+          call++;
+          // Same num_turns every round — no progress at all.
+          return cutoffMsg('sess-stuck', 120);
+        }),
+      );
+      const events: TurnEvent[] = [];
+      const res = await rt.run({ threadId: 't1', prompt: 'stuck task', kind: 'user', onEvent: (e) => events.push(e) });
+
+      // original (no progress check yet) -> continuation 1 (equal to original,
+      // streak=1, still continues) -> continuation 2 (equal again, streak=2,
+      // pauses) = 3 calls total, well under the depth cap of 3 continuations.
+      expect(call).toBe(3);
+      expect(res.stopReason).toBe('error_max_turns');
+
+      const notices = events.filter((e) => e.type === 'notice') as Extract<TurnEvent, { type: 'notice' }>[];
+      expect(notices.some((n) => /no progress/.test(n.text) && /reply "continue"/.test(n.text))).toBe(true);
+      // Never reached the depth-cap message — the no-progress guard fired first.
+      expect(notices.some((n) => /auto-continue cap/.test(n.text))).toBe(false);
+    });
+
+    it('a non-user kind does NOT auto-continue on a maxTurns cutoff', async () => {
+      let call = 0;
+      const rt = mkRuntime(
+        scriptedQuery(() => {
+          call++;
+          return cutoffMsg('sess-hb', 6);
+        }),
+      );
+      const events: TurnEvent[] = [];
+      const res = await rt.run({ threadId: 't1', prompt: 'heartbeat check', kind: 'heartbeat', onEvent: (e) => events.push(e) });
+
+      expect(call).toBe(1); // no resume attempt
+      expect(res.stopReason).toBe('error_max_turns');
+      const notices = events.filter((e) => e.type === 'notice') as Extract<TurnEvent, { type: 'notice' }>[];
+      expect(notices.some((n) => /not auto-continuing/.test(n.text))).toBe(true);
+    });
+
+    it('the cutoff notice is emitted via onEvent, the same path the gateway live-persists to the transcript', async () => {
+      let call = 0;
+      const rt = mkRuntime(
+        scriptedQuery((opts) => {
+          call++;
+          if (call === 1) return cutoffMsg('sess-2', 120);
+          return happyScript(opts.model);
+        }),
+      );
+      const events: TurnEvent[] = [];
+      await rt.run({ threadId: 't1', prompt: 'go', kind: 'user', onEvent: (e) => events.push(e) });
+      // Ordering: the checkpoint notice for round 1 must appear before the
+      // continuation's own turn-start/turn-end, i.e. it's not dropped or
+      // reordered relative to the events the gateway persists live.
+      const noticeIdx = events.findIndex((e) => e.type === 'notice' && /auto-continuing/.test((e as any).text));
+      const secondTurnStartIdx = events.findIndex(
+        (e, i) => e.type === 'turn-start' && i > 0, // the 2nd turn-start (continuation's)
+      );
+      expect(noticeIdx).toBeGreaterThanOrEqual(0);
+      expect(secondTurnStartIdx).toBeGreaterThan(noticeIdx);
+    });
   });
 });
