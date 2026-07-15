@@ -472,9 +472,9 @@
   border: 1px solid var(--rule);
   border-radius: var(--r-3);
   font: inherit;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-body);
   line-height: 1.5;
-  padding: 10px 12px;
+  padding: var(--sp-2) var(--sp-3);
   max-height: 32dvh;
   min-height: 42px;
   outline: none;
@@ -545,13 +545,13 @@
 .composer-attachment-status {
   position: absolute;
   inset: auto 0 0 0;
-  font-size: 9px;
+  font-size: var(--fs-cap);
   text-align: center;
   background: rgba(0, 0, 0, 0.65);
   color: var(--linen);
   padding: 2px 0;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-cap);
 }
 .composer-attachment-remove {
   position: absolute;
