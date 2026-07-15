@@ -157,6 +157,40 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // Threads currently being resumed after a restart (gateway/pendingTurn.ts)
+  // — badges the affected row in the list. Fed two ways: the server's
+  // thread-resume-start/end broadcasts (any tab), and the open
+  // conversation's own drop detection via setResumeState (this tab,
+  // immediately — before the server is even back to broadcast anything).
+  const [resumingIds, setResumingIds] = useState<ReadonlySet<string>>(new Set());
+  const setResumeState = useCallback((threadId: string, active: boolean) => {
+    setResumingIds((prev) => {
+      if (prev.has(threadId) === active) return prev;
+      const next = new Set(prev);
+      if (active) next.add(threadId);
+      else next.delete(threadId);
+      return next;
+    });
+  }, []);
+
+  // Badge lifecycle from the server. The /api/events ring replays history to
+  // every fresh EventSource — safe here because the server only ever emits
+  // resume-start/end as a pair, so replayed pairs net out to no badge.
+  useEffect(() => {
+    if (usingMock) return;
+    const es = new EventSource('/api/events');
+    const mark = (active: boolean) => (ev: MessageEvent) => {
+      try {
+        const { threadId } = JSON.parse(ev.data as string) as { threadId?: string };
+        if (threadId) setResumeState(threadId, active);
+      } catch {
+        /* not our payload shape */
+      }
+    };
+    es.addEventListener('thread-resume-start', mark(true));
+    es.addEventListener('thread-resume-end', mark(false));
+    return () => es.close();
+  }, [setResumeState]);
 
   useEffect(() => {
     let alive = true;
@@ -245,6 +279,12 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
                   >
                     <div className="threads-row-top">
                       <span className="threads-row-title">{t.title ?? 'Untitled thread'}</span>
+                      {resumingIds.has(t.id) && (
+                        <span className="threads-row-resuming data">
+                          <span className="resume-dot" aria-hidden="true" />
+                          resuming
+                        </span>
+                      )}
                       <span className="threads-row-count data">{t.messages}</span>
                     </div>
                     {t.preview && <p className="threads-row-preview">{t.preview}</p>}
@@ -262,7 +302,14 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
 
         <div className="threads-reading-pane">
           {selected ? (
-            <Conversation key={selected.id} thread={selected} seed={seedForSelected} onSeedConsumed={onConsumed} onBack={() => setSelectedId(null)} />
+            <Conversation
+              key={selected.id}
+              thread={selected}
+              seed={seedForSelected}
+              onSeedConsumed={onConsumed}
+              onBack={() => setSelectedId(null)}
+              onResumeState={setResumeState}
+            />
           ) : (
             <div className="threads-reader-empty">
               <p className="threads-hint voice">Pick a conversation, or start a new one above.</p>
@@ -280,14 +327,25 @@ function Conversation({
   seed,
   onSeedConsumed,
   onBack,
+  onResumeState,
 }: {
   thread: ThreadSummary;
   seed?: string;
   onSeedConsumed?: () => void;
   onBack: () => void;
+  /** Tell the thread list which rows to badge as "resuming" (see Threads). */
+  onResumeState?: (threadId: string, active: boolean) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Self-deploy / restart affordance (2026-07-15): what the status strip
+  // above the composer shows. 'down' = we saw the connection die and the
+  // server isn't answering /healthz yet; 'up' = server answers again but
+  // hasn't confirmed a resume (this is the only state with a stand-down
+  // ceiling — a plain network blip never confirms one); 'resuming' = the
+  // server broadcast thread-resume-start for this thread, so we hold until
+  // its resume-end however long the turn runs. null = calm.
+  const [restartWait, setRestartWait] = useState<null | 'down' | 'up' | 'resuming'>(null);
   const [live, setLive] = useState<MessagePart[] | null>(null);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
@@ -312,6 +370,10 @@ function Conversation({
   pendingRef.current = pending;
   const sendingRef = useRef(false);
   sendingRef.current = sending;
+  const onResumeStateRef = useRef(onResumeState);
+  onResumeStateRef.current = onResumeState;
+  const restartWaitRef = useRef<typeof restartWait>(null);
+  restartWaitRef.current = restartWait;
   const messagesRef = useRef<ChatMessage[] | null>(null);
   messagesRef.current = messages;
   const threadIdRef = useRef(thread.id);
@@ -368,8 +430,57 @@ function Conversation({
         });
     };
     es.addEventListener('thread-activity', onActivity);
+    // Status-strip transitions from the server's own mouth: a resume turn
+    // started (covers a tab that loaded mid-restart and never saw the drop)
+    // or finished (the all-clear — strip and list badge come down).
+    const forThisThread = (ev: MessageEvent): boolean => {
+      try {
+        return (JSON.parse(ev.data as string) as { threadId?: string }).threadId === threadIdRef.current;
+      } catch {
+        return false;
+      }
+    };
+    const onResumeStart = (ev: MessageEvent) => {
+      if (forThisThread(ev)) setRestartWait('resuming');
+    };
+    const onResumeEnd = (ev: MessageEvent) => {
+      if (!forThisThread(ev)) return;
+      setRestartWait(null);
+      onResumeStateRef.current?.(threadIdRef.current, false);
+    };
+    es.addEventListener('thread-resume-start', onResumeStart);
+    es.addEventListener('thread-resume-end', onResumeEnd);
     return () => es.close();
   }, [thread.id]);
+
+  // While the strip says 'down', poll the public /healthz until the server
+  // answers again. While it says 'up' (back online, resume not yet
+  // confirmed), a 90s ceiling quietly stands the strip down — that's the
+  // network-blip case where the server never died, no marker exists, and no
+  // resume will ever come. 'resuming' has no ceiling on purpose: the server
+  // confirmed the turn, and resume-end will clear it however long it runs.
+  useEffect(() => {
+    if (restartWait === 'down') {
+      const timer = setInterval(() => {
+        fetch('/healthz')
+          .then((res) => {
+            if (res.ok) setRestartWait('up');
+          })
+          .catch(() => {
+            /* still down — keep polling */
+          });
+      }, 2000);
+      return () => clearInterval(timer);
+    }
+    if (restartWait === 'up') {
+      const ceiling = setTimeout(() => {
+        setRestartWait(null);
+        onResumeStateRef.current?.(threadIdRef.current, false);
+      }, 90_000);
+      return () => clearTimeout(ceiling);
+    }
+    return undefined;
+  }, [restartWait]);
 
   // The reading pane has no scroll container of its own — the whole surface
   // (header, log, and composer together) scrolls inside <main class="surface">
@@ -484,6 +595,13 @@ function Conversation({
           if (res.messages.length > preSendCount + 1) {
             setMessages(res.messages);
             setError(null);
+            // The turn's result is on the record after all — if this was a
+            // mere blip (strip at 'down'/'up'), stand down. A confirmed
+            // 'resuming' strip stays: resume-end is its all-clear.
+            if (restartWaitRef.current === 'down' || restartWaitRef.current === 'up') {
+              setRestartWait(null);
+              onResumeStateRef.current?.(threadId, false);
+            }
             return;
           }
           // 12 attempts (~35s) — a self-redeploy takes 10–20s to come back,
@@ -592,6 +710,10 @@ function Conversation({
             level: 'info',
             text: 'Connection dropped — likely a server restart. This thread reconnects and catches up on its own.',
           });
+          // Raise the status strip + list badge immediately — the /healthz
+          // poll and the server's resume broadcasts take it from here.
+          setRestartWait('down');
+          onResumeStateRef.current?.(thread.id, true);
         } else {
           setError(msg);
         }
@@ -728,6 +850,19 @@ function Conversation({
       </ol>
 
       {error && <p className="reader-error voice">{error}</p>}
+
+      {restartWait && (
+        <div className="resume-strip" role="status" aria-live="polite">
+          <span className="resume-dot" aria-hidden="true" />
+          <span className="resume-text data">
+            {restartWait === 'down'
+              ? 'Cabinet is restarting — this thread resumes on its own.'
+              : restartWait === 'up'
+                ? 'Back online — waiting for the thread to resume…'
+                : 'Resuming this thread…'}
+          </span>
+        </div>
+      )}
 
       <form
         className="composer-form"

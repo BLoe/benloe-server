@@ -704,3 +704,50 @@
 }
 @keyframes msg-blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .msg-cursor { animation: none; } }
+
+/* ---- restart / self-deploy affordance (2026-07-15) ----
+   A calm status strip above the composer while the server restarts and the
+   thread waits on its resume turn (see gateway/pendingTurn.ts server-side),
+   plus a small "resuming" tag on the affected row in the thread list. One
+   brass pulsing dot — same visual language as the shell's presence dot. */
+.resume-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.resume-text {
+  font-size: var(--fs-cap);
+  color: var(--linen-dim);
+}
+.resume-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brass);
+  animation: resume-pulse 1.6s ease-in-out infinite;
+}
+.threads-row-resuming {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-cap);
+  color: var(--brass);
+}
+.threads-row-resuming .resume-dot {
+  width: 6px;
+  height: 6px;
+}
+@keyframes resume-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 #c99b5355; }
+  50% { box-shadow: 0 0 0 5px #c99b5300; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .resume-dot { animation: none; }
+}

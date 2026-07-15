@@ -102,7 +102,7 @@ describe('resumeInterruptedTurn', () => {
     expect(existsSync(MARKER_PATH())).toBe(false);
   });
 
-  it('broadcasts thread-activity over the widgetBus push relay', async () => {
+  it('broadcasts thread-activity plus a paired resume-start/resume-end over the widgetBus push relay', async () => {
     const threadId = makeThread();
     markTurnInFlight(dir, threadId, 'q');
     const pushes: { event: string; data: unknown }[] = [];
@@ -116,9 +116,15 @@ describe('resumeInterruptedTurn', () => {
       widgetBus: bus as any,
     });
 
-    expect(pushes.length).toBeGreaterThanOrEqual(2); // once at the seam note, once after the turn persists
-    expect(pushes.every((p) => p.event === 'thread-activity')).toBe(true);
-    expect(pushes[0]!.data).toEqual({ threadId });
+    const events = pushes.map((p) => p.event);
+    // Re-fetch trigger at the seam note and again after the turn persists.
+    expect(events.filter((e) => e === 'thread-activity')).toHaveLength(2);
+    // Badge lifecycle: a start must always be paired with an end (the
+    // /api/events ring replays to fresh tabs — an unpaired start would
+    // strand a stale "resuming" badge), and start precedes end.
+    expect(events.indexOf('thread-resume-start')).toBeGreaterThan(-1);
+    expect(events.indexOf('thread-resume-end')).toBeGreaterThan(events.indexOf('thread-resume-start'));
+    expect(pushes.every((p) => JSON.stringify(p.data) === JSON.stringify({ threadId }))).toBe(true);
   });
 
   it('refuses a stale marker (>24h old)', async () => {
