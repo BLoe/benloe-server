@@ -3,7 +3,7 @@ import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ThreadSummary } from '../lib/cabinet.js';
 import { streamChat, foldTurn, uploadAttachment, interruptChat } from '../lib/chat.js';
 import { SectionLabel } from '../components/instruments/index.js';
-import { Paperclip, ArrowUp, Square, X } from 'lucide-react';
+import { Paperclip, ArrowUp, Square, X, Plus } from 'lucide-react';
 import './threads.css';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -154,6 +154,8 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -186,23 +188,41 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
 
   const seedForSelected = selected && selected.id === openThreadId ? openSeed ?? undefined : undefined;
 
+  const handleNewConversation = useCallback(() => {
+    if (creating) return;
+    setCreating(true);
+    setCreateError(null);
+    api
+      .createThread()
+      .then(({ id }) => setSelectedId(id))
+      .catch((e: unknown) => setCreateError(e instanceof Error ? e.message : "Couldn't start a new conversation."))
+      .finally(() => setCreating(false));
+  }, [creating]);
+
   return (
     <section className="threads" aria-label="Conversations">
       <header className="threads-head">
         <div>
           <SectionLabel n="00">Conversations</SectionLabel>
-          <p className="threads-lede voice">Every conversation, on the record — pick one up, or start a new one with ⌘K.</p>
+          <p className="threads-lede voice">Every conversation, on the record — pick one up, or start a new one.</p>
         </div>
-        <div className="threads-search">
-          <input
-            type="search"
-            className="threads-search-input data"
-            placeholder="Search title or preview…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search conversations"
-          />
+        <div className="threads-head-actions">
+          <div className="threads-search">
+            <input
+              type="search"
+              className="threads-search-input data"
+              placeholder="Search title or preview…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search conversations"
+            />
+          </div>
+          <button type="button" className="threads-new-btn" onClick={handleNewConversation} disabled={creating}>
+            <Plus size={16} aria-hidden="true" />
+            {creating ? 'Starting…' : 'New conversation'}
+          </button>
         </div>
+        {createError && <p className="threads-new-error voice">{createError}</p>}
       </header>
 
       <div className={`threads-body${selectedId ? ' has-selection' : ''}`}>
@@ -233,7 +253,7 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
               ))}
             </ul>
           ) : threads.length === 0 ? (
-            <p className="threads-empty voice">Nothing filed yet. Start one with ⌘K.</p>
+            <p className="threads-empty voice">Nothing filed yet. Start one above, or with ⌘K.</p>
           ) : (
             <p className="threads-empty voice">Nothing matches “{query.trim()}.”</p>
           )}
@@ -244,7 +264,7 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
             <Conversation key={selected.id} thread={selected} seed={seedForSelected} onSeedConsumed={onConsumed} onBack={() => setSelectedId(null)} />
           ) : (
             <div className="threads-reader-empty">
-              <p className="threads-hint voice">Pick a conversation, or press ⌘K to start one.</p>
+              <p className="threads-hint voice">Pick a conversation, or start a new one above.</p>
             </div>
           )}
         </div>

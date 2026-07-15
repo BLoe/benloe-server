@@ -31,6 +31,13 @@
   max-width: 46ch;
 }
 
+.threads-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
 .threads-search-input {
   width: min(320px, 60vw);
   font-size: var(--fs-sm);
@@ -48,6 +55,44 @@
 .threads-search-input:focus-visible {
   outline: 2px solid var(--brass-hi);
   outline-offset: 1px;
+}
+
+.threads-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--brass);
+  background: transparent;
+  border: 1px solid var(--brass-dim);
+  border-radius: var(--r-pill);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+
+.threads-new-btn:hover:not(:disabled),
+.threads-new-btn:focus-visible:not(:disabled) {
+  color: var(--brass-hi);
+  border-color: var(--brass-hi);
+  background: var(--panel);
+  outline: none;
+}
+
+.threads-new-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.threads-new-error {
+  flex-basis: 100%;
+  font-size: var(--fs-fine);
+  color: var(--vermilion);
 }
 
 /* ---- body: two-pane master/detail ---- */
@@ -420,8 +465,17 @@
     padding: var(--sp-4);
   }
 
+  .threads-head-actions {
+    width: 100%;
+  }
+
   .threads-search-input {
     width: 100%;
+  }
+
+  .threads-new-btn {
+    width: 100%;
+    justify-content: center;
   }
 
   .threads-body {
