@@ -115,6 +115,16 @@ describe('auth wall', () => {
     expect(detailed).toMatchObject({ ok: true, db: true, authMode: 'subscription' });
   });
 
+  it('/healthz.presence + queueDepth mirror queue depth unauthenticated — cabinet-deploy-watch.sh drains off these exact fields', async () => {
+    const runtime = fakeRuntime();
+    await startApp(runtime);
+    expect(await (await fetch(base + '/healthz')).json()).toMatchObject({ presence: 'idle', queueDepth: 0 });
+    runtime.queue.depth = 1;
+    expect(await (await fetch(base + '/healthz')).json()).toMatchObject({ presence: 'working', queueDepth: 1 });
+    runtime.queue.depth = 0;
+    expect(await (await fetch(base + '/healthz')).json()).toMatchObject({ presence: 'idle', queueDepth: 0 });
+  });
+
   it('/api/healthz.buildMarker is "unknown" when unwired (e.g. dev/test), not a stale hardcoded string', async () => {
     await startApp(); // default fixture never passes buildMarker
     expect((await (await asOwner('/api/healthz')).json()).buildMarker).toBe('unknown');

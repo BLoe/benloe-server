@@ -94,7 +94,22 @@ export function buildApp(deps: GatewayDeps) {
   // curl for deploy verification instead of standing up agent-bearer auth
   // for a detached shell script. /api/healthz below carries the full
   // authenticated detail.
-  app.get('/healthz', (_req, res) => res.json({ ok: true, buildMarker: deps.buildMarker ?? 'unknown' }));
+  //
+  // presence ('working'/'idle', mirroring /api/healthz's) plus the raw
+  // queueDepth it's derived from are included for the same reason:
+  // cabinet-deploy-watch.sh's drain step needs to know whether a turn is in
+  // flight before it kills cabinet-api, and it's the same unauthenticated
+  // shell-script caller — queue depth isn't sensitive (no content, just a
+  // count), so exposing it here (and in its timeout log line) costs nothing.
+  app.get('/healthz', (_req, res) => {
+    const depth = deps.runtime.queue.depth;
+    res.json({
+      ok: true,
+      buildMarker: deps.buildMarker ?? 'unknown',
+      presence: depth > 0 ? 'working' : 'idle',
+      queueDepth: depth,
+    });
+  });
 
   async function authenticate(req: AuthedRequest, res: Response, next: NextFunction) {
     try {
