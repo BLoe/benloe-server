@@ -510,13 +510,22 @@ function Conversation({
 
   // The textarea grows with its content instead of clipping to one line —
   // reset to 'auto' first so shrinking (e.g. after send clears the draft)
-  // isn't stuck at the tallest height it ever reached.
+  // isn't stuck at the tallest height it ever reached. After resizing,
+  // re-pin the scroll host to its true bottom (same gate as the streaming
+  // auto-scroll above): without this, growth only triggers the browser's
+  // native scroll-caret-into-view, which keeps the caret line visible but
+  // leaves the composer's bottom edge (border, attach/send buttons) cut
+  // off below the fold.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-  }, [draft]);
+    if (stickToBottomRef.current) {
+      const host = scrollHost();
+      if (host) host.scrollTop = host.scrollHeight;
+    }
+  }, [draft, scrollHost]);
 
   // Relative times ("3m ago") go stale sitting still — nudge a re-render
   // periodically so an open conversation keeps ticking forward without
