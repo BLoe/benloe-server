@@ -45,6 +45,27 @@ export async function streamChat(
 }
 
 /**
+ * Stop the in-flight turn for a thread — a real cancel, not just dropping
+ * this tab's connection: it POSTs /api/interrupt, which aborts the SDK
+ * query server-side (AgentRuntime.interrupt), so the agent loop actually
+ * stops running rather than continuing unseen after the tab disconnects.
+ * Whatever already streamed stays (live-persist already saved it). No-op in
+ * mock mode — there's no server-side turn to abort.
+ */
+export async function interruptChat(threadId: string): Promise<boolean> {
+  if (usingMock) return true;
+  const res = await fetch('/api/interrupt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId }),
+  });
+  if (res.status === 401) throw new AuthRequiredError();
+  if (!res.ok) return false;
+  const body = (await res.json().catch(() => ({}))) as { interrupted?: boolean };
+  return body.interrupted ?? false;
+}
+
+/**
  * Upload one composer image (paste/drop/attach) before referencing its id in
  * streamChat — mirrors gateway/attachments.ts's server-side save. Mock mode
  * has no backend to hit, so it hands back a synthetic id; the mock chat

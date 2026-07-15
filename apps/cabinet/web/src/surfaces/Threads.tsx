@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ThreadSummary } from '../lib/cabinet.js';
-import { streamChat, foldTurn, uploadAttachment } from '../lib/chat.js';
+import { streamChat, foldTurn, uploadAttachment, interruptChat } from '../lib/chat.js';
 import { SectionLabel } from '../components/instruments/index.js';
-import { Paperclip, ArrowUp, X } from 'lucide-react';
+import { Paperclip, ArrowUp, Square, X } from 'lucide-react';
 import './threads.css';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -261,7 +261,19 @@ function Conversation({
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState<PendingAttachment[]>([]);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Whether the viewer is parked at (or near) the bottom of the scrollback —
+  // gates auto-scroll-on-stream so a user who scrolled up to read history
+  // doesn't get yanked back down by the next token. Starts true: a freshly
+  // opened/switched thread (Conversation is remounted per thread — see the
+  // `key={selected.id}` on its call site) should open at the bottom.
+  const stickToBottomRef = useRef(true);
+  // True only while a stop-button click is in flight — lets the turn's
+  // resulting 'error' SSE event (an aborted turn surfaces as one) render as
+  // a calm inline notice instead of the red error banner reserved for
+  // actual failures. See send()'s onEvent and stop() below.
+  const interruptingRef = useRef(false);
   const seededRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
@@ -288,9 +300,41 @@ function Conversation({
     };
   }, [thread.id]);
 
+  // The reading pane has no scroll container of its own — the whole surface
+  // (header, log, and composer together) scrolls inside <main class="surface">
+  // (see shell.css). Anchoring auto-scroll to an element *inside* the log
+  // (the old approach: an empty ref just before the composer, scrolled to
+  // the viewport's bottom edge via scrollIntoView) put the composer itself
+  // — which sits after that anchor in the DOM — below the fold on every
+  // streamed token. Scroll the real host to its true bottom instead, which
+  // includes the composer, and only while the viewer is already there.
+  const scrollHost = useCallback((): HTMLElement | null => readerRef.current?.closest<HTMLElement>('.surface') ?? null, []);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView?.({ block: 'end' });
-  }, [messages, live]);
+    const host = scrollHost();
+    if (!host) return;
+    const onScroll = () => {
+      stickToBottomRef.current = host.scrollHeight - host.scrollTop - host.clientHeight < 96;
+    };
+    host.addEventListener('scroll', onScroll, { passive: true });
+    return () => host.removeEventListener('scroll', onScroll);
+  }, [scrollHost]);
+
+  useEffect(() => {
+    if (!stickToBottomRef.current) return;
+    const host = scrollHost();
+    if (host) host.scrollTop = host.scrollHeight;
+  }, [messages, live, scrollHost]);
+
+  // The textarea grows with its content instead of clipping to one line —
+  // reset to 'auto' first so shrinking (e.g. after send clears the draft)
+  // isn't stuck at the tallest height it ever reached.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
 
   // Relative times ("3m ago") go stale sitting still — nudge a re-render
   // periodically so an open conversation keeps ticking forward without
@@ -388,6 +432,8 @@ function Conversation({
       setDraft('');
       setPending([]);
       setError(null);
+      stickToBottomRef.current = true;
+      interruptingRef.current = false;
       const userParts: MessagePart[] = [
         ...ready.map((a) => ({ type: 'image' as const, id: a.id, mediaType: a.mediaType })),
         ...(t ? [{ type: 'text' as const, text: t }] : []),
@@ -401,7 +447,18 @@ function Conversation({
       try {
         await streamChat(thread.id, { text: t, attachments: ready.map((a) => ({ id: a.id })) }, (e) => {
           if (e.type === 'error') {
-            setError(e.message);
+            // A deliberate stop (see stop() below) surfaces here as the
+            // aborted turn's own error event — show it as a calm notice,
+            // not the red banner reserved for a turn that actually failed.
+            if (interruptingRef.current) {
+              const last = parts.at(-1);
+              if (!(last?.type === 'notice' && last.text === 'Stopped.')) {
+                parts.push({ type: 'notice', level: 'info', text: 'Stopped.' });
+                setLive([...parts]);
+              }
+            } else {
+              setError(e.message);
+            }
             return;
           }
           foldTurn(parts, e);
@@ -424,10 +481,25 @@ function Conversation({
       } finally {
         setLive(null);
         setSending(false);
+        interruptingRef.current = false;
       }
     },
     [thread.id, sending, reconcileAfterDrop],
   );
+
+  // Stop button: a real cancel — POSTs /api/interrupt, which aborts the
+  // turn server-side (AgentRuntime.interrupt) rather than just dropping this
+  // tab's connection, so the agent loop actually stops instead of running on
+  // unseen. Whatever already streamed in is kept (see the `error`-as-notice
+  // handling above and the server's live-persist).
+  const stop = useCallback(() => {
+    if (!sending) return;
+    interruptingRef.current = true;
+    void interruptChat(thread.id).catch(() => {
+      // The turn may finish (or fail on its own) before the interrupt lands
+      // — nothing useful to surface to a user who just clicked "stop".
+    });
+  }, [sending, thread.id]);
 
   // Auto-send the seed (from the command bar) once history has loaded.
   useEffect(() => {
@@ -445,7 +517,7 @@ function Conversation({
   const runs = buildRenderRuns(messages ?? [], live, new Date());
 
   return (
-    <div className="reader">
+    <div className="reader" ref={readerRef}>
       <header className="reader-head">
         <button type="button" className="threads-back" onClick={onBack}>
           ← Conversations
@@ -494,7 +566,6 @@ function Conversation({
             return rows;
           })
         )}
-        <div ref={bottomRef} />
       </ol>
 
       {error && <p className="reader-error voice">{error}</p>}
@@ -546,6 +617,7 @@ function Conversation({
             <Paperclip size={18} />
           </button>
           <textarea
+            ref={textareaRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onPaste={(e) => {
@@ -573,14 +645,20 @@ function Conversation({
             rows={1}
             aria-label="Message Cabinet"
           />
-          <button
-            type="submit"
-            className="composer-send-btn"
-            aria-label="Send"
-            disabled={sending || pending.some((p) => p.uploading) || (!draft.trim() && !pending.some((p) => p.id && !p.error))}
-          >
-            {sending ? <span className="composer-send-spinner" aria-hidden="true" /> : <ArrowUp size={18} />}
-          </button>
+          {sending ? (
+            <button type="button" className="composer-send-btn composer-stop-btn" aria-label="Stop" onClick={stop}>
+              <Square size={14} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="composer-send-btn"
+              aria-label="Send"
+              disabled={pending.some((p) => p.uploading) || (!draft.trim() && !pending.some((p) => p.id && !p.error))}
+            >
+              <ArrowUp size={18} />
+            </button>
+          )}
         </div>
       </form>
     </div>
