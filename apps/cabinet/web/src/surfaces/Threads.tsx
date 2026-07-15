@@ -361,6 +361,16 @@ function Conversation({
         setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'The turn failed.');
+        // A network drop (e.g. the server restarting mid-turn) throws here —
+        // but whatever had already streamed in (tool calls included) is real
+        // work that ran, and as of the 2026-07-15 persistence fix it's
+        // already durably saved server-side too. Fold it into the real
+        // message list exactly like the success path below does, instead of
+        // wiping it via the `finally`'s setLive(null) and leaving only a bare
+        // error banner where the tool-call trail used to be.
+        if (parts.length > 0) {
+          setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
+        }
       } finally {
         setLive(null);
         setSending(false);
