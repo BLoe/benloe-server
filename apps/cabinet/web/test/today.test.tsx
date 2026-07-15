@@ -39,7 +39,7 @@ const VIEW: TodayView = {
   vitals: [
     { kind: 'dial', label: 'Nutrition · today', tag: 'on track', value: 142, max: 185, unit: '/ 185 g protein' },
   ],
-  overnight: { count: 3, summary: 'backed up your data, titled a thread' },
+  overnight: { count: 3, summary: 'backed up your data, titled a chat' },
   sweptAt: '2026-07-08T06:06:00-04:00',
   briefing: null,
   checkin: null,
@@ -65,7 +65,7 @@ describe('Today', () => {
 
   it('fires the action intent through api.command', async () => {
     today.mockResolvedValue(VIEW);
-    command.mockResolvedValue({ threadId: 't1' });
+    command.mockResolvedValue({ chatId: 't1' });
     render(<Today />);
 
     const primary = await screen.findByRole('button', { name: 'Reorder now' });

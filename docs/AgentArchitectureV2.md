@@ -99,7 +99,7 @@ Example interaction:
 ┌──────────────────────────────────────────────────────────────┐
 │ Cabinet GATEWAY  (Node/TS, Express, :3008, runs as claude-worker)│
 │  • artanis auth middleware + owner-email allowlist           │
-│  • Threads/messages API + hand-rolled SSE chat stream        │
+│  • Chats/messages API + hand-rolled SSE chat stream        │
 │  • Serialized turn queue (one agent turn at a time)          │
 │  • Tier engine: canUseTool → allow / deny / approval queue   │
 │  • Scheduler: heartbeat (30m) + cron (briefings, review)     │
@@ -110,11 +110,11 @@ Example interaction:
         ▼                               ▼
 ┌────────────────────────┐   ┌─────────────────────────────────┐
 │ AGENT RUNTIME          │   │ DATA  /srv/benloe/data/cabinet/    │
-│ @anthropic-ai/         │   │  cabinet.db      (facts, threads)  │
+│ @anthropic-ai/         │   │  cabinet.db      (facts, chats)  │
 │   claude-agent-sdk     │   │  episodic.db  (sqlite-vec)      │
 │ model routing per turn │   │  memory/      (markdown, git)   │
 │ session resume per     │   │  documents/ photos/ backups/    │
-│   thread               │   └─────────────────────────────────┘
+│   chat               │   └─────────────────────────────────┘
 │ layered system prompt  │
 └───────┬────────────────┘
         │ tools
@@ -142,9 +142,9 @@ Endpoints:
 
 | Route | Purpose |
 |---|---|
-| `POST /api/chat` | Send a user message to a thread; responds with the SSE turn stream (§12.2) |
-| `GET  /api/threads` / `POST /api/threads` / `PATCH /api/threads/:id` | List / create / rename-archive threads |
-| `GET  /api/threads/:id/messages` | Paged message history for a thread |
+| `POST /api/chat` | Send a user message to a chat; responds with the SSE turn stream (§12.2) |
+| `GET  /api/chats` / `POST /api/chats` / `PATCH /api/chats/:id` | List / create / rename-archive chats |
+| `GET  /api/chats/:id/messages` | Paged message history for a chat |
 | `GET  /api/approvals` / `POST /api/approvals/:id` | Pending approval packets; approve/deny/edit |
 | `POST /api/interrupt` | Abort the in-flight turn (AbortController → SDK) |
 | `GET  /api/usage` | Token/cost dashboard data |
@@ -185,7 +185,7 @@ const q = query({
   prompt: userText,                      // or async generator for tool-result continuations
   options: {
     model: route(turn),                  // 'claude-haiku-4-5' | 'claude-sonnet-5' | 'claude-opus-4-8' | 'claude-fable-5'
-    resume: thread.sdkSessionId,         // per-thread continuity across process restarts
+    resume: chat.sdkSessionId,         // per-chat continuity across process restarts
     cwd: '/srv/benloe',
     additionalDirectories: ['/srv/benloe/data/cabinet'],
     systemPrompt: assemblePrompt(turn),  // layered, cache-stable prefix (§9.3)
@@ -207,7 +207,7 @@ const q = query({
 });
 ```
 
-- The SDK provides the agentic loop, context compaction, session persistence, and subprocess isolation. The gateway records the `session_id` from the init message onto the thread row; `resume` restores it after restarts.
+- The SDK provides the agentic loop, context compaction, session persistence, and subprocess isolation. The gateway records the `session_id` from the init message onto the chat row; `resume` restores it after restarts.
 - `canUseTool` is the tier engine's hook: it is async and blocks, which is exactly how Tier-2 "approve-before" works — the turn pauses mid-flight, an approval card streams to the UI, and the callback resolves when Ben taps approve/deny (or the packet expires).
 - Heartbeat/cron turns run as **fresh sessions with a minimal prompt** (no `resume`, light context) so a wake costs ~2–5K tokens, not a replay of history.
 - Subagents (SDK `agents` option) are defined for the weekly review: read-only domain analysts (Sonnet 5) fanned out by an Opus 4.8 orchestrator.
@@ -216,10 +216,10 @@ const q = query({
 
 Two complementary stores, by design:
 
-1. **`cabinet.db` `thread` + `message` tables** — the UI's source of truth. Every user message, assistant message (as ordered typed parts: text, tool-run, widget, approval-ref), and turn usage row is written here as the stream happens. History rendering, search, and thread lists never touch SDK internals.
-2. **SDK session transcripts** (JSONL under the `claude-worker` home) — the *agent's* source of truth for `resume`. The gateway treats these as an implementation detail; if a session is lost, the thread falls back to a fresh session seeded with a summary of recent `message` rows.
+1. **`cabinet.db` `chat` + `message` tables** — the UI's source of truth. Every user message, assistant message (as ordered typed parts: text, tool-run, widget, approval-ref), and turn usage row is written here as the stream happens. History rendering, search, and chat lists never touch SDK internals.
+2. **SDK session transcripts** (JSONL under the `claude-worker` home) — the *agent's* source of truth for `resume`. The gateway treats these as an implementation detail; if a session is lost, the chat falls back to a fresh session seeded with a summary of recent `message` rows.
 
-Threads are cheap; Ben can keep one long-running "main" thread and spin topical ones. Compaction is the SDK's job; durable facts are protected because they live in SQLite/markdown, not in the context window (Principle 2).
+Chats are cheap; Ben can keep one long-running "main" chat and spin topical ones. Compaction is the SDK's job; durable facts are protected because they live in SQLite/markdown, not in the context window (Principle 2).
 
 ---
 
@@ -229,11 +229,11 @@ Threads are cheap; Ben can keep one long-running "main" thread and spin topical 
 
 ```sql
 -- ========== CHAT (new in v2) ==========
-CREATE TABLE thread (
+CREATE TABLE chat (
   id TEXT PRIMARY KEY,                  -- nanoid
   title TEXT,
   sdk_session_id TEXT,                  -- Agent SDK session for resume
-  model_override TEXT,                  -- per-thread routing override ('fable', 'opus', …)
+  model_override TEXT,                  -- per-chat routing override ('fable', 'opus', …)
   kind TEXT CHECK(kind IN ('user','heartbeat','cron')) DEFAULT 'user',
   archived INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -241,16 +241,16 @@ CREATE TABLE thread (
 );
 CREATE TABLE message (
   id TEXT PRIMARY KEY,
-  thread_id TEXT NOT NULL REFERENCES thread(id) ON DELETE CASCADE,
+  chat_id TEXT NOT NULL REFERENCES chat(id) ON DELETE CASCADE,
   role TEXT CHECK(role IN ('user','assistant','system')) NOT NULL,
   parts TEXT NOT NULL,                  -- JSON array of typed parts (§12.2)
   usage TEXT,                           -- JSON usage snapshot for assistant turns
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX idx_message_thread ON message(thread_id, created_at);
+CREATE INDEX idx_message_chat ON message(chat_id, created_at);
 
 -- action_audit gains dev-tool context
-ALTER TABLE action_audit ADD COLUMN thread_id TEXT;
+ALTER TABLE action_audit ADD COLUMN chat_id TEXT;
 ALTER TABLE action_audit ADD COLUMN tier INTEGER;      -- (already in v1; kept)
 ALTER TABLE action_audit ADD COLUMN decision TEXT;     -- 'allowed','denied','approved','auto'
 ```
@@ -279,7 +279,7 @@ Mechanics:
 - **Path checks** resolve symlinks (`realpath`) before matching allow/deny prefixes — no traversal games.
 - **Approval packets** (Tier 2) carry: action, exact payload (full command / diff / email body), reasoning, confidence, reversibility note, expiry (default 24h). They render as cards in the chat stream *and* on the `/api/events` channel, and are answerable from any device. `canUseTool` resolves `allow` (optionally with edited input) or `deny{message}` accordingly.
 - **Promotions**: `STANDING_ORDERS.md` can promote specific Tier-2 action classes to Tier-3 ("you may push to the games/ static site without asking"). Promotions are only ever written by Ben or via an approved packet — the lesson-governance validator rejects any lesson that would expand autonomy.
-- **Everything audited**: every gate decision writes `action_audit` (tool, args hash, tier, decision, thread, session kind).
+- **Everything audited**: every gate decision writes `action_audit` (tool, args hash, tier, decision, chat, session kind).
 
 Tier 0 is defense-in-depth, not the only wall: unix permissions back it up (§13.2). Even a bypassed gate is a `claude-worker` process that cannot read root-owned secrets or write to `/etc`.
 
@@ -313,7 +313,7 @@ Discipline unchanged from v1: curated files stay curated; daily detail goes to S
 
 - **Embedding:** `@huggingface/transformers` v4 (ONNX runtime) running `Xenova/bge-small-en-v1.5` (384-dim, quantized ~30 MB) **inside a Node worker thread** in the gateway. No Python, no extra service, no port. The worker exposes `embed(texts[]) → Float32Array[]`; model loads lazily on first use and stays resident (~200–400 MB).
 - **Store:** `sqlite-vec@0.1.9` (pinned — healthy but slow-cadence, bus-factor-1 project) `vec0` tables in `episodic.db`. Brute-force KNN is instant at our scale (thousands of chunks).
-- **Chunking:** after a thread goes idle >30 min, a background job chunks new messages (~512 tokens, 64 overlap) tagged with thread id + local day; journal entries chunk at entry granularity.
+- **Chunking:** after a chat goes idle >30 min, a background job chunks new messages (~512 tokens, 64 overlap) tagged with chat id + local day; journal entries chunk at entry granularity.
 - **Lessons:** the governed reflection bank exactly as v1 §5.4 — evaluated (confidence-gated), evidenced (`evidence` column), lifecycle-managed (active/retired/superseded, decay on disuse), governed (no autonomy escalations; those require STANDING_ORDERS.md through Ben). `recall_lessons(context)` injects top-k relevant active lessons per substantive turn; high-value stable ones get promoted into Layer 2.
 - **Failure mode:** embedder down ⇒ episodic search returns "recall unavailable", chunks queue for backfill, nothing else blocks.
 
@@ -359,10 +359,10 @@ Verified timeline (July 2026): Anthropic blocked third-party harnesses (OpenClaw
 | `nano` | `claude-haiku-4-5` | 1 / 5 | Heartbeats ("anything urgent?" → mostly `HEARTBEAT_OK`), intent classification, title generation |
 | `default` | `claude-sonnet-5` | 3 / 15 (intro 2 / 10 through 2026-08-31) | All interactive chat, logging, planning, briefings, routine dev work. 1M context; near-Opus on coding/agentic work |
 | `deep` | `claude-opus-4-8` | 5 / 25 | Weekly review + reflection, cross-domain correlation, hard multi-step dev builds, code review of its own diffs |
-| `max` | `claude-fable-5` | 10 / 50 | **Opt-in only** (`/model fable` per thread, or the router escalating *with a notify*): the hardest long-horizon builds. Caveats: thinking always on, `refusal` stop reason must be handled (fall back to Opus 4.8), requires 30-day data retention org setting — the runtime handles all three |
+| `max` | `claude-fable-5` | 10 / 50 | **Opt-in only** (`/model fable` per chat, or the router escalating *with a notify*): the hardest long-horizon builds. Caveats: thinking always on, `refusal` stop reason must be handled (fall back to Opus 4.8), requires 30-day data retention org setting — the runtime handles all three |
 | effort | — | — | `effort: 'high'` default; `xhigh` for `deep`/`max` dev tasks; `low` for heartbeats |
 
-Escalation heuristic: the gateway never silently spends `max`; it either honors a thread override or asks ("this looks like a 45-minute build — want me to run it on Fable 5?").
+Escalation heuristic: the gateway never silently spends `max`; it either honors a chat override or asks ("this looks like a 45-minute build — want me to run it on Fable 5?").
 
 ### 9.3 Prompt layering & caching
 
@@ -394,7 +394,7 @@ Hand-rolled scheduler in the gateway (a ~80-line module + tests): fixed local-ti
 | Job | When (America/New_York) | Model | Does |
 |---|---|---|---|
 | Heartbeat | every 30m, 07:00–23:00 | Haiku 4.5 | Fresh light session reads HEARTBEAT.md + fast deterministic snapshot; replies `HEARTBEAT_OK` (suppressed) or escalates to a Sonnet 5 turn that posts a nudge |
-| Morning briefing | 06:30 | Sonnet 5 | Deterministic assembly (queries + MCP reads) → model narrates → briefing widget to the main thread + `/api/events` push |
+| Morning briefing | 06:30 | Sonnet 5 | Deterministic assembly (queries + MCP reads) → model narrates → briefing widget to the main chat + `/api/events` push |
 | Evening check-in | 20:30 | Sonnet 5 | Mood/energy tap card, macro gap, tomorrow's first event |
 | Weekly review | Sun 09:00 | Opus 4.8 (+ Sonnet 5 subagents) | Correlations (sleep×mood, protein×training, spend), goal progress, subscription/portfolio audit, reflection pass → lessons, rewrite `domains/*.md` |
 | Maintenance | 03:00 daily | none | `sqlite3 .backup` both DBs, WAL checkpoint, embedding backfill, expire stale approvals, usage rollup, memory-git gc, encrypted off-box backup sync |
@@ -411,10 +411,10 @@ Vite + React + TypeScript + Tailwind, served as static files by Caddy from `web/
 
 ### 12.2 The wire protocol (ours)
 
-`POST /api/chat {threadId, text}` responds `Content-Type: text/event-stream`. Named SSE events, JSON data:
+`POST /api/chat {chatId, text}` responds `Content-Type: text/event-stream`. Named SSE events, JSON data:
 
 ```
-event: turn-start      data: {"messageId","threadId","model"}
+event: turn-start      data: {"messageId","chatId","model"}
 event: text-delta      data: {"delta"}
 event: tool-start      data: {"toolId","name","input","tier"}
 event: tool-end        data: {"toolId","output","isError","durationMs"}
@@ -430,8 +430,8 @@ The same event vocabulary flows on `GET /api/events` for out-of-band pushes (bri
 
 ### 12.3 Client architecture
 
-- `useThread(threadId)` — hand-rolled hook: loads history from `/api/threads/:id/messages`, sends via `/api/chat`, folds stream events into an ordered `parts[]` per message (text accumulates; tool-runs get start→end lifecycle; widgets and approvals are typed parts). Optimistic user message, abort support, error surface. Fully unit-tested against recorded streams.
-- Components: `ThreadList`, `ChatView`, `Composer` (bottom bar, safe-area insets), `MessagePart` dispatcher, `ToolRunCard` (collapsible terminal-style card for Bash/dev tools showing command + streamed output), `ApprovalCard` (payload preview, Approve / Edit / Deny, countdown), `MacroRing`, `WeightChart`, `BriefingCard`, `GroceryChecklist` (checkboxes POST back), `MoodCheckin` (1–5 taps), `UsageDash`.
+- `useChat(chatId)` — hand-rolled hook: loads history from `/api/chats/:id/messages`, sends via `/api/chat`, folds stream events into an ordered `parts[]` per message (text accumulates; tool-runs get start→end lifecycle; widgets and approvals are typed parts). Optimistic user message, abort support, error surface. Fully unit-tested against recorded streams.
+- Components: `ChatList`, `ChatView`, `Composer` (bottom bar, safe-area insets), `MessagePart` dispatcher, `ToolRunCard` (collapsible terminal-style card for Bash/dev tools showing command + streamed output), `ApprovalCard` (payload preview, Approve / Edit / Deny, countdown), `MacroRing`, `WeightChart`, `BriefingCard`, `GroceryChecklist` (checkboxes POST back), `MoodCheckin` (1–5 taps), `UsageDash`.
 - **PWA:** `manifest.json` (standalone, icons, theme), service worker for shell caching + installability; mobile-first layout; time-to-first-token target <1s (Sonnet 5 + warm cache makes this realistic).
 
 ---
@@ -520,7 +520,7 @@ cabinet.benloe.com {
 1. `chown root:root /srv/benloe/.env` — **done 2026-07-07** during pre-build validation; was `claude-worker`-owned, which would have handed the agent every platform secret.
 2. Keep ufw/fail2ban/SSH state as-is (already good); add fail2ban jail for repeated 401/403s on `cabinet.benloe.com` via the Caddy log (defense against magic-link/cookie brute-forcing at the artanis layer too).
 3. `/root/.claude/.credentials.json` stays root-only (already 600); the agent never sees Ben's interactive Claude credentials — its own token is injected per-process.
-4. Backups (03:00 job): `sqlite3 .backup` + tar of `memory/`, `documents/`, thread exports → `age`-encrypted → off-box (rclone target Ben configures; until then, encrypted copies rotate locally in `data/cabinet/backups/`, 30 daily + 12 monthly). A restore drill is part of acceptance testing.
+4. Backups (03:00 job): `sqlite3 .backup` + tar of `memory/`, `documents/`, chat exports → `age`-encrypted → off-box (rclone target Ben configures; until then, encrypted copies rotate locally in `data/cabinet/backups/`, 30 daily + 12 monthly). A restore drill is part of acceptance testing.
 5. Prompt-injection posture: all web/MCP/email-derived content is data, not instructions; tier gates fire on *actions* regardless of what fetched content asks; Tier-2 can never be auto-approved by content; approval packets always show the exact payload so Ben approves what will actually run.
 6. OS updates: already covered by the 7-day-delay apt system — the agent is Tier-1 on apt and must not touch it.
 
@@ -550,15 +550,15 @@ Dependency-ordered; each step lands with its tests. No phases, no deferred featu
 
 1. **Scaffold & permissions.** `apps/cabinet/{server,web}` workspaces; `data/cabinet/` dirs (+ `memory/` git init); confirm gitignore covers them; `chown root:root /srv/benloe/.env`; sudoers + install `cabinet-privops` to `/usr/local/sbin`; add `.env` keys (`CABINET_CLAUDE_AUTH`, `CABINET_OWNER_EMAIL`, `CLAUDE_CODE_OAUTH_TOKEN` placeholder).
 2. **DB layer.** Migration runner + full DDL (v1 domain schema + §5 chat tables); db module (WAL, FK, readonly `query_db` guard). *Tests: migrations idempotent; SELECT-guard rejects writes/PRAGMA/ATTACH/multi-statement.*
-3. **Embeddings + episodic.** Worker-thread embedder (`Xenova/bge-small-en-v1.5`), episodic store on sqlite-vec, chunker, backfill job. *Tests: 384-dim output, KNN round-trip, worker crash recovery.*
+3. **Embeddings + episodic.** Worker-chat embedder (`Xenova/bge-small-en-v1.5`), episodic store on sqlite-vec, chunker, backfill job. *Tests: 384-dim output, KNN round-trip, worker crash recovery.*
 4. **Memory layer.** Template markdown files; `update_memory`/`add_lesson`/`recall_lessons`/`search_episodic` tools; lesson governance validator. *Tests: escalation-lesson rejection; git commit on write.*
 5. **Tier engine.** Bash classifier, path resolver, tier table, approval queue (DB + await/resolve), `canUseTool` gate. *Tests are the heart of the build: table-driven cases for every row of §6 including compound commands, symlink traversal, privops args, expiry.*
 6. **Agent runtime.** SDK wrapper: model router, prompt assembler (cache-stable layering), turn queue, session resume, usage recorder, auth dual-path + startup probe, Fable-refusal fallback. *Tests: routing, queue serialization, prompt stability across turns (byte-identical prefix).*
 7. **Domain tools.** All `log_*`/read tools from §8 with macro estimation, EWMA, accumulators, PR detection. *Tests: accumulator math, EWMA, daily totals.*
 8. **In-process MCP server + external MCP wiring.** `createSdkMcpServer` with everything; yahoo MCP registration against :3006; config-gated google/plaid/apple-health registrations + `docs/cabinet-integrations.md` setup guide for each credential dance.
-9. **Gateway HTTP.** Express app, artanis+allowlist middleware, threads/messages/approvals/usage/healthz routes, SSE encoder, `/api/events` channel, interrupt. *Tests: auth wall (wrong email = 403), SSE encode/parse round-trip, approval resolve path.*
+9. **Gateway HTTP.** Express app, artanis+allowlist middleware, chats/messages/approvals/usage/healthz routes, SSE encoder, `/api/events` channel, interrupt. *Tests: auth wall (wrong email = 403), SSE encode/parse round-trip, approval resolve path.*
 10. **Scheduler.** Hand-rolled next-occurrence scheduler + the five jobs; heartbeat escalation path; maintenance job incl. encrypted backups. *Tests: DST boundaries (Mar/Nov), defer-while-busy, no stacking.*
-11. **Web UI.** Vite scaffold, `useThread` + stream parser, all components/widgets from §12.3, PWA manifest + SW, usage dashboard. *Tests: hook folding logic against recorded streams; parser fuzz.*
+11. **Web UI.** Vite scaffold, `useChat` + stream parser, all components/widgets from §12.3, PWA manifest + SW, usage dashboard. *Tests: hook folding logic against recorded streams; parser fuzz.*
 12. **Deploy.** Build both workspaces; ecosystem config (uid claude-worker); Caddy file + reload via privops; PM2 start + save. (Auth prerequisites already done during validation: `claude setup-token` minted → `CLAUDE_CODE_OAUTH_TOKEN` in `.env`; system Node at `/usr/local/bin/node` — replace with a proper NodeSource/apt Node 24 install or keep the copied binary updated alongside root's nvm.)
 13. **Acceptance.** End-to-end: login wall (second account gets 403); chat streams; `log_food` → totals; dev task ("add a test page to static/") exercises Tier 3+2 incl. an approval card; heartbeat fires and suppresses `HEARTBEAT_OK`; briefing renders; restore-from-backup drill; tier red-team (attempt `.env` read, artanis edit, sudo escape — all blocked and audited); commit + push the code (not the data).
 

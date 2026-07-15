@@ -3,7 +3,7 @@ import { applyPromotions, classifyToolUse, parsePromotions, type Classification,
 import type { ApprovalQueue, ApprovalPacket } from './approvals.js';
 
 export interface GateContext {
-  threadId: string | null;
+  chatId: string | null;
   sessionKind: 'user' | 'heartbeat' | 'cron';
   /** Latest STANDING_ORDERS.md content, read at turn start. */
   standingOrders: string;
@@ -50,9 +50,9 @@ export function buildGate(opts: {
   const audit = (toolName: string, c: Classification, decision: string, ctx: GateContext, args: unknown) => {
     opts.db
       .prepare(
-        'INSERT INTO action_audit (tool, tier, args, decision, thread_id, session_kind, result) VALUES (?,?,?,?,?,?,?)',
+        'INSERT INTO action_audit (tool, tier, args, decision, chat_id, session_kind, result) VALUES (?,?,?,?,?,?,?)',
       )
-      .run(toolName, c.tier, JSON.stringify(args).slice(0, 4000), decision, ctx.threadId, ctx.sessionKind, c.reason);
+      .run(toolName, c.tier, JSON.stringify(args).slice(0, 4000), decision, ctx.chatId, ctx.sessionKind, c.reason);
   };
 
   return async function gate(
@@ -96,7 +96,7 @@ export function buildGate(opts: {
       reasoning: c.reason,
       confidence: null,
       reversibility: null,
-      threadId: ctx.threadId,
+      chatId: ctx.chatId,
       ttlMs: ctx.sessionKind === 'user' ? undefined : 1000, // non-interactive: fail fast, packet remains visible
     });
     opts.events?.onApprovalRequested?.(packet);

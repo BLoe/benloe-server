@@ -24,9 +24,9 @@ export interface GatewayDeps {
   db: Database.Database;
   runtime: Pick<AgentRuntime, 'run' | 'interrupt' | 'authMode' | 'titleFor'> & {
     queue: { depth: number };
-    /** Thread id of the turn executing right now, else null. Optional so
+    /** Chat id of the turn executing right now, else null. Optional so
      *  narrow test fakes don't have to care; undefined reads as "no turn". */
-    currentThread?: string | null;
+    currentChat?: string | null;
   };
   approvals: ApprovalQueue;
   widgetBus: EventEmitter;
@@ -147,53 +147,53 @@ export function buildApp(deps: GatewayDeps) {
   // Cabinet v2 surface endpoints (behind the wall). Contract: web/src/lib/contracts.ts.
   registerSurfaceRoutes(app, { db: deps.db, memory: deps.memory, queueDepth: () => deps.runtime.queue.depth });
 
-  // ---------- threads ----------
-  app.get('/api/threads', (_req, res) => {
+  // ---------- chats ----------
+  app.get('/api/chats', (_req, res) => {
     const rows = deps.db
       .prepare(
         `SELECT t.id, t.title, t.model_override, t.archived, t.updated_at,
-                (SELECT COUNT(*) FROM message m WHERE m.thread_id = t.id) AS messages
-         FROM thread t WHERE t.kind = 'user' ORDER BY t.updated_at DESC LIMIT 100`,
+                (SELECT COUNT(*) FROM message m WHERE m.chat_id = t.id) AS messages
+         FROM chat t WHERE t.kind = 'user' ORDER BY t.updated_at DESC LIMIT 100`,
       )
       .all();
-    res.json({ threads: rows });
+    res.json({ chats: rows });
   });
 
-  app.post('/api/threads', (req, res) => {
+  app.post('/api/chats', (req, res) => {
     const id = randomUUID();
     const by = (req as AuthedRequest).principal?.email ?? null;
-    deps.db.prepare('INSERT INTO thread (id, title, kind, created_by) VALUES (?,?,?,?)').run(id, req.body?.title ?? null, 'user', by);
+    deps.db.prepare('INSERT INTO chat (id, title, kind, created_by) VALUES (?,?,?,?)').run(id, req.body?.title ?? null, 'user', by);
     res.status(201).json({ id });
   });
 
-  app.patch('/api/threads/:id', (req, res) => {
+  app.patch('/api/chats/:id', (req, res) => {
     const { title, archived, model_override } = req.body ?? {};
     const r = deps.db
       .prepare(
-        `UPDATE thread SET title = COALESCE(?, title), archived = COALESCE(?, archived),
+        `UPDATE chat SET title = COALESCE(?, title), archived = COALESCE(?, archived),
                 model_override = COALESCE(?, model_override), updated_at = datetime('now') WHERE id = ?`,
       )
       .run(title ?? null, archived === undefined ? null : Number(archived), model_override ?? null, req.params.id);
-    if (r.changes === 0) return res.status(404).json({ error: 'no such thread' });
+    if (r.changes === 0) return res.status(404).json({ error: 'no such chat' });
     res.json({ ok: true });
   });
 
-  app.get('/api/threads/:id/messages', (req, res) => {
+  app.get('/api/chats/:id/messages', (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
     const before = String(req.query.before ?? '9999-12-31');
     const rows = deps.db
       .prepare(
         `SELECT id, role, parts, usage, author, created_at FROM message
-         WHERE thread_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?`,
+         WHERE chat_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?`,
       )
       .all(req.params.id, before, limit) as { parts: string; usage: string | null }[];
     res.json({
       messages: rows.reverse().map((r) => ({ ...r, parts: JSON.parse(r.parts), usage: r.usage ? JSON.parse(r.usage) : null })),
-      // Reattach-on-load (2026-07-15): is a turn executing on THIS thread
+      // Reattach-on-load (2026-07-15): is a turn executing on THIS chat
       // right now? A tab that (re)loads mid-turn uses this to show the
       // working strip and follow along via polling — the turn itself
       // survives any client disconnect; only the live view was lost before.
-      live: deps.runtime.currentThread === req.params.id,
+      live: deps.runtime.currentChat === req.params.id,
     });
   });
 
@@ -236,15 +236,15 @@ export function buildApp(deps: GatewayDeps) {
 
   // ---------- chat (the turn stream) ----------
   app.post('/api/chat', async (req, res) => {
-    const { threadId, text, attachments } = req.body ?? {};
+    const { chatId, text, attachments } = req.body ?? {};
     const attachmentRefs = Array.isArray(attachments) ? attachments : [];
-    if (typeof threadId !== 'string' || typeof text !== 'string' || (!text.trim() && attachmentRefs.length === 0)) {
-      return res.status(400).json({ error: 'threadId and text (or an attachment) required' });
+    if (typeof chatId !== 'string' || typeof text !== 'string' || (!text.trim() && attachmentRefs.length === 0)) {
+      return res.status(400).json({ error: 'chatId and text (or an attachment) required' });
     }
-    const thread = deps.db.prepare('SELECT id, title FROM thread WHERE id = ?').get(threadId) as
+    const chat = deps.db.prepare('SELECT id, title FROM chat WHERE id = ?').get(chatId) as
       | { id: string; title: string | null }
       | undefined;
-    if (!thread) return res.status(404).json({ error: 'no such thread' });
+    if (!chat) return res.status(404).json({ error: 'no such chat' });
 
     // Resolve each referenced attachment id to bytes + mediaType now, while a
     // plain 400 (not an SSE error mid-stream) is still possible — mirrors
@@ -271,10 +271,10 @@ export function buildApp(deps: GatewayDeps) {
 
     const principal = (req as AuthedRequest).principal;
     const userParts: MessagePart[] = [...imageParts, ...(text.trim() ? [{ type: 'text' as const, text }] : [])];
-    persistUserMessage(deps.db, threadId, userParts, principal?.email ?? null);
+    persistUserMessage(deps.db, chatId, userParts, principal?.email ?? null);
     deps.db
-      .prepare("UPDATE thread SET updated_at = datetime('now'), created_by = COALESCE(created_by, ?) WHERE id = ?")
-      .run(principal?.email ?? null, threadId);
+      .prepare("UPDATE chat SET updated_at = datetime('now'), created_by = COALESCE(created_by, ?) WHERE id = ?")
+      .run(principal?.email ?? null, chatId);
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -286,16 +286,16 @@ export function buildApp(deps: GatewayDeps) {
     // Live-persist rides inside the recorder now (transcript.ts) — upserts
     // the assistant row as events fold so a hard process kill mid-turn
     // can't erase the transcript. Shared with resume + cron turns.
-    const recorder = createTranscriptRecorder({ db: deps.db, threadId });
+    const recorder = createTranscriptRecorder({ db: deps.db, chatId });
     const send = (e: TurnEvent) => {
       recorder.onEvent(e);
       res.write(encodeSse({ event: e.type, data: e }));
       if (e.type === 'turn-start') {
-        // Nudge OTHER tabs (this thread open elsewhere, or reloaded
+        // Nudge OTHER tabs (this chat open elsewhere, or reloaded
         // mid-turn) to re-fetch and notice `live: true` — the sending tab
         // ignores this while its own stream is up. Paired with the same
         // broadcast in the finally below when the turn is over.
-        broadcast('thread-activity', { threadId });
+        broadcast('chat-activity', { chatId });
       }
     };
 
@@ -310,7 +310,7 @@ export function buildApp(deps: GatewayDeps) {
       try {
         lessons = await recallLessons(deps.episodic, deps.embedder, text, 4, deps.db);
       } catch (err) {
-        console.warn(`chat: lesson recall failed for thread ${threadId}: ${(err as Error).message}`);
+        console.warn(`chat: lesson recall failed for chat ${chatId}: ${(err as Error).message}`);
       }
     }
 
@@ -325,7 +325,7 @@ export function buildApp(deps: GatewayDeps) {
       try {
         profileGapText = profileGap(deps.db, deps.memory);
       } catch (err) {
-        console.warn(`chat: profile completeness check failed for thread ${threadId}: ${(err as Error).message}`);
+        console.warn(`chat: profile completeness check failed for chat ${chatId}: ${(err as Error).message}`);
       }
     }
 
@@ -335,10 +335,10 @@ export function buildApp(deps: GatewayDeps) {
     // orphans the message just the same), removed on ANY graceful end in the
     // finally below. Only a hard process death leaves it for boot to find.
     const DATA_DIR = deps.dataDir ?? '/srv/benloe/data/cabinet';
-    const turnMarker = markTurnInFlight(DATA_DIR, threadId, text);
+    const turnMarker = markTurnInFlight(DATA_DIR, chatId, text);
     try {
       await deps.runtime.run({
-        threadId, prompt: text, kind: 'user', onEvent: send,
+        chatId, prompt: text, kind: 'user', onEvent: send,
         images: images.length ? images : undefined,
         promptInput: {
           // Tell Cabinet who it's talking to (Ben vs an agent like Benji).
@@ -354,12 +354,12 @@ export function buildApp(deps: GatewayDeps) {
       // Compare-before-clear: a turn that queued behind this one has already
       // overwritten the breadcrumb with its own — don't strip its protection.
       clearTurnInFlightIf(DATA_DIR, turnMarker);
-      recorder.persist(deps.db, threadId);
-      broadcast('thread-activity', { threadId });
-      // Auto-name a still-"untitled" thread from its opening exchange. Best
+      recorder.persist(deps.db, chatId);
+      broadcast('chat-activity', { chatId });
+      // Auto-name a still-"untitled" chat from its opening exchange. Best
       // effort — a titling failure must never surface to the chat turn — and
       // only on the first turn, so an established title is never overwritten.
-      if (!thread.title?.trim() && recorder.parts.length > 0) {
+      if (!chat.title?.trim() && recorder.parts.length > 0) {
         const assistantText = recorder.parts
           .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
           .map((p) => p.text)
@@ -368,9 +368,9 @@ export function buildApp(deps: GatewayDeps) {
         try {
           const title = await deps.runtime.titleFor(text, assistantText);
           if (title) {
-            const upd = deps.db.prepare('UPDATE thread SET title = ? WHERE id = ? AND (title IS NULL OR title = ?)');
-            const r = upd.run(title, threadId, '');
-            if (r.changes > 0) broadcast('thread-titled', { id: threadId, title });
+            const upd = deps.db.prepare('UPDATE chat SET title = ? WHERE id = ? AND (title IS NULL OR title = ?)');
+            const r = upd.run(title, chatId, '');
+            if (r.changes > 0) broadcast('chat-titled', { id: chatId, title });
           }
         } catch { /* leave it untitled; never break the turn */ }
       }
@@ -379,7 +379,7 @@ export function buildApp(deps: GatewayDeps) {
   });
 
   app.post('/api/interrupt', (req, res) => {
-    res.json({ interrupted: deps.runtime.interrupt(req.body?.threadId) });
+    res.json({ interrupted: deps.runtime.interrupt(req.body?.chatId) });
   });
 
   // ---------- admin: manual job trigger (mentorship session 2) ----------
@@ -387,8 +387,8 @@ export function buildApp(deps: GatewayDeps) {
   // Scheduler.runNow) — proves the scheduler→job wiring, not a hand-run copy
   // of the job's logic. Async: weekly-review runs on the opus/xhigh route and
   // can take minutes, so this returns 202 immediately rather than blocking the
-  // HTTP request; poll GET /api/threads/:id/messages on the job's system
-  // thread (e.g. sys-weekly) to see the persisted transcript land.
+  // HTTP request; poll GET /api/chats/:id/messages on the job's system
+  // chat (e.g. sys-weekly) to see the persisted transcript land.
   app.post('/api/admin/jobs/:name/run', (req, res) => {
     const principal = (req as AuthedRequest).principal;
     if (!principal || !(principal.isOwner || principal.role === 'agent')) {

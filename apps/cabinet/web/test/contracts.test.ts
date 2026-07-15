@@ -48,10 +48,10 @@ describe('mock CabinetApi — contract validity', () => {
     expect(r.results.every((x) => typeof x.score === 'number' && x.provenance.length > 0)).toBe(true);
   });
 
-  it('threads() + messages() are shaped for the archive', async () => {
-    const { threads } = await mockApi.threads();
-    expect(threads[0]?.title).toBeTruthy();
-    const { messages } = await mockApi.messages(threads[0]!.id);
+  it('chats() + messages() are shaped for the archive', async () => {
+    const { chats } = await mockApi.chats();
+    expect(chats[0]?.title).toBeTruthy();
+    const { messages } = await mockApi.messages(chats[0]!.id);
     expect(messages.every((m) => m.parts.length > 0)).toBe(true);
   });
 

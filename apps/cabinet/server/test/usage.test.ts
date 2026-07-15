@@ -74,7 +74,7 @@ describe('GET /api/usage', () => {
     await startApp();
     cabinet.db
       .prepare(
-        `INSERT INTO token_usage (model, input_tokens, output_tokens, cache_read, cache_write, cost_usd, session_kind, thread_id)
+        `INSERT INTO token_usage (model, input_tokens, output_tokens, cache_read, cache_write, cost_usd, session_kind, chat_id)
          VALUES ('claude-sonnet-5', 100, 50, 9000, 300, 0.01, 'user', 't1')`,
       )
       .run();
@@ -93,28 +93,28 @@ describe('GET /api/usage/rolling', () => {
     // inside 5h
     cabinet.db
       .prepare(
-        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, thread_id)
+        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, chat_id)
          VALUES (datetime('now','-1 hour'), 1000, 500, 20000, 200, 'user', 't1')`,
       )
       .run();
     // inside 24h but outside 5h
     cabinet.db
       .prepare(
-        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, thread_id)
+        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, chat_id)
          VALUES (datetime('now','-10 hours'), 2000, 1000, 0, 400, 'user', 't1')`,
       )
       .run();
     // inside 7d but outside 24h
     cabinet.db
       .prepare(
-        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, thread_id)
+        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, chat_id)
          VALUES (datetime('now','-3 days'), 3000, 1500, 0, 0, 'user', 't1')`,
       )
       .run();
     // outside all windows
     cabinet.db
       .prepare(
-        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, thread_id)
+        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, chat_id)
          VALUES (datetime('now','-30 days'), 9999, 9999, 0, 0, 'user', 't1')`,
       )
       .run();
@@ -140,7 +140,7 @@ describe('GET /api/usage/rolling', () => {
     await startApp();
     cabinet.db
       .prepare(
-        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, thread_id)
+        `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, chat_id)
          VALUES (datetime('now'), 100, 50, 0, 0, 'user', 't1')`,
       )
       .run();

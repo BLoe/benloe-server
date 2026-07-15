@@ -321,7 +321,7 @@ describe('jobs', () => {
     upsertTask(cabinet.db, { title: 'due thing', due_on: '2000-01-01' });
     const nudgingRuntime = {
       run: async (req: { onEvent: (e: unknown) => void }) => {
-        req.onEvent({ type: 'turn-start', messageId: 'm1', threadId: 'sys-heartbeat', model: 'claude-haiku-4-5' });
+        req.onEvent({ type: 'turn-start', messageId: 'm1', chatId: 'sys-heartbeat', model: 'claude-haiku-4-5' });
         req.onEvent({ type: 'text-delta', delta: 'Heads up: the due thing is overdue.' });
         req.onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
         return { stopReason: 'success', sessionId: 's1' };
@@ -336,7 +336,7 @@ describe('jobs', () => {
     expect(notices).toHaveLength(1);
     expect((notices[0]!.data as { text: string }).text).toBe('Heads up: the due thing is overdue.');
 
-    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-heartbeat' ORDER BY created_at").all() as {
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE chat_id = 'sys-heartbeat' ORDER BY created_at").all() as {
       role: string;
       parts: string;
     }[];
@@ -359,7 +359,7 @@ describe('jobs', () => {
     await jobs.find((j) => j.name === 'heartbeat')!.run();
 
     expect(events.filter((e) => e.event === 'notice')).toHaveLength(0);
-    const rows = cabinet.db.prepare("SELECT role FROM message WHERE thread_id = 'sys-heartbeat'").all();
+    const rows = cabinet.db.prepare("SELECT role FROM message WHERE chat_id = 'sys-heartbeat'").all();
     expect(rows).toHaveLength(2); // user prompt + assistant "HEARTBEAT_OK" — persisted even when there's nothing to surface
   });
 
@@ -384,7 +384,7 @@ describe('jobs', () => {
     function seedTokens(input: number, output: number, cacheWrite: number, cacheRead = 0) {
       cabinet.db
         .prepare(
-          `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, thread_id)
+          `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, chat_id)
            VALUES (datetime('now'), ?, ?, ?, ?, 'user', 't1')`,
         )
         .run(input, output, cacheRead, cacheWrite);
@@ -452,7 +452,7 @@ describe('jobs', () => {
   it('weekly-review persists a real transcript (prompt + folded assistant reply) on sys-weekly — not onEvent: () => {} discarding it', async () => {
     const scriptedRuntime = {
       run: async (req: { onEvent: (e: unknown) => void }) => {
-        req.onEvent({ type: 'turn-start', messageId: 'm1', threadId: 'sys-weekly', model: 'claude-opus-4-8' });
+        req.onEvent({ type: 'turn-start', messageId: 'm1', chatId: 'sys-weekly', model: 'claude-opus-4-8' });
         req.onEvent({ type: 'text-delta', delta: 'Reviewed the week: no domain has real data yet.' });
         req.onEvent({ type: 'tool-start', toolId: 't1', name: 'mcp__cabinet__query_db', input: { sql: 'select 1' } });
         req.onEvent({ type: 'tool-end', toolId: 't1', output: '[]', isError: false });
@@ -463,7 +463,7 @@ describe('jobs', () => {
     const jobs = buildJobs({ ...deps, runtime: scriptedRuntime as never });
     await jobs.find((j) => j.name === 'weekly-review')!.run();
 
-    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-weekly' ORDER BY created_at").all() as {
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE chat_id = 'sys-weekly' ORDER BY created_at").all() as {
       role: string;
       parts: string;
     }[];
@@ -478,7 +478,7 @@ describe('jobs', () => {
   it('morning-briefing persists a real transcript (prompt + folded narrative/widget) on sys-briefing — mentorship: Today surface durability, this was the untested gap the audit found', async () => {
     const scriptedRuntime = {
       run: async (req: { onEvent: (e: unknown) => void }) => {
-        req.onEvent({ type: 'turn-start', messageId: 'm1', threadId: 'sys-briefing', model: 'claude-haiku-4-5' });
+        req.onEvent({ type: 'turn-start', messageId: 'm1', chatId: 'sys-briefing', model: 'claude-haiku-4-5' });
         req.onEvent({ type: 'widget', widgetType: 'briefing', data: { sections: [] } });
         req.onEvent({ type: 'text-delta', delta: 'Quiet start — nothing urgent, protein target is on track.' });
         req.onEvent({ type: 'turn-end', usage: { output_tokens: 12 }, sessionId: 's1', stopReason: 'success' });
@@ -488,7 +488,7 @@ describe('jobs', () => {
     const jobs = buildJobs({ ...deps, runtime: scriptedRuntime as never });
     await jobs.find((j) => j.name === 'morning-briefing')!.run();
 
-    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-briefing' ORDER BY created_at").all() as {
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE chat_id = 'sys-briefing' ORDER BY created_at").all() as {
       role: string;
       parts: string;
     }[];
@@ -507,7 +507,7 @@ describe('jobs', () => {
     // no agent turn — evening-checkin never calls runtime.run()
     expect(runtimeCalls).toEqual([]);
 
-    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-checkin' ORDER BY created_at").all() as {
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE chat_id = 'sys-checkin' ORDER BY created_at").all() as {
       role: string;
       parts: string;
     }[];
@@ -531,7 +531,7 @@ describe('jobs', () => {
     expect(events).toHaveLength(1);
     expect(events[0]!.event).toBe('widget');
     const persisted = JSON.parse(
-      (cabinet.db.prepare("SELECT parts FROM message WHERE thread_id = 'sys-checkin'").get() as { parts: string }).parts,
+      (cabinet.db.prepare("SELECT parts FROM message WHERE chat_id = 'sys-checkin'").get() as { parts: string }).parts,
     )[0].data;
     expect(events[0]!.data).toEqual(persisted); // one payload shape, not two drifting copies
   });
@@ -539,7 +539,7 @@ describe('jobs', () => {
   it('weekly-review still persists the partial transcript if the turn throws mid-run', async () => {
     const throwingRuntime = {
       run: async (req: { onEvent: (e: unknown) => void }) => {
-        req.onEvent({ type: 'turn-start', messageId: 'm1', threadId: 'sys-weekly', model: 'claude-opus-4-8' });
+        req.onEvent({ type: 'turn-start', messageId: 'm1', chatId: 'sys-weekly', model: 'claude-opus-4-8' });
         req.onEvent({ type: 'text-delta', delta: 'Partial output before the SDK crashed.' });
         throw new Error('sdk crashed mid-turn');
       },
@@ -547,7 +547,7 @@ describe('jobs', () => {
     const jobs = buildJobs({ ...deps, runtime: throwingRuntime as never });
     await expect(jobs.find((j) => j.name === 'weekly-review')!.run()).rejects.toThrow('sdk crashed mid-turn');
 
-    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE thread_id = 'sys-weekly' ORDER BY created_at").all() as {
+    const rows = cabinet.db.prepare("SELECT role, parts FROM message WHERE chat_id = 'sys-weekly' ORDER BY created_at").all() as {
       role: string;
       parts: string;
     }[];
@@ -603,18 +603,18 @@ describe('jobs', () => {
   });
 
   describe('maintenance: conversation indexing (mentorship: Phase 3 item 3 keystone)', () => {
-    const addThread = (kind: string) => {
+    const addChat = (kind: string) => {
       const id = kind === 'user' ? randomUUID() : `sys-${kind}-${randomUUID()}`;
-      cabinet.db.prepare('INSERT INTO thread (id, title, kind) VALUES (?,?,?)').run(id, null, kind);
+      cabinet.db.prepare('INSERT INTO chat (id, title, kind) VALUES (?,?,?)').run(id, null, kind);
       return id;
     };
-    const addMsg = (threadId: string, role: string, text: string) =>
+    const addMsg = (chatId: string, role: string, text: string) =>
       cabinet.db
-        .prepare('INSERT INTO message (id, thread_id, role, parts) VALUES (?,?,?,?)')
-        .run(randomUUID(), threadId, role, JSON.stringify([{ type: 'text', text }]));
+        .prepare('INSERT INTO message (id, chat_id, role, parts) VALUES (?,?,?,?)')
+        .run(randomUUID(), chatId, role, JSON.stringify([{ type: 'text', text }]));
 
-    it('indexes a real user-thread message: embedded flips to 1, backfilled increments, and it lands in the episodic chunk store as kind=conversation, findable via searchChunks', async () => {
-      const t = addThread('user');
+    it('indexes a real user-chat message: embedded flips to 1, backfilled increments, and it lands in the episodic chunk store as kind=conversation, findable via searchChunks', async () => {
+      const t = addChat('user');
       addMsg(t, 'user', 'Ben asked whether the catastrophic-shrink threshold should be forty percent.');
 
       const res = await runMaintenance(deps);
@@ -627,8 +627,8 @@ describe('jobs', () => {
       expect(hits.some((h) => h.text.includes('catastrophic-shrink threshold'))).toBe(true);
     }, MODEL_TIMEOUT);
 
-    it('excludes sys-* thread messages (heartbeat/briefing/checkin/weekly narration, not conversational memory) — flagged embedded=1 without being indexed', async () => {
-      const t = addThread('heartbeat');
+    it('excludes sys-* chat messages (heartbeat/briefing/checkin/weekly narration, not conversational memory) — flagged embedded=1 without being indexed', async () => {
+      const t = addChat('heartbeat');
       addMsg(t, 'assistant', 'HEARTBEAT_OK — this is exactly the kind of audit narration that must not pollute recall.');
 
       const res = await runMaintenance(deps);
@@ -637,8 +637,8 @@ describe('jobs', () => {
       expect(row.embedded).toBe(0); // never touched — excluded by the WHERE clause itself, not skip-but-flag
     }, MODEL_TIMEOUT);
 
-    it('excludes role=system messages within an otherwise-eligible user thread', async () => {
-      const t = addThread('user');
+    it('excludes role=system messages within an otherwise-eligible user chat', async () => {
+      const t = addChat('user');
       addMsg(t, 'system', 'An internal system-role message that should never be indexed.');
 
       const res = await runMaintenance(deps);
@@ -646,7 +646,7 @@ describe('jobs', () => {
     }, MODEL_TIMEOUT);
 
     it('skip-but-flag: a message whose extracted text is under the 15-char floor is flagged embedded=1 without being indexed, and is never reselected', async () => {
-      const t = addThread('user');
+      const t = addChat('user');
       addMsg(t, 'user', 'ok'); // 2 chars, well under the floor
 
       const res = await runMaintenance(deps);
@@ -659,7 +659,7 @@ describe('jobs', () => {
     }, MODEL_TIMEOUT);
 
     it('a message embed failure is logged with the row id, leaves embedded=0, and stops that table\'s batch — same discipline as journal_entry\'s', async () => {
-      const t = addThread('user');
+      const t = addChat('user');
       addMsg(t, 'user', 'a real message long enough to clear the fifteen character floor easily');
       const brokenEmbedder = { embed: async () => { throw new Error('embedding process exited (code 1)'); } } as unknown as Embedder;
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -675,7 +675,7 @@ describe('jobs', () => {
     }, MODEL_TIMEOUT);
 
     it('a >50-row backlog drains over multiple nightly runs rather than being silently capped forever', async () => {
-      const t = addThread('user');
+      const t = addChat('user');
       for (let i = 0; i < 55; i++) addMsg(t, 'user', `distinct real message number ${i} long enough to clear the floor`);
 
       const first = await runMaintenance(deps); // the existing 50-row LIMIT per table per run
@@ -689,12 +689,12 @@ describe('jobs', () => {
       expect(pendingAfterSecond).toBe(0); // fully drained, not stuck
     }, MODEL_TIMEOUT);
 
-    it('pendingBackfillCount never counts a permanently-excluded sys-* thread message as "pending" — it would sit at embedded=0 forever and falsely inflate the number', () => {
-      const sys = addThread('heartbeat');
+    it('pendingBackfillCount never counts a permanently-excluded sys-* chat message as "pending" — it would sit at embedded=0 forever and falsely inflate the number', () => {
+      const sys = addChat('heartbeat');
       addMsg(sys, 'assistant', 'HEARTBEAT_OK, permanently excluded, permanently embedded=0.');
       expect(pendingBackfillCount(cabinet.db)).toBe(0);
 
-      const user = addThread('user');
+      const user = addChat('user');
       addMsg(user, 'user', 'a real message that IS genuinely pending backfill');
       expect(pendingBackfillCount(cabinet.db)).toBe(1); // only the real one counts
     });

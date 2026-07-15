@@ -67,7 +67,7 @@ export function Today({ onNavigate }: { onNavigate?: (surface: 'ops') => void })
     api
       .command(action.intent)
       .catch(() => {
-        /* command failures surface in the thread, not here */
+        /* command failures surface in the chat, not here */
       })
       .finally(() => setFiring(null));
   }, []);

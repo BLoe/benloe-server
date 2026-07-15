@@ -134,7 +134,7 @@ Each domain below is specified to implementable detail: the data captured, the t
    ┌──────────────────────────────────────────────────────────────────────┐
    │                     GATEWAY  (Node/TS, :8787)                          │
    │  - HTTP+SSE server, single-user auth (passkey/session cookie)         │
-   │  - Session & conversation manager (per-thread JSONL transcripts)      │
+   │  - Session & conversation manager (per-chat JSONL transcripts)      │
    │  - Request queue (serializes turns; prevents concurrent Max calls)    │
    │  - Autonomy policy engine + approval queue                            │
    │  - Scheduler: heartbeat (30m) + cron (briefings/reviews)             │
@@ -166,7 +166,7 @@ Each domain below is specified to implementable detail: the data captured, the t
 
 The gateway is the single control plane — OpenClaw's "single source of truth." It is a long-lived Node/TypeScript process managed by systemd. Responsibilities:
 
-1. **Ingress:** an HTTP server exposing `POST /api/chat` (SSE streaming), `GET /api/threads`, `POST /api/approvals/:id`, plus a static file server for the PWA. Binds to `127.0.0.1:8787`; nginx terminates TLS and proxies.
+1. **Ingress:** an HTTP server exposing `POST /api/chat` (SSE streaming), `GET /api/chats`, `POST /api/approvals/:id`, plus a static file server for the PWA. Binds to `127.0.0.1:8787`; nginx terminates TLS and proxies.
 2. **Auth:** a single-user session cookie issued after a passkey (WebAuthn) or password login. No third-party OAuth login surface.
 3. **Session/queue management:** all agent turns — whether user-initiated, heartbeat, or cron — go through one serialized queue. **This is critical for a Max subscription:** concurrent Claude calls burn the weekly limit faster and risk rate-limit 429s. One turn at a time; scheduled turns defer while a user turn is active (exactly OpenClaw's "heartbeat skips when busy" pattern).
 4. **Autonomy policy engine:** intercepts tool calls flagged high-consequence and routes them to the approval queue instead of executing (see §3.7).
@@ -184,9 +184,9 @@ The runtime wraps the **Claude Agent SDK** (TypeScript, `@anthropic-ai/claude-ag
 
 ### 3.4 Session & conversation management
 
-- Each conversation thread is a JSONL transcript on disk (`threads/<id>.jsonl`), one row per message — human-inspectable, appendable, crash-safe.
-- The "main" session is the ongoing relationship thread; heartbeat and cron runs use **isolated lightweight sessions** (fresh session, minimal bootstrap context) to keep per-run token cost at ~2–5K instead of replaying the full history — directly modeled on OpenClaw's `isolatedSession: true` + `lightContext: true`.
-- Server-side **compaction** (Agent SDK beta, `compact-2026-01-12`) summarizes the main thread when it approaches the context window; durable facts are flushed to memory *before* compaction via the context-editing warning hook.
+- Each conversation chat is a JSONL transcript on disk (`chats/<id>.jsonl`), one row per message — human-inspectable, appendable, crash-safe.
+- The "main" session is the ongoing relationship chat; heartbeat and cron runs use **isolated lightweight sessions** (fresh session, minimal bootstrap context) to keep per-run token cost at ~2–5K instead of replaying the full history — directly modeled on OpenClaw's `isolatedSession: true` + `lightContext: true`.
+- Server-side **compaction** (Agent SDK beta, `compact-2026-01-12`) summarizes the main chat when it approaches the context window; durable facts are flushed to memory *before* compaction via the context-editing warning hook.
 
 ### 3.5 The three-layer memory system
 
@@ -484,7 +484,7 @@ CREATE TABLE token_usage (
 CREATE TABLE chunk (
   id INTEGER PRIMARY KEY,
   kind TEXT CHECK(kind IN ('conversation','journal')),
-  source_ref TEXT,           -- thread id + message range, or journal_entry id
+  source_ref TEXT,           -- chat id + message range, or journal_entry id
   local_day TEXT, text TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -539,7 +539,7 @@ memory/
 
 ### 5.3 Layer 3 — Episodic memory pipeline
 
-**Chunking.** After each conversation thread goes idle (>30 min) or is compacted, a background job chunks new messages into ~512-token windows with ~64-token overlap, tagging each with thread id and local day. Journal entries are chunked at entry granularity.
+**Chunking.** After each conversation chat goes idle (>30 min) or is compacted, a background job chunks new messages into ~512-token windows with ~64-token overlap, tagging each with chat id and local day. Journal entries are chunked at entry granularity.
 
 **Embedding model choice: `bge-small-en-v1.5` (BAAI), 384-dim, ~130MB, CPU-only.** Rationale from the research:
 - Per BAAI/Hugging Face, `bge-small-en-v1.5` is 384-dim, **33.36M params** (model.safetensors ~133MB; ONNX fp32 ~127MB). This is markedly lighter than the ~109M-param `bge-base-en-v1.5`; the small model runs comfortably on CPU on a small VPS with no GPU and low RAM. (The 109M `bge-base` also benchmarks fine on CPU if we later want more headroom.)
@@ -599,7 +599,7 @@ Dynamic values (datetime, "user name") are kept OUT of the cached prefix and inj
 ### 6.3 Prompt caching strategy
 
 - Mark cache breakpoints on the last stable block (end of layer 3) with 1h TTL. Per Anthropic's official pricing, cache reads cost 0.1× the base input rate (5-minute cache writes 1.25×, 1-hour cache writes 2×) — e.g., Sonnet 4.6 cache reads run $0.30 vs. $3/MTok base. For an always-on agent re-sending a large stable prefix every turn this is the single highest-leverage cost lever (production workloads report 60–90% input-cost reduction).
-- The Agent SDK manages conversation-layer caching automatically for multi-turn threads.
+- The Agent SDK manages conversation-layer caching automatically for multi-turn chats.
 - Heartbeat isolated sessions deliberately carry a *minimal* prefix (`IDENTITY.md` + `HEARTBEAT.md` only) so each 30-min wake is cheap.
 - Never interpolate per-turn state into the cached prefix (§6.2).
 
@@ -621,7 +621,7 @@ This profile sits well within Max 20x weekly limits with headroom, *because* of 
 - **Custom tools as in-process MCP servers** via the SDK — no subprocess overhead.
 - **Hooks:** `PreToolUse` implements the autonomy policy engine (block/redirect Tier-1/2 to approval queue); `PostToolUse` writes `action_audit`; `SessionStart` loads memory layers; context-editing warning hook flushes durable facts to memory before compaction.
 - **Subagents** for parallelizable read-only work (e.g., weekly review spins up domain-scoped analysis subagents), following the Opus-orchestrator / Sonnet-subagent mixed-model pattern.
-- **Compaction** (server-side beta) enabled on the main thread; memory tool + context editing paired so nothing durable is lost when tool results are cleared. (Anthropic's internal benchmarks show the memory tool + context editing pairing delivered 84% token savings and a 39% performance improvement on a 100-turn task — the pattern this design leans on.)
+- **Compaction** (server-side beta) enabled on the main chat; memory tool + context editing paired so nothing durable is lost when tool results are cleared. (Anthropic's internal benchmarks show the memory tool + context editing pairing delivered 84% token savings and a 39% performance improvement on a 100-turn task — the pattern this design leans on.)
 
 ---
 
@@ -702,7 +702,7 @@ Two mechanisms, straight from OpenClaw's model:
 
 **Why not the off-the-shelf UIs:** LibreChat and Open WebUI are excellent multi-provider ChatGPT clones, but they're built around chatting with a *model/provider*, expect their own backends (LibreChat requires MongoDB + Meilisearch, and runs three containers; Open WebUI runs a Python backend), and don't natively speak to our custom gateway/agent runtime or render our domain widgets (macro rings, weight charts, approval cards). Bending them to our architecture is more work than a focused custom build.
 
-**Why assistant-ui + Vercel AI SDK:** `assistant-ui` provides production-grade chat primitives (threads, streaming, markdown, attachments, persistence) as React components; the Vercel AI SDK provides the streaming transport (`useChat`, UI message stream protocol over SSE) and — critically — **generative UI**, letting the agent emit rich custom components (our widgets) inline in the conversation. `@assistant-ui/react-ai-sdk` wraps the AI SDK's `useChat` hook as an assistant-ui runtime; our gateway returns a UI message stream (`x-vercel-ai-ui-message-stream: v1`) so we control the backend entirely while getting a polished streaming UI. This is the lowest-friction path to "feels like a native app with rich domain cards."
+**Why assistant-ui + Vercel AI SDK:** `assistant-ui` provides production-grade chat primitives (chats, streaming, markdown, attachments, persistence) as React components; the Vercel AI SDK provides the streaming transport (`useChat`, UI message stream protocol over SSE) and — critically — **generative UI**, letting the agent emit rich custom components (our widgets) inline in the conversation. `@assistant-ui/react-ai-sdk` wraps the AI SDK's `useChat` hook as an assistant-ui runtime; our gateway returns a UI message stream (`x-vercel-ai-ui-message-stream: v1`) so we control the backend entirely while getting a polished streaming UI. This is the lowest-friction path to "feels like a native app with rich domain cards."
 
 ### 9.2 PWA
 
@@ -760,7 +760,7 @@ CPU: embedding of a day's chunks is a few seconds on CPU; agent turns are networ
   embed/              # Python embedding sidecar
   memory/             # curated markdown (git repo)
   data/
-    cabinet.db  episodic.db  threads/*.jsonl
+    cabinet.db  episodic.db  chats/*.jsonl
     documents/  photos/   backups/
   config/
     .env              # secrets (0600): CLAUDE_CODE_OAUTH_TOKEN, session secret,
@@ -785,7 +785,7 @@ Add a server block for `cabinet.benleo.com` proxying to `127.0.0.1:8787`, with S
 ### 10.5 SSL, backups, monitoring
 
 - **SSL:** certbot/Let's Encrypt, auto-renew (already in place for benleo.com).
-- **Backups:** nightly (3am maintenance job) `sqlite3 .backup` of both DBs + tarball of `memory/`, `documents/`, `threads/` → encrypted (age/gpg) → off-box (DO Spaces or a second location). Retain 30 daily + 12 monthly. `memory/` is also a git repo pushed to a private remote.
+- **Backups:** nightly (3am maintenance job) `sqlite3 .backup` of both DBs + tarball of `memory/`, `documents/`, `chats/` → encrypted (age/gpg) → off-box (DO Spaces or a second location). Retain 30 daily + 12 monthly. `memory/` is also a git repo pushed to a private remote.
 - **Monitoring:** a `/healthz` endpoint (gateway up, DB writable, embed sidecar reachable, OAuth token valid); a lightweight uptime check (UptimeRobot or a cron curl that alerts on failure); token-usage dashboard in the UI; journald for logs. Alert Ben in-app if the OAuth token is within 14 days of its 1-year expiry.
 
 ---

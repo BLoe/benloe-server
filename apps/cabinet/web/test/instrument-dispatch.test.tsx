@@ -20,7 +20,7 @@ describe('Instrument dispatcher', () => {
     expect(screen.getByText(spec.label)).toBeTruthy();
   });
 
-  it('threads the corner tag through to the card', () => {
+  it('chats the corner tag through to the card', () => {
     render(<Instrument spec={{ kind: 'dial', label: 'X', value: 1, max: 2, tag: 'on track' }} />);
     expect(screen.getByText('on track')).toBeTruthy();
   });

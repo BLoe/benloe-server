@@ -15,7 +15,7 @@ import './brain.css';
 const SOURCE_LABEL: Record<RecallSource, string> = {
   fact: 'Fact',
   episodic: 'Episodic',
-  thread: 'Thread',
+  chat: 'Chat',
   lesson: 'Lesson',
   document: 'Document',
 };
@@ -30,7 +30,7 @@ function editedLine(iso: string | null): string {
 
 /**
  * BRAIN — what Cabinet knows about Ben. Two halves: a unified recall search
- * across every store (facts, episodic, threads, lessons, documents) with the
+ * across every store (facts, episodic, chats, lessons, documents) with the
  * provenance and score on the record; and the standing memory — the authored
  * files Ben signs, plus the lessons Cabinet has drawn on its own.
  */
@@ -129,7 +129,7 @@ function Recall() {
         )
       ) : (
         <p className="brain__hint voice">
-          Search facts, past days, threads, lessons, and documents in one pass.
+          Search facts, past days, chats, lessons, and documents in one pass.
         </p>
       )}
     </section>

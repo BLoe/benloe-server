@@ -32,19 +32,19 @@ const ENTRIES: OpsEntry[] = [
     tier: 3,
     kind: 'cron',
     result: 'integrity ok',
-    threadId: null,
+    chatId: null,
     reversible: false,
   },
   {
     id: 'o2',
     at: '2026-07-08T02:14:00-04:00',
     tool: 'Write',
-    action: 'title thread',
-    reason: 'auto-title untitled thread',
+    action: 'title chat',
+    reason: 'auto-title untitled chat',
     tier: 4,
     kind: 'heartbeat',
     result: '"Cabinet Systems Status Report"',
-    threadId: 't-5dd8',
+    chatId: 't-5dd8',
     reversible: true,
     diff: 'title: null → "Cabinet Systems Status Report"',
   },
@@ -72,8 +72,8 @@ describe('Ops surface', () => {
     await waitFor(() => expect(opsMock).toHaveBeenCalledWith(undefined));
 
     expect(await screen.findByText('snapshot databases')).toBeTruthy();
-    expect(screen.getByText('title thread')).toBeTruthy();
-    expect(screen.getByText('auto-title untitled thread')).toBeTruthy();
+    expect(screen.getByText('title chat')).toBeTruthy();
+    expect(screen.getByText('auto-title untitled chat')).toBeTruthy();
     // diff shown inline
     expect(screen.getByText(/title: null →/)).toBeTruthy();
     // kind + tier chips
@@ -85,12 +85,12 @@ describe('Ops surface', () => {
     const rows = document.querySelectorAll('.ops-row');
     expect(rows.length).toBe(2);
     expect(rows[0]?.textContent).toContain('snapshot databases');
-    expect(rows[1]?.textContent).toContain('title thread');
+    expect(rows[1]?.textContent).toContain('title chat');
   });
 
   it('shows a Revert only on reversible rows', async () => {
     render(<Ops />);
-    await screen.findByText('title thread');
+    await screen.findByText('title chat');
     const reverts = screen.getAllByRole('button', { name: 'Revert' });
     expect(reverts.length).toBe(1);
   });
@@ -105,13 +105,13 @@ describe('Ops surface', () => {
     await waitFor(() => expect(opsMock).toHaveBeenCalledWith({ kind: 'heartbeat' }));
     // cron row is gone after refetch
     await waitFor(() => expect(screen.queryByText('snapshot databases')).toBeNull());
-    expect(screen.getByText('title thread')).toBeTruthy();
+    expect(screen.getByText('title chat')).toBeTruthy();
   });
 
   it('clicking Revert calls api.revertOp(id) and marks the row reverted', async () => {
     const user = userEvent.setup();
     render(<Ops />);
-    await screen.findByText('title thread');
+    await screen.findByText('title chat');
 
     await user.click(screen.getByRole('button', { name: 'Revert' }));
 

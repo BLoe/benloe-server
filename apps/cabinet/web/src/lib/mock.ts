@@ -1,5 +1,5 @@
 import type {
-  CabinetApi, TodayView, DomainId, DomainView, OpsFeed, MemoryView, RecallResponse, HealthInfo, ThreadSummary, ChatMessage, InstrumentSpec,
+  CabinetApi, TodayView, DomainId, DomainView, OpsFeed, MemoryView, RecallResponse, HealthInfo, ChatSummary, ChatMessage, InstrumentSpec,
   UsageView, UsageRollingView,
 } from './contracts.js';
 
@@ -29,7 +29,7 @@ const today: TodayView = {
       actions: [{ label: 'Review spend', intent: 'review dining spend' }, { label: 'Let it ride', intent: 'raise dining budget' }] },
   ],
   vitals,
-  overnight: { count: 3, summary: 'backed up your data, indexed 2 journal entries, titled a thread' },
+  overnight: { count: 3, summary: 'backed up your data, indexed 2 journal entries, titled a chat' },
   sweptAt: '2026-07-08T06:06:00-04:00',
   briefing: {
     at: '2026-07-08T10:32:00.000Z',
@@ -95,9 +95,9 @@ const DOMAIN_DATA: Record<DomainId, DomainView> = {
 
 const ops: OpsFeed = {
   entries: [
-    { id: 'o1', at: '2026-07-08T05:41:00-04:00', tool: 'backup', action: 'snapshot databases', reason: 'nightly maintenance', tier: 3, kind: 'cron', result: 'cabinet.db + episodic.db · integrity ok', threadId: null, reversible: false },
-    { id: 'o2', at: '2026-07-08T05:41:20-04:00', tool: 'mcp__cabinet__search_episodic', action: 'index 2 journal entries', reason: 'embedding backfill', tier: 4, kind: 'cron', result: '2 indexed', threadId: null, reversible: false },
-    { id: 'o3', at: '2026-07-08T02:14:00-04:00', tool: 'Write', action: 'title thread', reason: 'auto-title untitled thread', tier: 4, kind: 'heartbeat', result: '"Cabinet Systems Status Report"', threadId: 't-5dd8', reversible: true, diff: 'title: null → "Cabinet Systems Status Report"' },
+    { id: 'o1', at: '2026-07-08T05:41:00-04:00', tool: 'backup', action: 'snapshot databases', reason: 'nightly maintenance', tier: 3, kind: 'cron', result: 'cabinet.db + episodic.db · integrity ok', chatId: null, reversible: false },
+    { id: 'o2', at: '2026-07-08T05:41:20-04:00', tool: 'mcp__cabinet__search_episodic', action: 'index 2 journal entries', reason: 'embedding backfill', tier: 4, kind: 'cron', result: '2 indexed', chatId: null, reversible: false },
+    { id: 'o3', at: '2026-07-08T02:14:00-04:00', tool: 'Write', action: 'title chat', reason: 'auto-title untitled chat', tier: 4, kind: 'heartbeat', result: '"Cabinet Systems Status Report"', chatId: 't-5dd8', reversible: true, diff: 'title: null → "Cabinet Systems Status Report"' },
   ],
 };
 
@@ -148,13 +148,13 @@ function recallFor(query: string): RecallResponse {
     results: [
       { source: 'fact', title: 'Breakfast', snippet: '3 eggs and 2 toast, ~34 g protein', provenance: 'facts · nutrition', score: 0.94, ref: 'fact:breakfast' },
       { source: 'lesson', title: 'Protein on lifting days', snippet: 'Prefers high-protein dinners on lifting days.', provenance: 'lessons · meal logs 2026-06', score: 0.86, ref: 'lesson:2' },
-      { source: 'thread', title: 'Weight-tracker deploy', snippet: 'We shipped the weight tracker and wired the macro ring…', provenance: 'thread · 2026-07-05', score: 0.77, ref: 'thread:t-5dd8' },
+      { source: 'chat', title: 'Weight-tracker deploy', snippet: 'We shipped the weight tracker and wired the macro ring…', provenance: 'chat · 2026-07-05', score: 0.77, ref: 'chat:t-5dd8' },
       { source: 'episodic', title: 'June labs', snippet: 'A1c 5.4, lipids normal — trended down 0.2.', provenance: 'episodic · 2026-06-28', score: 0.71, ref: 'episodic:labs-jun' },
     ],
   };
 }
 
-const threads: ThreadSummary[] = [
+const chats: ChatSummary[] = [
   { id: 't-5dd8', title: 'Cabinet Systems Status Report', model_override: null, archived: 0, updated_at: '2026-07-07T13:10:00-04:00', messages: 6, preview: 'Full status check across services and data.' },
   { id: 't-1a2b', title: 'Weight tracker + macro ring', model_override: 'opus', archived: 0, updated_at: '2026-07-05T20:30:00-04:00', messages: 14, preview: 'Built and deployed the weight tracker.' },
 ];
@@ -179,8 +179,8 @@ export const mockApi: CabinetApi = {
   memory: () => delay(memory),
   saveMemoryFile: () => delay({ ok: true }),
   recall: (q) => delay(recallFor(q)),
-  threads: () => delay({ threads }),
-  createThread: () => delay({ id: 't-new' }),
+  chats: () => delay({ chats }),
+  createChat: () => delay({ id: 't-new' }),
   messages: () => delay({ messages: sampleMessages }),
-  command: () => delay({ threadId: 't-new' }),
+  command: () => delay({ chatId: 't-new' }),
 };

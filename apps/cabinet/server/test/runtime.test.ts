@@ -22,7 +22,7 @@ describe('router', () => {
     expect(route({ kind: 'cron' }).model).toBe(MODELS.default);
   });
 
-  it('honors per-thread overrides by alias and literal id', () => {
+  it('honors per-chat overrides by alias and literal id', () => {
     expect(route({ kind: 'user', override: 'fable' }).model).toBe(MODELS.max);
     expect(route({ kind: 'user', override: 'opus' }).model).toBe(MODELS.deep);
     expect(route({ kind: 'user', override: 'claude-sonnet-5' }).model).toBe('claude-sonnet-5');
@@ -210,7 +210,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
     cabinet = openDb(join(dir, 'cabinet.db'));
     mem = new MemoryStore(join(dir, 'memory'));
     mem.ensureTemplates();
-    cabinet.db.prepare("INSERT INTO thread (id, kind) VALUES ('t1','user')").run();
+    cabinet.db.prepare("INSERT INTO chat (id, kind) VALUES ('t1','user')").run();
   });
 
   afterEach(() => {
@@ -260,7 +260,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
       }),
     );
     const events: TurnEvent[] = [];
-    const res = await rt.run({ threadId: 't1', prompt: 'hi', kind: 'user', onEvent: (e) => events.push(e) });
+    const res = await rt.run({ chatId: 't1', prompt: 'hi', kind: 'user', onEvent: (e) => events.push(e) });
 
     expect(res).toEqual({ stopReason: 'success', sessionId: 'sess-123' });
     expect(events.map((e) => e.type)).toEqual([
@@ -281,7 +281,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
     expect(reviewer.tools).not.toContain('Write');
     expect(reviewer.tools).not.toContain('Bash');
     // session persisted
-    const row = cabinet.db.prepare("SELECT sdk_session_id FROM thread WHERE id='t1'").get() as any;
+    const row = cabinet.db.prepare("SELECT sdk_session_id FROM chat WHERE id='t1'").get() as any;
     expect(row.sdk_session_id).toBe('sess-123');
     // usage recorded
     const usage = cabinet.db.prepare('SELECT model, input_tokens, cost_usd FROM token_usage').get() as any;
@@ -300,11 +300,11 @@ describe('AgentRuntime.run (fake SDK)', () => {
     const rt = mkRuntime(queryFn);
 
     await rt.run({
-      threadId: 't1', prompt: 'first', kind: 'user', onEvent: () => {},
+      chatId: 't1', prompt: 'first', kind: 'user', onEvent: () => {},
       promptInput: { now: new Date('2026-01-01T00:00:00Z') },
     });
     await rt.run({
-      threadId: 't1', prompt: 'second', kind: 'user', onEvent: () => {},
+      chatId: 't1', prompt: 'second', kind: 'user', onEvent: () => {},
       promptInput: { now: new Date('2026-06-01T00:00:00Z') },
     });
 
@@ -333,13 +333,13 @@ describe('AgentRuntime.run (fake SDK)', () => {
 
     // No images — prompt stays the plain wrapped string, byte-for-byte the
     // same shape as before this feature existed.
-    await rt.run({ threadId: 't1', prompt: 'plain turn', kind: 'user', onEvent: () => {} });
+    await rt.run({ chatId: 't1', prompt: 'plain turn', kind: 'user', onEvent: () => {} });
     expect(typeof seenPrompts[0]).toBe('string');
 
     // With images — prompt becomes a one-shot async iterable yielding a
     // single SDKUserMessage whose content is [text, ...images].
     await rt.run({
-      threadId: 't1',
+      chatId: 't1',
       prompt: 'what is this?',
       kind: 'user',
       onEvent: () => {},
@@ -361,7 +361,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
   });
 
   it('resumes user turns with the stored session id, not scheduled turns', async () => {
-    cabinet.db.prepare("UPDATE thread SET sdk_session_id = 'prev-sess' WHERE id='t1'").run();
+    cabinet.db.prepare("UPDATE chat SET sdk_session_id = 'prev-sess' WHERE id='t1'").run();
     const resumes: (string | undefined)[] = [];
     const rt = mkRuntime(
       scriptedQuery((opts) => {
@@ -369,13 +369,13 @@ describe('AgentRuntime.run (fake SDK)', () => {
         return happyScript(opts.model);
       }),
     );
-    await rt.run({ threadId: 't1', prompt: 'a', kind: 'user', onEvent: () => {} });
-    await rt.run({ threadId: 't1', prompt: 'b', kind: 'heartbeat', onEvent: () => {} });
+    await rt.run({ chatId: 't1', prompt: 'a', kind: 'user', onEvent: () => {} });
+    await rt.run({ chatId: 't1', prompt: 'b', kind: 'heartbeat', onEvent: () => {} });
     expect(resumes).toEqual(['prev-sess', undefined]);
   });
 
   it('falls back to opus when fable refuses', async () => {
-    cabinet.db.prepare("UPDATE thread SET model_override = 'fable' WHERE id='t1'").run();
+    cabinet.db.prepare("UPDATE chat SET model_override = 'fable' WHERE id='t1'").run();
     const modelsSeen: string[] = [];
     const rt = mkRuntime(
       scriptedQuery((opts) => {
@@ -390,7 +390,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
       }),
     );
     const events: TurnEvent[] = [];
-    const res = await rt.run({ threadId: 't1', prompt: 'build it', kind: 'user', onEvent: (e) => events.push(e) });
+    const res = await rt.run({ chatId: 't1', prompt: 'build it', kind: 'user', onEvent: (e) => events.push(e) });
     expect(modelsSeen).toEqual(['claude-fable-5', 'claude-opus-4-8']);
     expect(res.stopReason).toBe('success');
     expect(events.some((e) => e.type === 'notice')).toBe(true);
@@ -405,7 +405,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
     }) as unknown as QueryFn);
     const events: TurnEvent[] = [];
     await expect(
-      rt.run({ threadId: 't1', prompt: 'x', kind: 'user', onEvent: (e) => events.push(e) }),
+      rt.run({ chatId: 't1', prompt: 'x', kind: 'user', onEvent: (e) => events.push(e) }),
     ).rejects.toThrow('boom 529');
     expect(events.at(-1)).toMatchObject({ type: 'error', retryable: true });
   });
@@ -434,7 +434,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
         }),
       );
       const events: TurnEvent[] = [];
-      const res = await rt.run({ threadId: 't1', prompt: 'build the thing', kind: 'user', onEvent: (e) => events.push(e) });
+      const res = await rt.run({ chatId: 't1', prompt: 'build the thing', kind: 'user', onEvent: (e) => events.push(e) });
 
       expect(call).toBe(2); // original + exactly one auto-continuation
       expect(resumes).toEqual([undefined, 'sess-1']); // 2nd call resumes the session captured from the 1st
@@ -456,7 +456,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
         }),
       );
       const events: TurnEvent[] = [];
-      const res = await rt.run({ threadId: 't1', prompt: 'build a lot of things', kind: 'user', onEvent: (e) => events.push(e) });
+      const res = await rt.run({ chatId: 't1', prompt: 'build a lot of things', kind: 'user', onEvent: (e) => events.push(e) });
 
       // original + MAX_AUTO_CONTINUATIONS continuations, then stop
       expect(call).toBe(1 + MAX_AUTO_CONTINUATIONS);
@@ -477,7 +477,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
         }),
       );
       const events: TurnEvent[] = [];
-      const res = await rt.run({ threadId: 't1', prompt: 'stuck task', kind: 'user', onEvent: (e) => events.push(e) });
+      const res = await rt.run({ chatId: 't1', prompt: 'stuck task', kind: 'user', onEvent: (e) => events.push(e) });
 
       // original (no progress check yet) -> continuation 1 (equal to original,
       // streak=1, still continues) -> continuation 2 (equal again, streak=2,
@@ -500,7 +500,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
         }),
       );
       const events: TurnEvent[] = [];
-      const res = await rt.run({ threadId: 't1', prompt: 'heartbeat check', kind: 'heartbeat', onEvent: (e) => events.push(e) });
+      const res = await rt.run({ chatId: 't1', prompt: 'heartbeat check', kind: 'heartbeat', onEvent: (e) => events.push(e) });
 
       expect(call).toBe(1); // no resume attempt
       expect(res.stopReason).toBe('error_max_turns');
@@ -518,7 +518,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
         }),
       );
       const events: TurnEvent[] = [];
-      await rt.run({ threadId: 't1', prompt: 'go', kind: 'user', onEvent: (e) => events.push(e) });
+      await rt.run({ chatId: 't1', prompt: 'go', kind: 'user', onEvent: (e) => events.push(e) });
       // Ordering: the checkpoint notice for round 1 must appear before the
       // continuation's own turn-start/turn-end, i.e. it's not dropped or
       // reordered relative to the events the gateway persists live.

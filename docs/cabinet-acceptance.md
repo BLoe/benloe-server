@@ -7,7 +7,7 @@ Built end-to-end by the /loop run on 2026-07-07. Live at **https://cabinet.benlo
 
 | # | Criterion | Result | Evidence |
 |---|---|---|---|
-| 1 | Auth wall — non-owner gets 403 | ✅ | Live: anonymous `GET https://cabinet.benloe.com/api/threads` → 401; gateway suite proves owner-email → 200, other artanis user → 403, bad cookie → 401 |
+| 1 | Auth wall — non-owner gets 403 | ✅ | Live: anonymous `GET https://cabinet.benloe.com/api/chats` → 401; gateway suite proves owner-email → 200, other artanis user → 403, bad cookie → 401 |
 | 2 | Chat streams end to end | ✅ tests / ⏳ live | 150 gateway tests drive the full SSE turn (turn-start→deltas→tool-run→turn-end) with folded-part persistence; **live authenticated turn is Ben-gated** — needs an owner magic-link login (the wall working as designed) |
 | 3 | `log_food` → correct daily totals | ✅ | domains + mcp suites: accumulation, macro totals, pantry deltas |
 | 4 | Dev task exercises Tier 3 + Tier 2 approval | ✅ | tier suite: every §6 row; Write under apps=T3, git push=T2 blocks-until-approved, approval card resolves; live: privops arg-validation rejects injection |

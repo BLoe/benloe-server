@@ -521,7 +521,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
           reasoning: args.reasoning,
           confidence: args.confidence ?? null,
           reversibility: args.reversibility ?? null,
-          threadId: null,
+          chatId: null,
         });
         return ok({ approvalId: id, status: 'pending' });
       },

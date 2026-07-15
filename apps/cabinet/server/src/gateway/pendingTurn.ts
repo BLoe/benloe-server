@@ -3,7 +3,7 @@
 // tree, a crash, a host reboot — the live-persist throttle (gateway/app.ts)
 // already saves whatever the turn produced, but nothing ever *finished* the
 // conversation: the last user message sat unanswered until Ben manually
-// pinged the thread. This module is the durable breadcrumb + boot-time
+// pinged the chat. This module is the durable breadcrumb + boot-time
 // half that closes that loop, structured exactly like its sibling
 // deploy/pendingConfirmation.ts:
 //
@@ -12,13 +12,13 @@
 //     deliberate /api/interrupt — the route's `finally` still runs). Only a
 //     hard process death leaves the marker behind.
 //   * On boot, a leftover marker means "a turn died mid-flight": the fresh
-//     process posts a small system note into that thread, then runs a real
-//     agent turn there (full SDK session context via the thread's
+//     process posts a small system note into that chat, then runs a real
+//     agent turn there (full SDK session context via the chat's
 //     sdk_session_id) instructing Cabinet to verify any restart/deploy it
 //     had initiated and answer whatever went unanswered.
-//   * Each step broadcasts `thread-activity` over the out-of-band
+//   * Each step broadcasts `chat-activity` over the out-of-band
 //     /api/events channel (via widgetBus's 'push' relay in gateway/app.ts),
-//     so a browser tab sitting on the thread re-fetches and the
+//     so a browser tab sitting on the chat re-fetches and the
 //     conversation visibly resumes without a reload.
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -35,13 +35,13 @@ const MARKER = 'pending-turn.json';
 const MAX_RESUME_AGE_MS = 24 * 60 * 60 * 1000;
 /** A resume turn re-arms its own marker so a restart DURING the resume gets
  *  resumed too (learned live: a self-deploy fired from inside a resume turn
- *  killed it, and the thread simply went quiet). Bounded: generations 1 and
+ *  killed it, and the chat simply went quiet). Bounded: generations 1 and
  *  2 re-arm, generation 3 runs without a net — a resume that reliably
  *  crashes the process must not ping-pong the server forever. */
 const MAX_RESUME_GENERATIONS = 2;
 
 export interface PendingTurnMarker {
-  threadId: string;
+  chatId: string;
   /** First 200 chars of the user prompt — context for the resume turn, and
    *  for a human reading the marker file, never the full payload. */
   promptHead: string;
@@ -62,8 +62,8 @@ function writeMarker(dataDir: string, marker: PendingTurnMarker): void {
 
 /** Returns the marker it wrote so the caller can later stand down exactly
  *  this breadcrumb (clearTurnInFlightIf) without clobbering a newer one. */
-export function markTurnInFlight(dataDir: string, threadId: string, prompt: string): PendingTurnMarker {
-  const marker: PendingTurnMarker = { threadId, promptHead: prompt.slice(0, 200), startedAt: new Date().toISOString() };
+export function markTurnInFlight(dataDir: string, chatId: string, prompt: string): PendingTurnMarker {
+  const marker: PendingTurnMarker = { chatId, promptHead: prompt.slice(0, 200), startedAt: new Date().toISOString() };
   writeMarker(dataDir, marker);
   return marker;
 }
@@ -85,7 +85,7 @@ export function clearTurnInFlightIf(dataDir: string, expected: PendingTurnMarker
   try {
     const current = JSON.parse(readFileSync(join(dataDir, MARKER), 'utf8')) as PendingTurnMarker;
     if (
-      current.threadId !== expected.threadId ||
+      current.chatId !== expected.chatId ||
       current.startedAt !== expected.startedAt ||
       current.generation !== expected.generation
     ) {
@@ -112,8 +112,13 @@ export function takePendingTurn(dataDir: string): PendingTurnMarker | null {
   }
   clearTurnInFlight(dataDir);
   try {
-    const marker = JSON.parse(raw) as PendingTurnMarker;
-    return typeof marker.threadId === 'string' && marker.threadId ? marker : null;
+    // Legacy compat (Threads→Chat rename, 2026-07-15): a marker written by a
+    // pre-rename process keys the conversation as `threadId`. The rename's own
+    // deploy is exactly the case that hits this — the old code writes the
+    // marker, the new code resumes from it. Accept both, normalize to chatId.
+    const marker = JSON.parse(raw) as PendingTurnMarker & { threadId?: string };
+    const chatId = typeof marker.chatId === 'string' && marker.chatId ? marker.chatId : marker.threadId;
+    return typeof chatId === 'string' && chatId ? { ...marker, chatId } : null;
   } catch (err) {
     console.error('pendingTurn: corrupt marker, dropping —', err instanceof Error ? err.message : err);
     return null;
@@ -129,7 +134,7 @@ export interface ResumeDeps {
 
 function resumePrompt(marker: PendingTurnMarker): string {
   return [
-    `SYSTEM RESUME — the cabinet-api process restarted while you were mid-turn in this thread (turn started ${marker.startedAt}; the interrupted message began: ${JSON.stringify(marker.promptHead)}).`,
+    `SYSTEM RESUME — the cabinet-api process restarted while you were mid-turn in this chat (turn started ${marker.startedAt}; the interrupted message began: ${JSON.stringify(marker.promptHead)}).`,
     'Whatever your previous turn streamed before the restart was preserved in the transcript; anything after it was lost, and the last user message may be effectively unanswered.',
     'Review the tail of this conversation. If you initiated a deploy or restart yourself, verify it actually landed (healthz buildMarker, service logs) and report the result. Then pick the work back up: finish or re-answer whatever was left hanging.',
     'Address Ben directly as usual; briefly acknowledge the restart so the seam in the conversation is honest, then get to the point.',
@@ -146,32 +151,32 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
 
   const ageMs = Date.now() - Date.parse(marker.startedAt);
   if (!Number.isFinite(ageMs) || ageMs > MAX_RESUME_AGE_MS) {
-    console.log(`pendingTurn: marker for thread ${marker.threadId} too old (${marker.startedAt}), not resuming`);
+    console.log(`pendingTurn: marker for chat ${marker.chatId} too old (${marker.startedAt}), not resuming`);
     return false;
   }
 
-  const thread = deps.db.prepare('SELECT id FROM thread WHERE id = ?').get(marker.threadId) as { id: string } | undefined;
-  if (!thread) {
-    console.error(`pendingTurn: marker points at unknown thread ${marker.threadId}, dropping`);
+  const chat = deps.db.prepare('SELECT id FROM chat WHERE id = ?').get(marker.chatId) as { id: string } | undefined;
+  if (!chat) {
+    console.error(`pendingTurn: marker points at unknown chat ${marker.chatId}, dropping`);
     return false;
   }
 
-  const broadcast = (event: string) => deps.widgetBus?.emit('push', { event, data: { threadId: marker.threadId } });
+  const broadcast = (event: string) => deps.widgetBus?.emit('push', { event, data: { chatId: marker.chatId } });
 
   // Honest seam in the transcript: the reader should see *why* the reply
   // below arrives out of band. role 'system' renders as "System" in the UI.
   deps.db
-    .prepare('INSERT INTO message (id, thread_id, role, parts) VALUES (?,?,?,?)')
-    .run(randomUUID(), marker.threadId, 'system', JSON.stringify([{ type: 'text', text: 'Process restarted mid-turn — Cabinet is resuming this thread.' }]));
-  deps.db.prepare("UPDATE thread SET updated_at = datetime('now') WHERE id = ?").run(marker.threadId);
-  // thread-activity drives the open tab's re-fetch; thread-resume-start/end
+    .prepare('INSERT INTO message (id, chat_id, role, parts) VALUES (?,?,?,?)')
+    .run(randomUUID(), marker.chatId, 'system', JSON.stringify([{ type: 'text', text: 'Process restarted mid-turn — Cabinet is resuming this chat.' }]));
+  deps.db.prepare("UPDATE chat SET updated_at = datetime('now') WHERE id = ?").run(marker.chatId);
+  // chat-activity drives the open tab's re-fetch; chat-resume-start/end
   // bracket the resume for UI affordances (the conversation's status strip,
-  // the thread list's "resuming" badge). Emitted as a start/end PAIR on
+  // the chat list's "resuming" badge). Emitted as a start/end PAIR on
   // purpose: /api/events replays its ring to every fresh EventSource, so an
   // unpaired start would leave stale badges on tabs opened later — a
   // replayed pair nets out to nothing.
-  broadcast('thread-activity');
-  broadcast('thread-resume-start');
+  broadcast('chat-activity');
+  broadcast('chat-resume-start');
 
   // Re-arm before running: if THIS resume dies uncleanly too (learned live —
   // a self-deploy triggered from inside a resume turn SIGKILLs it), the next
@@ -182,30 +187,30 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
       ? { ...marker, generation, startedAt: new Date().toISOString() }
       : null;
   if (rearmed) writeMarker(deps.dataDir, rearmed);
-  else console.log(`pendingTurn: generation cap reached for thread ${marker.threadId} — running this resume without a re-arm`);
+  else console.log(`pendingTurn: generation cap reached for chat ${marker.chatId} — running this resume without a re-arm`);
 
-  console.log(`pendingTurn: resuming interrupted turn in thread ${marker.threadId} (started ${marker.startedAt}, generation ${generation})`);
+  console.log(`pendingTurn: resuming interrupted turn in chat ${marker.chatId} (started ${marker.startedAt}, generation ${generation})`);
   // Live-persisting recorder (transcript.ts): the resume's own transcript
   // survives a mid-turn kill — the exact failure that erased resume #2's
   // reply the night this feature shipped.
-  const recorder = createTranscriptRecorder({ db: deps.db, threadId: marker.threadId });
+  const recorder = createTranscriptRecorder({ db: deps.db, chatId: marker.chatId });
   try {
     await deps.runtime.run({
-      threadId: marker.threadId,
+      chatId: marker.chatId,
       kind: 'user',
       prompt: resumePrompt(marker),
       onEvent: recorder.onEvent,
     });
   } finally {
-    recorder.persist(deps.db, marker.threadId);
-    deps.db.prepare("UPDATE thread SET updated_at = datetime('now') WHERE id = ?").run(marker.threadId);
+    recorder.persist(deps.db, marker.chatId);
+    deps.db.prepare("UPDATE chat SET updated_at = datetime('now') WHERE id = ?").run(marker.chatId);
     // Stand the re-arm down — but only if the file still holds OUR marker.
     // A user turn that queued behind this resume has already overwritten it
     // with its own breadcrumb (app.ts marks before the queue), and blindly
     // unlinking here would strip that turn of its crash protection.
     if (rearmed) clearTurnInFlightIf(deps.dataDir, rearmed);
-    broadcast('thread-activity');
-    broadcast('thread-resume-end');
+    broadcast('chat-activity');
+    broadcast('chat-resume-end');
   }
   return true;
 }

@@ -1,11 +1,11 @@
 /* ============================================================================
-   THREADS surface — the conversation archive. Master-detail: a searchable
-   list of past threads + a reading pane restyling the chat log into the
+   CHATS surface — the conversation archive. Master-detail: a searchable
+   list of past chats + a reading pane restyling the chat log into the
    design system. Stacks on mobile. Tokens only; no shared selectors.
    ========================================================================== */
 
 /* width + centering come from the shared .surface > * rule in shell.css */
-.threads {
+.chat {
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
@@ -14,7 +14,7 @@
 }
 
 /* ---- header: intent line + search ---- */
-.threads-head {
+.chat-head {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -24,21 +24,21 @@
   border-bottom: 1px solid var(--rule-soft);
 }
 
-.threads-lede {
+.chat-lede {
   margin-top: var(--sp-2);
   font-size: var(--fs-sm);
   color: var(--linen-dim);
   max-width: 46ch;
 }
 
-.threads-head-actions {
+.chat-head-actions {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
   flex-wrap: wrap;
 }
 
-.threads-search-input {
+.chat-search-input {
   width: min(320px, 60vw);
   font-size: var(--fs-sm);
   color: var(--linen);
@@ -48,16 +48,16 @@
   padding: var(--sp-2) var(--sp-3);
 }
 
-.threads-search-input::placeholder {
+.chat-search-input::placeholder {
   color: var(--linen-faint);
 }
 
-.threads-search-input:focus-visible {
+.chat-search-input:focus-visible {
   outline: 2px solid var(--brass-hi);
   outline-offset: 1px;
 }
 
-.threads-new-btn {
+.chat-new-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
@@ -76,53 +76,53 @@
   transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
 }
 
-.threads-new-btn:hover:not(:disabled),
-.threads-new-btn:focus-visible:not(:disabled) {
+.chat-new-btn:hover:not(:disabled),
+.chat-new-btn:focus-visible:not(:disabled) {
   color: var(--brass-hi);
   border-color: var(--brass-hi);
   background: var(--panel);
   outline: none;
 }
 
-.threads-new-btn:disabled {
+.chat-new-btn:disabled {
   cursor: default;
   opacity: 0.6;
 }
 
-.threads-new-error {
+.chat-new-error {
   flex-basis: 100%;
   font-size: var(--fs-fine);
   color: var(--vermilion);
 }
 
 /* ---- body: two-pane master/detail ---- */
-.threads-body {
+.chat-body {
   display: grid;
   grid-template-columns: minmax(260px, 340px) 1fr;
   gap: var(--sp-5);
   align-items: start;
 }
 
-.threads-list-pane {
+.chat-list-pane {
   border: 1px solid var(--rule-soft);
   border-radius: var(--r-3);
   overflow: hidden;
 }
 
-.threads-loading,
-.threads-empty {
+.chat-loading,
+.chat-empty {
   padding: var(--sp-7) var(--sp-4);
   color: var(--linen-faint);
   font-size: var(--fs-fine);
 }
 
-.threads-empty {
+.chat-empty {
   font-size: var(--fs-body);
   font-style: italic;
   color: var(--linen-dim);
 }
 
-.threads-list {
+.chat-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -130,7 +130,7 @@
   overflow-y: auto;
 }
 
-.threads-row {
+.chat-row {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -145,32 +145,32 @@
   transition: background var(--dur-1) var(--ease);
 }
 
-.threads-list li:last-child .threads-row {
+.chat-list li:last-child .chat-row {
   border-bottom: none;
 }
 
-.threads-row:hover {
+.chat-row:hover {
   background: var(--panel);
 }
 
-.threads-row.active {
+.chat-row.active {
   background: var(--panel-2);
   box-shadow: inset var(--rail) 0 0 0 var(--brass);
 }
 
-.threads-row:focus-visible {
+.chat-row:focus-visible {
   outline: 2px solid var(--brass-hi);
   outline-offset: -2px;
 }
 
-.threads-row-top {
+.chat-row-top {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--sp-3);
 }
 
-.threads-row-title {
+.chat-row-title {
   font-family: var(--serif);
   font-size: var(--fs-body);
   color: var(--linen);
@@ -179,13 +179,13 @@
   white-space: nowrap;
 }
 
-.threads-row-count {
+.chat-row-count {
   flex: none;
   font-size: var(--fs-cap);
   color: var(--linen-faint);
 }
 
-.threads-row-preview {
+.chat-row-preview {
   font-size: var(--fs-sm);
   color: var(--linen-dim);
   overflow: hidden;
@@ -193,30 +193,30 @@
   white-space: nowrap;
 }
 
-.threads-row-when {
+.chat-row-when {
   font-size: var(--fs-cap);
   color: var(--brass-dim);
 }
 
-.threads-row.active .threads-row-when {
+.chat-row.active .chat-row-when {
   color: var(--brass);
 }
 
 /* ---- reading pane ---- */
-.threads-reading-pane {
+.chat-reading-pane {
   border: 1px solid var(--rule-soft);
   border-radius: var(--r-3);
   min-height: 320px;
 }
 
-.threads-reader-empty {
+.chat-reader-empty {
   display: grid;
   place-items: center;
   min-height: 320px;
   padding: var(--sp-7);
 }
 
-.threads-hint {
+.chat-hint {
   color: var(--linen-faint);
   font-style: italic;
 }
@@ -236,7 +236,7 @@
   border-bottom: 1px solid var(--rule-soft);
 }
 
-.threads-back {
+.chat-back {
   display: none;
   flex: none;
   font-family: var(--mono);
@@ -461,40 +461,40 @@
 
 /* ---- mobile: stack, one pane at a time ---- */
 @media (max-width: 768px) {
-  .threads {
+  .chat {
     padding: var(--sp-4);
   }
 
-  .threads-head-actions {
+  .chat-head-actions {
     width: 100%;
   }
 
-  .threads-search-input {
+  .chat-search-input {
     width: 100%;
   }
 
-  .threads-new-btn {
+  .chat-new-btn {
     width: 100%;
     justify-content: center;
   }
 
-  .threads-body {
+  .chat-body {
     grid-template-columns: 1fr;
   }
 
-  .threads-reading-pane {
+  .chat-reading-pane {
     display: none;
   }
 
-  .threads-body.has-selection .threads-list-pane {
+  .chat-body.has-selection .chat-list-pane {
     display: none;
   }
 
-  .threads-body.has-selection .threads-reading-pane {
+  .chat-body.has-selection .chat-reading-pane {
     display: block;
   }
 
-  .threads-back {
+  .chat-back {
     display: inline-block;
   }
 
@@ -579,7 +579,7 @@
 }
 
 /* ---- queued messages: submitted while a turn was still running: held here
-   (not yet sent — see submit()/QueuedMessage in Threads.tsx) and auto-fired
+   (not yet sent — see submit()/QueuedMessage in Chat.tsx) and auto-fired
    the instant Cabinet goes idle, in order, no re-send needed. Dimmer than a
    real message — this hasn't happened yet. */
 .composer-queue {
@@ -707,8 +707,8 @@
 
 /* ---- restart / self-deploy affordance (2026-07-15) ----
    A calm status strip above the composer while the server restarts and the
-   thread waits on its resume turn (see gateway/pendingTurn.ts server-side),
-   plus a small "resuming" tag on the affected row in the thread list. One
+   chat waits on its resume turn (see gateway/pendingTurn.ts server-side),
+   plus a small "resuming" tag on the affected row in the chat list. One
    brass pulsing dot — same visual language as the shell's presence dot. */
 .resume-strip {
   display: flex;
@@ -732,7 +732,7 @@
   background: var(--brass);
   animation: resume-pulse 1.6s ease-in-out infinite;
 }
-.threads-row-resuming {
+.chat-row-resuming {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -740,7 +740,7 @@
   font-size: var(--fs-cap);
   color: var(--brass);
 }
-.threads-row-resuming .resume-dot {
+.chat-row-resuming .resume-dot {
   width: 6px;
   height: 6px;
 }

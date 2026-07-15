@@ -21,7 +21,7 @@ export type InstrumentSpec =
   | { kind: 'gauge'; label: string; value: number; max: number; threshold?: number; leftLabel?: string; rightLabel?: string; tag?: string; tagTone?: Severity }
   | { kind: 'stat'; label: string; big: string; unit?: string; sub?: string; tone?: Tone; points?: number[]; pointsColor?: string; tag?: string; tagTone?: Severity };
 
-/* ---------- threads ---------- */
+/* ---------- chats ---------- */
 export type MessageRole = 'user' | 'assistant' | 'system';
 export type MessagePart =
   | { type: 'text'; text: string }
@@ -34,10 +34,10 @@ export type MessagePart =
 
 export interface ApprovalPacket {
   id: string; tier: number; action: string; payload: string; reasoning: string;
-  confidence: number | null; reversibility: string | null; threadId: string | null; expiresAt: string;
+  confidence: number | null; reversibility: string | null; chatId: string | null; expiresAt: string;
 }
 
-export interface ThreadSummary {
+export interface ChatSummary {
   id: string; title: string | null; model_override: string | null;
   archived: number; updated_at: string; messages: number;
   /** short preview / produced-artifact hint for the archive */
@@ -92,7 +92,7 @@ export interface DomainView {
 export type OpsKind = 'user' | 'heartbeat' | 'cron';
 export interface OpsEntry {
   id: string; at: string; tool: string; action: string; reason: string;
-  tier: number; kind: OpsKind; result: string; threadId: string | null;
+  tier: number; kind: OpsKind; result: string; chatId: string | null;
   reversible: boolean; diff?: string;
   reverted?: boolean;
 }
@@ -103,7 +103,7 @@ export interface MemoryFile { name: string; content: string; updatedAt: string |
 export interface MemoryLesson { id: number; text: string; domain: string | null; confidence: number; }
 export interface MemoryView { files: MemoryFile[]; lessons: MemoryLesson[]; }
 
-export type RecallSource = 'fact' | 'episodic' | 'thread' | 'lesson' | 'document';
+export type RecallSource = 'fact' | 'episodic' | 'chat' | 'lesson' | 'document';
 export interface RecallResult {
   source: RecallSource; title: string; snippet: string;
   provenance: string; score: number; ref: string;
@@ -147,10 +147,10 @@ export interface CabinetApi {
   memory(): Promise<MemoryView>;
   saveMemoryFile(name: string, content: string): Promise<{ ok: boolean }>;
   recall(query: string): Promise<RecallResponse>;
-  threads(): Promise<{ threads: ThreadSummary[] }>;
-  createThread(): Promise<{ id: string }>;
-  /** `live` — a turn is executing on this thread server-side right now
+  chats(): Promise<{ chats: ChatSummary[] }>;
+  createChat(): Promise<{ id: string }>;
+  /** `live` — a turn is executing on this chat server-side right now
    *  (reattach-on-load; optional so the mock backend can ignore it). */
-  messages(threadId: string): Promise<{ messages: ChatMessage[]; live?: boolean }>;
-  command(intent: string): Promise<{ threadId: string }>;
+  messages(chatId: string): Promise<{ messages: ChatMessage[]; live?: boolean }>;
+  command(intent: string): Promise<{ chatId: string }>;
 }

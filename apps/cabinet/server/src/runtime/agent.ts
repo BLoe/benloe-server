@@ -25,7 +25,7 @@ const MAX_TURNS_BY_KIND: Record<TurnKind, number> = { user: 120, cron: 12, heart
  * the failure mode that cost ~30min on 2026-07-14. Bounded to this many
  * chained auto-resumes per originating user turn; tracked via a depth
  * counter threaded through the recursive executeTurn call, NOT a class
- * field, so concurrent threads never share or leak continuation state.
+ * field, so concurrent chats never share or leak continuation state.
  */
 export const MAX_AUTO_CONTINUATIONS = 3;
 
@@ -38,7 +38,7 @@ export function classifyStop(subtype: string | null | undefined): TurnOutcome {
 
 /** §12.2 event vocabulary — the gateway maps these 1:1 onto SSE. */
 export type TurnEvent =
-  | { type: 'turn-start'; messageId: string; threadId: string; model: string }
+  | { type: 'turn-start'; messageId: string; chatId: string; model: string }
   | { type: 'text-delta'; delta: string }
   | { type: 'tool-start'; toolId: string; name: string; input: unknown }
   | { type: 'tool-end'; toolId: string; output: string; isError: boolean }
@@ -66,7 +66,7 @@ export interface RuntimeOptions {
 }
 
 export interface TurnRequest {
-  threadId: string;
+  chatId: string;
   prompt: string;
   kind: TurnKind;
   deep?: boolean;
@@ -152,7 +152,7 @@ export class AgentRuntime {
   /** Single-flight (guaranteed by the queue): the active turn's sinks. */
   private currentOnEvent: ((e: TurnEvent) => void) | null = null;
   private currentAbort: AbortController | null = null;
-  private currentThreadId: string | null = null;
+  private currentChatId: string | null = null;
 
   constructor(private opts: RuntimeOptions) {
     this.queryFn = opts.queryFn ?? sdkQuery;
@@ -174,17 +174,17 @@ export class AgentRuntime {
     );
   }
 
-  /** Thread id of the turn executing right now, else null — lets the
-   *  gateway tell a (re)loading tab "this thread is live, follow along"
-   *  (reattach-on-load, gateway/app.ts's /api/threads/:id/messages). */
-  get currentThread(): string | null {
-    return this.currentThreadId;
+  /** Chat id of the turn executing right now, else null — lets the
+   *  gateway tell a (re)loading tab "this chat is live, follow along"
+   *  (reattach-on-load, gateway/app.ts's /api/chats/:id/messages). */
+  get currentChat(): string | null {
+    return this.currentChatId;
   }
 
-  /** Abort the in-flight turn (optionally only if it belongs to threadId). */
-  interrupt(threadId?: string): boolean {
+  /** Abort the in-flight turn (optionally only if it belongs to chatId). */
+  interrupt(chatId?: string): boolean {
     if (!this.currentAbort) return false;
-    if (threadId && this.currentThreadId !== threadId) return false;
+    if (chatId && this.currentChatId !== chatId) return false;
     this.currentAbort.abort();
     return true;
   }
@@ -204,11 +204,11 @@ export class AgentRuntime {
     return generateTitle(this.queryFn, { userText, assistantText });
   }
 
-  private threadRow(threadId: string): { sdk_session_id: string | null; model_override: string | null } {
+  private chatRow(chatId: string): { sdk_session_id: string | null; model_override: string | null } {
     const row = this.opts.db
-      .prepare('SELECT sdk_session_id, model_override FROM thread WHERE id = ?')
-      .get(threadId) as { sdk_session_id: string | null; model_override: string | null } | undefined;
-    if (!row) throw new Error(`unknown thread ${threadId}`);
+      .prepare('SELECT sdk_session_id, model_override FROM chat WHERE id = ?')
+      .get(chatId) as { sdk_session_id: string | null; model_override: string | null } | undefined;
+    if (!row) throw new Error(`unknown chat ${chatId}`);
     return row;
   }
 
@@ -226,19 +226,19 @@ export class AgentRuntime {
     } = {},
   ): Promise<{ stopReason: string; sessionId: string | null }> {
     const { modelOverride, continuationDepth = 0, lastNumTurns, noProgressStreak = 0 } = execOpts;
-    const thread = this.threadRow(req.threadId);
+    const chat = this.chatRow(req.chatId);
     const { model, effort } = modelOverride
       ? { model: modelOverride, effort: 'xhigh' as const }
-      : route({ kind: req.kind, override: thread.model_override, deep: req.deep });
+      : route({ kind: req.kind, override: chat.model_override, deep: req.deep });
 
     const standingOrders = this.safeRead('STANDING_ORDERS.md');
-    const ctx: GateContext = { threadId: req.threadId, sessionKind: req.kind, standingOrders };
+    const ctx: GateContext = { chatId: req.chatId, sessionKind: req.kind, standingOrders };
     const messageId = randomUUID();
     const abort = req.abort ?? new AbortController();
     this.currentOnEvent = req.onEvent;
     this.currentAbort = abort;
-    this.currentThreadId = req.threadId;
-    req.onEvent({ type: 'turn-start', messageId, threadId: req.threadId, model });
+    this.currentChatId = req.chatId;
+    req.onEvent({ type: 'turn-start', messageId, chatId: req.chatId, model });
 
     // §9.3: systemPrompt must be byte-stable across turns for the SDK's
     // prompt cache to hit — everything per-turn (datetime, interlocutor,
@@ -278,7 +278,7 @@ export class AgentRuntime {
             yield message;
           })();
 
-    let sessionId: string | null = thread.sdk_session_id;
+    let sessionId: string | null = chat.sdk_session_id;
     let stopReason = 'end_turn';
     let sawRefusal = false;
     let lastToolName: string | null = null;
@@ -294,7 +294,7 @@ export class AgentRuntime {
           cwd: this.opts.cwd ?? '/srv/benloe',
           additionalDirectories: [this.opts.dataDir ?? '/srv/benloe/data/cabinet'],
           systemPrompt,
-          resume: req.kind === 'user' ? (thread.sdk_session_id ?? undefined) : undefined,
+          resume: req.kind === 'user' ? (chat.sdk_session_id ?? undefined) : undefined,
           maxTurns: MAX_TURNS_BY_KIND[req.kind],
           includePartialMessages: true,
           settingSources: [],
@@ -318,13 +318,13 @@ export class AgentRuntime {
                     // that never reaches canUseTool (Appendix B).
                     this.opts.db
                       .prepare(
-                        'INSERT INTO action_audit (tool, args, decision, thread_id, session_kind) VALUES (?,?,?,?,?)',
+                        'INSERT INTO action_audit (tool, args, decision, chat_id, session_kind) VALUES (?,?,?,?,?)',
                       )
                       .run(
                         `pre:${hookInput.tool_name ?? 'unknown'}`,
                         JSON.stringify(hookInput.tool_input ?? {}).slice(0, 2000),
                         'observed',
-                        req.threadId,
+                        req.chatId,
                         req.kind,
                       );
                     return {};
@@ -389,13 +389,13 @@ export class AgentRuntime {
     } finally {
       this.currentOnEvent = null;
       this.currentAbort = null;
-      this.currentThreadId = null;
+      this.currentChatId = null;
     }
 
-    if (sessionId && sessionId !== thread.sdk_session_id) {
+    if (sessionId && sessionId !== chat.sdk_session_id) {
       this.opts.db
-        .prepare("UPDATE thread SET sdk_session_id = ?, updated_at = datetime('now') WHERE id = ?")
-        .run(sessionId, req.threadId);
+        .prepare("UPDATE chat SET sdk_session_id = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(sessionId, req.chatId);
     }
 
     // Continuation-on-limit (build 3): see MAX_AUTO_CONTINUATIONS above for
@@ -469,7 +469,7 @@ export class AgentRuntime {
     const u = result.usage ?? {};
     this.opts.db
       .prepare(
-        `INSERT INTO token_usage (model, input_tokens, output_tokens, cache_read, cache_write, cost_usd, session_kind, thread_id)
+        `INSERT INTO token_usage (model, input_tokens, output_tokens, cache_read, cache_write, cost_usd, session_kind, chat_id)
          VALUES (?,?,?,?,?,?,?,?)`,
       )
       .run(
@@ -480,7 +480,7 @@ export class AgentRuntime {
         u.cache_creation_input_tokens ?? 0,
         result.total_cost_usd ?? null,
         req.kind,
-        req.threadId,
+        req.chatId,
       );
   }
 }

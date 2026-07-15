@@ -7,7 +7,7 @@ import {
   parseServerDate,
   relativeTime,
   summarizeToolCall,
-} from '../src/surfaces/Threads.js';
+} from '../src/surfaces/Chat.js';
 import type { ChatMessage } from '../src/lib/contracts.js';
 
 // Pure-logic coverage for the chat-UX pass (§ changes 2 + 3): the component

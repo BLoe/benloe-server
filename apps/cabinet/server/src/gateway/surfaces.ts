@@ -59,16 +59,16 @@ interface BriefingOutput { at: string; isCurrent: boolean; narrative: string; }
 interface CheckinOutput { at: string; isCurrent: boolean; vitals: InstrumentSpec[]; prompt: string; }
 
 /* ---------- durable cron output (mentorship: Today surface, briefing/checkin durability) ----------
-   morning-briefing and evening-checkin persist to well-known system threads
+   morning-briefing and evening-checkin persist to well-known system chats
    (sys-briefing, sys-checkin — see scheduler/jobs.ts) instead of relying on
    a live SSE push nobody may be connected for. This is the one shared read
    path both latestBriefing/latestCheckin below build on — same discipline as
    runAgentCronJob being the one shared *write* path for agent-turn jobs. */
 
-function latestAssistantMessage(db: Database.Database, threadId: string): { createdAt: string; parts: MessagePart[] } | null {
+function latestAssistantMessage(db: Database.Database, chatId: string): { createdAt: string; parts: MessagePart[] } | null {
   const row = db
-    .prepare(`SELECT parts, created_at FROM message WHERE thread_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 1`)
-    .get(threadId) as { parts: string; created_at: string } | undefined;
+    .prepare(`SELECT parts, created_at FROM message WHERE chat_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 1`)
+    .get(chatId) as { parts: string; created_at: string } | undefined;
   if (!row) return null;
   try {
     return { createdAt: row.created_at, parts: JSON.parse(row.parts) as MessagePart[] };
@@ -76,7 +76,7 @@ function latestAssistantMessage(db: Database.Database, threadId: string): { crea
     // Should never happen — we control every writer of this column — but a
     // malformed blob must not 500 the whole Today surface, and silence would
     // make it indistinguishable from "no briefing yet." Log enough to find it.
-    console.warn(`latestAssistantMessage: unparseable parts for thread ${threadId}: ${(err as Error).message}`);
+    console.warn(`latestAssistantMessage: unparseable parts for chat ${chatId}: ${(err as Error).message}`);
     return null;
   }
 }
@@ -480,8 +480,8 @@ function recall(query: string, db: Database.Database) {
   const journalRows = db
     .prepare(`SELECT id, local_day, body FROM journal_entry WHERE body LIKE ? ORDER BY written_at DESC LIMIT 5`)
     .all(like) as { id: number; local_day: string; body: string }[];
-  const threadRows = db
-    .prepare(`SELECT id, title, updated_at FROM thread WHERE title LIKE ? AND kind = 'user' ORDER BY updated_at DESC LIMIT 5`)
+  const chatRows = db
+    .prepare(`SELECT id, title, updated_at FROM chat WHERE title LIKE ? AND kind = 'user' ORDER BY updated_at DESC LIMIT 5`)
     .all(like) as { id: string; title: string | null; updated_at: string }[];
 
   const results = [
@@ -493,13 +493,13 @@ function recall(query: string, db: Database.Database) {
       score: Math.max(0.5, 0.9 - i * 0.05),
       ref: `journal:${r.id}`,
     })),
-    ...threadRows.map((r, i) => ({
-      source: 'thread' as const,
-      title: r.title ?? 'Untitled thread',
-      snippet: `Thread updated ${r.updated_at}`,
-      provenance: `thread · ${r.updated_at}`,
+    ...chatRows.map((r, i) => ({
+      source: 'chat' as const,
+      title: r.title ?? 'Untitled chat',
+      snippet: `Chat updated ${r.updated_at}`,
+      provenance: `chat · ${r.updated_at}`,
       score: Math.max(0.4, 0.85 - i * 0.05),
-      ref: `thread:${r.id}`,
+      ref: `chat:${r.id}`,
     })),
   ];
   results.sort((a, b) => b.score - a.score);
@@ -522,7 +522,7 @@ export function registerSurfaceRoutes(app: Express, deps: SurfaceDeps): void {
     const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
     const rows = db
       .prepare(
-        `SELECT id, ts, tool, tier, args, result, decision, thread_id, session_kind
+        `SELECT id, ts, tool, tier, args, result, decision, chat_id, session_kind
          FROM action_audit ${kind ? 'WHERE session_kind = ?' : ''} ORDER BY id DESC LIMIT 200`,
       )
       .all(...(kind ? [kind] : [])) as Array<Record<string, unknown>>;
@@ -535,7 +535,7 @@ export function registerSurfaceRoutes(app: Express, deps: SurfaceDeps): void {
       tier: Number(r.tier ?? 4),
       kind: String(r.session_kind ?? 'user'),
       result: String(r.decision ?? ''),
-      threadId: (r.thread_id as string) ?? null,
+      chatId: (r.chat_id as string) ?? null,
       reversible: REVERSIBLE.test(String(r.tool)),
       reverted: false,
     }));
@@ -590,7 +590,7 @@ export function registerSurfaceRoutes(app: Express, deps: SurfaceDeps): void {
     if (typeof intent !== 'string' || !intent.trim()) return res.status(400).json({ error: 'intent required' });
     const id = randomUUID();
     const by = (req as { principal?: { email?: string } }).principal?.email ?? null;
-    db.prepare('INSERT INTO thread (id, title, kind, created_by) VALUES (?,?,?,?)').run(id, null, 'user', by);
-    res.status(201).json({ threadId: id });
+    db.prepare('INSERT INTO chat (id, title, kind, created_by) VALUES (?,?,?,?)').run(id, null, 'user', by);
+    res.status(201).json({ chatId: id });
   });
 }

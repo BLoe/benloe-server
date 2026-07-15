@@ -56,7 +56,7 @@
 
 /* ---- shared content-width primitive ----
    Every surface renders exactly one root element as .surface's direct child
-   (.today / .dom / .ops / .brain / .threads). Constrain + center it here,
+   (.today / .dom / .ops / .brain / .chat). Constrain + center it here,
    once, instead of each surface picking its own max-width — that's what
    made surfaces feel inconsistent (some stranded near the edge, some
    swimming in dead gutter) when navigating between them. A surface that

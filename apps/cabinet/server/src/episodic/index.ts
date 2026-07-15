@@ -74,11 +74,11 @@ export const EMBEDDABLE_TABLES: EmbeddableTable[] = [
     textColumn: 'parts',
     kind: 'conversation',
     sourceRef: (id) => `message:${id}`,
-    // sys-* thread ids are exactly and only systemThread()'s cron/heartbeat
-    // threads (scheduler/jobs.ts) — audit-shaped narration, not conversational
-    // memory. Cheaper and more robust than joining to thread.kind: no join
+    // sys-* chat ids are exactly and only systemChat()'s cron/heartbeat
+    // chats (scheduler/jobs.ts) — audit-shaped narration, not conversational
+    // memory. Cheaper and more robust than joining to chat.kind: no join
     // needed, and it doesn't depend on kind semantics staying what they are today.
-    where: "thread_id NOT LIKE 'sys-%' AND role IN ('user','assistant')",
+    where: "chat_id NOT LIKE 'sys-%' AND role IN ('user','assistant')",
     extract: (raw) => {
       let parts: MessagePart[];
       try {

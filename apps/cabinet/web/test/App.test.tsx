@@ -23,9 +23,9 @@ vi.mock('../src/lib/cabinet.js', async (importOriginal) => {
     memory: async () => ({ files: [], lessons: [] }),
     saveMemoryFile: async () => ({ ok: true }),
     recall: async (q: string) => ({ query: q, results: [] }),
-    threads: async () => ({ threads: [] }),
+    chats: async () => ({ chats: [] }),
     messages: async () => ({ messages: [] }),
-    command: async () => ({ threadId: 't' }),
+    command: async () => ({ chatId: 't' }),
   };
   return { ...actual, api, usingMock: true };
 });

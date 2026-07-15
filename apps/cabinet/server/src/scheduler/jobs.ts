@@ -11,7 +11,7 @@ import type { AgentRuntime } from '../runtime/agent.js';
 import type { ApprovalQueue } from '../tiers/approvals.js';
 import { EMBEDDABLE_TABLES, type EpisodicStore } from '../episodic/index.js';
 import type { Embedder } from '../embeddings/index.js';
-import { persistAssistantMessage, runAgentCronJob, systemThread } from '../gateway/transcript.js';
+import { persistAssistantMessage, runAgentCronJob, systemChat } from '../gateway/transcript.js';
 import type { InstrumentSpec } from '../gateway/surfaces.js';
 import { nextDaily, nextHeartbeat, nextWeekly } from './clock.js';
 import type { JobSpec } from './index.js';
@@ -33,7 +33,7 @@ const push = (deps: JobDeps, event: string, data: unknown) => deps.widgetBus.emi
  *
  * Metric = input_tokens + output_tokens + cache_write, summed over the
  * trailing 5h window (the window Max plan rate limits actually gate on).
- * cache_read is deliberately excluded: on a cache-healthy thread it's the
+ * cache_read is deliberately excluded: on a cache-healthy chat it's the
  * biggest number by far (tens of thousands of tokens per turn just from
  * re-reading a stable system-prompt prefix) but reflects reused, not fresh,
  * work — folding it in would make a long, cheap, perfectly healthy chat
@@ -115,9 +115,9 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
         db.prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES ('heartbeat','HEARTBEAT_OK','heartbeat')").run();
         return; // zero model cost
       }
-      const threadId = systemThread(db, 'sys-heartbeat', 'heartbeat', 'Heartbeat');
+      const chatId = systemChat(db, 'sys-heartbeat', 'heartbeat', 'Heartbeat');
       const { text } = await runAgentCronJob(deps.runtime, db, {
-        threadId,
+        chatId,
         kind: 'heartbeat',
         prompt: 'Work through HEARTBEAT.md against the findings in your snapshot. If anything needs Ben, write one short nudge. If not, reply HEARTBEAT_OK.',
         promptInput: { snapshot: findings.join('\n') },
@@ -141,9 +141,9 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
         tasksToday: db.prepare("SELECT title, due_on, priority FROM task WHERE status='open' AND (due_on IS NULL OR due_on <= ?) ORDER BY priority LIMIT 5").all(today),
         pendingApprovals: deps.approvals.pending().length,
       };
-      const threadId = systemThread(db, 'sys-briefing', 'cron', 'Briefings');
+      const chatId = systemChat(db, 'sys-briefing', 'cron', 'Briefings');
       await runAgentCronJob(deps.runtime, db, {
-        threadId,
+        chatId,
         kind: 'cron',
         prompt:
           'Assemble the morning briefing from the deterministic snapshot below. Call mcp__cabinet__render_widget with widgetType "briefing" and a sectioned data payload, then write a 2-3 sentence narrative. Numbers must come from the snapshot verbatim.',
@@ -172,8 +172,8 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
       // spirit as heartbeat's zero-model-cost path), so this goes straight to
       // the message table instead of through runAgentCronJob. Same INSERT
       // persistAssistantMessage every other path uses, not a second one.
-      const threadId = systemThread(db, 'sys-checkin', 'cron', 'Evening check-in');
-      persistAssistantMessage(db, threadId, [{ type: 'widget', widgetType: 'checkin', data: payload }]);
+      const chatId = systemChat(db, 'sys-checkin', 'cron', 'Evening check-in');
+      persistAssistantMessage(db, chatId, [{ type: 'widget', widgetType: 'checkin', data: payload }]);
       // Ephemeral live push, unchanged in spirit — kept for a future SSE
       // consumer; the durable write above is what actually closes the gap.
       push(deps, 'widget', payload);
@@ -184,7 +184,7 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     name: 'weekly-review',
     next: (from) => nextWeekly(0, 9, 0, from), // Sunday 09:00 NY
     run: async () => {
-      const threadId = systemThread(db, 'sys-weekly', 'cron', 'Weekly review');
+      const chatId = systemChat(db, 'sys-weekly', 'cron', 'Weekly review');
       const prompt = [
         'Run the weekly review (§11):',
         '1. Use mcp__cabinet__query_db for cross-domain correlations (sleep×mood, protein×training days, spend by category, weight trend).',
@@ -198,7 +198,7 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
           'eligible, say so and do nothing — do not lower the bar to manufacture a promotion.',
         '6. Finish with a render_widget briefing card summarizing the week and 3 focus points.',
       ].join('\n');
-      await runAgentCronJob(deps.runtime, db, { threadId, kind: 'cron', deep: true, prompt });
+      await runAgentCronJob(deps.runtime, db, { chatId, kind: 'cron', deep: true, prompt });
       push(deps, 'notice', { level: 'info', text: 'Weekly review complete.', source: 'weekly' });
     },
   };

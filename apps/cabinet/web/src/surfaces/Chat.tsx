@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/cabinet.js';
-import type { ChatMessage, MessagePart, ThreadSummary } from '../lib/cabinet.js';
+import type { ChatMessage, MessagePart, ChatSummary } from '../lib/cabinet.js';
 import { streamChat, foldTurn, uploadAttachment, interruptChat } from '../lib/chat.js';
 import { usingMock } from '../lib/cabinet.js';
 import { SectionLabel } from '../components/instruments/index.js';
 import { Paperclip, ArrowUp, Square, X, Plus } from 'lucide-react';
-import './threads.css';
+import './chat.css';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
@@ -46,7 +46,7 @@ function stamp(iso: string): string {
 /**
  * A real Date from either timestamp shape a ChatMessage.created_at carries:
  * the DB's `datetime('now')` (SQLite: "YYYY-MM-DD HH:MM:SS", space-separated,
- * UTC, no zone marker) for history loaded from GET /api/threads/:id/messages,
+ * UTC, no zone marker) for history loaded from GET /api/chats/:id/messages,
  * or a proper `Date.prototype.toISOString()` (has a trailing 'Z') for the
  * locally-synthesized echo/live bubbles in `send()` below. Naively handing
  * the former to `new Date()` gets silently misread as the *browser's* local
@@ -133,42 +133,42 @@ export function buildRenderRuns(messages: ChatMessage[], live: MessagePart[] | n
   return runs;
 }
 
-function matches(t: ThreadSummary, needle: string): boolean {
+function matches(t: ChatSummary, needle: string): boolean {
   const hay = `${t.title ?? ''} ${t.preview ?? ''}`.toLowerCase();
   return hay.includes(needle);
 }
 
-interface ThreadsProps {
-  /** Open (and, if new, seed) a specific thread — used by the ⌘K command bar. */
-  openThreadId?: string | null;
+interface ChatProps {
+  /** Open (and, if new, seed) a specific chat — used by the ⌘K command bar. */
+  openChatId?: string | null;
   openSeed?: string | null;
   onConsumed?: () => void;
 }
 
 /**
- * THREADS — where conversations live. A searchable archive on the left; the
- * right pane is a LIVE conversation: pick a thread up where it left off, or
+ * CHATS — where conversations live. A searchable archive on the left; the
+ * right pane is a LIVE conversation: pick a chat up where it left off, or
  * start a new one from the command bar. Every turn streams from Cabinet.
  */
-export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
-  const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
+export function Chat({ openChatId, openSeed, onConsumed }: ChatProps) {
+  const [chats, setChats] = useState<ChatSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  // Threads currently being resumed after a restart (gateway/pendingTurn.ts)
+  // Chats currently being resumed after a restart (gateway/pendingTurn.ts)
   // — badges the affected row in the list. Fed two ways: the server's
-  // thread-resume-start/end broadcasts (any tab), and the open
+  // chat-resume-start/end broadcasts (any tab), and the open
   // conversation's own drop detection via setResumeState (this tab,
   // immediately — before the server is even back to broadcast anything).
   const [resumingIds, setResumingIds] = useState<ReadonlySet<string>>(new Set());
-  const setResumeState = useCallback((threadId: string, active: boolean) => {
+  const setResumeState = useCallback((chatId: string, active: boolean) => {
     setResumingIds((prev) => {
-      if (prev.has(threadId) === active) return prev;
+      if (prev.has(chatId) === active) return prev;
       const next = new Set(prev);
-      if (active) next.add(threadId);
-      else next.delete(threadId);
+      if (active) next.add(chatId);
+      else next.delete(chatId);
       return next;
     });
   }, []);
@@ -181,138 +181,138 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
     const es = new EventSource('/api/events');
     const mark = (active: boolean) => (ev: MessageEvent) => {
       try {
-        const { threadId } = JSON.parse(ev.data as string) as { threadId?: string };
-        if (threadId) setResumeState(threadId, active);
+        const { chatId } = JSON.parse(ev.data as string) as { chatId?: string };
+        if (chatId) setResumeState(chatId, active);
       } catch {
         /* not our payload shape */
       }
     };
-    es.addEventListener('thread-resume-start', mark(true));
-    es.addEventListener('thread-resume-end', mark(false));
+    es.addEventListener('chat-resume-start', mark(true));
+    es.addEventListener('chat-resume-end', mark(false));
     return () => es.close();
   }, [setResumeState]);
 
   useEffect(() => {
     let alive = true;
     api
-      .threads()
-      .then((res) => alive && setThreads(res.threads))
+      .chats()
+      .then((res) => alive && setChats(res.chats))
       .catch((e: unknown) => alive && setLoadError(e instanceof Error ? e.message : "Couldn't reach the archive."));
     return () => {
       alive = false;
     };
   }, []);
 
-  // The command bar opens a specific (often brand-new) thread.
+  // The command bar opens a specific (often brand-new) chat.
   useEffect(() => {
-    if (openThreadId) setSelectedId(openThreadId);
-  }, [openThreadId]);
+    if (openChatId) setSelectedId(openChatId);
+  }, [openChatId]);
 
   const filtered = useMemo(() => {
-    if (!threads) return null;
+    if (!chats) return null;
     const needle = query.trim().toLowerCase();
-    return needle ? threads.filter((t) => matches(t, needle)) : threads;
-  }, [threads, query]);
+    return needle ? chats.filter((t) => matches(t, needle)) : chats;
+  }, [chats, query]);
 
-  // A just-created thread won't be in the fetched list yet — synthesize a stub.
-  const selected: ThreadSummary | null =
-    threads?.find((t) => t.id === selectedId) ??
+  // A just-created chat won't be in the fetched list yet — synthesize a stub.
+  const selected: ChatSummary | null =
+    chats?.find((t) => t.id === selectedId) ??
     (selectedId
       ? { id: selectedId, title: null, model_override: null, archived: 0, updated_at: new Date().toISOString(), messages: 0 }
       : null);
 
-  const seedForSelected = selected && selected.id === openThreadId ? openSeed ?? undefined : undefined;
+  const seedForSelected = selected && selected.id === openChatId ? openSeed ?? undefined : undefined;
 
   const handleNewConversation = useCallback(() => {
     if (creating) return;
     setCreating(true);
     setCreateError(null);
     api
-      .createThread()
+      .createChat()
       .then(({ id }) => setSelectedId(id))
       .catch((e: unknown) => setCreateError(e instanceof Error ? e.message : "Couldn't start a new conversation."))
       .finally(() => setCreating(false));
   }, [creating]);
 
   return (
-    <section className="threads" aria-label="Conversations">
-      <header className="threads-head">
+    <section className="chat" aria-label="Conversations">
+      <header className="chat-head">
         <div>
           <SectionLabel n="00">Conversations</SectionLabel>
-          <p className="threads-lede voice">Every conversation, on the record — pick one up, or start a new one.</p>
+          <p className="chat-lede voice">Every conversation, on the record — pick one up, or start a new one.</p>
         </div>
-        <div className="threads-head-actions">
-          <div className="threads-search">
+        <div className="chat-head-actions">
+          <div className="chat-search">
             <input
               type="search"
-              className="threads-search-input data"
+              className="chat-search-input data"
               placeholder="Search title or preview…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               aria-label="Search conversations"
             />
           </div>
-          <button type="button" className="threads-new-btn" onClick={handleNewConversation} disabled={creating}>
+          <button type="button" className="chat-new-btn" onClick={handleNewConversation} disabled={creating}>
             <Plus size={16} aria-hidden="true" />
             {creating ? 'Starting…' : 'New conversation'}
           </button>
         </div>
-        {createError && <p className="threads-new-error voice">{createError}</p>}
+        {createError && <p className="chat-new-error voice">{createError}</p>}
       </header>
 
-      <div className={`threads-body${selectedId ? ' has-selection' : ''}`}>
-        <div className="threads-list-pane">
+      <div className={`chat-body${selectedId ? ' has-selection' : ''}`}>
+        <div className="chat-list-pane">
           {loadError ? (
-            <p className="threads-empty voice">{loadError}</p>
-          ) : !threads ? (
-            <p className="threads-loading data">Opening the archive…</p>
+            <p className="chat-empty voice">{loadError}</p>
+          ) : !chats ? (
+            <p className="chat-loading data">Opening the archive…</p>
           ) : filtered && filtered.length > 0 ? (
-            <ul className="threads-list" role="listbox" aria-label="Conversations">
+            <ul className="chat-list" role="listbox" aria-label="Conversations">
               {filtered.map((t) => (
                 <li key={t.id}>
                   <button
                     type="button"
-                    className={`threads-row${t.id === selectedId ? ' active' : ''}`}
+                    className={`chat-row${t.id === selectedId ? ' active' : ''}`}
                     role="option"
                     aria-selected={t.id === selectedId}
                     onClick={() => setSelectedId(t.id)}
                   >
-                    <div className="threads-row-top">
-                      <span className="threads-row-title">{t.title ?? 'Untitled thread'}</span>
+                    <div className="chat-row-top">
+                      <span className="chat-row-title">{t.title ?? 'Untitled chat'}</span>
                       {resumingIds.has(t.id) && (
-                        <span className="threads-row-resuming data">
+                        <span className="chat-row-resuming data">
                           <span className="resume-dot" aria-hidden="true" />
                           resuming
                         </span>
                       )}
-                      <span className="threads-row-count data">{t.messages}</span>
+                      <span className="chat-row-count data">{t.messages}</span>
                     </div>
-                    {t.preview && <p className="threads-row-preview">{t.preview}</p>}
-                    <span className="threads-row-when data">{stamp(t.updated_at)}</span>
+                    {t.preview && <p className="chat-row-preview">{t.preview}</p>}
+                    <span className="chat-row-when data">{stamp(t.updated_at)}</span>
                   </button>
                 </li>
               ))}
             </ul>
-          ) : threads.length === 0 ? (
-            <p className="threads-empty voice">Nothing filed yet. Start one above, or with ⌘K.</p>
+          ) : chats.length === 0 ? (
+            <p className="chat-empty voice">Nothing filed yet. Start one above, or with ⌘K.</p>
           ) : (
-            <p className="threads-empty voice">Nothing matches “{query.trim()}.”</p>
+            <p className="chat-empty voice">Nothing matches “{query.trim()}.”</p>
           )}
         </div>
 
-        <div className="threads-reading-pane">
+        <div className="chat-reading-pane">
           {selected ? (
             <Conversation
               key={selected.id}
-              thread={selected}
+              chat={selected}
               seed={seedForSelected}
               onSeedConsumed={onConsumed}
               onBack={() => setSelectedId(null)}
               onResumeState={setResumeState}
             />
           ) : (
-            <div className="threads-reader-empty">
-              <p className="threads-hint voice">Pick a conversation, or start a new one above.</p>
+            <div className="chat-reader-empty">
+              <p className="chat-hint voice">Pick a conversation, or start a new one above.</p>
             </div>
           )}
         </div>
@@ -323,18 +323,18 @@ export function Threads({ openThreadId, openSeed, onConsumed }: ThreadsProps) {
 
 /* ---- a live conversation: history + streaming turns + a composer ---- */
 function Conversation({
-  thread,
+  chat,
   seed,
   onSeedConsumed,
   onBack,
   onResumeState,
 }: {
-  thread: ThreadSummary;
+  chat: ChatSummary;
   seed?: string;
   onSeedConsumed?: () => void;
   onBack: () => void;
-  /** Tell the thread list which rows to badge as "resuming" (see Threads). */
-  onResumeState?: (threadId: string, active: boolean) => void;
+  /** Tell the chat list which rows to badge as "resuming" (see Chat). */
+  onResumeState?: (chatId: string, active: boolean) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -343,7 +343,7 @@ function Conversation({
   // server isn't answering /healthz yet; 'up' = server answers again but
   // hasn't confirmed a resume (this is the only state with a stand-down
   // ceiling — a plain network blip never confirms one); 'resuming' = the
-  // server broadcast thread-resume-start for this thread, so we hold until
+  // server broadcast chat-resume-start for this chat, so we hold until
   // its resume-end however long the turn runs. null = calm.
   const [restartWait, setRestartWait] = useState<null | 'down' | 'up' | 'resuming'>(null);
   // Reattach-on-load (2026-07-15, Ben's page-refresh question): a turn keeps
@@ -363,7 +363,7 @@ function Conversation({
   // Whether the viewer is parked at (or near) the bottom of the scrollback —
   // gates auto-scroll-on-stream so a user who scrolled up to read history
   // doesn't get yanked back down by the next token. Starts true: a freshly
-  // opened/switched thread (Conversation is remounted per thread — see the
+  // opened/switched chat (Conversation is remounted per chat — see the
   // `key={selected.id}` on its call site) should open at the bottom.
   const stickToBottomRef = useRef(true);
   // True only while a stop-button click is in flight — lets the turn's
@@ -383,8 +383,8 @@ function Conversation({
   restartWaitRef.current = restartWait;
   const messagesRef = useRef<ChatMessage[] | null>(null);
   messagesRef.current = messages;
-  const threadIdRef = useRef(thread.id);
-  threadIdRef.current = thread.id;
+  const chatIdRef = useRef(chat.id);
+  chatIdRef.current = chat.id;
   const mountedRef = useRef(true);
   useEffect(() => () => {
     mountedRef.current = false;
@@ -395,29 +395,29 @@ function Conversation({
     setMessages(null);
     setError(null);
     api
-      .messages(thread.id)
+      .messages(chat.id)
       .then((res) => {
         if (!alive) return;
         setMessages(res.messages);
         setLiveTurn(!!res.live);
       })
-      .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : "Couldn't pull that thread."));
+      .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : "Couldn't pull that chat."));
     return () => {
       alive = false;
     };
-  }, [thread.id]);
+  }, [chat.id]);
 
   // Follow a turn that's running without us (opened/reloaded mid-turn):
-  // poll while the server says the thread is live. Paused during our own
+  // poll while the server says the chat is live. Paused during our own
   // sends — there the SSE stream is the live view. The turn-end broadcast
-  // (thread-activity) usually flips this off before the poll even notices.
+  // (chat-activity) usually flips this off before the poll even notices.
   useEffect(() => {
     if (!liveTurn || sending) return;
     const timer = setInterval(() => {
       api
-        .messages(thread.id)
+        .messages(chat.id)
         .then((res) => {
-          if (!mountedRef.current || threadIdRef.current !== thread.id) return;
+          if (!mountedRef.current || chatIdRef.current !== chat.id) return;
           setMessages(res.messages);
           if (!res.live) setLiveTurn(false);
         })
@@ -426,13 +426,13 @@ function Conversation({
         });
     }, 2500);
     return () => clearInterval(timer);
-  }, [liveTurn, sending, thread.id]);
+  }, [liveTurn, sending, chat.id]);
 
   // Live out-of-band updates (2026-07-15 restart-UX): the server broadcasts
-  // `thread-activity` on /api/events when it writes to a thread outside a
+  // `chat-activity` on /api/events when it writes to a chat outside a
   // client-initiated stream — today that's the interrupted-turn resume
-  // (gateway/pendingTurn.ts) posting into a thread after a restart killed a
-  // turn mid-flight. When it's THIS thread, re-fetch the authoritative
+  // (gateway/pendingTurn.ts) posting into a chat after a restart killed a
+  // turn mid-flight. When it's THIS chat, re-fetch the authoritative
   // history so the conversation visibly resumes without a manual reload.
   // EventSource reconnects on its own across server restarts, and the
   // server-side replay ring (Last-Event-ID) covers events that fired while
@@ -445,15 +445,15 @@ function Conversation({
     const onActivity = (ev: MessageEvent) => {
       let touched: string | undefined;
       try {
-        touched = (JSON.parse(ev.data as string) as { threadId?: string }).threadId;
+        touched = (JSON.parse(ev.data as string) as { chatId?: string }).chatId;
       } catch {
         return; // not our payload shape; other event types have their own listeners
       }
-      if (!touched || touched !== threadIdRef.current || sendingRef.current) return;
+      if (!touched || touched !== chatIdRef.current || sendingRef.current) return;
       api
         .messages(touched)
         .then((res) => {
-          if (!mountedRef.current || threadIdRef.current !== touched || sendingRef.current) return;
+          if (!mountedRef.current || chatIdRef.current !== touched || sendingRef.current) return;
           setMessages(res.messages);
           setError(null);
           // /api/chat broadcasts at turn start and end — this keeps the
@@ -461,32 +461,32 @@ function Conversation({
           setLiveTurn(!!res.live);
         })
         .catch(() => {
-          /* transient — the next thread-activity or reload will catch up */
+          /* transient — the next chat-activity or reload will catch up */
         });
     };
-    es.addEventListener('thread-activity', onActivity);
+    es.addEventListener('chat-activity', onActivity);
     // Status-strip transitions from the server's own mouth: a resume turn
     // started (covers a tab that loaded mid-restart and never saw the drop)
     // or finished (the all-clear — strip and list badge come down).
-    const forThisThread = (ev: MessageEvent): boolean => {
+    const forThisChat = (ev: MessageEvent): boolean => {
       try {
-        return (JSON.parse(ev.data as string) as { threadId?: string }).threadId === threadIdRef.current;
+        return (JSON.parse(ev.data as string) as { chatId?: string }).chatId === chatIdRef.current;
       } catch {
         return false;
       }
     };
     const onResumeStart = (ev: MessageEvent) => {
-      if (forThisThread(ev)) setRestartWait('resuming');
+      if (forThisChat(ev)) setRestartWait('resuming');
     };
     const onResumeEnd = (ev: MessageEvent) => {
-      if (!forThisThread(ev)) return;
+      if (!forThisChat(ev)) return;
       setRestartWait(null);
-      onResumeStateRef.current?.(threadIdRef.current, false);
+      onResumeStateRef.current?.(chatIdRef.current, false);
     };
-    es.addEventListener('thread-resume-start', onResumeStart);
-    es.addEventListener('thread-resume-end', onResumeEnd);
+    es.addEventListener('chat-resume-start', onResumeStart);
+    es.addEventListener('chat-resume-end', onResumeEnd);
     return () => es.close();
-  }, [thread.id]);
+  }, [chat.id]);
 
   // While the strip says 'down', poll the public /healthz until the server
   // answers again. While it says 'up' (back online, resume not yet
@@ -510,7 +510,7 @@ function Conversation({
     if (restartWait === 'up') {
       const ceiling = setTimeout(() => {
         setRestartWait(null);
-        onResumeStateRef.current?.(threadIdRef.current, false);
+        onResumeStateRef.current?.(chatIdRef.current, false);
       }, 90_000);
       return () => clearTimeout(ceiling);
     }
@@ -562,7 +562,7 @@ function Conversation({
     return () => clearInterval(id);
   }, []);
 
-  // A composer switch (new/different thread) abandons any in-flight or
+  // A composer switch (new/different chat) abandons any in-flight or
   // finished-but-unsent uploads — release their local object URLs so we
   // don't leak blob: URLs for the life of the tab. (The uploaded file itself
   // is a separate, server-side leak — see attachments.ts's KNOWN LEAK note.)
@@ -570,7 +570,7 @@ function Conversation({
     return () => {
       for (const p of pendingRef.current) URL.revokeObjectURL(p.previewUrl);
     };
-  }, [thread.id]);
+  }, [chat.id]);
 
   const addFiles = useCallback((files: FileList | File[]) => {
     const list = Array.from(files).filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
@@ -607,26 +607,26 @@ function Conversation({
   // always means the connection died, not that the turn didn't happen — and
   // as of the server's live-persist fix, whatever the turn got through is
   // now durably saved even if we never got to see the rest of it stream.
-  // Poll the thread's real history a few times; once the server shows more
+  // Poll the chat's real history a few times; once the server shows more
   // than just the user's own message (i.e. an assistant reply actually
   // landed — possibly a fuller one than what we folded locally before the
   // drop), swap it in as the authoritative version and clear the stale error
   // banner. Gives up silently after ~15s — the locally-folded fallback
   // message from the catch block above is still sitting there either way.
-  const reconcileAfterDrop = useCallback((threadId: string, preSendCount: number) => {
+  const reconcileAfterDrop = useCallback((chatId: string, preSendCount: number) => {
     let attempt = 0;
     const tick = () => {
-      // Live checks against refs, not a captured `thread` — this closure was
+      // Live checks against refs, not a captured `chat` — this closure was
       // built once when the drop happened, but the user may since have
-      // switched threads (this Conversation instance is reused across
-      // threads, not remounted), and we must not splice a stale reconcile
+      // switched chats (this Conversation instance is reused across
+      // chats, not remounted), and we must not splice a stale reconcile
       // into whatever's now on screen.
-      if (!mountedRef.current || threadIdRef.current !== threadId) return;
+      if (!mountedRef.current || chatIdRef.current !== chatId) return;
       attempt++;
       api
-        .messages(threadId)
+        .messages(chatId)
         .then((res) => {
-          if (!mountedRef.current || threadIdRef.current !== threadId) return;
+          if (!mountedRef.current || chatIdRef.current !== chatId) return;
           if (res.messages.length > preSendCount + 1) {
             setMessages(res.messages);
             setError(null);
@@ -635,7 +635,7 @@ function Conversation({
             // 'resuming' strip stays: resume-end is its all-clear.
             if (restartWaitRef.current === 'down' || restartWaitRef.current === 'up') {
               setRestartWait(null);
-              onResumeStateRef.current?.(threadId, false);
+              onResumeStateRef.current?.(chatId, false);
             }
             return;
           }
@@ -680,7 +680,7 @@ function Conversation({
       setLive(parts);
       setSending(true);
       try {
-        await streamChat(thread.id, { text: t, attachments: ready.map((a) => ({ id: a.id })) }, (e) => {
+        await streamChat(chat.id, { text: t, attachments: ready.map((a) => ({ id: a.id })) }, (e) => {
           if (e.type === 'turn-end') sawTurnEnd = true;
           if (e.type === 'error') {
             // A deliberate stop (see stop() below) surfaces here as the
@@ -720,7 +720,7 @@ function Conversation({
           if (parts.length > 0) {
             setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
           }
-          reconcileAfterDrop(thread.id, preSendCount);
+          reconcileAfterDrop(chat.id, preSendCount);
         }
       } catch (err) {
         // A network drop (e.g. the server restarting mid-turn) throws here —
@@ -743,26 +743,26 @@ function Conversation({
           parts.push({
             type: 'notice',
             level: 'info',
-            text: 'Connection dropped — likely a server restart. This thread reconnects and catches up on its own.',
+            text: 'Connection dropped — likely a server restart. This chat reconnects and catches up on its own.',
           });
           // Raise the status strip + list badge immediately — the /healthz
           // poll and the server's resume broadcasts take it from here.
           setRestartWait('down');
-          onResumeStateRef.current?.(thread.id, true);
+          onResumeStateRef.current?.(chat.id, true);
         } else {
           setError(msg);
         }
         if (parts.length > 0) {
           setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
         }
-        reconcileAfterDrop(thread.id, preSendCount);
+        reconcileAfterDrop(chat.id, preSendCount);
       } finally {
         setLive(null);
         setSending(false);
         interruptingRef.current = false;
       }
     },
-    [thread.id, sending, reconcileAfterDrop],
+    [chat.id, sending, reconcileAfterDrop],
   );
 
   // What the composer's Send button (and Enter) actually calls. Cabinet
@@ -811,11 +811,11 @@ function Conversation({
   const stop = useCallback(() => {
     if (!sending) return;
     interruptingRef.current = true;
-    void interruptChat(thread.id).catch(() => {
+    void interruptChat(chat.id).catch(() => {
       // The turn may finish (or fail on its own) before the interrupt lands
       // — nothing useful to surface to a user who just clicked "stop".
     });
-  }, [sending, thread.id]);
+  }, [sending, chat.id]);
 
   // Auto-send the seed (from the command bar) once history has loaded.
   useEffect(() => {
@@ -835,19 +835,19 @@ function Conversation({
   return (
     <div className="reader" ref={readerRef}>
       <header className="reader-head">
-        <button type="button" className="threads-back" onClick={onBack}>
+        <button type="button" className="chat-back" onClick={onBack}>
           ← Conversations
         </button>
         <div className="reader-title">
-          <h2>{thread.title ?? 'New conversation'}</h2>
-          <span className="reader-meta data">{thread.messages > 0 ? `${thread.messages} messages · ` : ''}Cabinet</span>
+          <h2>{chat.title ?? 'New conversation'}</h2>
+          <span className="reader-meta data">{chat.messages > 0 ? `${chat.messages} messages · ` : ''}Cabinet</span>
         </div>
       </header>
 
       <ol className="reader-log">
         {!messages && !error ? (
           <li>
-            <p className="threads-loading data">Pulling the scrollback…</p>
+            <p className="chat-loading data">Pulling the scrollback…</p>
           </li>
         ) : (
           runs.flatMap((run) => {
@@ -891,12 +891,12 @@ function Conversation({
           <span className="resume-dot" aria-hidden="true" />
           <span className="resume-text data">
             {restartWait === 'down'
-              ? 'Cabinet is restarting — this thread resumes on its own.'
+              ? 'Cabinet is restarting — this chat resumes on its own.'
               : restartWait === 'up'
-                ? 'Back online — waiting for the thread to resume…'
+                ? 'Back online — waiting for the chat to resume…'
                 : restartWait === 'resuming'
-                  ? 'Resuming this thread…'
-                  : 'Cabinet is working on this thread — following along…'}
+                  ? 'Resuming this chat…'
+                  : 'Cabinet is working on this chat — following along…'}
           </span>
         </div>
       )}

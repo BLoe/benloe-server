@@ -34,39 +34,39 @@ describe('findCandidates', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const addThread = (title: string | null, kind = 'user') => {
+  const addChat = (title: string | null, kind = 'user') => {
     const id = randomUUID();
-    cabinet.db.prepare('INSERT INTO thread (id, title, kind) VALUES (?,?,?)').run(id, title, kind);
+    cabinet.db.prepare('INSERT INTO chat (id, title, kind) VALUES (?,?,?)').run(id, title, kind);
     return id;
   };
-  const addMsg = (threadId: string, role: string, text: string, at: string) =>
+  const addMsg = (chatId: string, role: string, text: string, at: string) =>
     cabinet.db
-      .prepare('INSERT INTO message (id, thread_id, role, parts, created_at) VALUES (?,?,?,?,?)')
-      .run(randomUUID(), threadId, role, JSON.stringify([{ type: 'text', text }]), at);
+      .prepare('INSERT INTO message (id, chat_id, role, parts, created_at) VALUES (?,?,?,?,?)')
+      .run(randomUUID(), chatId, role, JSON.stringify([{ type: 'text', text }]), at);
 
-  it('selects only untitled user threads that have a real exchange', () => {
+  it('selects only untitled user chats that have a real exchange', () => {
     // untitled, full exchange → candidate
-    const t1 = addThread(null);
+    const t1 = addChat(null);
     addMsg(t1, 'user', 'first question', '2026-07-01 10:00:00');
     addMsg(t1, 'user', 'later question', '2026-07-01 10:05:00');
     addMsg(t1, 'assistant', 'the answer', '2026-07-01 10:00:30');
 
     // empty-string title → also a candidate (treated as untitled)
-    const t2 = addThread('');
+    const t2 = addChat('');
     addMsg(t2, 'user', 'hello', '2026-07-02 09:00:00');
     addMsg(t2, 'assistant', 'hi', '2026-07-02 09:00:10');
 
     // already titled → skipped
-    const t3 = addThread('Established Title');
+    const t3 = addChat('Established Title');
     addMsg(t3, 'user', 'q', '2026-07-03 09:00:00');
     addMsg(t3, 'assistant', 'a', '2026-07-03 09:00:10');
 
     // untitled but no assistant reply yet → skipped
-    const t4 = addThread(null);
+    const t4 = addChat(null);
     addMsg(t4, 'user', 'unanswered', '2026-07-04 09:00:00');
 
     // non-user kind → skipped
-    const t5 = addThread(null, 'heartbeat');
+    const t5 = addChat(null, 'heartbeat');
     addMsg(t5, 'user', 'beat', '2026-07-05 09:00:00');
     addMsg(t5, 'assistant', 'ok', '2026-07-05 09:00:10');
 

@@ -12,7 +12,7 @@
    Brain has no scroll container of its own — .surface (shell.css) is the
    actual scroller, shared by every surface. Scope the fade to .surface only
    when it's holding .brain, via :has(), so this doesn't bleed into Today/
-   Ops/Threads/Domains. Classic two-layer trick, bottom edge only: the
+   Ops/Chats/Domains. Classic two-layer trick, bottom edge only: the
    "cover" layer is background-attachment: local (scrolls with content), so
    it sits exactly at the true bottom of the content and masks the "shadow"
    layer beneath it whenever there's nothing left to scroll to; the "shadow"
@@ -155,7 +155,7 @@
 
 .hit__chip--fact { color: var(--patina); border-color: var(--patina-dim); }
 .hit__chip--lesson { color: var(--brass-hi); border-color: var(--brass-dim); }
-.hit__chip--thread { color: var(--linen); border-color: var(--rule); }
+.hit__chip--chat { color: var(--linen); border-color: var(--rule); }
 .hit__chip--episodic { color: var(--linen-dim); border-color: var(--rule); }
 .hit__chip--document { color: var(--paper-2); border-color: var(--brass-deep); }
 
