@@ -121,7 +121,7 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
     return false;
   }
 
-  const broadcast = () => deps.widgetBus?.emit('push', { event: 'thread-activity', data: { threadId: marker.threadId } });
+  const broadcast = (event: string) => deps.widgetBus?.emit('push', { event, data: { threadId: marker.threadId } });
 
   // Honest seam in the transcript: the reader should see *why* the reply
   // below arrives out of band. role 'system' renders as "System" in the UI.
@@ -129,7 +129,14 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
     .prepare('INSERT INTO message (id, thread_id, role, parts) VALUES (?,?,?,?)')
     .run(randomUUID(), marker.threadId, 'system', JSON.stringify([{ type: 'text', text: 'Process restarted mid-turn — Cabinet is resuming this thread.' }]));
   deps.db.prepare("UPDATE thread SET updated_at = datetime('now') WHERE id = ?").run(marker.threadId);
-  broadcast();
+  // thread-activity drives the open tab's re-fetch; thread-resume-start/end
+  // bracket the resume for UI affordances (the conversation's status strip,
+  // the thread list's "resuming" badge). Emitted as a start/end PAIR on
+  // purpose: /api/events replays its ring to every fresh EventSource, so an
+  // unpaired start would leave stale badges on tabs opened later — a
+  // replayed pair nets out to nothing.
+  broadcast('thread-activity');
+  broadcast('thread-resume-start');
 
   console.log(`pendingTurn: resuming interrupted turn in thread ${marker.threadId} (started ${marker.startedAt})`);
   const recorder = createTranscriptRecorder();
@@ -143,7 +150,8 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
   } finally {
     recorder.persist(deps.db, marker.threadId);
     deps.db.prepare("UPDATE thread SET updated_at = datetime('now') WHERE id = ?").run(marker.threadId);
-    broadcast();
+    broadcast('thread-activity');
+    broadcast('thread-resume-end');
   }
   return true;
 }
