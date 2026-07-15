@@ -476,6 +476,7 @@
   padding: var(--sp-2) var(--sp-3);
   max-height: 32dvh;
   min-height: 42px;
+  overflow-y: auto;
   outline: none;
 }
 .composer textarea:focus { border-color: var(--brass-dim); }
@@ -505,17 +506,20 @@
 .composer-send-btn:not(:disabled):hover,
 .composer-send-btn:not(:disabled):focus-visible { color: var(--brass-hi); }
 .composer-send-btn:disabled { color: var(--linen-faint); border-color: var(--rule); }
-.composer-send-spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid var(--linen-faint);
-  border-top-color: var(--brass);
-  animation: composer-spin 0.7s linear infinite;
+
+/* ---- stop button: replaces send while a turn is streaming (real cancel,
+   see interruptChat/#api/interrupt) — brass so it still reads as "live and
+   actionable", vermilion on hover since clicking it halts work in progress. */
+.composer-stop-btn {
+  color: var(--brass);
+  border-color: var(--brass-dim);
+  cursor: pointer;
 }
-@keyframes composer-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .composer-send-spinner { animation: none; }
+.composer-stop-btn:hover,
+.composer-stop-btn:focus-visible {
+  color: var(--vermilion);
+  border-color: var(--vermilion-dim);
+  outline: none;
 }
 
 /* ---- composer: pending attachment thumbnails (paste/drop/attach) ---- */
