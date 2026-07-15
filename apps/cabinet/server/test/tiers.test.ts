@@ -7,7 +7,7 @@ import { classifyBash, classifyToolUse, parsePromotions, applyPromotions } from 
 import { ApprovalQueue } from '../src/tiers/approvals.js';
 import { buildGate, type GateContext } from '../src/tiers/gate.js';
 
-const ctx: GateContext = { threadId: 't1', sessionKind: 'user', standingOrders: '' };
+const ctx: GateContext = { chatId: 't1', sessionKind: 'user', standingOrders: '' };
 
 // ---------------------------------------------------------------------------
 // §6 tier table, row by row.

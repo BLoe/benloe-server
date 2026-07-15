@@ -42,18 +42,18 @@ describe('applyPendingDeployConfirmation', () => {
   it('no-ops when the live sha does not match targetSha', () => {
     writeStatus();
     expect(applyPendingDeployConfirmation(cabinet.db, dir, 'different-sha')).toBe(false);
-    const count = cabinet.db.prepare("SELECT count(*) AS n FROM thread WHERE id='sys-deploy'").get() as { n: number };
+    const count = cabinet.db.prepare("SELECT count(*) AS n FROM chat WHERE id='sys-deploy'").get() as { n: number };
     expect(count.n).toBe(0);
   });
 
-  it('posts a confirmation into a user-kind sys-deploy thread and acks the status file', () => {
+  it('posts a confirmation into a user-kind sys-deploy chat and acks the status file', () => {
     writeStatus();
     expect(applyPendingDeployConfirmation(cabinet.db, dir, 'abc123')).toBe(true);
 
-    const thread = cabinet.db.prepare("SELECT kind FROM thread WHERE id='sys-deploy'").get() as { kind: string };
-    expect(thread.kind).toBe('user');
+    const chat = cabinet.db.prepare("SELECT kind FROM chat WHERE id='sys-deploy'").get() as { kind: string };
+    expect(chat.kind).toBe('user');
 
-    const msg = cabinet.db.prepare("SELECT parts FROM message WHERE thread_id='sys-deploy'").get() as { parts: string };
+    const msg = cabinet.db.prepare("SELECT parts FROM message WHERE chat_id='sys-deploy'").get() as { parts: string };
     const parts = JSON.parse(msg.parts) as { text: string }[];
     expect(parts[0].text).toContain('abc123');
     expect(parts[0].text).toContain('test commit');
@@ -66,7 +66,7 @@ describe('applyPendingDeployConfirmation', () => {
     writeStatus();
     applyPendingDeployConfirmation(cabinet.db, dir, 'abc123');
     expect(applyPendingDeployConfirmation(cabinet.db, dir, 'abc123')).toBe(false);
-    const count = cabinet.db.prepare("SELECT count(*) AS n FROM message WHERE thread_id='sys-deploy'").get() as {
+    const count = cabinet.db.prepare("SELECT count(*) AS n FROM message WHERE chat_id='sys-deploy'").get() as {
       n: number;
     };
     expect(count.n).toBe(1);
@@ -101,12 +101,12 @@ describe('schedulePendingDeployConfirmationWatch', () => {
     schedulePendingDeployConfirmationWatch(cabinet.db, dir, 'abc123', { pollMs: 10, timeoutMs: 500 });
 
     vi.advanceTimersByTime(25); // a couple of ticks with no marker yet — must not crash or wedge
-    expect(cabinet.db.prepare("SELECT count(*) AS n FROM thread WHERE id='sys-deploy'").get()).toEqual({ n: 0 });
+    expect(cabinet.db.prepare("SELECT count(*) AS n FROM chat WHERE id='sys-deploy'").get()).toEqual({ n: 0 });
 
     writeStatus({ targetSha: 'abc123' }); // watcher writes it late, as it does in production
     vi.advanceTimersByTime(30); // next tick(s) should pick it up
 
-    const count = cabinet.db.prepare("SELECT count(*) AS n FROM message WHERE thread_id='sys-deploy'").get() as {
+    const count = cabinet.db.prepare("SELECT count(*) AS n FROM message WHERE chat_id='sys-deploy'").get() as {
       n: number;
     };
     expect(count.n).toBe(1);
@@ -121,7 +121,7 @@ describe('schedulePendingDeployConfirmationWatch', () => {
     writeStatus({ targetSha: 'abc123' });
     vi.advanceTimersByTime(200); // nothing left running to notice
 
-    const count = cabinet.db.prepare("SELECT count(*) AS n FROM message WHERE thread_id='sys-deploy'").get() as {
+    const count = cabinet.db.prepare("SELECT count(*) AS n FROM message WHERE chat_id='sys-deploy'").get() as {
       n: number;
     };
     expect(count.n).toBe(0);
@@ -132,7 +132,7 @@ describe('schedulePendingDeployConfirmationWatch', () => {
     writeStatus({ targetSha: 'some-other-sha' });
     vi.advanceTimersByTime(200);
 
-    const count = cabinet.db.prepare("SELECT count(*) AS n FROM thread WHERE id='sys-deploy'").get() as { n: number };
+    const count = cabinet.db.prepare("SELECT count(*) AS n FROM chat WHERE id='sys-deploy'").get() as { n: number };
     expect(count.n).toBe(0);
   });
 });

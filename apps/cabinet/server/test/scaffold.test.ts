@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 
 describe('scaffold', () => {
   it('data directories exist and are gitignored', () => {
-    for (const d of ['memory', 'documents', 'photos', 'backups', 'models', 'threads']) {
+    for (const d of ['memory', 'documents', 'photos', 'backups', 'models', 'chats']) {
       expect(existsSync(`/srv/benloe/data/cabinet/${d}`)).toBe(true);
     }
     const ignore = execFileSync('git', ['-C', '/srv/benloe', 'check-ignore', 'data/cabinet/cabinet.db'], {

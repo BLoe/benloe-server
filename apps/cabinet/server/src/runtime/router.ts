@@ -18,7 +18,7 @@ export const EFFORT: Record<Route, 'low' | 'medium' | 'high' | 'xhigh'> = {
 
 export interface RouteInput {
   kind: 'user' | 'heartbeat' | 'cron';
-  /** Per-thread override: 'nano'|'default'|'deep'|'max' or a literal model id. */
+  /** Per-chat override: 'nano'|'default'|'deep'|'max' or a literal model id. */
   override?: string | null;
   /** Cron jobs may request the deep route (weekly review). */
   deep?: boolean;

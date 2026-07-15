@@ -1,5 +1,5 @@
 import type {
-  CabinetApi, TodayView, DomainId, DomainView, OpsFeed, OpsKind, MemoryView, RecallResponse, HealthInfo, ThreadSummary, ChatMessage,
+  CabinetApi, TodayView, DomainId, DomainView, OpsFeed, OpsKind, MemoryView, RecallResponse, HealthInfo, ChatSummary, ChatMessage,
   UsageView, UsageRollingView,
 } from './contracts.js';
 
@@ -44,10 +44,10 @@ export const fetchApi: CabinetApi = {
   memory: () => get<MemoryView>('/api/memory'),
   saveMemoryFile: (name: string, content: string) => send<{ ok: boolean }>(`/api/memory/${encodeURIComponent(name)}`, 'PUT', { content }),
   recall: (query: string) => get<RecallResponse>(`/api/recall${qs({ q: query })}`),
-  threads: () => get<{ threads: ThreadSummary[] }>('/api/threads'),
-  createThread: () => send<{ id: string }>('/api/threads', 'POST', {}),
-  messages: (threadId: string) => get<{ messages: ChatMessage[] }>(`/api/threads/${threadId}/messages`),
-  command: (intent: string) => send<{ threadId: string }>('/api/command', 'POST', { intent }),
+  chats: () => get<{ chats: ChatSummary[] }>('/api/chats'),
+  createChat: () => send<{ id: string }>('/api/chats', 'POST', {}),
+  messages: (chatId: string) => get<{ messages: ChatMessage[] }>(`/api/chats/${chatId}/messages`),
+  command: (intent: string) => send<{ chatId: string }>('/api/command', 'POST', { intent }),
 };
 
 export { AuthRequiredError };

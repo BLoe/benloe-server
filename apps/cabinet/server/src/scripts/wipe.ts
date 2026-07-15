@@ -136,7 +136,7 @@ export const CABINET_CLEAR_TABLES = [
   'retrieval_log',
   'subscription',
   'task',
-  'thread',
+  'chat',
   'token_usage',
   'transaction_row',
   'workout',

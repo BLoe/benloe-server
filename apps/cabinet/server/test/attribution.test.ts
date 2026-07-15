@@ -48,24 +48,24 @@ beforeEach(async () => { dir = mkdtempSync(join(tmpdir(), 'cabinet-attr-')); cab
 afterEach(async () => { await new Promise((r) => server.close(r)); cabinet.close(); rmSync(dir, { recursive: true, force: true }); });
 
 describe('identity attribution', () => {
-  it('stamps created_by on a thread the principal opens', async () => {
-    const { id } = await (await call('/api/threads', 'benji', { method: 'POST', body: '{}' })).json();
-    const row = cabinet.db.prepare('SELECT created_by FROM thread WHERE id = ?').get(id) as { created_by: string };
+  it('stamps created_by on a chat the principal opens', async () => {
+    const { id } = await (await call('/api/chats', 'benji', { method: 'POST', body: '{}' })).json();
+    const row = cabinet.db.prepare('SELECT created_by FROM chat WHERE id = ?').get(id) as { created_by: string };
     expect(row.created_by).toBe('benji@agents.benloe.com');
   });
 
   it('stamps a user message with its author and tells the runtime who it is (agent)', async () => {
-    const { id } = await (await call('/api/threads', 'benji', { method: 'POST', body: '{}' })).json();
-    await drain(await call('/api/chat', 'benji', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'a suggestion' }) }));
-    const msg = cabinet.db.prepare("SELECT author FROM message WHERE thread_id = ? AND role = 'user'").get(id) as { author: string };
+    const { id } = await (await call('/api/chats', 'benji', { method: 'POST', body: '{}' })).json();
+    await drain(await call('/api/chat', 'benji', { method: 'POST', body: JSON.stringify({ chatId: id, text: 'a suggestion' }) }));
+    const msg = cabinet.db.prepare("SELECT author FROM message WHERE chat_id = ? AND role = 'user'").get(id) as { author: string };
     expect(msg.author).toBe('benji@agents.benloe.com');
     expect(captured?.interlocutor).toMatchObject({ name: 'benji', role: 'agent', isOwner: false });
   });
 
   it('attributes the owner as principal', async () => {
-    const { id } = await (await call('/api/threads', 'owner', { method: 'POST', body: '{}' })).json();
-    await drain(await call('/api/chat', 'owner', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'hi' }) }));
-    const msg = cabinet.db.prepare("SELECT author FROM message WHERE thread_id = ? AND role = 'user'").get(id) as { author: string };
+    const { id } = await (await call('/api/chats', 'owner', { method: 'POST', body: '{}' })).json();
+    await drain(await call('/api/chat', 'owner', { method: 'POST', body: JSON.stringify({ chatId: id, text: 'hi' }) }));
+    const msg = cabinet.db.prepare("SELECT author FROM message WHERE chat_id = ? AND role = 'user'").get(id) as { author: string };
     expect(msg.author).toBe(OWNER);
     expect(captured?.interlocutor).toMatchObject({ isOwner: true });
   });

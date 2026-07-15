@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ChatMessage, ThreadSummary } from '../src/lib/contracts.js';
+import type { ChatMessage, ChatSummary } from '../src/lib/contracts.js';
 
-const { threadsMock, messagesMock, streamChatMock } = vi.hoisted(() => ({
-  threadsMock: vi.fn<() => Promise<{ threads: ThreadSummary[] }>>(),
-  messagesMock: vi.fn<(threadId: string) => Promise<{ messages: ChatMessage[] }>>(),
+const { chatsMock, messagesMock, streamChatMock } = vi.hoisted(() => ({
+  chatsMock: vi.fn<() => Promise<{ chats: ChatSummary[] }>>(),
+  messagesMock: vi.fn<(chatId: string) => Promise<{ messages: ChatMessage[] }>>(),
   streamChatMock: vi.fn(),
 }));
 
-// Stub the data module: keep the real types/exports, swap api.threads + api.messages.
+// Stub the data module: keep the real types/exports, swap api.chats + api.messages.
 vi.mock('../src/lib/cabinet.js', async (importActual) => {
   const actual = await importActual<typeof import('../src/lib/cabinet.js')>();
-  return { ...actual, api: { ...actual.api, threads: threadsMock, messages: messagesMock } };
+  return { ...actual, api: { ...actual.api, chats: chatsMock, messages: messagesMock } };
 });
 
 // Stub only streamChat — foldTurn stays real so folded parts match production folding.
@@ -21,9 +21,9 @@ vi.mock('../src/lib/chat.js', async (importActual) => {
   return { ...actual, streamChat: streamChatMock };
 });
 
-import { Threads } from '../src/surfaces/Threads.js';
+import { Chat } from '../src/surfaces/Chat.js';
 
-const THREADS: ThreadSummary[] = [
+const CHATS: ChatSummary[] = [
   {
     id: 't-5dd8',
     title: 'Cabinet Systems Status Report',
@@ -58,18 +58,18 @@ const MESSAGES: ChatMessage[] = [
 ];
 
 beforeEach(() => {
-  threadsMock.mockReset();
+  chatsMock.mockReset();
   messagesMock.mockReset();
   streamChatMock.mockReset();
-  threadsMock.mockResolvedValue({ threads: THREADS });
+  chatsMock.mockResolvedValue({ chats: CHATS });
   messagesMock.mockResolvedValue({ messages: MESSAGES });
 });
 afterEach(cleanup);
 
-describe('Threads surface', () => {
+describe('Chat surface', () => {
   it('renders the archive list with title, preview, and message count', async () => {
-    render(<Threads />);
-    await waitFor(() => expect(threadsMock).toHaveBeenCalled());
+    render(<Chat />);
+    await waitFor(() => expect(chatsMock).toHaveBeenCalled());
 
     expect(await screen.findByText('Cabinet Systems Status Report')).toBeTruthy();
     expect(screen.getByText('Weight tracker + macro ring')).toBeTruthy();
@@ -80,7 +80,7 @@ describe('Threads surface', () => {
 
   it('the search box filters the list by title/preview', async () => {
     const user = userEvent.setup();
-    render(<Threads />);
+    render(<Chat />);
     await screen.findByText('Cabinet Systems Status Report');
 
     await user.type(screen.getByLabelText('Search conversations'), 'weight tracker');
@@ -91,7 +91,7 @@ describe('Threads surface', () => {
 
   it('shows voice empty copy when the search matches nothing', async () => {
     const user = userEvent.setup();
-    render(<Threads />);
+    render(<Chat />);
     await screen.findByText('Cabinet Systems Status Report');
 
     await user.type(screen.getByLabelText('Search conversations'), 'zzz-nonexistent');
@@ -99,9 +99,9 @@ describe('Threads surface', () => {
     expect(await screen.findByText(/Nothing matches/)).toBeTruthy();
   });
 
-  it('selecting a thread calls api.messages(id) and renders its messages', async () => {
+  it('selecting a chat calls api.messages(id) and renders its messages', async () => {
     const user = userEvent.setup();
-    render(<Threads />);
+    render(<Chat />);
     await screen.findByText('Cabinet Systems Status Report');
 
     await user.click(screen.getByText('Cabinet Systems Status Report'));
@@ -116,13 +116,13 @@ describe('Threads surface', () => {
 
   it('a mid-turn network drop (e.g. the server restarting) still leaves the tool call it already ran visible, not wiped (2026-07-15 fix)', async () => {
     const user = userEvent.setup();
-    streamChatMock.mockImplementation(async (_threadId: string, _message: unknown, onEvent: (e: unknown) => void) => {
-      onEvent({ type: 'turn-start', messageId: 'm-live', threadId: 't-5dd8', model: 'claude-sonnet-5' });
+    streamChatMock.mockImplementation(async (_chatId: string, _message: unknown, onEvent: (e: unknown) => void) => {
+      onEvent({ type: 'turn-start', messageId: 'm-live', chatId: 't-5dd8', model: 'claude-sonnet-5' });
       onEvent({ type: 'tool-start', toolId: 'tu-live', name: 'Bash', input: { command: 'ls' } });
       onEvent({ type: 'tool-end', toolId: 'tu-live', output: 'ok', isError: false });
       throw new Error('chat failed: 502');
     });
-    render(<Threads />);
+    render(<Chat />);
     await user.click(await screen.findByText('Cabinet Systems Status Report'));
     await screen.findByText('How are the services looking?');
 

@@ -72,11 +72,11 @@ describe('surface endpoints — frozen contract', () => {
   describe('/api/today.briefing / .checkin (mentorship: durable Today surface)', () => {
     /** SQLite datetime('now')-style UTC stamp, matching what persistAssistantMessage's INSERT default produces. */
     const sqliteUtc = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
-    const seedThread = (id: string, kind = 'cron') => cabinet.db.prepare('INSERT INTO thread (id, title, kind) VALUES (?,?,?)').run(id, id, kind);
-    const seedMessage = (threadId: string, parts: unknown, createdAt: Date) =>
+    const seedChat = (id: string, kind = 'cron') => cabinet.db.prepare('INSERT INTO chat (id, title, kind) VALUES (?,?,?)').run(id, id, kind);
+    const seedMessage = (chatId: string, parts: unknown, createdAt: Date) =>
       cabinet.db
-        .prepare('INSERT INTO message (id, thread_id, role, parts, created_at) VALUES (?,?,?,?,?)')
-        .run(`${threadId}-${createdAt.getTime()}`, threadId, 'assistant', JSON.stringify(parts), sqliteUtc(createdAt));
+        .prepare('INSERT INTO message (id, chat_id, role, parts, created_at) VALUES (?,?,?,?,?)')
+        .run(`${chatId}-${createdAt.getTime()}`, chatId, 'assistant', JSON.stringify(parts), sqliteUtc(createdAt));
 
     it('both are null when neither job has ever run', async () => {
       const t = await (await owner('/api/today')).json();
@@ -85,7 +85,7 @@ describe('surface endpoints — frozen contract', () => {
     });
 
     it('briefing is populated and isCurrent when sys-briefing has a fresh text part', async () => {
-      seedThread('sys-briefing');
+      seedChat('sys-briefing');
       seedMessage('sys-briefing', [{ type: 'widget', widgetType: 'briefing', data: { sections: [] } }, { type: 'text', text: 'Quiet day, nothing urgent.' }], new Date());
       const t = await (await owner('/api/today')).json();
       expect(t.briefing).toMatchObject({ isCurrent: true, narrative: 'Quiet day, nothing urgent.' });
@@ -93,21 +93,21 @@ describe('surface endpoints — frozen contract', () => {
     });
 
     it('briefing is stale (isCurrent: false) but still returned, not silently swapped for the template', async () => {
-      seedThread('sys-briefing');
+      seedChat('sys-briefing');
       seedMessage('sys-briefing', [{ type: 'text', text: 'Two days old.' }], new Date(Date.now() - 2 * 86_400_000));
       const t = await (await owner('/api/today')).json();
       expect(t.briefing).toMatchObject({ isCurrent: false, narrative: 'Two days old.' });
     });
 
     it('briefing is null when the persisted turn has no text part (tool calls only, nothing to lead with)', async () => {
-      seedThread('sys-briefing');
+      seedChat('sys-briefing');
       seedMessage('sys-briefing', [{ type: 'tool-run', toolId: 't1', name: 'x', input: {}, output: '', isError: false, done: true }], new Date());
       const t = await (await owner('/api/today')).json();
       expect(t.briefing).toBeNull();
     });
 
     it('checkin is populated and isCurrent when sys-checkin has a fresh checkin widget', async () => {
-      seedThread('sys-checkin');
+      seedChat('sys-checkin');
       const vitals = [{ kind: 'stat', label: 'Protein · tonight', big: '90', unit: 'g', sub: '1400 kcal · 2 meals' }];
       seedMessage('sys-checkin', [{ type: 'widget', widgetType: 'checkin', data: { vitals, prompt: 'How was today?' } }], new Date());
       const t = await (await owner('/api/today')).json();
@@ -115,7 +115,7 @@ describe('surface endpoints — frozen contract', () => {
     });
 
     it('checkin is stale (isCurrent: false) when yesterday\'s check-in is the only one on record', async () => {
-      seedThread('sys-checkin');
+      seedChat('sys-checkin');
       const vitals = [{ kind: 'stat', label: 'Protein · tonight', big: '50', unit: 'g', sub: '800 kcal · 1 meal' }];
       seedMessage('sys-checkin', [{ type: 'widget', widgetType: 'checkin', data: { vitals, prompt: 'How was today?' } }], new Date(Date.now() - 2 * 86_400_000));
       const t = await (await owner('/api/today')).json();
@@ -123,14 +123,14 @@ describe('surface endpoints — frozen contract', () => {
     });
 
     it('checkin is null when the widget lacks a vitals array (malformed/unexpected shape) rather than throwing', async () => {
-      seedThread('sys-checkin');
+      seedChat('sys-checkin');
       seedMessage('sys-checkin', [{ type: 'widget', widgetType: 'checkin', data: { prompt: 'oops, no vitals' } }], new Date());
       const t = await (await owner('/api/today')).json();
       expect(t.checkin).toBeNull();
     });
 
     it('the template greeting/read fields are unchanged and still present alongside briefing/checkin — they remain the frontend\'s fallback', async () => {
-      seedThread('sys-briefing');
+      seedChat('sys-briefing');
       seedMessage('sys-briefing', [{ type: 'text', text: 'Real narrative.' }], new Date());
       const t = await (await owner('/api/today')).json();
       expect(t.greeting).toBe('Good morning, Ben.');
@@ -197,10 +197,10 @@ describe('surface endpoints — frozen contract', () => {
     expect((await owner('/api/memory/STANDING_ORDERS.md', { method: 'PUT', body: JSON.stringify({ content: 'x' }) })).status).toBe(400);
   });
 
-  it('POST /api/command opens a thread; GET /api/recall echoes the query', async () => {
+  it('POST /api/command opens a chat; GET /api/recall echoes the query', async () => {
     const c = await (await owner('/api/command', { method: 'POST', body: JSON.stringify({ intent: 'log two eggs' }) })).json();
-    expect(typeof c.threadId).toBe('string');
-    expect(cabinet.db.prepare('SELECT id FROM thread WHERE id = ?').get(c.threadId)).toBeTruthy();
+    expect(typeof c.chatId).toBe('string');
+    expect(cabinet.db.prepare('SELECT id FROM chat WHERE id = ?').get(c.chatId)).toBeTruthy();
     cabinet.db.prepare(`INSERT INTO journal_entry (written_at, local_day, body) VALUES (?,?,?)`)
       .run(new Date().toISOString(), localDay(), 'Had a good breakfast today, felt energized.');
     const r = await (await owner('/api/recall?q=breakfast')).json();

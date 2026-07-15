@@ -20,18 +20,18 @@ import { extractText, foldEvent, type MessagePart } from './fold.js';
  * second time. No-ops on an empty parts array (nothing worth persisting).
  */
 /**
- * Get-or-create a singleton system thread by a fixed id — heartbeat/cron
+ * Get-or-create a singleton system chat by a fixed id — heartbeat/cron
  * sentinels (sys-heartbeat, sys-briefing, sys-checkin, sys-weekly), and now
  * sys-deploy (deploy/pendingConfirmation.ts). `kind: 'user'` is deliberate
- * when the thread should actually surface in the normal Threads list —
- * GET /api/threads filters `WHERE kind = 'user'`; `'heartbeat'`/`'cron'`
- * threads are intentionally invisible there and instead surface through the
+ * when the chat should actually surface in the normal Chats list —
+ * GET /api/chats filters `WHERE kind = 'user'`; `'heartbeat'`/`'cron'`
+ * chats are intentionally invisible there and instead surface through the
  * dedicated Today-surface endpoints (gateway/surfaces.ts). Moved here (out
  * of scheduler/jobs.ts, which now imports it) so a non-scheduler caller like
  * pendingConfirmation.ts doesn't have to duplicate the INSERT OR IGNORE.
  */
-export function systemThread(db: Database.Database, id: string, kind: 'user' | 'heartbeat' | 'cron', title: string): string {
-  db.prepare('INSERT OR IGNORE INTO thread (id, title, kind) VALUES (?,?,?)').run(id, title, kind);
+export function systemChat(db: Database.Database, id: string, kind: 'user' | 'heartbeat' | 'cron', title: string): string {
+  db.prepare('INSERT OR IGNORE INTO chat (id, title, kind) VALUES (?,?,?)').run(id, title, kind);
   return id;
 }
 
@@ -48,15 +48,15 @@ export function systemThread(db: Database.Database, id: string, kind: 'user' | '
  */
 export function persistAssistantMessage(
   db: Database.Database,
-  threadId: string,
+  chatId: string,
   parts: MessagePart[],
   opts: { id?: string; usage?: unknown } = {},
 ): void {
   if (parts.length === 0) return;
   db.prepare(
-    `INSERT INTO message (id, thread_id, role, parts, usage) VALUES (?,?,?,?,?)
+    `INSERT INTO message (id, chat_id, role, parts, usage) VALUES (?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET parts = excluded.parts, usage = excluded.usage`,
-  ).run(opts.id ?? randomUUID(), threadId, 'assistant', JSON.stringify(parts), opts.usage ? JSON.stringify(opts.usage) : null);
+  ).run(opts.id ?? randomUUID(), chatId, 'assistant', JSON.stringify(parts), opts.usage ? JSON.stringify(opts.usage) : null);
 }
 
 /** Event types that always flush a live persist (structural changes worth a
@@ -80,16 +80,16 @@ export function createTranscriptRecorder(
    * `finally` never runs) can't erase a turn's transcript. Learned twice:
    * first on /api/chat, then AGAIN when a resume turn's whole reply
    * vanished because only the chat route had the fix. Any turn that talks
-   * to a thread should pass this; omit only when there's genuinely no
-   * thread to persist to.
+   * to a chat should pass this; omit only when there's genuinely no
+   * chat to persist to.
    */
-  live?: { db: Database.Database; threadId: string; minMs?: number },
+  live?: { db: Database.Database; chatId: string; minMs?: number },
 ): {
   /** Live reference (mutated by onEvent) — e.g. for auto-titling off the folded text, same as /api/chat always read. */
   parts: readonly MessagePart[];
   onEvent(e: TurnEvent): void;
   /** No-ops if the turn produced no visible parts (nothing worth persisting). */
-  persist(db: Database.Database, threadId: string): void;
+  persist(db: Database.Database, chatId: string): void;
 } {
   const parts: MessagePart[] = [];
   let assistantId: string | null = null;
@@ -105,31 +105,31 @@ export function createTranscriptRecorder(
       const now = Date.now();
       if (ALWAYS_LIVE_PERSIST.has(e.type) || now - lastLivePersist >= (live.minMs ?? 800)) {
         lastLivePersist = now;
-        persistAssistantMessage(live.db, live.threadId, parts, { id: assistantId });
+        persistAssistantMessage(live.db, live.chatId, parts, { id: assistantId });
       }
     },
-    persist(db, threadId) {
-      persistAssistantMessage(db, threadId, parts, { id: assistantId ?? undefined, usage });
+    persist(db, chatId) {
+      persistAssistantMessage(db, chatId, parts, { id: assistantId ?? undefined, usage });
     },
   };
 }
 
 /**
  * Persists the human-readable side of a turn (a real chat message, or a cron
- * job's prompt) so a thread reads as a real conversation. `content` is
+ * job's prompt) so a chat reads as a real conversation. `content` is
  * usually plain text (every cron-job caller passes a string); /api/chat
  * passes a pre-built MessagePart[] instead when the turn carries image
  * attachments (image parts first, then the text part — see gateway/app.ts).
  */
 export function persistUserMessage(
   db: Database.Database,
-  threadId: string,
+  chatId: string,
   content: string | MessagePart[],
   author: string | null = null,
 ): void {
   const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
-  db.prepare('INSERT INTO message (id, thread_id, role, parts, author) VALUES (?,?,?,?,?)')
-    .run(randomUUID(), threadId, 'user', JSON.stringify(parts), author);
+  db.prepare('INSERT INTO message (id, chat_id, role, parts, author) VALUES (?,?,?,?,?)')
+    .run(randomUUID(), chatId, 'user', JSON.stringify(parts), author);
 }
 
 /**
@@ -145,20 +145,20 @@ export function persistUserMessage(
  *
  * Deliberately NOT hoisted into Scheduler: JobSpec is `{name, next, run}`,
  * intentionally agnostic to whether a job even touches the agent runtime —
- * two of the five jobs don't. Pushing thread/prompt/transcript concerns
+ * two of the five jobs don't. Pushing chat/prompt/transcript concerns
  * into the dispatcher would leak agent-specific plumbing into a component
  * that has to stay dumb about what a job does internally.
  */
 export async function runAgentCronJob(
   runtime: Pick<AgentRuntime, 'run'>,
   db: Database.Database,
-  opts: { threadId: string; kind: TurnKind; prompt: string; promptInput?: Partial<PromptInput>; deep?: boolean },
+  opts: { chatId: string; kind: TurnKind; prompt: string; promptInput?: Partial<PromptInput>; deep?: boolean },
 ): Promise<{ parts: readonly MessagePart[]; text: string }> {
-  persistUserMessage(db, opts.threadId, opts.prompt);
-  const recorder = createTranscriptRecorder({ db, threadId: opts.threadId });
+  persistUserMessage(db, opts.chatId, opts.prompt);
+  const recorder = createTranscriptRecorder({ db, chatId: opts.chatId });
   try {
     await runtime.run({
-      threadId: opts.threadId,
+      chatId: opts.chatId,
       kind: opts.kind,
       deep: opts.deep,
       prompt: opts.prompt,
@@ -166,7 +166,7 @@ export async function runAgentCronJob(
       onEvent: recorder.onEvent,
     });
   } finally {
-    recorder.persist(db, opts.threadId);
+    recorder.persist(db, opts.chatId);
   }
   return { parts: recorder.parts, text: extractText(recorder.parts as MessagePart[]) };
 }

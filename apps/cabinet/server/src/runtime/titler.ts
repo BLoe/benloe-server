@@ -1,5 +1,5 @@
 /**
- * Conversation auto-titling (§9.2 nano route). A thread starts "untitled";
+ * Conversation auto-titling (§9.2 nano route). A chat starts "untitled";
  * after its first exchange we spend one cheap Haiku call to name it. The call
  * is deliberately tool-less and single-turn — it reads the opening exchange and
  * returns a short label, nothing more.

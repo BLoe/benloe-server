@@ -32,7 +32,7 @@ describe('migrations', () => {
       ),
     );
     for (const t of [
-      'thread', 'message', 'food_log', 'workout', 'workout_set', 'body_metric', 'health_daily',
+      'chat', 'message', 'food_log', 'workout', 'workout_set', 'body_metric', 'health_daily',
       'mood_log', 'journal_entry', 'insurance_plan', 'claim', 'medication', 'lab_result',
       'hsa_contribution', 'transaction_row', 'task', 'contact', 'approval', 'action_audit', 'token_usage',
     ]) {
@@ -46,7 +46,7 @@ describe('migrations', () => {
 
   it('enforces foreign keys', () => {
     expect(() =>
-      cabinet.db.prepare("INSERT INTO message (id, thread_id, role, parts) VALUES ('m1','nope','user','[]')").run(),
+      cabinet.db.prepare("INSERT INTO message (id, chat_id, role, parts) VALUES ('m1','nope','user','[]')").run(),
     ).toThrow(/FOREIGN KEY/);
   });
 });
@@ -58,17 +58,17 @@ describe('queryReadonly guard', () => {
   });
 
   it('supports bound parameters', () => {
-    cabinet.db.prepare("INSERT INTO thread (id, title) VALUES ('t1','hello')").run();
-    expect(queryReadonly(cabinet.readonlyDb, 'SELECT title FROM thread WHERE id = ?', ['t1'])).toEqual([
+    cabinet.db.prepare("INSERT INTO chat (id, title) VALUES ('t1','hello')").run();
+    expect(queryReadonly(cabinet.readonlyDb, 'SELECT title FROM chat WHERE id = ?', ['t1'])).toEqual([
       { title: 'hello' },
     ]);
   });
 
   it.each([
-    ["INSERT INTO thread (id) VALUES ('x')"],
-    ["UPDATE thread SET title='x'"],
-    ['DELETE FROM thread'],
-    ['DROP TABLE thread'],
+    ["INSERT INTO chat (id) VALUES ('x')"],
+    ["UPDATE chat SET title='x'"],
+    ['DELETE FROM chat'],
+    ['DROP TABLE chat'],
     ['PRAGMA journal_mode=DELETE'],
     ["ATTACH DATABASE '/tmp/evil.db' AS evil"],
     ['VACUUM'],
@@ -77,15 +77,15 @@ describe('queryReadonly guard', () => {
   });
 
   it('rejects multi-statement chaining', () => {
-    expect(() => queryReadonly(cabinet.readonlyDb, "SELECT 1; DELETE FROM thread")).toThrow(QueryGuardError);
+    expect(() => queryReadonly(cabinet.readonlyDb, "SELECT 1; DELETE FROM chat")).toThrow(QueryGuardError);
   });
 
   it('rejects comment-disguised writes', () => {
-    expect(() => queryReadonly(cabinet.readonlyDb, "/* SELECT */ DELETE FROM thread")).toThrow(QueryGuardError);
+    expect(() => queryReadonly(cabinet.readonlyDb, "/* SELECT */ DELETE FROM chat")).toThrow(QueryGuardError);
   });
 
   it('the readonly connection itself cannot write (defense in depth)', () => {
-    expect(() => cabinet.readonlyDb.prepare("INSERT INTO thread (id) VALUES ('x')").run()).toThrow(
+    expect(() => cabinet.readonlyDb.prepare("INSERT INTO chat (id) VALUES ('x')").run()).toThrow(
       /readonly/i,
     );
   });

@@ -10,7 +10,7 @@ export interface ApprovalPacket {
   reasoning: string;
   confidence: number | null;
   reversibility: string | null;
-  threadId: string | null;
+  chatId: string | null;
   expiresAt: string;
 }
 
@@ -49,10 +49,10 @@ export class ApprovalQueue extends EventEmitter {
     const expiresAt = new Date(Date.now() + ttl).toISOString();
     this.db
       .prepare(
-        `INSERT INTO approval (id, tier, action, payload, reasoning, confidence, reversibility, thread_id, expires_at)
+        `INSERT INTO approval (id, tier, action, payload, reasoning, confidence, reversibility, chat_id, expires_at)
          VALUES (?,?,?,?,?,?,?,?,?)`,
       )
-      .run(id, packet.tier, packet.action, packet.payload, packet.reasoning, packet.confidence, packet.reversibility, packet.threadId, expiresAt);
+      .run(id, packet.tier, packet.action, packet.payload, packet.reasoning, packet.confidence, packet.reversibility, packet.chatId, expiresAt);
 
     const decision = new Promise<ApprovalDecision>((resolve) => {
       const timer = setTimeout(() => this.settle(id, 'expired', { approved: false, message: 'approval expired' }), ttl);
@@ -68,7 +68,7 @@ export class ApprovalQueue extends EventEmitter {
       reasoning: packet.reasoning,
       confidence: packet.confidence,
       reversibility: packet.reversibility,
-      threadId: packet.threadId,
+      chatId: packet.chatId,
       expiresAt,
     };
     this.emit('approval', full);
@@ -104,7 +104,7 @@ export class ApprovalQueue extends EventEmitter {
     return this.db
       .prepare(
         `SELECT id, tier, action, payload, reasoning, confidence, reversibility,
-                thread_id AS threadId, expires_at AS expiresAt
+                chat_id AS chatId, expires_at AS expiresAt
          FROM approval WHERE status = 'pending' ORDER BY created_at`,
       )
       .all() as ApprovalPacket[];

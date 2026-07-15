@@ -149,7 +149,7 @@ app.listen(PORT, '127.0.0.1', () => {
 });
 
 // If a turn died with the previous process (self-redeploy, crash), resume
-// its thread — see gateway/pendingTurn.ts. After listen(): the resume turn
+// its chat — see gateway/pendingTurn.ts. After listen(): the resume turn
 // broadcasts over /api/events, which should be up before anything fires.
 scheduleInterruptedTurnResume({ db: cabinet.db, runtime, widgetBus, dataDir: DATA_DIR });
 

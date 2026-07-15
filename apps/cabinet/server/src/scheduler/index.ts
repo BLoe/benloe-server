@@ -41,7 +41,7 @@ export class Scheduler {
    * proves the scheduler→job wiring itself, not just the job's own logic
    * run by hand from a scratch script. Rejects a second concurrent trigger
    * for the same name rather than overlapping two turns against the same
-   * system thread; the timer path (arm(), below) is untouched by this guard.
+   * system chat; the timer path (arm(), below) is untouched by this guard.
    */
   async runNow(name: string): Promise<void> {
     const job = this.jobs.find((j) => j.name === name);

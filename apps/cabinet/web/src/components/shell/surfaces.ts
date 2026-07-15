@@ -1,4 +1,4 @@
-export type SurfaceId = 'today' | 'domains' | 'ops' | 'brain' | 'threads';
+export type SurfaceId = 'today' | 'domains' | 'ops' | 'brain' | 'chat';
 
 export interface SurfaceDef {
   id: SurfaceId;
@@ -11,5 +11,5 @@ export const SURFACES: SurfaceDef[] = [
   { id: 'domains', label: 'Domains', key: '2' },
   { id: 'ops', label: 'Ops', key: '3' },
   { id: 'brain', label: 'Brain', key: '4' },
-  { id: 'threads', label: 'Threads', key: '5' },
+  { id: 'chat', label: 'Chat', key: '5' },
 ];

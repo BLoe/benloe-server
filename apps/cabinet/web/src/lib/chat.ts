@@ -8,7 +8,7 @@ import type { MessagePart, ApprovalPacket } from './contracts.js';
 
 /** The turn events the gateway emits (mirrors the server's TurnEvent). */
 export type TurnEvent =
-  | { type: 'turn-start'; messageId: string; threadId: string; model: string }
+  | { type: 'turn-start'; messageId: string; chatId: string; model: string }
   | { type: 'text-delta'; delta: string }
   | { type: 'tool-start'; toolId: string; name: string; input: unknown }
   | { type: 'tool-end'; toolId: string; output: string; isError: boolean }
@@ -20,7 +20,7 @@ export type TurnEvent =
 
 /** POST a message (with optional composer image attachments) and pump the streamed turn into `onEvent`. */
 export async function streamChat(
-  threadId: string,
+  chatId: string,
   message: { text: string; attachments?: { id: string }[] },
   onEvent: (e: TurnEvent) => void,
   signal?: AbortSignal,
@@ -29,7 +29,7 @@ export async function streamChat(
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ threadId, text: message.text, attachments: message.attachments }),
+    body: JSON.stringify({ chatId, text: message.text, attachments: message.attachments }),
     signal,
   });
   if (res.status === 401) throw new AuthRequiredError();
@@ -45,19 +45,19 @@ export async function streamChat(
 }
 
 /**
- * Stop the in-flight turn for a thread — a real cancel, not just dropping
+ * Stop the in-flight turn for a chat — a real cancel, not just dropping
  * this tab's connection: it POSTs /api/interrupt, which aborts the SDK
  * query server-side (AgentRuntime.interrupt), so the agent loop actually
  * stops running rather than continuing unseen after the tab disconnects.
  * Whatever already streamed stays (live-persist already saved it). No-op in
  * mock mode — there's no server-side turn to abort.
  */
-export async function interruptChat(threadId: string): Promise<boolean> {
+export async function interruptChat(chatId: string): Promise<boolean> {
   if (usingMock) return true;
   const res = await fetch('/api/interrupt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ threadId }),
+    body: JSON.stringify({ chatId }),
   });
   if (res.status === 401) throw new AuthRequiredError();
   if (!res.ok) return false;
@@ -104,7 +104,7 @@ function fileToBase64(file: File): Promise<string> {
 /** Dev-only: a simulated streamed reply so the UI works without a backend. */
 async function mockStream(text: string, onEvent: (e: TurnEvent) => void, attachmentCount = 0): Promise<void> {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  onEvent({ type: 'turn-start', messageId: 'mock', threadId: 'mock', model: 'claude-sonnet-5' });
+  onEvent({ type: 'turn-start', messageId: 'mock', chatId: 'mock', model: 'claude-sonnet-5' });
   const imageNote = attachmentCount > 0 ? ` (with ${attachmentCount} image${attachmentCount === 1 ? '' : 's'} attached)` : '';
   const reply = `Noted — "${text.slice(0, 80)}"${imageNote}. This is a simulated reply; the real Cabinet answers live when the app is deployed against the gateway.`;
   for (const chunk of reply.match(/.{1,6}/g) ?? []) {

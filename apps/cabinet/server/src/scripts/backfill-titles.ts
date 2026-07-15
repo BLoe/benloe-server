@@ -1,5 +1,5 @@
 /**
- * One-shot maintenance: name every still-"untitled" user thread from its
+ * One-shot maintenance: name every still-"untitled" user chat from its
  * opening exchange, using the same Haiku titler as the live path (§9.2).
  *
  * Runs under PM2's env injection so it inherits the service's Claude auth
@@ -58,22 +58,22 @@ interface Candidate {
   assistantText: string;
 }
 
-/** Untitled user threads that have at least one user + one assistant message. */
+/** Untitled user chats that have at least one user + one assistant message. */
 export function findCandidates(db: import('better-sqlite3').Database): Candidate[] {
-  const threads = db
+  const chats = db
     .prepare(
-      `SELECT id FROM thread
+      `SELECT id FROM chat
        WHERE kind = 'user' AND (title IS NULL OR title = '')
        ORDER BY updated_at DESC`,
     )
     .all() as { id: string }[];
 
   const firstOf = db.prepare(
-    `SELECT parts FROM message WHERE thread_id = ? AND role = ? ORDER BY created_at ASC LIMIT 1`,
+    `SELECT parts FROM message WHERE chat_id = ? AND role = ? ORDER BY created_at ASC LIMIT 1`,
   );
 
   const out: Candidate[] = [];
-  for (const t of threads) {
+  for (const t of chats) {
     const u = firstOf.get(t.id, 'user') as { parts: string } | undefined;
     const a = firstOf.get(t.id, 'assistant') as { parts: string } | undefined;
     if (!u || !a) continue; // need a real exchange to name it
@@ -89,10 +89,10 @@ async function main(): Promise<void> {
   configureAuth(process.env);
   const dataDir = process.env.CABINET_DATA_DIR ?? '/srv/benloe/data/cabinet';
   const cabinet = openDb(join(dataDir, 'cabinet.db'));
-  const update = cabinet.db.prepare("UPDATE thread SET title = ? WHERE id = ? AND (title IS NULL OR title = '')");
+  const update = cabinet.db.prepare("UPDATE chat SET title = ? WHERE id = ? AND (title IS NULL OR title = '')");
 
   const candidates = findCandidates(cabinet.db);
-  console.log(`backfill: ${candidates.length} untitled thread(s) to name`);
+  console.log(`backfill: ${candidates.length} untitled chat(s) to name`);
 
   let named = 0;
   for (const c of candidates) {
