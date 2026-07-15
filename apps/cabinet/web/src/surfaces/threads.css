@@ -507,8 +507,10 @@
 .composer-send-btn:not(:disabled):focus-visible { color: var(--brass-hi); }
 .composer-send-btn:disabled { color: var(--linen-faint); border-color: var(--rule); }
 
-/* ---- stop button: replaces send while a turn is streaming (real cancel,
-   see interruptChat/#api/interrupt) — brass so it still reads as "live and
+/* ---- stop button: sits beside Send while a turn is streaming (real
+   cancel, see interruptChat/#api/interrupt) — Send stays Send throughout
+   (submitting mid-turn queues instead, see .composer-queue below), so Stop
+   is its own control, not a swap-in. Brass so it still reads "live and
    actionable", vermilion on hover since clicking it halts work in progress. */
 .composer-stop-btn {
   color: var(--brass);
@@ -521,6 +523,59 @@
   border-color: var(--vermilion-dim);
   outline: none;
 }
+
+/* ---- queued messages: submitted while a turn was still running: held here
+   (not yet sent — see submit()/QueuedMessage in Threads.tsx) and auto-fired
+   the instant Cabinet goes idle, in order, no re-send needed. Dimmer than a
+   real message — this hasn't happened yet. */
+.composer-queue {
+  list-style: none;
+  margin: 0 0 var(--sp-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.composer-queue-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  background: var(--inset);
+  border: 1px dashed var(--rule);
+  border-radius: var(--r-2);
+  padding: var(--sp-2) var(--sp-3);
+  opacity: 0.72;
+}
+.composer-queue-tag {
+  flex: none;
+  font-size: var(--fs-cap);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-cap);
+  color: var(--brass-dim);
+}
+.composer-queue-text {
+  flex: 1;
+  font-size: var(--fs-sm);
+  color: var(--linen-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-queue-remove {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--linen-faint);
+  cursor: pointer;
+  padding: 0;
+}
+.composer-queue-remove:hover { color: var(--vermilion); }
 
 /* ---- composer: pending attachment thumbnails (paste/drop/attach) ---- */
 .composer-attachments {

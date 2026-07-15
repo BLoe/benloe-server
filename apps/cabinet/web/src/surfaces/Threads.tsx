@@ -21,6 +21,16 @@ interface PendingAttachment {
   mediaType?: string;
 }
 
+/** A message submitted while a turn was already in flight — held client-side
+ *  (not yet persisted) and auto-fired the moment the current turn goes idle.
+ *  Not durable: a refresh/close while something sits queued loses it, same
+ *  as an unsent draft. See the queue-and-auto-chain note on `submit` below. */
+interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments: PendingAttachment[];
+}
+
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** Parse the wall-clock time literally from the ISO string — deterministic,
@@ -261,6 +271,7 @@ function Conversation({
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const [queued, setQueued] = useState<QueuedMessage[]>([]);
   const readerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Whether the viewer is parked at (or near) the bottom of the scrollback —
@@ -487,6 +498,44 @@ function Conversation({
     [thread.id, sending, reconcileAfterDrop],
   );
 
+  // What the composer's Send button (and Enter) actually calls. Cabinet
+  // can only run one turn at a time (the runtime is single-flight — see
+  // AgentRuntime's `current*` fields), so a message submitted mid-turn
+  // can't be handed to me to read yet; it's held here and auto-fired (via
+  // the effect below) the instant the current turn goes idle, without
+  // needing you to come back and hit send again. This is queue-and-fire,
+  // not true mid-turn steering — I don't see it until my current turn ends.
+  const submit = useCallback(
+    (text: string, attachments: PendingAttachment[]) => {
+      const t = text.trim();
+      const ready = attachments.filter((a) => a.id && a.mediaType && !a.error);
+      if (!t && ready.length === 0) return;
+      if (sending) {
+        setQueued((q) => [...q, { id: `q-${Date.now()}-${Math.random().toString(36).slice(2)}`, text, attachments }]);
+        setDraft('');
+        setPending([]);
+        return;
+      }
+      void send(text, attachments);
+    },
+    [sending, send],
+  );
+
+  const removeQueued = useCallback((id: string) => {
+    setQueued((q) => q.filter((m) => m.id !== id));
+  }, []);
+
+  // Auto-chain: the moment the active turn finishes, fire the next queued
+  // message as a fresh turn — no manual re-send required. Repeats on its
+  // own until the queue's empty (each completed send flips `sending` back
+  // to false, which re-fires this effect for the next item, if any).
+  useEffect(() => {
+    if (sending || queued.length === 0) return;
+    const [next, ...rest] = queued;
+    setQueued(rest);
+    void send(next!.text, next!.attachments);
+  }, [sending, queued, send]);
+
   // Stop button: a real cancel — POSTs /api/interrupt, which aborts the
   // turn server-side (AgentRuntime.interrupt) rather than just dropping this
   // tab's connection, so the agent loop actually stops instead of running on
@@ -579,9 +628,22 @@ function Conversation({
         }}
         onSubmit={(e) => {
           e.preventDefault();
-          void send(draft, pending);
+          submit(draft, pending);
         }}
       >
+        {queued.length > 0 && (
+          <ol className="composer-queue">
+            {queued.map((q) => (
+              <li className="composer-queue-item" key={q.id}>
+                <span className="composer-queue-tag data">queued</span>
+                <span className="composer-queue-text">{q.text}</span>
+                <button type="button" className="composer-queue-remove" onClick={() => removeQueued(q.id)} aria-label="Remove queued message">
+                  <X size={12} />
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
         {pending.length > 0 && (
           <div className="composer-attachments">
             {pending.map((p) => (
@@ -638,27 +700,26 @@ function Conversation({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                void send(draft, pending);
+                submit(draft, pending);
               }
             }}
-            placeholder="Message Cabinet…"
+            placeholder={sending ? 'Message Cabinet… (queues until this turn finishes)' : 'Message Cabinet…'}
             rows={1}
             aria-label="Message Cabinet"
           />
-          {sending ? (
-            <button type="button" className="composer-send-btn composer-stop-btn" aria-label="Stop" onClick={stop}>
+          {sending && (
+            <button type="button" className="composer-stop-btn" aria-label="Stop" onClick={stop}>
               <Square size={14} fill="currentColor" />
             </button>
-          ) : (
-            <button
-              type="submit"
-              className="composer-send-btn"
-              aria-label="Send"
-              disabled={pending.some((p) => p.uploading) || (!draft.trim() && !pending.some((p) => p.id && !p.error))}
-            >
-              <ArrowUp size={18} />
-            </button>
           )}
+          <button
+            type="submit"
+            className="composer-send-btn"
+            aria-label={sending ? 'Queue message' : 'Send'}
+            disabled={pending.some((p) => p.uploading) || (!draft.trim() && !pending.some((p) => p.id && !p.error))}
+          >
+            <ArrowUp size={18} />
+          </button>
         </div>
       </form>
     </div>
