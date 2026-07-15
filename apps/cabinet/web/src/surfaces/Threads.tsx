@@ -453,10 +453,17 @@ function Conversation({
       const preSendCount = messagesRef.current?.length ?? 0;
       setMessages((m) => [...(m ?? []), userMsg]);
       const parts: MessagePart[] = [];
+      // Set only by an actual 'turn-end' SSE event — the signal that the
+      // stream ended *because the turn genuinely finished*, not because the
+      // connection just happened to stop delivering. See the "silent
+      // truncation" note below: a clean-looking stream close is not proof
+      // of a complete one.
+      let sawTurnEnd = false;
       setLive(parts);
       setSending(true);
       try {
         await streamChat(thread.id, { text: t, attachments: ready.map((a) => ({ id: a.id })) }, (e) => {
+          if (e.type === 'turn-end') sawTurnEnd = true;
           if (e.type === 'error') {
             // A deliberate stop (see stop() below) surfaces here as the
             // aborted turn's own error event — show it as a calm notice,
@@ -475,7 +482,28 @@ function Conversation({
           foldTurn(parts, e);
           setLive([...parts]);
         });
-        setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
+        if (sawTurnEnd) {
+          setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
+        } else {
+          // Silent truncation (2026-07-15 follow-up): streamChat() returned
+          // normally — no exception, so this looks like a clean finish —
+          // but we never actually saw the turn-end event. Observed live: a
+          // self-deploy's restart landed in the narrow gap between the
+          // server-side turn finishing (already durably saved via
+          // live-persist) and the last bytes of that response actually
+          // reaching this tab, so the browser's fetch reader saw a
+          // plain end-of-stream instead of an error. Nothing throws, so the
+          // catch block below never runs and this would otherwise render a
+          // truncated reply with no error banner — worse than the loud
+          // failure case, since nothing looks wrong. Treat it exactly like
+          // a hard drop: fold what we have so the trail isn't blank, then
+          // reconcile against the server's authoritative (already-complete)
+          // copy.
+          if (parts.length > 0) {
+            setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
+          }
+          reconcileAfterDrop(thread.id, preSendCount);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'The turn failed.');
         // A network drop (e.g. the server restarting mid-turn) throws here —
