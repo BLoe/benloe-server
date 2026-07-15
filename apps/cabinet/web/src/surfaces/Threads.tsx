@@ -265,6 +265,14 @@ function Conversation({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
   pendingRef.current = pending;
+  const messagesRef = useRef<ChatMessage[] | null>(null);
+  messagesRef.current = messages;
+  const threadIdRef = useRef(thread.id);
+  threadIdRef.current = thread.id;
+  const mountedRef = useRef(true);
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -332,6 +340,45 @@ function Conversation({
     });
   }, []);
 
+  // Recover from a dropped connection without a manual reload (2026-07-15
+  // follow-up to the redeploy-mid-turn bug): a network error here almost
+  // always means the connection died, not that the turn didn't happen — and
+  // as of the server's live-persist fix, whatever the turn got through is
+  // now durably saved even if we never got to see the rest of it stream.
+  // Poll the thread's real history a few times; once the server shows more
+  // than just the user's own message (i.e. an assistant reply actually
+  // landed — possibly a fuller one than what we folded locally before the
+  // drop), swap it in as the authoritative version and clear the stale error
+  // banner. Gives up silently after ~15s — the locally-folded fallback
+  // message from the catch block above is still sitting there either way.
+  const reconcileAfterDrop = useCallback((threadId: string, preSendCount: number) => {
+    let attempt = 0;
+    const tick = () => {
+      // Live checks against refs, not a captured `thread` — this closure was
+      // built once when the drop happened, but the user may since have
+      // switched threads (this Conversation instance is reused across
+      // threads, not remounted), and we must not splice a stale reconcile
+      // into whatever's now on screen.
+      if (!mountedRef.current || threadIdRef.current !== threadId) return;
+      attempt++;
+      api
+        .messages(threadId)
+        .then((res) => {
+          if (!mountedRef.current || threadIdRef.current !== threadId) return;
+          if (res.messages.length > preSendCount + 1) {
+            setMessages(res.messages);
+            setError(null);
+            return;
+          }
+          if (attempt < 6) setTimeout(tick, attempt < 3 ? 1500 : 3000);
+        })
+        .catch(() => {
+          if (attempt < 6) setTimeout(tick, attempt < 3 ? 1500 : 3000);
+        });
+    };
+    setTimeout(tick, 1500);
+  }, []);
+
   const send = useCallback(
     async (text: string, attachments: PendingAttachment[] = []) => {
       const t = text.trim();
@@ -345,6 +392,7 @@ function Conversation({
         ...(t ? [{ type: 'text' as const, text: t }] : []),
       ];
       const userMsg: ChatMessage = { id: `local-${Date.now()}`, role: 'user', parts: userParts, created_at: new Date().toISOString() };
+      const preSendCount = messagesRef.current?.length ?? 0;
       setMessages((m) => [...(m ?? []), userMsg]);
       const parts: MessagePart[] = [];
       setLive(parts);
@@ -371,12 +419,13 @@ function Conversation({
         if (parts.length > 0) {
           setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
         }
+        reconcileAfterDrop(thread.id, preSendCount);
       } finally {
         setLive(null);
         setSending(false);
       }
     },
-    [thread.id, sending],
+    [thread.id, sending, reconcileAfterDrop],
   );
 
   // Auto-send the seed (from the command bar) once history has loaded.
