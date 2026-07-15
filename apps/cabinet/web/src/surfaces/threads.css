@@ -481,33 +481,43 @@
 }
 .composer textarea:focus { border-color: var(--brass-dim); }
 .composer button {
-  font-family: var(--sans);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 12px;
-  background: var(--brass);
-  color: var(--ink);
-  border: 0;
-  border-radius: var(--r-3);
-  padding: 12px 18px;
-  cursor: pointer;
-}
-.composer button:disabled { background: var(--brass-dim); cursor: default; }
-.composer-attach-btn {
-  font-family: var(--sans);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
   background: var(--inset);
   color: var(--linen-dim);
   border: 1px solid var(--rule);
   border-radius: var(--r-3);
-  padding: 12px 14px;
   cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
-.composer-attach-btn:hover { border-color: var(--brass-dim); color: var(--linen); }
+.composer button:hover:not(:disabled),
+.composer button:focus-visible:not(:disabled) {
+  color: var(--brass-hi);
+  border-color: var(--brass-dim);
+  outline: none;
+}
+.composer button:disabled { cursor: default; }
+.composer-attach-btn { color: var(--linen-dim); }
+.composer-send-btn { color: var(--linen-faint); }
+.composer-send-btn:not(:disabled) { color: var(--brass); }
+.composer-send-btn:not(:disabled):hover,
+.composer-send-btn:not(:disabled):focus-visible { color: var(--brass-hi); }
+.composer-send-btn:disabled { color: var(--linen-faint); border-color: var(--rule); }
+.composer-send-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--linen-faint);
+  border-top-color: var(--brass);
+  animation: composer-spin 0.7s linear infinite;
+}
+@keyframes composer-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .composer-send-spinner { animation: none; }
+}
 
 /* ---- composer: pending attachment thumbnails (paste/drop/attach) ---- */
 .composer-attachments {
@@ -547,16 +557,16 @@
   position: absolute;
   top: 2px;
   right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   height: 18px;
-  line-height: 16px;
-  text-align: center;
   border-radius: 50%;
   border: 0;
   background: rgba(0, 0, 0, 0.65);
   color: var(--linen);
   cursor: pointer;
-  font-size: 13px;
   padding: 0;
 }
 

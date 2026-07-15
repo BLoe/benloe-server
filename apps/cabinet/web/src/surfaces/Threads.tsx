@@ -3,6 +3,7 @@ import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ThreadSummary } from '../lib/cabinet.js';
 import { streamChat, foldTurn, uploadAttachment } from '../lib/chat.js';
 import { SectionLabel } from '../components/instruments/index.js';
+import { Paperclip, ArrowUp, X } from 'lucide-react';
 import './threads.css';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -523,7 +524,7 @@ function Conversation({
                   onClick={() => removeAttachment(p.tempId)}
                   aria-label="Remove image"
                 >
-                  ×
+                  <X size={14} />
                 </button>
               </div>
             ))}
@@ -542,7 +543,7 @@ function Conversation({
             }}
           />
           <button type="button" className="composer-attach-btn" onClick={() => fileInputRef.current?.click()} aria-label="Attach image">
-            Attach
+            <Paperclip size={18} />
           </button>
           <textarea
             value={draft}
@@ -574,9 +575,11 @@ function Conversation({
           />
           <button
             type="submit"
+            className="composer-send-btn"
+            aria-label="Send"
             disabled={sending || pending.some((p) => p.uploading) || (!draft.trim() && !pending.some((p) => p.id && !p.error))}
           >
-            {sending ? '…' : 'Send'}
+            {sending ? <span className="composer-send-spinner" aria-hidden="true" /> : <ArrowUp size={18} />}
           </button>
         </div>
       </form>
