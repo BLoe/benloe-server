@@ -63,10 +63,16 @@
 .cmd-overlay { position: fixed; inset: 0; z-index: 50; background: #0a0603cc; backdrop-filter: blur(2px); display: flex; align-items: flex-start; justify-content: center; padding-top: 18dvh; animation: cmd-fade var(--dur-2) ease both; }
 @keyframes cmd-fade { from { opacity: 0; } }
 .cmd-box { width: min(620px, 92vw); background: linear-gradient(180deg, var(--panel-2), var(--inset)); border: 1px solid var(--brass-dim); border-radius: var(--r-4); box-shadow: var(--elev-2); overflow: hidden; }
-.cmd-box .row { display: flex; align-items: center; gap: 12px; padding: 16px 18px; }
+.cmd-box .row { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px; }
+.cmd-box .row .lead { padding-top: 2px; }
 .cmd-box .lead { color: var(--brass); font-family: var(--mono); font-size: 16px; }
-.cmd-box input { flex: 1; background: none; border: none; outline: none; color: var(--linen); font-family: var(--serif); font-size: 18px; }
-.cmd-box input::placeholder { color: var(--linen-faint); }
+.cmd-box textarea {
+  flex: 1; background: none; border: none; outline: none; color: var(--linen);
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.5;
+  resize: none; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+  min-height: 1.5em; max-height: 40vh; overflow-y: auto;
+}
+.cmd-box textarea::placeholder { color: var(--linen-faint); }
 .cmd-box .hint { border-top: 1px solid var(--rule); padding: 8px 18px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--linen-faint); text-transform: uppercase; display: flex; gap: 16px; }
 
 /* ---- presence strip ---- */

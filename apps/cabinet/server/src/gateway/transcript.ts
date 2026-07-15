@@ -35,6 +35,17 @@ export function systemThread(db: Database.Database, id: string, kind: 'user' | '
   return id;
 }
 
+/**
+ * Upsert, not insert-only (2026-07-15): /api/chat now calls this repeatedly
+ * mid-turn — see the live-persist throttle in gateway/app.ts's `send` — so a
+ * hard process kill (crash, or a self-redeploy of cabinet-api mid-turn, which
+ * SIGKILLs the very process running the turn before its `finally` block can
+ * run) leaves whatever was folded so far durable instead of vanishing with
+ * the process. `ON CONFLICT DO UPDATE` makes every call after the first on a
+ * given `opts.id` a plain overwrite of the same row rather than a duplicate
+ * insert; the final call (in app.ts's `finally`) still runs and is just the
+ * last, most-complete write.
+ */
 export function persistAssistantMessage(
   db: Database.Database,
   threadId: string,
@@ -42,8 +53,10 @@ export function persistAssistantMessage(
   opts: { id?: string; usage?: unknown } = {},
 ): void {
   if (parts.length === 0) return;
-  db.prepare('INSERT INTO message (id, thread_id, role, parts, usage) VALUES (?,?,?,?,?)')
-    .run(opts.id ?? randomUUID(), threadId, 'assistant', JSON.stringify(parts), opts.usage ? JSON.stringify(opts.usage) : null);
+  db.prepare(
+    `INSERT INTO message (id, thread_id, role, parts, usage) VALUES (?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET parts = excluded.parts, usage = excluded.usage`,
+  ).run(opts.id ?? randomUUID(), threadId, 'assistant', JSON.stringify(parts), opts.usage ? JSON.stringify(opts.usage) : null);
 }
 
 export function createTranscriptRecorder(): {

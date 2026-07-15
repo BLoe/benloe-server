@@ -15,7 +15,7 @@ import { recallLessons } from '../memory/lessons.js';
 import { profileGap } from '../domains/profile.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import type { MessagePart } from './fold.js';
-import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
+import { createTranscriptRecorder, persistAssistantMessage, persistUserMessage } from './transcript.js';
 import { registerSurfaceRoutes } from './surfaces.js';
 import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, type ImageMime } from './attachments.js';
 
@@ -256,9 +256,31 @@ export function buildApp(deps: GatewayDeps) {
     });
 
     const recorder = createTranscriptRecorder();
+    // Live-persist mid-turn (2026-07-15 follow-up): the only prior write was
+    // recorder.persist() in this route's `finally` block below — fine for a
+    // clean finish or even a graceful /api/interrupt abort (JS keeps running
+    // long enough for `finally` to fire), but a hard process kill (a crash,
+    // or self-redeploying cabinet-api mid-turn — that SIGKILLs this very
+    // process a few seconds after the redeploy call) tears the whole thing
+    // down before `finally` ever runs, leaving zero trace of a turn that may
+    // have already run several tool calls. Upsert the same assistant row
+    // (persistAssistantMessage is ON CONFLICT DO UPDATE as of this change) on
+    // every structurally-significant event, and throttle the high-frequency
+    // text-delta stream so plain prose doesn't hit sqlite on every token.
+    let assistantId: string | null = null;
+    let lastLivePersist = 0;
+    const LIVE_PERSIST_MIN_MS = 800;
+    const ALWAYS_LIVE_PERSIST: TurnEvent['type'][] = ['turn-start', 'tool-start', 'tool-end', 'turn-end', 'approval', 'notice', 'widget', 'error'];
     const send = (e: TurnEvent) => {
       recorder.onEvent(e);
       res.write(encodeSse({ event: e.type, data: e }));
+      if (e.type === 'turn-start') assistantId = e.messageId;
+      if (!assistantId || recorder.parts.length === 0) return;
+      const now = Date.now();
+      if (ALWAYS_LIVE_PERSIST.includes(e.type) || now - lastLivePersist >= LIVE_PERSIST_MIN_MS) {
+        lastLivePersist = now;
+        persistAssistantMessage(deps.db, threadId, recorder.parts as MessagePart[], { id: assistantId });
+      }
     };
 
     // Auto-recall (§7.3 follow-up, 2026-07-09): a lesson sitting in the store
