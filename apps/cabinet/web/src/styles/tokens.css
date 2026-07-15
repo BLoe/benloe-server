@@ -82,10 +82,15 @@
      every surface centers against this instead of picking its own max-width,
      so the five surfaces read as one system instead of jumping width as you
      navigate between them (see shell.css `.surface > *`).
+     Clamp, not a flat px: the floor (1140px) matches the old fixed value, so
+     nothing shifts at 1440px and below — the vw term only overtakes the
+     floor above ~1443px. Above that it scales gently and settles at the
+     1480px ceiling by ~1873px, so ultra-wide viewports (1920-2560px) get a
+     wider column instead of the huge static gutters a flat 1140px produced.
      --footer-h is the presence strip's reserved height — both the strip
      itself and the scroll container's bottom padding reference it, so the
      two can't drift apart and content can't end flush against it. */
-  --content-max: 1140px;
+  --content-max: clamp(1140px, 79vw, 1480px);
   --footer-h: 44px;
 
   /* ---- elevation (warm, low, like light raking across a desk) ---- */

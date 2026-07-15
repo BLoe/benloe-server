@@ -8,6 +8,28 @@
   gap: var(--sp-8);
 }
 
+/* ---- scroll affordance ----
+   Brain has no scroll container of its own — .surface (shell.css) is the
+   actual scroller, shared by every surface. Scope the fade to .surface only
+   when it's holding .brain, via :has(), so this doesn't bleed into Today/
+   Ops/Threads/Domains. Classic two-layer trick, bottom edge only: the
+   "cover" layer is background-attachment: local (scrolls with content), so
+   it sits exactly at the true bottom of the content and masks the "shadow"
+   layer beneath it whenever there's nothing left to scroll to; the "shadow"
+   layer is background-attachment: scroll (fixed to the viewport), so it's
+   only ever visible where the cover doesn't reach it — i.e. while the
+   bottom of the content is still below the fold. No JS, genuinely tied to
+   scroll position. */
+.surface:has(> .brain) {
+  background-image:
+    linear-gradient(to top, var(--ground) 0%, var(--ground) 45%, transparent 100%),
+    linear-gradient(to top, #00000055, transparent);
+  background-repeat: no-repeat, no-repeat;
+  background-position: bottom, bottom;
+  background-size: 100% 44px, 100% 18px;
+  background-attachment: local, scroll;
+}
+
 .brain__head {
   display: flex;
   flex-direction: column;

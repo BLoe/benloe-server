@@ -74,20 +74,35 @@
   gap: var(--sp-3);
 }
 
+/* Exactly 4 cards always render here (buildUsageSpecs in Ops.tsx: Cache
+   health + 5h/24h/7d windows), with Cache health spanning 2 columns for
+   visual primacy — column-spans 2+1+1+1 sum to 5. auto-fill(minmax(220px))
+   let the column count drift with viewport width, and whenever it landed on
+   4 columns the 5th unit (the 7d card) got stranded alone on its own row
+   with 3 empty columns beside it. Fixed column counts that the card set's
+   span total divides evenly into avoid that: 5 columns packs all 4 cards
+   into one full row with zero remainder; 3 columns (tablet) leaves at most
+   a 1-column remainder instead of 3. */
 .ops-usage-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(5, 1fr);
   gap: var(--sp-4);
 }
 
-/* Cache health is the headline — give it visual primacy by spanning two
-   columns wherever there's room, so it reads bigger than the three window
-   cards next to it. */
 .ops-usage-grid > :first-child {
   grid-column: span 2;
 }
 
+@media (max-width: 900px) {
+  .ops-usage-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 @media (max-width: 560px) {
+  .ops-usage-grid {
+    grid-template-columns: 1fr;
+  }
   .ops-usage-grid > :first-child {
     grid-column: span 1;
   }
