@@ -24,6 +24,13 @@ export interface RouteInput {
   deep?: boolean;
 }
 
+/**
+ * Temporary: main user loop runs on Fable (max) while stabilizing Cabinet's
+ * architecture/UI — needs maximum planning/architecture judgment. Flip back
+ * to 'default' (Sonnet) once stable. — Ben, 2026-07-15
+ */
+const USER_TURN_ROUTE: Route = 'max';
+
 export function route(input: RouteInput): { model: string; route: Route; effort: (typeof EFFORT)[Route] } {
   if (input.override) {
     const key = input.override.toLowerCase();
@@ -43,6 +50,7 @@ export function route(input: RouteInput): { model: string; route: Route; effort:
   }
   if (input.kind === 'heartbeat') return { model: MODELS.nano, route: 'nano', effort: EFFORT.nano };
   if (input.kind === 'cron' && input.deep) return { model: MODELS.deep, route: 'deep', effort: EFFORT.deep };
+  if (input.kind === 'user') return { model: MODELS[USER_TURN_ROUTE], route: USER_TURN_ROUTE, effort: EFFORT[USER_TURN_ROUTE] };
   return { model: MODELS.default, route: 'default', effort: EFFORT.default };
 }
 
