@@ -66,6 +66,9 @@ HOME=/home/claude-worker git push
 echo "cabinet-deploy: build..."
 (cd "$SERVER_DIR" && HOME=/home/claude-worker npm run build)
 
+echo "cabinet-deploy: build web..."
+(cd "$REPO_ROOT/apps/cabinet/web" && HOME=/home/claude-worker npm run build)
+
 TARGET_SHA="$(node -p "require('$SERVER_DIR/dist/build-info.json').sha")"
 
 # Defense-in-depth: with the reorder above this should never trip, but a
