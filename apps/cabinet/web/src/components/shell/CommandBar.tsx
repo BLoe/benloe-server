@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 export function CommandBar({ onSubmit }: { onSubmit?: (intent: string) => void }) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -26,6 +26,15 @@ export function CommandBar({ onSubmit }: { onSubmit?: (intent: string) => void }
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+
+  // Auto-grow the textarea to fit its content (CSS caps it at max-height and
+  // scrolls beyond that) instead of scrolling the text sideways forever.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value, open]);
 
   const submit = () => {
     const intent = value.trim();
@@ -48,17 +57,24 @@ export function CommandBar({ onSubmit }: { onSubmit?: (intent: string) => void }
           <div className="cmd-box">
             <div className="row">
               <span className="lead" aria-hidden="true">&rsaquo;</span>
-              <input
+              <textarea
                 ref={inputRef}
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submit()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    submit();
+                  }
+                }}
                 placeholder="Direct the cabinet, ask a question, log something, build&hellip;"
                 aria-label="Command input"
+                rows={1}
               />
             </div>
             <div className="hint">
               <span>Enter to send</span>
+              <span>Shift+Enter for a new line</span>
               <span>Esc to close</span>
             </div>
           </div>

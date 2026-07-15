@@ -393,6 +393,31 @@ describe('chat stream', () => {
     ]);
   });
 
+  it('live-persists the assistant message mid-turn, so a tool call already run is durable before turn-end (or a hard process kill, e.g. self-redeploying cabinet-api mid-turn) ever fires', async () => {
+    let sawMidTurnRow: { role: string; parts: string } | undefined;
+    await startApp(
+      fakeRuntime(async (onEvent) => {
+        onEvent({ type: 'turn-start', messageId: 'm1', threadId: 't', model: 'claude-sonnet-5' });
+        onEvent({ type: 'tool-start', toolId: 'tu1', name: 'Bash', input: { command: 'ls' } });
+        onEvent({ type: 'tool-end', toolId: 'tu1', output: 'ok', isError: false });
+        // Snapshot the DB right here — before turn-end, and before this route's
+        // `finally` block has any chance to run. This is exactly the window a
+        // hard process kill would land in; if the row isn't here yet, a crash
+        // (or a self-redeploy of the very process serving this turn) would
+        // erase the tool call with zero trace.
+        sawMidTurnRow = cabinet.db.prepare("SELECT role, parts FROM message WHERE role = 'assistant'").get() as
+          | { role: string; parts: string }
+          | undefined;
+        onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+      }),
+    );
+    const { id } = await (await asOwner('/api/threads', { method: 'POST', body: JSON.stringify({}) })).json();
+    await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ threadId: id, text: 'go' }) }));
+    expect(sawMidTurnRow).toBeDefined();
+    const parts = JSON.parse(sawMidTurnRow!.parts) as MessagePart[];
+    expect(parts).toEqual([{ type: 'tool-run', toolId: 'tu1', name: 'Bash', input: { command: 'ls' }, output: 'ok', isError: false, done: true }]);
+  });
+
   it('auto-titles an untitled thread from its first turn, but never re-titles', async () => {
     let titleCalls = 0;
     let turn = 0;
