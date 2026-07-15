@@ -2,19 +2,26 @@
 /**
  * review-shot.mjs — screenshot pipeline for the VISION design-review loop.
  *
- * Mints a short-lived agent key, drives a real (headless) browser to a
- * Cabinet surface authenticated as that agent, screenshots it, then revokes
- * the key. The resulting PNG is meant to be handed to a design-reviewer
- * subagent that actually reads the image (not the source).
+ * Mints a short-lived agent key, drives a real (headless) browser to one or
+ * more Cabinet surfaces authenticated as that agent, screenshots each, then
+ * revokes the key. The resulting PNGs are meant to be handed to a
+ * design-reviewer subagent that actually reads the image (not the source).
  *
  * Usage:
  *   node apps/cabinet/web/scripts/review-shot.mjs <surface>
+ *   node apps/cabinet/web/scripts/review-shot.mjs --all
  *
- * Currently supported surfaces: composer
+ * Supported surfaces: today, domains, ops, brain, threads
  *
- * Prints exactly one thing of consequence to stdout: the absolute path to
- * the PNG, as the final line. Everything else goes to stderr. The raw agent
- * key is NEVER printed — only used in-memory and redacted from error text.
+ * In --all mode, a single agent key is minted and a single browser session
+ * is used for all five surfaces (one login, sequential navigate+shoot) —
+ * cheaper than five separate logins, and the key is still revoked exactly
+ * once at the end (or on failure) via try/finally.
+ *
+ * Prints one PNG path per surface screenshotted, each on its own line, as
+ * the shots are taken. Nothing else of consequence goes to stdout — errors,
+ * progress, and per-surface failure notes go to stderr. The raw agent key is
+ * NEVER printed — only used in-memory and redacted from error text.
  */
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
@@ -74,13 +81,45 @@ async function revokeAgentKey(name) {
 
 // ---- per-surface drive scripts ----
 // Each takes an authenticated Playwright `page` already on cabinet.benloe.com
-// and must leave the page in the state to be screenshotted.
+// (rail nav visible) and must click into its surface and leave the page in
+// the state to be screenshotted. Order here is the --all capture order.
+const SURFACE_ORDER = ['today', 'domains', 'ops', 'brain', 'threads'];
+
+async function clickRail(page, label) {
+  await page
+    .getByRole('navigation', { name: 'Surfaces' })
+    .getByRole('button', { name: label })
+    .click();
+}
+
 const SURFACES = {
-  composer: async (page) => {
+  today: async (page) => {
+    await clickRail(page, 'Today');
+    // No unique ARIA landmark on Today (greeting heading is personalized
+    // text) — the "today" root wrapper is the steadiest signal available.
+    await page.waitForSelector('.today', { timeout: 15000 }).catch(() => {});
+    await page.waitForSelector('.today--message', { state: 'detached', timeout: 8000 }).catch(() => {});
+  },
+  domains: async (page) => {
+    await clickRail(page, 'Domains');
+    await page.getByRole('region', { name: 'Domains' }).waitFor({ timeout: 15000 }).catch(() => {});
+    await page.waitForSelector('.dom-body', { timeout: 15000 }).catch(() => {});
     await page
-      .getByRole('navigation', { name: 'Surfaces' })
-      .getByRole('button', { name: 'Threads' })
-      .click();
+      .waitForFunction(() => !document.querySelector('.dom-body.is-loading'), { timeout: 8000 })
+      .catch(() => {});
+  },
+  ops: async (page) => {
+    await clickRail(page, 'Ops');
+    await page.getByRole('region', { name: 'Operations ledger' }).waitFor({ timeout: 15000 }).catch(() => {});
+    await page.waitForSelector('.ops-feed', { timeout: 15000 }).catch(() => {});
+  },
+  brain: async (page) => {
+    await clickRail(page, 'Brain');
+    await page.getByRole('heading', { name: 'Brain' }).waitFor({ timeout: 15000 }).catch(() => {});
+    await page.waitForSelector('.brain__loading', { state: 'detached', timeout: 15000 }).catch(() => {});
+  },
+  threads: async (page) => {
+    await clickRail(page, 'Threads');
     await page
       .getByRole('listbox', { name: 'Conversations' })
       .getByRole('option')
@@ -92,15 +131,20 @@ const SURFACES = {
   },
 };
 
-async function main() {
-  const surfaceName = process.argv[2] || 'composer';
-  const drive = SURFACES[surfaceName];
-  if (!drive) {
-    console.error(
-      `unknown surface "${surfaceName}" — available: ${Object.keys(SURFACES).join(', ')}`
-    );
+function parseArgs(argv) {
+  const arg = argv[2];
+  if (!arg || arg === '--all') {
+    return { mode: 'all', surfaces: SURFACE_ORDER };
+  }
+  if (!SURFACES[arg]) {
+    console.error(`unknown surface "${arg}" — available: ${SURFACE_ORDER.join(', ')}, or --all`);
     process.exit(1);
   }
+  return { mode: 'single', surfaces: [arg] };
+}
+
+async function main() {
+  const { surfaces } = parseArgs(process.argv);
 
   const ts = Date.now();
   const agentName = `cabinet-shot-${ts}`;
@@ -143,17 +187,38 @@ async function main() {
         );
       }
 
-      await drive(page);
-
       await mkdir(SCREENSHOT_DIR, { recursive: true });
       const iso = new Date(ts).toISOString().replace(/[:.]/g, '-');
-      const pngPath = path.join(SCREENSHOT_DIR, `${surfaceName}-${iso}.png`);
-      await page.screenshot({ path: pngPath });
+
+      const shotPaths = [];
+      const failures = [];
+      for (const surfaceName of surfaces) {
+        try {
+          await SURFACES[surfaceName](page);
+          // Small settle delay so in-flight transitions/paints finish before
+          // the pixels are captured.
+          await page.waitForTimeout(300);
+
+          const pngPath = path.join(SCREENSHOT_DIR, `${surfaceName}-${iso}.png`);
+          await page.screenshot({ path: pngPath });
+          shotPaths.push(pngPath);
+
+          // Streamed as each surface completes — the only stdout content.
+          console.log(pngPath);
+        } catch (err) {
+          failures.push(surfaceName);
+          console.error(`WARNING: surface "${surfaceName}" failed, continuing: ${redact(err.message)}`);
+        }
+      }
 
       await browser.close();
 
-      // FINAL stdout line — the only thing callers should parse.
-      console.log(pngPath);
+      if (shotPaths.length === 0) {
+        throw new Error(`all surfaces failed: ${failures.join(', ')}`);
+      }
+      if (failures.length > 0) {
+        console.error(`done with failures on: ${failures.join(', ')}`);
+      }
     } catch (err) {
       await browser.close().catch(() => {});
       throw err;
