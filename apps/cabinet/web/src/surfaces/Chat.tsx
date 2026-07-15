@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ChatSummary } from '../lib/cabinet.js';
 import { streamChat, foldTurn, uploadAttachment, interruptChat } from '../lib/chat.js';
 import { usingMock } from '../lib/cabinet.js';
-import { SectionLabel } from '../components/instruments/index.js';
-import { Paperclip, ArrowUp, Square, X, Plus } from 'lucide-react';
+import { Paperclip, ArrowUp, Square, X } from 'lucide-react';
 import './chat.css';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -33,15 +32,6 @@ interface QueuedMessage {
 }
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/** Parse the wall-clock time literally from the ISO string — deterministic,
- *  no dependence on the runner's timezone (matches the Ops convention). */
-function stamp(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
-  if (!m) return iso;
-  const mo = MONTHS[Number(m[2])] ?? '';
-  return `${mo} ${Number(m[3])} · ${m[4]}:${m[5]}`;
-}
 
 /**
  * A real Date from either timestamp shape a ChatMessage.created_at carries:
@@ -133,208 +123,54 @@ export function buildRenderRuns(messages: ChatMessage[], live: MessagePart[] | n
   return runs;
 }
 
-function matches(t: ChatSummary, needle: string): boolean {
-  const hay = `${t.title ?? ''} ${t.preview ?? ''}`.toLowerCase();
-  return hay.includes(needle);
-}
-
 interface ChatProps {
-  /** Open (and, if new, seed) a specific chat — used by the ⌘K command bar. */
-  openChatId?: string | null;
-  openSeed?: string | null;
-  onConsumed?: () => void;
+  /** The conversation to show — selection lives in App (rail accordion). */
+  chat: ChatSummary | null;
+  /** First message to auto-send into a just-created chat (⌘K command bar). */
+  seed?: string | null;
+  onSeedConsumed?: () => void;
+  /** Tell the rail accordion which rows to badge as "resuming". */
+  onResumeState?: (chatId: string, resuming: boolean) => void;
 }
 
 /**
- * CHATS — where conversations live. A searchable archive on the left; the
- * right pane is a LIVE conversation: pick a chat up where it left off, or
- * start a new one from the command bar. Every turn streams from Cabinet.
+ * CHAT — one live conversation, full width. The archive list moved into the
+ * rail accordion (components/shell/Rail.tsx); this surface only renders
+ * whatever App says is selected. Every turn streams from Cabinet.
  */
-export function Chat({ openChatId, openSeed, onConsumed }: ChatProps) {
-  const [chats, setChats] = useState<ChatSummary[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  // Chats currently being resumed after a restart (gateway/pendingTurn.ts)
-  // — badges the affected row in the list. Fed two ways: the server's
-  // chat-resume-start/end broadcasts (any tab), and the open
-  // conversation's own drop detection via setResumeState (this tab,
-  // immediately — before the server is even back to broadcast anything).
-  const [resumingIds, setResumingIds] = useState<ReadonlySet<string>>(new Set());
-  const setResumeState = useCallback((chatId: string, active: boolean) => {
-    setResumingIds((prev) => {
-      if (prev.has(chatId) === active) return prev;
-      const next = new Set(prev);
-      if (active) next.add(chatId);
-      else next.delete(chatId);
-      return next;
-    });
-  }, []);
-
-  // Badge lifecycle from the server. The /api/events ring replays history to
-  // every fresh EventSource — safe here because the server only ever emits
-  // resume-start/end as a pair, so replayed pairs net out to no badge.
-  useEffect(() => {
-    if (usingMock) return;
-    const es = new EventSource('/api/events');
-    const mark = (active: boolean) => (ev: MessageEvent) => {
-      try {
-        const { chatId } = JSON.parse(ev.data as string) as { chatId?: string };
-        if (chatId) setResumeState(chatId, active);
-      } catch {
-        /* not our payload shape */
-      }
-    };
-    es.addEventListener('chat-resume-start', mark(true));
-    es.addEventListener('chat-resume-end', mark(false));
-    return () => es.close();
-  }, [setResumeState]);
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .chats()
-      .then((res) => alive && setChats(res.chats))
-      .catch((e: unknown) => alive && setLoadError(e instanceof Error ? e.message : "Couldn't reach the archive."));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // The command bar opens a specific (often brand-new) chat.
-  useEffect(() => {
-    if (openChatId) setSelectedId(openChatId);
-  }, [openChatId]);
-
-  const filtered = useMemo(() => {
-    if (!chats) return null;
-    const needle = query.trim().toLowerCase();
-    return needle ? chats.filter((t) => matches(t, needle)) : chats;
-  }, [chats, query]);
-
-  // A just-created chat won't be in the fetched list yet — synthesize a stub.
-  const selected: ChatSummary | null =
-    chats?.find((t) => t.id === selectedId) ??
-    (selectedId
-      ? { id: selectedId, title: null, model_override: null, archived: 0, updated_at: new Date().toISOString(), messages: 0 }
-      : null);
-
-  const seedForSelected = selected && selected.id === openChatId ? openSeed ?? undefined : undefined;
-
-  const handleNewConversation = useCallback(() => {
-    if (creating) return;
-    setCreating(true);
-    setCreateError(null);
-    api
-      .createChat()
-      .then(({ id }) => setSelectedId(id))
-      .catch((e: unknown) => setCreateError(e instanceof Error ? e.message : "Couldn't start a new conversation."))
-      .finally(() => setCreating(false));
-  }, [creating]);
-
+export function Chat({ chat, seed, onSeedConsumed, onResumeState }: ChatProps) {
   return (
-    <section className="chat" aria-label="Conversations">
-      <header className="chat-head">
-        <div>
-          <SectionLabel n="00">Conversations</SectionLabel>
-          <p className="chat-lede voice">Every conversation, on the record — pick one up, or start a new one.</p>
+    <section className="chat" aria-label="Chat">
+      {chat ? (
+        <Conversation
+          key={chat.id}
+          chat={chat}
+          seed={seed ?? undefined}
+          onSeedConsumed={onSeedConsumed}
+          onResumeState={onResumeState}
+        />
+      ) : (
+        <div className="chat-reader-empty">
+          <p className="chat-hint voice">Pick a conversation from the rail, or start one with ⌘K.</p>
         </div>
-        <div className="chat-head-actions">
-          <div className="chat-search">
-            <input
-              type="search"
-              className="chat-search-input data"
-              placeholder="Search title or preview…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Search conversations"
-            />
-          </div>
-          <button type="button" className="chat-new-btn" onClick={handleNewConversation} disabled={creating}>
-            <Plus size={16} aria-hidden="true" />
-            {creating ? 'Starting…' : 'New conversation'}
-          </button>
-        </div>
-        {createError && <p className="chat-new-error voice">{createError}</p>}
-      </header>
-
-      <div className={`chat-body${selectedId ? ' has-selection' : ''}`}>
-        <div className="chat-list-pane">
-          {loadError ? (
-            <p className="chat-empty voice">{loadError}</p>
-          ) : !chats ? (
-            <p className="chat-loading data">Opening the archive…</p>
-          ) : filtered && filtered.length > 0 ? (
-            <ul className="chat-list" role="listbox" aria-label="Conversations">
-              {filtered.map((t) => (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    className={`chat-row${t.id === selectedId ? ' active' : ''}`}
-                    role="option"
-                    aria-selected={t.id === selectedId}
-                    onClick={() => setSelectedId(t.id)}
-                  >
-                    <div className="chat-row-top">
-                      <span className="chat-row-title">{t.title ?? 'Untitled chat'}</span>
-                      {resumingIds.has(t.id) && (
-                        <span className="chat-row-resuming data">
-                          <span className="resume-dot" aria-hidden="true" />
-                          resuming
-                        </span>
-                      )}
-                      <span className="chat-row-count data">{t.messages}</span>
-                    </div>
-                    {t.preview && <p className="chat-row-preview">{t.preview}</p>}
-                    <span className="chat-row-when data">{stamp(t.updated_at)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : chats.length === 0 ? (
-            <p className="chat-empty voice">Nothing filed yet. Start one above, or with ⌘K.</p>
-          ) : (
-            <p className="chat-empty voice">Nothing matches “{query.trim()}.”</p>
-          )}
-        </div>
-
-        <div className="chat-reading-pane">
-          {selected ? (
-            <Conversation
-              key={selected.id}
-              chat={selected}
-              seed={seedForSelected}
-              onSeedConsumed={onConsumed}
-              onBack={() => setSelectedId(null)}
-              onResumeState={setResumeState}
-            />
-          ) : (
-            <div className="chat-reader-empty">
-              <p className="chat-hint voice">Pick a conversation, or start a new one above.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      )}
     </section>
   );
 }
+
 
 /* ---- a live conversation: history + streaming turns + a composer ---- */
 function Conversation({
   chat,
   seed,
   onSeedConsumed,
-  onBack,
   onResumeState,
 }: {
   chat: ChatSummary;
   seed?: string;
   onSeedConsumed?: () => void;
-  onBack: () => void;
-  /** Tell the chat list which rows to badge as "resuming" (see Chat). */
-  onResumeState?: (chatId: string, active: boolean) => void;
+  /** Tell the rail accordion which rows to badge as "resuming" (see App). */
+  onResumeState?: (chatId: string, resuming: boolean) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -835,9 +671,6 @@ function Conversation({
   return (
     <div className="reader" ref={readerRef}>
       <header className="reader-head">
-        <button type="button" className="chat-back" onClick={onBack}>
-          ← Conversations
-        </button>
         <div className="reader-title">
           <h2>{chat.title ?? 'New conversation'}</h2>
           <span className="reader-meta data">{chat.messages > 0 ? `${chat.messages} messages · ` : ''}Cabinet</span>
