@@ -56,6 +56,7 @@ import { seedInsurancePlan } from './domains/healthcare.js';
 import { Scheduler } from './scheduler/index.js';
 import { buildJobs } from './scheduler/jobs.js';
 import { schedulePendingDeployConfirmationWatch } from './deploy/pendingConfirmation.js';
+import { scheduleInterruptedTurnResume } from './gateway/pendingTurn.js';
 import { startGithubAppTokenLoop } from './integrations/githubApp.js';
 
 const DATA_DIR = process.env.CABINET_DATA_DIR ?? '/srv/benloe/data/cabinet';
@@ -140,11 +141,17 @@ const app = buildApp({
   memory,
   scheduler,
   buildMarker: buildInfo.sha,
+  dataDir: DATA_DIR,
 });
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`cabinet-api listening on 127.0.0.1:${PORT} (auth mode: ${runtime.authMode})`);
 });
+
+// If a turn died with the previous process (self-redeploy, crash), resume
+// its thread — see gateway/pendingTurn.ts. After listen(): the resume turn
+// broadcasts over /api/events, which should be up before anything fires.
+scheduleInterruptedTurnResume({ db: cabinet.db, runtime, widgetBus, dataDir: DATA_DIR });
 
 // Sweep approvals that expired while we were down (§14).
 approvals.expireOverdue();

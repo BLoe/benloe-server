@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ThreadSummary } from '../lib/cabinet.js';
 import { streamChat, foldTurn, uploadAttachment, interruptChat } from '../lib/chat.js';
+import { usingMock } from '../lib/cabinet.js';
 import { SectionLabel } from '../components/instruments/index.js';
 import { Paperclip, ArrowUp, Square, X, Plus } from 'lucide-react';
 import './threads.css';
@@ -309,6 +310,8 @@ function Conversation({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef<PendingAttachment[]>([]);
   pendingRef.current = pending;
+  const sendingRef = useRef(false);
+  sendingRef.current = sending;
   const messagesRef = useRef<ChatMessage[] | null>(null);
   messagesRef.current = messages;
   const threadIdRef = useRef(thread.id);
@@ -329,6 +332,43 @@ function Conversation({
     return () => {
       alive = false;
     };
+  }, [thread.id]);
+
+  // Live out-of-band updates (2026-07-15 restart-UX): the server broadcasts
+  // `thread-activity` on /api/events when it writes to a thread outside a
+  // client-initiated stream — today that's the interrupted-turn resume
+  // (gateway/pendingTurn.ts) posting into a thread after a restart killed a
+  // turn mid-flight. When it's THIS thread, re-fetch the authoritative
+  // history so the conversation visibly resumes without a manual reload.
+  // EventSource reconnects on its own across server restarts, and the
+  // server-side replay ring (Last-Event-ID) covers events that fired while
+  // this tab was disconnected — exactly the restart window we care about.
+  // Skipped while a send is streaming: the live stream is authoritative and
+  // a mid-stream swap would clobber the folding in send() below.
+  useEffect(() => {
+    if (usingMock) return;
+    const es = new EventSource('/api/events');
+    const onActivity = (ev: MessageEvent) => {
+      let touched: string | undefined;
+      try {
+        touched = (JSON.parse(ev.data as string) as { threadId?: string }).threadId;
+      } catch {
+        return; // not our payload shape; other event types have their own listeners
+      }
+      if (!touched || touched !== threadIdRef.current || sendingRef.current) return;
+      api
+        .messages(touched)
+        .then((res) => {
+          if (!mountedRef.current || threadIdRef.current !== touched || sendingRef.current) return;
+          setMessages(res.messages);
+          setError(null);
+        })
+        .catch(() => {
+          /* transient — the next thread-activity or reload will catch up */
+        });
+    };
+    es.addEventListener('thread-activity', onActivity);
+    return () => es.close();
   }, [thread.id]);
 
   // The reading pane has no scroll container of its own — the whole surface
@@ -446,10 +486,15 @@ function Conversation({
             setError(null);
             return;
           }
-          if (attempt < 6) setTimeout(tick, attempt < 3 ? 1500 : 3000);
+          // 12 attempts (~35s) — a self-redeploy takes 10–20s to come back,
+          // and the boot-side resume turn (server: gateway/pendingTurn.ts)
+          // starts a few seconds after that. Errors (server still down)
+          // retry on the same schedule. Beyond the window, the /api/events
+          // subscription above still catches the resume whenever it lands.
+          if (attempt < 12) setTimeout(tick, attempt < 3 ? 1500 : 3000);
         })
         .catch(() => {
-          if (attempt < 6) setTimeout(tick, attempt < 3 ? 1500 : 3000);
+          if (attempt < 12) setTimeout(tick, attempt < 3 ? 1500 : 3000);
         });
     };
     setTimeout(tick, 1500);
@@ -525,7 +570,6 @@ function Conversation({
           reconcileAfterDrop(thread.id, preSendCount);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'The turn failed.');
         // A network drop (e.g. the server restarting mid-turn) throws here —
         // but whatever had already streamed in (tool calls included) is real
         // work that ran, and as of the 2026-07-15 persistence fix it's
@@ -533,6 +577,24 @@ function Conversation({
         // message list exactly like the success path below does, instead of
         // wiping it via the `finally`'s setLive(null) and leaving only a bare
         // error banner where the tool-call trail used to be.
+        //
+        // Restart-UX follow-up (same day): a dropped connection is now a
+        // *recoverable* event — reconcileAfterDrop repolls and the
+        // /api/events subscription catches the server's own resume turn —
+        // so a fetch-level network failure gets a calm inline notice, not
+        // the red banner. The red banner stays for genuine turn failures
+        // (an HTTP error status, a server-side exception).
+        const msg = err instanceof Error ? err.message : 'The turn failed.';
+        const isNetworkDrop = err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(msg);
+        if (isNetworkDrop) {
+          parts.push({
+            type: 'notice',
+            level: 'info',
+            text: 'Connection dropped — likely a server restart. This thread reconnects and catches up on its own.',
+          });
+        } else {
+          setError(msg);
+        }
         if (parts.length > 0) {
           setMessages((m) => [...(m ?? []), { id: `a-${Date.now()}`, role: 'assistant', parts, created_at: new Date().toISOString() }]);
         }
