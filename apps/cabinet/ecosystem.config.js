@@ -30,6 +30,12 @@ module.exports = {
         CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
         ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY, // fallback path; runtime strips the unused one
         CABINET_BACKUP_PASSPHRASE: env.CABINET_BACKUP_PASSPHRASE,
+        // GitHub App (cabinet-benloe) — the raw private key is scrubbed from
+        // process.env at startup (server/src/integrations/githubApp.ts); agent
+        // shells only ever inherit the short-lived GH_TOKEN it mints.
+        GITHUB_APP_ID: env.GITHUB_APP_ID,
+        GITHUB_APP_INSTALLATION_ID: env.GITHUB_APP_INSTALLATION_ID,
+        GITHUB_APP_PRIVATE_KEY_B64: env.GITHUB_APP_PRIVATE_KEY_B64,
         // claude-worker's own nvm-managed node (v24.12.0) is the only place a
         // working, correctly-permissioned npm/npx/corepack actually lives on
         // this box — /usr/local/bin/node is a bare interpreter with no npm

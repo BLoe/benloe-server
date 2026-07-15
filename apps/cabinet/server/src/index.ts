@@ -56,6 +56,7 @@ import { seedInsurancePlan } from './domains/healthcare.js';
 import { Scheduler } from './scheduler/index.js';
 import { buildJobs } from './scheduler/jobs.js';
 import { schedulePendingDeployConfirmationWatch } from './deploy/pendingConfirmation.js';
+import { startGithubAppTokenLoop } from './integrations/githubApp.js';
 
 const DATA_DIR = process.env.CABINET_DATA_DIR ?? '/srv/benloe/data/cabinet';
 const PORT = Number(process.env.PORT ?? 3008);
@@ -95,6 +96,10 @@ schedulePendingDeployConfirmationWatch(cabinet.db, DATA_DIR, buildInfo.sha);
 
 const approvals = new ApprovalQueue(cabinet.db);
 const widgetBus = new EventEmitter();
+
+// Before AgentRuntime exists: scrubs the GitHub App private key out of
+// process.env (agent shells snapshot it) and keeps GH_TOKEN fresh instead.
+startGithubAppTokenLoop();
 
 const cabinetMcp = buildCabinetMcpServer({
   db: cabinet.db,
