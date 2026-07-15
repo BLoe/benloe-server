@@ -3,13 +3,12 @@
    Tokens only; no shared selectors with other surfaces.
    ========================================================================== */
 
+/* width + centering come from the shared .surface > * rule in shell.css */
 .dom {
   display: flex;
   flex-direction: column;
   gap: var(--sp-6);
   padding: var(--sp-6);
-  max-width: 1080px;
-  margin: 0 auto;
   width: 100%;
 }
 

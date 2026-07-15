@@ -1,8 +1,7 @@
 /* BRAIN surface — recall + standing memory. Tokens only; no hard-coded values. */
 
+/* width + centering come from the shared .surface > * rule in shell.css */
 .brain {
-  max-width: 940px;
-  margin: 0 auto;
   padding: var(--sp-8) var(--sp-7) var(--sp-9);
   display: flex;
   flex-direction: column;

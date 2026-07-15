@@ -3,13 +3,12 @@
    revert. Scanability over decoration. Tokens only; no shared selectors.
    ========================================================================== */
 
+/* width + centering come from the shared .surface > * rule in shell.css */
 .ops {
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
   padding: var(--sp-6);
-  max-width: 980px;
-  margin: 0 auto;
   width: 100%;
 }
 
