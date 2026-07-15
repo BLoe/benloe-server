@@ -22,7 +22,12 @@ import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, 
 
 export interface GatewayDeps {
   db: Database.Database;
-  runtime: Pick<AgentRuntime, 'run' | 'interrupt' | 'authMode' | 'titleFor'> & { queue: { depth: number } };
+  runtime: Pick<AgentRuntime, 'run' | 'interrupt' | 'authMode' | 'titleFor'> & {
+    queue: { depth: number };
+    /** Thread id of the turn executing right now, else null. Optional so
+     *  narrow test fakes don't have to care; undefined reads as "no turn". */
+    currentThread?: string | null;
+  };
   approvals: ApprovalQueue;
   widgetBus: EventEmitter;
   ownerEmail: string;
@@ -184,6 +189,11 @@ export function buildApp(deps: GatewayDeps) {
       .all(req.params.id, before, limit) as { parts: string; usage: string | null }[];
     res.json({
       messages: rows.reverse().map((r) => ({ ...r, parts: JSON.parse(r.parts), usage: r.usage ? JSON.parse(r.usage) : null })),
+      // Reattach-on-load (2026-07-15): is a turn executing on THIS thread
+      // right now? A tab that (re)loads mid-turn uses this to show the
+      // working strip and follow along via polling — the turn itself
+      // survives any client disconnect; only the live view was lost before.
+      live: deps.runtime.currentThread === req.params.id,
     });
   });
 
@@ -292,7 +302,14 @@ export function buildApp(deps: GatewayDeps) {
     const send = (e: TurnEvent) => {
       recorder.onEvent(e);
       res.write(encodeSse({ event: e.type, data: e }));
-      if (e.type === 'turn-start') assistantId = e.messageId;
+      if (e.type === 'turn-start') {
+        assistantId = e.messageId;
+        // Nudge OTHER tabs (this thread open elsewhere, or reloaded
+        // mid-turn) to re-fetch and notice `live: true` — the sending tab
+        // ignores this while its own stream is up. Paired with the same
+        // broadcast in the finally below when the turn is over.
+        broadcast('thread-activity', { threadId });
+      }
       if (!assistantId || recorder.parts.length === 0) return;
       const now = Date.now();
       if (ALWAYS_LIVE_PERSIST.includes(e.type) || now - lastLivePersist >= LIVE_PERSIST_MIN_MS) {
@@ -355,6 +372,7 @@ export function buildApp(deps: GatewayDeps) {
       clearInterval(hb);
       clearTurnInFlight(DATA_DIR);
       recorder.persist(deps.db, threadId);
+      broadcast('thread-activity', { threadId });
       // Auto-name a still-"untitled" thread from its opening exchange. Best
       // effort — a titling failure must never surface to the chat turn — and
       // only on the first turn, so an established title is never overwritten.

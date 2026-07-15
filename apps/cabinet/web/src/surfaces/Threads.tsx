@@ -346,6 +346,13 @@ function Conversation({
   // server broadcast thread-resume-start for this thread, so we hold until
   // its resume-end however long the turn runs. null = calm.
   const [restartWait, setRestartWait] = useState<null | 'down' | 'up' | 'resuming'>(null);
+  // Reattach-on-load (2026-07-15, Ben's page-refresh question): a turn keeps
+  // running server-side when this tab disconnects — a refresh only loses the
+  // live VIEW. When a (re)loading tab finds `live: true` on the messages
+  // fetch, this flag shows the working strip and drives a follow-along poll
+  // (live-persist updates the assistant row mid-turn, so each poll shows the
+  // turn's real progress) until the server reports the turn over.
+  const [liveTurn, setLiveTurn] = useState(false);
   const [live, setLive] = useState<MessagePart[] | null>(null);
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
@@ -389,12 +396,37 @@ function Conversation({
     setError(null);
     api
       .messages(thread.id)
-      .then((res) => alive && setMessages(res.messages))
+      .then((res) => {
+        if (!alive) return;
+        setMessages(res.messages);
+        setLiveTurn(!!res.live);
+      })
       .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : "Couldn't pull that thread."));
     return () => {
       alive = false;
     };
   }, [thread.id]);
+
+  // Follow a turn that's running without us (opened/reloaded mid-turn):
+  // poll while the server says the thread is live. Paused during our own
+  // sends — there the SSE stream is the live view. The turn-end broadcast
+  // (thread-activity) usually flips this off before the poll even notices.
+  useEffect(() => {
+    if (!liveTurn || sending) return;
+    const timer = setInterval(() => {
+      api
+        .messages(thread.id)
+        .then((res) => {
+          if (!mountedRef.current || threadIdRef.current !== thread.id) return;
+          setMessages(res.messages);
+          if (!res.live) setLiveTurn(false);
+        })
+        .catch(() => {
+          /* transient — next tick retries; the restart machinery covers real outages */
+        });
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [liveTurn, sending, thread.id]);
 
   // Live out-of-band updates (2026-07-15 restart-UX): the server broadcasts
   // `thread-activity` on /api/events when it writes to a thread outside a
@@ -424,6 +456,9 @@ function Conversation({
           if (!mountedRef.current || threadIdRef.current !== touched || sendingRef.current) return;
           setMessages(res.messages);
           setError(null);
+          // /api/chat broadcasts at turn start and end — this keeps the
+          // working strip honest for a tab that isn't running the turn.
+          setLiveTurn(!!res.live);
         })
         .catch(() => {
           /* transient — the next thread-activity or reload will catch up */
@@ -851,7 +886,7 @@ function Conversation({
 
       {error && <p className="reader-error voice">{error}</p>}
 
-      {restartWait && (
+      {(restartWait || liveTurn) && (
         <div className="resume-strip" role="status" aria-live="polite">
           <span className="resume-dot" aria-hidden="true" />
           <span className="resume-text data">
@@ -859,7 +894,9 @@ function Conversation({
               ? 'Cabinet is restarting — this thread resumes on its own.'
               : restartWait === 'up'
                 ? 'Back online — waiting for the thread to resume…'
-                : 'Resuming this thread…'}
+                : restartWait === 'resuming'
+                  ? 'Resuming this thread…'
+                  : 'Cabinet is working on this thread — following along…'}
           </span>
         </div>
       )}
