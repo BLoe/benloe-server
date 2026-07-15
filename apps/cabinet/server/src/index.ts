@@ -56,7 +56,7 @@ import { seedInsurancePlan } from './domains/healthcare.js';
 import { Scheduler } from './scheduler/index.js';
 import { buildJobs } from './scheduler/jobs.js';
 import { schedulePendingDeployConfirmationWatch } from './deploy/pendingConfirmation.js';
-import { scheduleInterruptedTurnResume } from './gateway/pendingTurn.js';
+import { markShutdown, scheduleInterruptedTurnResume } from './gateway/pendingTurn.js';
 import { startGithubAppTokenLoop } from './integrations/githubApp.js';
 
 const DATA_DIR = process.env.CABINET_DATA_DIR ?? '/srv/benloe/data/cabinet';
@@ -162,10 +162,19 @@ if (process.env.CABINET_SCHEDULER !== 'off') {
   console.log('scheduler armed:', JSON.stringify(scheduler.nextFireTimes()));
 }
 
-process.on('SIGTERM', () => {
+const shutdown = (signal: string) => {
+  // FIRST: freeze the pending-turn breadcrumb. The graceful close below keeps
+  // the event loop alive long enough for an aborted in-flight turn to unwind
+  // its finally block — which would otherwise delete the marker the next
+  // boot's resume depends on (observed live, 2026-07-15: two deploys in a row
+  // resumed nothing because the dying process cleaned up after itself).
+  markShutdown();
+  console.log(`${signal}: shutting down — pending-turn marker frozen`);
   void embedder.close().finally(() => {
     cabinet.close();
     episodic.close();
     process.exit(0);
   });
-});
+};
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));

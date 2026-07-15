@@ -51,6 +51,22 @@ export interface PendingTurnMarker {
   generation?: number;
 }
 
+/** Shutdown latch (2026-07-15, found live on the Threads→Chat deploy): pm2's
+ *  stop signal aborts the in-flight SDK run, which unwinds /api/chat's
+ *  try/finally exactly like a graceful end — so the dying process deleted the
+ *  very breadcrumb the next boot needed, and nothing resumed (boots at 22:42
+ *  and 23:23 had no marker; 22:19/22:32 only survived by losing that race
+ *  slower). Once a stop signal arrives, marker clears become no-ops: from
+ *  that moment "the turn ended" and "the process is dying" are the same
+ *  event, and the breadcrumb must outlive it. A turn that genuinely finished
+ *  inside the shutdown window leaves a stale marker behind — acceptable: the
+ *  resume prompt tells the agent to review the tail and answer only what's
+ *  actually unanswered. */
+let shuttingDown = false;
+export function markShutdown(state = true): void {
+  shuttingDown = state;
+}
+
 function writeMarker(dataDir: string, marker: PendingTurnMarker): void {
   try {
     writeFileSync(join(dataDir, MARKER), JSON.stringify(marker, null, 2));
@@ -69,6 +85,7 @@ export function markTurnInFlight(dataDir: string, chatId: string, prompt: string
 }
 
 export function clearTurnInFlight(dataDir: string): void {
+  if (shuttingDown) return; // see markShutdown — the breadcrumb must outlive us
   try {
     unlinkSync(join(dataDir, MARKER));
   } catch (err) {
