@@ -174,6 +174,13 @@ export class AgentRuntime {
     );
   }
 
+  /** Thread id of the turn executing right now, else null — lets the
+   *  gateway tell a (re)loading tab "this thread is live, follow along"
+   *  (reattach-on-load, gateway/app.ts's /api/threads/:id/messages). */
+  get currentThread(): string | null {
+    return this.currentThreadId;
+  }
+
   /** Abort the in-flight turn (optionally only if it belongs to threadId). */
   interrupt(threadId?: string): boolean {
     if (!this.currentAbort) return false;

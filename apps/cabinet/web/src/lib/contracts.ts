@@ -149,6 +149,8 @@ export interface CabinetApi {
   recall(query: string): Promise<RecallResponse>;
   threads(): Promise<{ threads: ThreadSummary[] }>;
   createThread(): Promise<{ id: string }>;
-  messages(threadId: string): Promise<{ messages: ChatMessage[] }>;
+  /** `live` — a turn is executing on this thread server-side right now
+   *  (reattach-on-load; optional so the mock backend can ignore it). */
+  messages(threadId: string): Promise<{ messages: ChatMessage[]; live?: boolean }>;
   command(intent: string): Promise<{ threadId: string }>;
 }
