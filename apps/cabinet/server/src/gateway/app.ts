@@ -16,6 +16,7 @@ import { profileGap } from '../domains/profile.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import type { MessagePart } from './fold.js';
 import { createTranscriptRecorder, persistAssistantMessage, persistUserMessage } from './transcript.js';
+import { markTurnInFlight, clearTurnInFlight } from './pendingTurn.js';
 import { registerSurfaceRoutes } from './surfaces.js';
 import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, type ImageMime } from './attachments.js';
 
@@ -61,6 +62,8 @@ export interface GatewayDeps {
   reviewShotsDir?: string;
   /** Composer image attachments (§ vision spike). Injectable for tests; production defaults to the real dir. */
   attachmentsDir?: string;
+  /** Where pending-turn.json (interrupted-turn resume, gateway/pendingTurn.ts) lives. Injectable for tests. */
+  dataDir?: string;
 }
 
 export interface Principal {
@@ -329,6 +332,12 @@ export function buildApp(deps: GatewayDeps) {
     }
 
     const hb = setInterval(() => res.write(SSE_HEARTBEAT), 25_000);
+    // Durable breadcrumb for the interrupted-turn resume (pendingTurn.ts):
+    // written now (even while this turn waits in the queue — a restart there
+    // orphans the message just the same), removed on ANY graceful end in the
+    // finally below. Only a hard process death leaves it for boot to find.
+    const DATA_DIR = deps.dataDir ?? '/srv/benloe/data/cabinet';
+    markTurnInFlight(DATA_DIR, threadId, text);
     try {
       await deps.runtime.run({
         threadId, prompt: text, kind: 'user', onEvent: send,
@@ -344,6 +353,7 @@ export function buildApp(deps: GatewayDeps) {
       res.write(encodeSse({ event: 'error', data: { message: String((err as Error).message).slice(0, 300), retryable: true } }));
     } finally {
       clearInterval(hb);
+      clearTurnInFlight(DATA_DIR);
       recorder.persist(deps.db, threadId);
       // Auto-name a still-"untitled" thread from its opening exchange. Best
       // effort — a titling failure must never surface to the chat turn — and
