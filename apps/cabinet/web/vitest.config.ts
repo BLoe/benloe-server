@@ -12,5 +12,10 @@ export default defineConfig({
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     setupFiles: ['./test/setup.ts'],
     globals: true,
+    // Pin NODE_ENV: vitest inherits an ambient value instead of overriding,
+    // and Cabinet's own agent shell carries NODE_ENV=production (PM2 env) —
+    // which makes React load its production build, which has no React.act,
+    // which fails every component test with "React.act is not a function".
+    env: { NODE_ENV: 'development' },
   },
 });

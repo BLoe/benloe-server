@@ -1,218 +1,29 @@
 /* ============================================================================
-   CHATS surface — the conversation archive. Master-detail: a searchable
-   list of past chats + a reading pane restyling the chat log into the
-   design system. Stacks on mobile. Tokens only; no shared selectors.
+   CHAT surface — one live conversation, full width. The archive list lives
+   in the rail's accordion (shell.css, .rail-convos); this surface is just
+   the reader + composer. Tokens only; no shared selectors.
    ========================================================================== */
 
 /* width + centering come from the shared .surface > * rule in shell.css */
 .chat {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-5);
   padding: var(--sp-6);
   width: 100%;
 }
 
-/* ---- header: intent line + search ---- */
-.chat-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--sp-4);
-  padding-bottom: var(--sp-4);
-  border-bottom: 1px solid var(--rule-soft);
-}
-
-.chat-lede {
-  margin-top: var(--sp-2);
-  font-size: var(--fs-sm);
-  color: var(--linen-dim);
-  max-width: 46ch;
-}
-
-.chat-head-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  flex-wrap: wrap;
-}
-
-.chat-search-input {
-  width: min(320px, 60vw);
-  font-size: var(--fs-sm);
-  color: var(--linen);
-  background: var(--inset);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-2);
-  padding: var(--sp-2) var(--sp-3);
-}
-
-.chat-search-input::placeholder {
-  color: var(--linen-faint);
-}
-
-.chat-search-input:focus-visible {
-  outline: 2px solid var(--brass-hi);
-  outline-offset: 1px;
-}
-
-.chat-new-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--fs-cap);
-  letter-spacing: var(--tracking-cap);
-  text-transform: uppercase;
-  white-space: nowrap;
-  color: var(--brass);
-  background: transparent;
-  border: 1px solid var(--brass-dim);
-  border-radius: var(--r-pill);
-  padding: var(--sp-2) var(--sp-3);
-  cursor: pointer;
-  transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
-}
-
-.chat-new-btn:hover:not(:disabled),
-.chat-new-btn:focus-visible:not(:disabled) {
-  color: var(--brass-hi);
-  border-color: var(--brass-hi);
-  background: var(--panel);
-  outline: none;
-}
-
-.chat-new-btn:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.chat-new-error {
-  flex-basis: 100%;
-  font-size: var(--fs-fine);
-  color: var(--vermilion);
-}
-
 /* ---- body: two-pane master/detail ---- */
-.chat-body {
-  display: grid;
-  grid-template-columns: minmax(260px, 340px) 1fr;
-  gap: var(--sp-5);
-  align-items: start;
-}
-
-.chat-list-pane {
-  border: 1px solid var(--rule-soft);
-  border-radius: var(--r-3);
-  overflow: hidden;
-}
-
-.chat-loading,
-.chat-empty {
+.chat-loading {
   padding: var(--sp-7) var(--sp-4);
   color: var(--linen-faint);
   font-size: var(--fs-fine);
 }
 
-.chat-empty {
-  font-size: var(--fs-body);
-  font-style: italic;
-  color: var(--linen-dim);
-}
-
-.chat-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 68dvh;
-  overflow-y: auto;
-}
-
-.chat-row {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--sp-1);
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--rule-soft);
-  padding: var(--sp-4);
-  cursor: pointer;
-  transition: background var(--dur-1) var(--ease);
-}
-
-.chat-list li:last-child .chat-row {
-  border-bottom: none;
-}
-
-.chat-row:hover {
-  background: var(--panel);
-}
-
-.chat-row.active {
-  background: var(--panel-2);
-  box-shadow: inset var(--rail) 0 0 0 var(--brass);
-}
-
-.chat-row:focus-visible {
-  outline: 2px solid var(--brass-hi);
-  outline-offset: -2px;
-}
-
-.chat-row-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--sp-3);
-}
-
-.chat-row-title {
-  font-family: var(--serif);
-  font-size: var(--fs-body);
-  color: var(--linen);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-row-count {
-  flex: none;
-  font-size: var(--fs-cap);
-  color: var(--linen-faint);
-}
-
-.chat-row-preview {
-  font-size: var(--fs-sm);
-  color: var(--linen-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-row-when {
-  font-size: var(--fs-cap);
-  color: var(--brass-dim);
-}
-
-.chat-row.active .chat-row-when {
-  color: var(--brass);
-}
-
 /* ---- reading pane ---- */
-.chat-reading-pane {
-  border: 1px solid var(--rule-soft);
-  border-radius: var(--r-3);
-  min-height: 320px;
-}
-
 .chat-reader-empty {
   display: grid;
   place-items: center;
-  min-height: 320px;
+  min-height: 50dvh;
   padding: var(--sp-7);
 }
 
@@ -225,7 +36,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
-  padding: var(--sp-5);
+  padding: var(--sp-2) 0;
 }
 
 .reader-head {
@@ -234,21 +45,6 @@
   gap: var(--sp-4);
   padding-bottom: var(--sp-4);
   border-bottom: 1px solid var(--rule-soft);
-}
-
-.chat-back {
-  display: none;
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--fs-cap);
-  letter-spacing: var(--tracking-cap);
-  text-transform: uppercase;
-  color: var(--brass);
-  background: transparent;
-  border: 1px solid var(--brass-dim);
-  border-radius: var(--r-pill);
-  padding: var(--sp-2) var(--sp-3);
-  cursor: pointer;
 }
 
 .reader-title h2 {
@@ -459,43 +255,10 @@
   color: var(--brass-hi);
 }
 
-/* ---- mobile: stack, one pane at a time ---- */
+/* ---- mobile ---- */
 @media (max-width: 768px) {
   .chat {
     padding: var(--sp-4);
-  }
-
-  .chat-head-actions {
-    width: 100%;
-  }
-
-  .chat-search-input {
-    width: 100%;
-  }
-
-  .chat-new-btn {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .chat-body {
-    grid-template-columns: 1fr;
-  }
-
-  .chat-reading-pane {
-    display: none;
-  }
-
-  .chat-body.has-selection .chat-list-pane {
-    display: none;
-  }
-
-  .chat-body.has-selection .chat-reading-pane {
-    display: block;
-  }
-
-  .chat-back {
-    display: inline-block;
   }
 
   .msg {
@@ -731,18 +494,6 @@
   border-radius: 50%;
   background: var(--brass);
   animation: resume-pulse 1.6s ease-in-out infinite;
-}
-.chat-row-resuming {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  font-size: var(--fs-cap);
-  color: var(--brass);
-}
-.chat-row-resuming .resume-dot {
-  width: 6px;
-  height: 6px;
 }
 @keyframes resume-pulse {
   0%, 100% { box-shadow: 0 0 0 0 #c99b5355; }

@@ -3,16 +3,15 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ChatMessage, ChatSummary } from '../src/lib/contracts.js';
 
-const { chatsMock, messagesMock, streamChatMock } = vi.hoisted(() => ({
-  chatsMock: vi.fn<() => Promise<{ chats: ChatSummary[] }>>(),
+const { messagesMock, streamChatMock } = vi.hoisted(() => ({
   messagesMock: vi.fn<(chatId: string) => Promise<{ messages: ChatMessage[] }>>(),
   streamChatMock: vi.fn(),
 }));
 
-// Stub the data module: keep the real types/exports, swap api.chats + api.messages.
+// Stub the data module: keep the real types/exports, swap api.messages.
 vi.mock('../src/lib/cabinet.js', async (importActual) => {
   const actual = await importActual<typeof import('../src/lib/cabinet.js')>();
-  return { ...actual, api: { ...actual.api, chats: chatsMock, messages: messagesMock } };
+  return { ...actual, api: { ...actual.api, messages: messagesMock } };
 });
 
 // Stub only streamChat — foldTurn stays real so folded parts match production folding.
@@ -22,6 +21,7 @@ vi.mock('../src/lib/chat.js', async (importActual) => {
 });
 
 import { Chat } from '../src/surfaces/Chat.js';
+import { Rail, type ChatNav } from '../src/components/shell/Rail.js';
 
 const CHATS: ChatSummary[] = [
   {
@@ -57,31 +57,42 @@ const MESSAGES: ChatMessage[] = [
   },
 ];
 
+function nav(overrides: Partial<ChatNav> = {}): ChatNav {
+  return {
+    chats: CHATS,
+    loadError: null,
+    selectedId: null,
+    resumingIds: new Set<string>(),
+    creating: false,
+    createError: null,
+    onSelect: () => {},
+    onNew: () => {},
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
-  chatsMock.mockReset();
   messagesMock.mockReset();
   streamChatMock.mockReset();
-  chatsMock.mockResolvedValue({ chats: CHATS });
   messagesMock.mockResolvedValue({ messages: MESSAGES });
 });
 afterEach(cleanup);
 
-describe('Chat surface', () => {
-  it('renders the archive list with title, preview, and message count', async () => {
-    render(<Chat />);
-    await waitFor(() => expect(chatsMock).toHaveBeenCalled());
-
-    expect(await screen.findByText('Cabinet Systems Status Report')).toBeTruthy();
+describe('rail Chat accordion', () => {
+  it('lists conversations by title when the Chat surface is active', () => {
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav()} />);
+    expect(screen.getByText('Cabinet Systems Status Report')).toBeTruthy();
     expect(screen.getByText('Weight tracker + macro ring')).toBeTruthy();
-    expect(screen.getByText('Full status check across services and data.')).toBeTruthy();
-    expect(screen.getByText('6')).toBeTruthy();
-    expect(screen.getByText('14')).toBeTruthy();
+  });
+
+  it('stays collapsed when another surface is active', () => {
+    render(<Rail active="today" onNavigate={() => {}} chatNav={nav()} />);
+    expect(screen.queryByText('Cabinet Systems Status Report')).toBeNull();
   });
 
   it('the search box filters the list by title/preview', async () => {
     const user = userEvent.setup();
-    render(<Chat />);
-    await screen.findByText('Cabinet Systems Status Report');
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav()} />);
 
     await user.type(screen.getByLabelText('Search conversations'), 'weight tracker');
 
@@ -91,26 +102,41 @@ describe('Chat surface', () => {
 
   it('shows voice empty copy when the search matches nothing', async () => {
     const user = userEvent.setup();
-    render(<Chat />);
-    await screen.findByText('Cabinet Systems Status Report');
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav()} />);
 
     await user.type(screen.getByLabelText('Search conversations'), 'zzz-nonexistent');
 
     expect(await screen.findByText(/Nothing matches/)).toBeTruthy();
   });
 
-  it('selecting a chat calls api.messages(id) and renders its messages', async () => {
+  it('selecting a conversation reports its id', async () => {
     const user = userEvent.setup();
-    render(<Chat />);
-    await screen.findByText('Cabinet Systems Status Report');
+    const onSelect = vi.fn();
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav({ onSelect })} />);
 
     await user.click(screen.getByText('Cabinet Systems Status Report'));
+
+    expect(onSelect).toHaveBeenCalledWith('t-5dd8');
+  });
+});
+
+describe('Chat surface', () => {
+  it('shows the pick-a-conversation hint when nothing is selected', () => {
+    render(<Chat chat={null} />);
+    expect(screen.getByText(/Pick a conversation/)).toBeTruthy();
+    expect(messagesMock).not.toHaveBeenCalled();
+  });
+
+  it('renders the selected conversation: api.messages(id) + message parts', async () => {
+    render(<Chat chat={CHATS[0]!} />);
 
     await waitFor(() => expect(messagesMock).toHaveBeenCalledWith('t-5dd8'));
     expect(await screen.findByText('How are the services looking?')).toBeTruthy();
     expect(screen.getByText(/All green\. Nine services up/)).toBeTruthy();
-    // tool-run part rendered as a compact card
-    expect(screen.getByText('pm2_list')).toBeTruthy();
+    // tool-run part rendered as a compact card: human summary line + raw
+    // name in the details disclosure
+    expect(screen.getByText('Ran pm2 list')).toBeTruthy();
+    expect(screen.getByText(/pm2_list/)).toBeTruthy();
     expect(screen.getByText('9 online')).toBeTruthy();
   });
 
@@ -122,8 +148,7 @@ describe('Chat surface', () => {
       onEvent({ type: 'tool-end', toolId: 'tu-live', output: 'ok', isError: false });
       throw new Error('chat failed: 502');
     });
-    render(<Chat />);
-    await user.click(await screen.findByText('Cabinet Systems Status Report'));
+    render(<Chat chat={CHATS[0]!} />);
     await screen.findByText('How are the services looking?');
 
     await user.type(screen.getByLabelText('Message Cabinet'), 'redeploy yourself');

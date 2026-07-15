@@ -114,3 +114,40 @@
   .topbar { flex-wrap: wrap; }
   .cmd-trigger { width: 100%; }
 }
+
+/* ---- rail: Chat accordion (the conversation list) ----
+   Expanded exactly while the Chat surface is active — the list is App-owned
+   state projected here; the surface renders only the selected conversation. */
+.rail-convos { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px; padding-left: 26px; min-height: 0; }
+.rail-convos-head { display: flex; align-items: center; gap: 6px; padding: 2px 8px 6px 2px; }
+.rail-convos-search {
+  flex: 1; min-width: 0; background: var(--inset); border: 1px solid var(--rule); border-radius: var(--r-2);
+  color: var(--linen); font-size: 11px; padding: 4px 8px; outline: none;
+}
+.rail-convos-search::placeholder { color: var(--linen-faint); }
+.rail-convos-search:focus-visible { border-color: var(--brass-dim); }
+.rail-convos-new {
+  flex: none; display: grid; place-items: center; width: 24px; height: 24px;
+  border: 1px solid var(--rule); border-radius: var(--r-2); background: transparent; color: var(--brass);
+  cursor: pointer; transition: border-color var(--dur-1), background var(--dur-1);
+}
+.rail-convos-new:hover:not(:disabled), .rail-convos-new:focus-visible:not(:disabled) { border-color: var(--brass-dim); background: #ffffff08; }
+.rail-convos-new:disabled { opacity: .5; cursor: default; }
+.rail-convos-note { padding: 4px 8px 6px 2px; font-size: 11px; color: var(--linen-faint); }
+.rail-convos-list { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; max-height: 44dvh; padding-right: 2px; }
+.rail-convo {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 6px 8px; border-radius: var(--r-2); color: var(--linen-dim); font-size: 12.5px;
+  transition: color var(--dur-1), background var(--dur-1);
+}
+.rail-convo:hover { background: #ffffff08; color: var(--linen); }
+.rail-convo.active { background: #ffffff0c; color: var(--linen); box-shadow: inset 2px 0 0 var(--brass); }
+.rail-convo-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-convo .resume-dot { margin-left: auto; width: 6px; height: 6px; }
+
+/* mobile: the rail is a top bar — let it wrap and give the accordion the
+   full width as a second, vertically-scrollable row under the tabs. */
+@media (max-width: 860px) {
+  .rail { flex-wrap: wrap; }
+  .rail-convos { flex-basis: 100%; padding-left: 4px; max-height: 38dvh; overflow-y: auto; }
+}
