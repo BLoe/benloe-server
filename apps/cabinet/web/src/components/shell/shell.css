@@ -48,7 +48,20 @@
 .topbar { display: flex; align-items: center; gap: 16px; padding: 14px 26px; border-bottom: 1px solid var(--rule); background: linear-gradient(180deg, #1b120a, transparent); }
 .topbar .datestamp { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; color: var(--linen-dim); text-transform: uppercase; white-space: nowrap; }
 .topbar .datestamp b { color: var(--brass); font-weight: 500; }
-.surface { flex: 1; overflow-y: auto; min-height: 0; }
+/* flex:1 + overflow-y:auto makes .surface the one scroll container for every
+   surface. padding-bottom reserves the presence strip's height at the end of
+   the scrollable content so the last card/row always has breathing room
+   before the strip, instead of ending flush against it — see --footer-h. */
+.surface { flex: 1; overflow-y: auto; min-height: 0; padding-bottom: var(--footer-h); }
+
+/* ---- shared content-width primitive ----
+   Every surface renders exactly one root element as .surface's direct child
+   (.today / .dom / .ops / .brain / .threads). Constrain + center it here,
+   once, instead of each surface picking its own max-width — that's what
+   made surfaces feel inconsistent (some stranded near the edge, some
+   swimming in dead gutter) when navigating between them. A surface that
+   genuinely wants full-bleed should override explicitly, not by omission. */
+.surface > * { max-width: var(--content-max); margin-inline: auto; }
 
 /* ---- command bar (trigger + overlay) ---- */
 .cmd-trigger {
@@ -76,7 +89,7 @@
 .cmd-box .hint { border-top: 1px solid var(--rule); padding: 8px 18px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--linen-faint); text-transform: uppercase; display: flex; gap: 16px; }
 
 /* ---- presence strip ---- */
-.presence { display: flex; align-items: center; gap: 12px; padding: 12px 26px; border-top: 1px solid var(--rule); background: linear-gradient(0deg, #1b120a, transparent); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--linen-dim); }
+.presence { display: flex; align-items: center; gap: 12px; min-height: var(--footer-h); padding: 0 26px; box-sizing: border-box; border-top: 1px solid var(--rule); background: linear-gradient(0deg, #1b120a, transparent); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--linen-dim); }
 .presence .live { width: 7px; height: 7px; border-radius: 50%; background: var(--linen-faint); }
 .presence .live.idle { background: var(--patina); }
 .presence .live.working { background: var(--brass); animation: pulse 1.6s ease-in-out infinite; }
