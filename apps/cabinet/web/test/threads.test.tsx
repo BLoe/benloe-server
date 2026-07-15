@@ -3,15 +3,22 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ChatMessage, ThreadSummary } from '../src/lib/contracts.js';
 
-const { threadsMock, messagesMock } = vi.hoisted(() => ({
+const { threadsMock, messagesMock, streamChatMock } = vi.hoisted(() => ({
   threadsMock: vi.fn<() => Promise<{ threads: ThreadSummary[] }>>(),
   messagesMock: vi.fn<(threadId: string) => Promise<{ messages: ChatMessage[] }>>(),
+  streamChatMock: vi.fn(),
 }));
 
 // Stub the data module: keep the real types/exports, swap api.threads + api.messages.
 vi.mock('../src/lib/cabinet.js', async (importActual) => {
   const actual = await importActual<typeof import('../src/lib/cabinet.js')>();
   return { ...actual, api: { ...actual.api, threads: threadsMock, messages: messagesMock } };
+});
+
+// Stub only streamChat — foldTurn stays real so folded parts match production folding.
+vi.mock('../src/lib/chat.js', async (importActual) => {
+  const actual = await importActual<typeof import('../src/lib/chat.js')>();
+  return { ...actual, streamChat: streamChatMock };
 });
 
 import { Threads } from '../src/surfaces/Threads.js';
@@ -53,6 +60,7 @@ const MESSAGES: ChatMessage[] = [
 beforeEach(() => {
   threadsMock.mockReset();
   messagesMock.mockReset();
+  streamChatMock.mockReset();
   threadsMock.mockResolvedValue({ threads: THREADS });
   messagesMock.mockResolvedValue({ messages: MESSAGES });
 });
@@ -104,5 +112,28 @@ describe('Threads surface', () => {
     // tool-run part rendered as a compact card
     expect(screen.getByText('pm2_list')).toBeTruthy();
     expect(screen.getByText('9 online')).toBeTruthy();
+  });
+
+  it('a mid-turn network drop (e.g. the server restarting) still leaves the tool call it already ran visible, not wiped (2026-07-15 fix)', async () => {
+    const user = userEvent.setup();
+    streamChatMock.mockImplementation(async (_threadId: string, _message: unknown, onEvent: (e: unknown) => void) => {
+      onEvent({ type: 'turn-start', messageId: 'm-live', threadId: 't-5dd8', model: 'claude-sonnet-5' });
+      onEvent({ type: 'tool-start', toolId: 'tu-live', name: 'Bash', input: { command: 'ls' } });
+      onEvent({ type: 'tool-end', toolId: 'tu-live', output: 'ok', isError: false });
+      throw new Error('chat failed: 502');
+    });
+    render(<Threads />);
+    await user.click(await screen.findByText('Cabinet Systems Status Report'));
+    await screen.findByText('How are the services looking?');
+
+    await user.type(screen.getByLabelText('Message Cabinet'), 'redeploy yourself');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(streamChatMock).toHaveBeenCalled());
+    // The tool call already ran before the connection dropped — the old
+    // code's `finally { setLive(null); }` wiped it from view on ANY turn
+    // termination (success or error), and only the success path re-added it
+    // to `messages` first. Now the error path does too.
+    expect(await screen.findByText('Ran: ls')).toBeTruthy();
   });
 });
