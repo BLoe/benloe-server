@@ -30,7 +30,16 @@ module.exports = {
         CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
         ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY, // fallback path; runtime strips the unused one
         CABINET_BACKUP_PASSPHRASE: env.CABINET_BACKUP_PASSPHRASE,
-        PATH: '/usr/local/bin:/usr/bin:/bin',
+        // claude-worker's own nvm-managed node (v24.12.0) is the only place a
+        // working, correctly-permissioned npm/npx/corepack actually lives on
+        // this box — /usr/local/bin/node is a bare interpreter with no npm
+        // bundled, and root's nvm install (whatever the Claude Agent SDK's
+        // own shell-snapshot bootstrap prepends to PATH — see PLATFORM.md) is
+        // root-owned and unreadable to this user, so it resolves to nothing.
+        // Prepending the real path here means npm just works for Bash-tool
+        // commands and for `npm run build` in the deploy script, without any
+        // per-command HOME= prefix hack.
+        PATH: '/home/claude-worker/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/usr/bin:/bin',
       },
       error_file: '/srv/benloe/logs/cabinet-api-err.log',
       out_file: '/srv/benloe/logs/cabinet-api-out.log',
