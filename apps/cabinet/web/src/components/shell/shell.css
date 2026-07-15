@@ -118,7 +118,7 @@
 /* ---- rail: Chat accordion (the conversation list) ----
    Expanded exactly while the Chat surface is active — the list is App-owned
    state projected here; the surface renders only the selected conversation. */
-.rail-convos { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px; padding-left: 26px; min-height: 0; }
+.rail-convos { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px; padding-left: 8px; min-height: 0; }
 .rail-convos-head { display: flex; align-items: center; gap: 6px; padding: 2px 8px 6px 2px; }
 .rail-convos-search {
   flex: 1; min-width: 0; background: var(--inset); border: 1px solid var(--rule); border-radius: var(--r-2);
@@ -134,6 +134,7 @@
 .rail-convos-new:hover:not(:disabled), .rail-convos-new:focus-visible:not(:disabled) { border-color: var(--brass-dim); background: #ffffff08; }
 .rail-convos-new:disabled { opacity: .5; cursor: default; }
 .rail-convos-note { padding: 4px 8px 6px 2px; font-size: 11px; color: var(--linen-faint); }
+.rail-convos-list, .rail-convos-list li { list-style: none; margin: 0; padding: 0; }
 .rail-convos-list { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; max-height: 44dvh; padding-right: 2px; }
 .rail-convo {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;

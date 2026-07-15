@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, type CabinetDb } from '../src/db/index.js';
 import {
+  markShutdown,
   markTurnInFlight,
   clearTurnInFlight,
   clearTurnInFlightIf,
@@ -22,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  markShutdown(false); // reset the module-level shutdown latch between tests
   cabinet.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -254,5 +256,23 @@ describe('resumeInterruptedTurn', () => {
     await expect(resumeInterruptedTurn({ db: cabinet.db, runtime, dataDir: dir })).rejects.toThrow('boom');
     const rows = cabinet.db.prepare('SELECT role FROM message WHERE chat_id = ?').all(chatId) as { role: string }[];
     expect(rows.map((r) => r.role).sort()).toEqual(['assistant', 'system']);
+  });
+
+  it('shutdown latch: a stop signal freezes the marker so a dying turn cannot erase it (2026-07-15 regression)', () => {
+    const marker = markTurnInFlight(dir, 'chat-1', 'the question');
+    // pm2 sends the stop signal; index.ts flips the latch...
+    markShutdown();
+    // ...and the aborted turn's finally still runs its usual cleanup:
+    clearTurnInFlightIf(dir, marker);
+    clearTurnInFlight(dir);
+    expect(existsSync(MARKER_PATH())).toBe(true);
+    // Next boot (fresh process, latch off) consumes it normally.
+    markShutdown(false);
+    expect(takePendingTurn(dir)?.chatId).toBe('chat-1');
+  });
+
+  it('legacy threadId marker (pre-rename) is still consumed as chatId', () => {
+    writeFileSync(MARKER_PATH(), JSON.stringify({ threadId: 'old-format', promptHead: 'q', startedAt: new Date().toISOString() }));
+    expect(takePendingTurn(dir)?.chatId).toBe('old-format');
   });
 });
