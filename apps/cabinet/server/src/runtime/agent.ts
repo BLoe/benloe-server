@@ -12,6 +12,13 @@ import { refusalFallback, route } from './router.js';
 import { TurnQueue, type TurnKind } from './queue.js';
 import { generateTitle } from './titler.js';
 
+/**
+ * Per-kind agentic-turn budget. User turns can involve multi-file builds,
+ * test runs, and deploys, so they get real headroom; heartbeat/cron turns
+ * are scheduled and meant to be cheap, so they stay tight.
+ */
+const MAX_TURNS_BY_KIND: Record<TurnKind, number> = { user: 120, cron: 12, heartbeat: 6 };
+
 /** §12.2 event vocabulary — the gateway maps these 1:1 onto SSE. */
 export type TurnEvent =
   | { type: 'turn-start'; messageId: string; threadId: string; model: string }
@@ -208,7 +215,7 @@ export class AgentRuntime {
           additionalDirectories: [this.opts.dataDir ?? '/srv/benloe/data/cabinet'],
           systemPrompt,
           resume: req.kind === 'user' ? (thread.sdk_session_id ?? undefined) : undefined,
-          maxTurns: req.kind === 'heartbeat' ? 6 : 40,
+          maxTurns: MAX_TURNS_BY_KIND[req.kind],
           includePartialMessages: true,
           settingSources: [],
           // Appendix B: gated tools must NOT be listed here — bare entries
