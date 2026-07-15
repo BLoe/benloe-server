@@ -13,7 +13,11 @@ import { AgentRuntime, configureAuth, classifyStop, MAX_AUTO_CONTINUATIONS, AGEN
 describe('router', () => {
   it('routes by session kind', () => {
     expect(route({ kind: 'heartbeat' }).model).toBe(MODELS.nano);
-    expect(route({ kind: 'user' }).model).toBe(MODELS.default);
+    // Temporary: user turns route to Fable (max) while stabilizing — see router.ts.
+    const userRoute = route({ kind: 'user' });
+    expect(userRoute.model).toBe(MODELS.max);
+    expect(userRoute.route).toBe('max');
+    expect(userRoute.effort).toBe('xhigh');
     expect(route({ kind: 'cron', deep: true }).model).toBe(MODELS.deep);
     expect(route({ kind: 'cron' }).model).toBe(MODELS.default);
   });
