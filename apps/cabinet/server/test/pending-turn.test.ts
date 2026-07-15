@@ -6,6 +6,7 @@ import { openDb, type CabinetDb } from '../src/db/index.js';
 import {
   markTurnInFlight,
   clearTurnInFlight,
+  clearTurnInFlightIf,
   takePendingTurn,
   resumeInterruptedTurn,
   type PendingTurnMarker,
@@ -65,6 +66,20 @@ describe('markTurnInFlight / clearTurnInFlight / takePendingTurn', () => {
 
   it('clear tolerates a missing marker', () => {
     expect(() => clearTurnInFlight(dir)).not.toThrow();
+  });
+
+  it('clearTurnInFlightIf only removes the exact marker it was given', () => {
+    const mine = markTurnInFlight(dir, 't-1', 'first turn');
+    // A newer turn overwrites the breadcrumb (queued-behind race)…
+    markTurnInFlight(dir, 't-2', 'second turn');
+    // …so the first turn's cleanup must leave it alone.
+    clearTurnInFlightIf(dir, mine);
+    expect(takePendingTurn(dir)?.threadId).toBe('t-2');
+
+    // But it does remove its own marker when unchanged.
+    const again = markTurnInFlight(dir, 't-3', 'third turn');
+    clearTurnInFlightIf(dir, again);
+    expect(existsSync(MARKER_PATH())).toBe(false);
   });
 
   it('drops (and consumes) a corrupt marker instead of crashing', () => {
@@ -144,6 +159,86 @@ describe('resumeInterruptedTurn', () => {
     const calls: { threadId: string; prompt: string }[] = [];
     await expect(resumeInterruptedTurn({ db: cabinet.db, runtime: fakeRuntime(calls), dataDir: dir })).resolves.toBe(false);
     expect(calls).toHaveLength(0);
+  });
+
+  it('re-arms a bounded marker while the resume runs, and stands it down after', async () => {
+    const threadId = makeThread();
+    markTurnInFlight(dir, threadId, 'q');
+    let markerDuringRun: PendingTurnMarker | null = null;
+    const runtime = {
+      run: async (req: { onEvent: (e: TurnEvent) => void }) => {
+        markerDuringRun = JSON.parse(readFileSync(MARKER_PATH(), 'utf8')) as PendingTurnMarker;
+        req.onEvent({ type: 'turn-start', messageId: 'm', threadId, model: 'test' });
+        req.onEvent({ type: 'turn-end', usage: null, sessionId: null, stopReason: 'success' });
+        return { stopReason: 'success', sessionId: null };
+      },
+    };
+    await resumeInterruptedTurn({ db: cabinet.db, runtime, dataDir: dir });
+    // A kill during the resume would have found this generation-1 marker.
+    expect(markerDuringRun!.threadId).toBe(threadId);
+    expect(markerDuringRun!.generation).toBe(1);
+    // Graceful finish stands it down.
+    expect(existsSync(MARKER_PATH())).toBe(false);
+  });
+
+  it('stops re-arming past the generation cap', async () => {
+    const threadId = makeThread();
+    writeFileSync(
+      MARKER_PATH(),
+      JSON.stringify({ threadId, promptHead: 'q', startedAt: new Date().toISOString(), generation: 2 }),
+    );
+    let markerExistedDuringRun = true;
+    const runtime = {
+      run: async (req: { onEvent: (e: TurnEvent) => void }) => {
+        markerExistedDuringRun = existsSync(MARKER_PATH());
+        req.onEvent({ type: 'turn-start', messageId: 'm', threadId, model: 'test' });
+        req.onEvent({ type: 'text-delta', delta: 'third and final attempt' });
+        req.onEvent({ type: 'turn-end', usage: null, sessionId: null, stopReason: 'success' });
+        return { stopReason: 'success', sessionId: null };
+      },
+    };
+    // Generation-3 resume still RUNS (the thread deserves its answer)…
+    await expect(resumeInterruptedTurn({ db: cabinet.db, runtime, dataDir: dir })).resolves.toBe(true);
+    // …but with no safety net re-armed: a crash here must not loop forever.
+    expect(markerExistedDuringRun).toBe(false);
+  });
+
+  it('does not stand down a marker a newer queued turn wrote during the resume', async () => {
+    const threadId = makeThread();
+    markTurnInFlight(dir, threadId, 'q');
+    const runtime = {
+      run: async (req: { onEvent: (e: TurnEvent) => void }) => {
+        // A user turn queues behind the resume and writes its own breadcrumb.
+        markTurnInFlight(dir, 'newer-thread', 'queued question');
+        req.onEvent({ type: 'turn-start', messageId: 'm', threadId, model: 'test' });
+        req.onEvent({ type: 'turn-end', usage: null, sessionId: null, stopReason: 'success' });
+        return { stopReason: 'success', sessionId: null };
+      },
+    };
+    await resumeInterruptedTurn({ db: cabinet.db, runtime, dataDir: dir });
+    expect(takePendingTurn(dir)?.threadId).toBe('newer-thread');
+  });
+
+  it('live-persists the resume transcript mid-turn — a SIGKILL cannot erase it', async () => {
+    const threadId = makeThread();
+    markTurnInFlight(dir, threadId, 'q');
+    let persistedMidTurn: number = 0;
+    const runtime = {
+      run: async (req: { onEvent: (e: TurnEvent) => void }) => {
+        req.onEvent({ type: 'turn-start', messageId: 'live-m', threadId, model: 'test' });
+        req.onEvent({ type: 'text-delta', delta: 'progress before any kill' });
+        req.onEvent({ type: 'tool-start', toolId: 't1', name: 'Bash', input: {} });
+        // Snapshot the DB *as if* the process died right here — before
+        // turn-end, before any finally.
+        persistedMidTurn = (
+          cabinet.db.prepare('SELECT COUNT(*) AS n FROM message WHERE thread_id = ? AND role = ?').get(threadId, 'assistant') as { n: number }
+        ).n;
+        req.onEvent({ type: 'turn-end', usage: null, sessionId: null, stopReason: 'success' });
+        return { stopReason: 'success', sessionId: null };
+      },
+    };
+    await resumeInterruptedTurn({ db: cabinet.db, runtime, dataDir: dir });
+    expect(persistedMidTurn).toBe(1);
   });
 
   it('persists whatever streamed even when the resume turn itself throws', async () => {
