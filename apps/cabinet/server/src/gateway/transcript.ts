@@ -59,7 +59,32 @@ export function persistAssistantMessage(
   ).run(opts.id ?? randomUUID(), threadId, 'assistant', JSON.stringify(parts), opts.usage ? JSON.stringify(opts.usage) : null);
 }
 
-export function createTranscriptRecorder(): {
+/** Event types that always flush a live persist (structural changes worth a
+ *  write); plain text-deltas ride the time throttle instead. */
+const ALWAYS_LIVE_PERSIST = new Set<TurnEvent['type']>([
+  'turn-start',
+  'tool-start',
+  'tool-end',
+  'turn-end',
+  'approval',
+  'notice',
+  'widget',
+  'error',
+]);
+
+export function createTranscriptRecorder(
+  /**
+   * Live-persist mid-turn (2026-07-15, generalized same day): upsert the
+   * assistant row as events fold, so a hard process kill (crash, or a
+   * self-redeploy SIGKILLing the very process running this turn — its
+   * `finally` never runs) can't erase a turn's transcript. Learned twice:
+   * first on /api/chat, then AGAIN when a resume turn's whole reply
+   * vanished because only the chat route had the fix. Any turn that talks
+   * to a thread should pass this; omit only when there's genuinely no
+   * thread to persist to.
+   */
+  live?: { db: Database.Database; threadId: string; minMs?: number },
+): {
   /** Live reference (mutated by onEvent) — e.g. for auto-titling off the folded text, same as /api/chat always read. */
   parts: readonly MessagePart[];
   onEvent(e: TurnEvent): void;
@@ -69,12 +94,19 @@ export function createTranscriptRecorder(): {
   const parts: MessagePart[] = [];
   let assistantId: string | null = null;
   let usage: unknown = null;
+  let lastLivePersist = 0;
   return {
     parts,
     onEvent(e) {
       if (e.type === 'turn-start') assistantId = e.messageId;
       if (e.type === 'turn-end') usage = e.usage;
       foldEvent(parts, e);
+      if (!live || !assistantId || parts.length === 0) return;
+      const now = Date.now();
+      if (ALWAYS_LIVE_PERSIST.has(e.type) || now - lastLivePersist >= (live.minMs ?? 800)) {
+        lastLivePersist = now;
+        persistAssistantMessage(live.db, live.threadId, parts, { id: assistantId });
+      }
     },
     persist(db, threadId) {
       persistAssistantMessage(db, threadId, parts, { id: assistantId ?? undefined, usage });
@@ -123,7 +155,7 @@ export async function runAgentCronJob(
   opts: { threadId: string; kind: TurnKind; prompt: string; promptInput?: Partial<PromptInput>; deep?: boolean },
 ): Promise<{ parts: readonly MessagePart[]; text: string }> {
   persistUserMessage(db, opts.threadId, opts.prompt);
-  const recorder = createTranscriptRecorder();
+  const recorder = createTranscriptRecorder({ db, threadId: opts.threadId });
   try {
     await runtime.run({
       threadId: opts.threadId,

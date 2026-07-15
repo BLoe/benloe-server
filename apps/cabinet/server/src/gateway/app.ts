@@ -15,8 +15,8 @@ import { recallLessons } from '../memory/lessons.js';
 import { profileGap } from '../domains/profile.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import type { MessagePart } from './fold.js';
-import { createTranscriptRecorder, persistAssistantMessage, persistUserMessage } from './transcript.js';
-import { markTurnInFlight, clearTurnInFlight } from './pendingTurn.js';
+import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
+import { markTurnInFlight, clearTurnInFlightIf } from './pendingTurn.js';
 import { registerSurfaceRoutes } from './surfaces.js';
 import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, type ImageMime } from './attachments.js';
 
@@ -283,38 +283,19 @@ export function buildApp(deps: GatewayDeps) {
       'X-Accel-Buffering': 'no',
     });
 
-    const recorder = createTranscriptRecorder();
-    // Live-persist mid-turn (2026-07-15 follow-up): the only prior write was
-    // recorder.persist() in this route's `finally` block below — fine for a
-    // clean finish or even a graceful /api/interrupt abort (JS keeps running
-    // long enough for `finally` to fire), but a hard process kill (a crash,
-    // or self-redeploying cabinet-api mid-turn — that SIGKILLs this very
-    // process a few seconds after the redeploy call) tears the whole thing
-    // down before `finally` ever runs, leaving zero trace of a turn that may
-    // have already run several tool calls. Upsert the same assistant row
-    // (persistAssistantMessage is ON CONFLICT DO UPDATE as of this change) on
-    // every structurally-significant event, and throttle the high-frequency
-    // text-delta stream so plain prose doesn't hit sqlite on every token.
-    let assistantId: string | null = null;
-    let lastLivePersist = 0;
-    const LIVE_PERSIST_MIN_MS = 800;
-    const ALWAYS_LIVE_PERSIST: TurnEvent['type'][] = ['turn-start', 'tool-start', 'tool-end', 'turn-end', 'approval', 'notice', 'widget', 'error'];
+    // Live-persist rides inside the recorder now (transcript.ts) — upserts
+    // the assistant row as events fold so a hard process kill mid-turn
+    // can't erase the transcript. Shared with resume + cron turns.
+    const recorder = createTranscriptRecorder({ db: deps.db, threadId });
     const send = (e: TurnEvent) => {
       recorder.onEvent(e);
       res.write(encodeSse({ event: e.type, data: e }));
       if (e.type === 'turn-start') {
-        assistantId = e.messageId;
         // Nudge OTHER tabs (this thread open elsewhere, or reloaded
         // mid-turn) to re-fetch and notice `live: true` — the sending tab
         // ignores this while its own stream is up. Paired with the same
         // broadcast in the finally below when the turn is over.
         broadcast('thread-activity', { threadId });
-      }
-      if (!assistantId || recorder.parts.length === 0) return;
-      const now = Date.now();
-      if (ALWAYS_LIVE_PERSIST.includes(e.type) || now - lastLivePersist >= LIVE_PERSIST_MIN_MS) {
-        lastLivePersist = now;
-        persistAssistantMessage(deps.db, threadId, recorder.parts as MessagePart[], { id: assistantId });
       }
     };
 
@@ -354,7 +335,7 @@ export function buildApp(deps: GatewayDeps) {
     // orphans the message just the same), removed on ANY graceful end in the
     // finally below. Only a hard process death leaves it for boot to find.
     const DATA_DIR = deps.dataDir ?? '/srv/benloe/data/cabinet';
-    markTurnInFlight(DATA_DIR, threadId, text);
+    const turnMarker = markTurnInFlight(DATA_DIR, threadId, text);
     try {
       await deps.runtime.run({
         threadId, prompt: text, kind: 'user', onEvent: send,
@@ -370,7 +351,9 @@ export function buildApp(deps: GatewayDeps) {
       res.write(encodeSse({ event: 'error', data: { message: String((err as Error).message).slice(0, 300), retryable: true } }));
     } finally {
       clearInterval(hb);
-      clearTurnInFlight(DATA_DIR);
+      // Compare-before-clear: a turn that queued behind this one has already
+      // overwritten the breadcrumb with its own — don't strip its protection.
+      clearTurnInFlightIf(DATA_DIR, turnMarker);
       recorder.persist(deps.db, threadId);
       broadcast('thread-activity', { threadId });
       // Auto-name a still-"untitled" thread from its opening exchange. Best

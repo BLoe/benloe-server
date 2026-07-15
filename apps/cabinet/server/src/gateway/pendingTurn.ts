@@ -33,6 +33,12 @@ const MARKER = 'pending-turn.json';
  *  question from a process that's been down for a day reads as haunted, not
  *  helpful. (Realistic restarts are back in seconds to minutes.) */
 const MAX_RESUME_AGE_MS = 24 * 60 * 60 * 1000;
+/** A resume turn re-arms its own marker so a restart DURING the resume gets
+ *  resumed too (learned live: a self-deploy fired from inside a resume turn
+ *  killed it, and the thread simply went quiet). Bounded: generations 1 and
+ *  2 re-arm, generation 3 runs without a net — a resume that reliably
+ *  crashes the process must not ping-pong the server forever. */
+const MAX_RESUME_GENERATIONS = 2;
 
 export interface PendingTurnMarker {
   threadId: string;
@@ -40,16 +46,26 @@ export interface PendingTurnMarker {
    *  for a human reading the marker file, never the full payload. */
   promptHead: string;
   startedAt: string;
+  /** How many resume attempts this marker descends from (absent = a fresh
+   *  user turn; resumeInterruptedTurn re-arms with generation + 1). */
+  generation?: number;
 }
 
-export function markTurnInFlight(dataDir: string, threadId: string, prompt: string): void {
+function writeMarker(dataDir: string, marker: PendingTurnMarker): void {
   try {
-    const marker: PendingTurnMarker = { threadId, promptHead: prompt.slice(0, 200), startedAt: new Date().toISOString() };
     writeFileSync(join(dataDir, MARKER), JSON.stringify(marker, null, 2));
   } catch (err) {
     // Never let breadcrumb bookkeeping break the actual turn.
     console.error('pendingTurn: failed to write marker —', err instanceof Error ? err.message : err);
   }
+}
+
+/** Returns the marker it wrote so the caller can later stand down exactly
+ *  this breadcrumb (clearTurnInFlightIf) without clobbering a newer one. */
+export function markTurnInFlight(dataDir: string, threadId: string, prompt: string): PendingTurnMarker {
+  const marker: PendingTurnMarker = { threadId, promptHead: prompt.slice(0, 200), startedAt: new Date().toISOString() };
+  writeMarker(dataDir, marker);
+  return marker;
 }
 
 export function clearTurnInFlight(dataDir: string): void {
@@ -60,6 +76,25 @@ export function clearTurnInFlight(dataDir: string): void {
       console.error('pendingTurn: failed to clear marker —', err instanceof Error ? err.message : err);
     }
   }
+}
+
+/** Clear the marker only if the file still holds exactly `expected` — the
+ *  compare-before-unlink that keeps one turn's cleanup from destroying a
+ *  breadcrumb some newer turn has since written. */
+export function clearTurnInFlightIf(dataDir: string, expected: PendingTurnMarker): void {
+  try {
+    const current = JSON.parse(readFileSync(join(dataDir, MARKER), 'utf8')) as PendingTurnMarker;
+    if (
+      current.threadId !== expected.threadId ||
+      current.startedAt !== expected.startedAt ||
+      current.generation !== expected.generation
+    ) {
+      return; // someone newer owns the file now — leave it be
+    }
+  } catch {
+    return; // gone or unreadable — nothing to stand down
+  }
+  clearTurnInFlight(dataDir);
 }
 
 /** Read-and-consume the marker. Consuming FIRST is deliberate: if the resume
@@ -138,8 +173,22 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
   broadcast('thread-activity');
   broadcast('thread-resume-start');
 
-  console.log(`pendingTurn: resuming interrupted turn in thread ${marker.threadId} (started ${marker.startedAt})`);
-  const recorder = createTranscriptRecorder();
+  // Re-arm before running: if THIS resume dies uncleanly too (learned live —
+  // a self-deploy triggered from inside a resume turn SIGKILLs it), the next
+  // boot resumes again, up to MAX_RESUME_GENERATIONS.
+  const generation = (marker.generation ?? 0) + 1;
+  const rearmed: PendingTurnMarker | null =
+    generation <= MAX_RESUME_GENERATIONS
+      ? { ...marker, generation, startedAt: new Date().toISOString() }
+      : null;
+  if (rearmed) writeMarker(deps.dataDir, rearmed);
+  else console.log(`pendingTurn: generation cap reached for thread ${marker.threadId} — running this resume without a re-arm`);
+
+  console.log(`pendingTurn: resuming interrupted turn in thread ${marker.threadId} (started ${marker.startedAt}, generation ${generation})`);
+  // Live-persisting recorder (transcript.ts): the resume's own transcript
+  // survives a mid-turn kill — the exact failure that erased resume #2's
+  // reply the night this feature shipped.
+  const recorder = createTranscriptRecorder({ db: deps.db, threadId: marker.threadId });
   try {
     await deps.runtime.run({
       threadId: marker.threadId,
@@ -150,6 +199,11 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
   } finally {
     recorder.persist(deps.db, marker.threadId);
     deps.db.prepare("UPDATE thread SET updated_at = datetime('now') WHERE id = ?").run(marker.threadId);
+    // Stand the re-arm down — but only if the file still holds OUR marker.
+    // A user turn that queued behind this resume has already overwritten it
+    // with its own breadcrumb (app.ts marks before the queue), and blindly
+    // unlinking here would strip that turn of its crash protection.
+    if (rearmed) clearTurnInFlightIf(deps.dataDir, rearmed);
     broadcast('thread-activity');
     broadcast('thread-resume-end');
   }
