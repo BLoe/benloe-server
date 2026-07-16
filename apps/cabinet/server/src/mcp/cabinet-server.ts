@@ -19,6 +19,7 @@ import {
   addJournal, addPriceWatch, importTransactionsCsv, listConstraints, logMood,
   upsertConstraint, upsertContact, upsertGoal, upsertTask,
 } from '../domains/misc.js';
+import { truncateForModel } from '../runtime/toolTruncate.js';
 
 export interface CabinetToolContext {
   db: Database.Database;
@@ -31,7 +32,15 @@ export interface CabinetToolContext {
   widgetBus: EventEmitter;
 }
 
-const ok = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data) }] });
+// Step 3 (2026-07-16, token-cost work w/ benji): source-truncate large MCP
+// tool payloads the same way the PostToolUse hook truncates built-in
+// Bash/Read results (see runtime/toolTruncate.ts) — a uniform backstop
+// across all mcp__cabinet__* tools rather than special-casing the handful
+// (search_episodic, search_documents, query_db) that can return big results.
+const ok = (data: unknown) => {
+  const { text } = truncateForModel(JSON.stringify(data), 'tool result');
+  return { content: [{ type: 'text' as const, text }] };
+};
 const fail = (message: string) => ({ content: [{ type: 'text' as const, text: `ERROR: ${message}` }], isError: true });
 
 export const WIDGET_TYPES = ['macro-ring', 'weight-chart', 'briefing', 'grocery', 'checkin', 'diff', 'usage'] as const;

@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import type { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { appendFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage, AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { MemoryStore } from '../memory/index.js';
@@ -11,6 +13,7 @@ import { assemblePrompt, type PromptInput } from './prompt.js';
 import { refusalFallback, route } from './router.js';
 import { TurnQueue, type TurnKind } from './queue.js';
 import { generateTitle } from './titler.js';
+import { truncateForModel } from './toolTruncate.js';
 
 /**
  * Per-kind agentic-turn budget. User turns can involve multi-file builds,
@@ -18,6 +21,22 @@ import { generateTitle } from './titler.js';
  * are scheduled and meant to be cheap, so they stay tight.
  */
 const MAX_TURNS_BY_KIND: Record<TurnKind, number> = { user: 120, cron: 12, heartbeat: 6 };
+
+/**
+ * Step 1 (2026-07-16, joint design w/ benji): native auto-compact threshold
+ * override. Step 0's diagnostic harness showed the CLI's default
+ * autoCompactThreshold sits at ~96.6% of the context window (934K of 967K
+ * measured on Sonnet 5) — high enough that it structurally cannot fire
+ * within even a 120-step turn, which is why cache_read compounds
+ * quadratically (integral of a linearly-growing context) instead of being
+ * periodically flattened. Valid range per the SDK's settings schema is
+ * [100_000, 1_000_000] tokens (verified against the runtime bundle, not
+ * just the .d.ts). 200K first: conservative-first, ratchet down toward
+ * 150K only once we've confirmed no fidelity loss on a real build turn.
+ * Env-overridable so tuning doesn't require a full redeploy — just
+ * `cabinet-privops pm2-start ecosystem.config.js` + `pm2-save`.
+ */
+const AUTO_COMPACT_WINDOW = Number(process.env.CABINET_AUTO_COMPACT_WINDOW) || 200_000;
 
 /**
  * Continuation-on-limit (build 3). A turn cut off by the SDK's maxTurns
@@ -283,6 +302,9 @@ export class AgentRuntime {
     let sawRefusal = false;
     let lastToolName: string | null = null;
     let numTurns: number | null = null;
+    // Step 0 diagnostic harness — see diagLog() above.
+    let stepCount = 0;
+    const cumUsage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
 
     try {
       const q = this.queryFn({
@@ -298,6 +320,11 @@ export class AgentRuntime {
           maxTurns: MAX_TURNS_BY_KIND[req.kind],
           includePartialMessages: true,
           settingSources: [],
+          // Step 1: tighten native auto-compact so it can actually fire
+          // mid-turn instead of sitting at ~96.6% of the window (see
+          // AUTO_COMPACT_WINDOW above). Shallow-merges into the flag
+          // settings layer — does not touch permissions or anything else.
+          settings: { autoCompactWindow: AUTO_COMPACT_WINDOW },
           // Appendix B: gated tools must NOT be listed here — bare entries
           // auto-approve before canUseTool. Only ungated cabinet tools appear.
           allowedTools: this.opts.allowedTools ?? [],
@@ -332,6 +359,98 @@ export class AgentRuntime {
                 ],
               },
             ],
+            // Step 3 (2026-07-16, token-cost work w/ benji): deterministic
+            // HEAD+TAIL truncation of large built-in tool results. This
+            // handles the WITHIN-a-turn gap Step 1's compaction can't — a
+            // big Bash/Read output at step 10 of a long turn otherwise gets
+            // re-sent verbatim on every subsequent step until the turn grows
+            // enough to trip the compact threshold. Deliberately synchronous
+            // and non-LLM (see toolTruncate.ts doc comment). Defensive
+            // try/catch: a hook throwing must never break the tool call
+            // itself, so on any unexpected shape we just pass the original
+            // response through untouched and log why.
+            PostToolUse: [
+              {
+                hooks: [
+                  async (hookInput: { tool_name?: string; tool_response?: unknown }) => {
+                    try {
+                      const name = hookInput.tool_name;
+                      const resp = hookInput.tool_response as Record<string, unknown> | undefined;
+                      if (!resp) return {};
+                      if (name === 'Bash') {
+                        if (resp.isImage || typeof resp.stdout !== 'string') return {};
+                        const { text, wasTruncated, originalChars } = truncateForModel(resp.stdout, 'Bash output');
+                        if (!wasTruncated) return {};
+                        this.diagLog({ kind: 'tool-truncate', chatId: req.chatId, tool: name, originalChars });
+                        return {
+                          hookSpecificOutput: {
+                            hookEventName: 'PostToolUse' as const,
+                            updatedToolOutput: { ...resp, stdout: text },
+                          },
+                        };
+                      }
+                      if (name === 'Read') {
+                        if (resp.type !== 'text') return {};
+                        const file = resp.file as Record<string, unknown> | undefined;
+                        if (!file || typeof file.content !== 'string') return {};
+                        const { text, wasTruncated, originalChars } = truncateForModel(file.content, 'file read');
+                        if (!wasTruncated) return {};
+                        this.diagLog({ kind: 'tool-truncate', chatId: req.chatId, tool: name, originalChars });
+                        return {
+                          hookSpecificOutput: {
+                            hookEventName: 'PostToolUse' as const,
+                            updatedToolOutput: { ...resp, file: { ...file, content: text } },
+                          },
+                        };
+                      }
+                      return {};
+                    } catch (err) {
+                      this.diagLog({ kind: 'tool-truncate-error', chatId: req.chatId, error: String(err) });
+                      return {};
+                    }
+                  },
+                ],
+              },
+            ],
+            // Step 1 fidelity check (2026-07-16): PreCompact/PostCompact are
+            // observe-only in this SDK version — there is no
+            // PreCompactHookSpecificOutput, so this cannot bias what the
+            // native summarizer keeps (confirmed by grepping the runtime
+            // bundle, not just the .d.ts). This just logs so we can eyeball
+            // whether AUTO_COMPACT_WINDOW is firing and whether the summary
+            // preserves current-task state well enough to trust.
+            PreCompact: [
+              {
+                hooks: [
+                  async (hookInput: { trigger?: string; custom_instructions?: string | null }) => {
+                    this.diagLog({
+                      kind: 'precompact',
+                      chatId: req.chatId,
+                      trigger: hookInput.trigger,
+                      hasCustomInstructions: !!hookInput.custom_instructions,
+                    });
+                    return {};
+                  },
+                ],
+              },
+            ],
+            PostCompact: [
+              {
+                hooks: [
+                  async (hookInput: { trigger?: string; compact_summary?: string }) => {
+                    const summary = hookInput.compact_summary ?? '';
+                    this.diagLog({
+                      kind: 'postcompact',
+                      chatId: req.chatId,
+                      trigger: hookInput.trigger,
+                      summaryLength: summary.length,
+                      summaryPreview: summary.slice(0, 2000),
+                    });
+                    return {};
+                  },
+                ],
+              },
+            ],
           },
           abortController: abort,
         },
@@ -350,6 +469,42 @@ export class AgentRuntime {
           continue;
         }
         if (msg.type === 'assistant') {
+          stepCount++;
+          const stepUsage = msg.message?.usage as Record<string, number> | undefined;
+          if (stepUsage) {
+            cumUsage.input_tokens += stepUsage.input_tokens ?? 0;
+            cumUsage.output_tokens += stepUsage.output_tokens ?? 0;
+            cumUsage.cache_creation_input_tokens += stepUsage.cache_creation_input_tokens ?? 0;
+            cumUsage.cache_read_input_tokens += stepUsage.cache_read_input_tokens ?? 0;
+          }
+          // Step 0 diagnostic harness: every 20 internal steps of a user
+          // turn, snapshot the running usage sum plus a full context-usage
+          // breakdown (which tool is actually eating the window, and
+          // whether native auto-compact is even enabled/firing today).
+          if (req.kind === 'user' && stepCount % 20 === 0) {
+            // Snapshot stepCount now — by the time getContextUsage()'s
+            // promise resolves, later assistant messages may have already
+            // ticked it forward (caught 2026-07-16: an earlier version read
+            // the closure-captured live value inside .then(), mislabeling
+            // the reading by however many steps elapsed before it resolved).
+            const stepAtCall = stepCount;
+            this.diagLog({ kind: 'usage-diag', chatId: req.chatId, step: stepAtCall, cumUsage: { ...cumUsage } });
+            q.getContextUsage()
+              .then((ctx) =>
+                this.diagLog({
+                  kind: 'ctx-diag',
+                  chatId: req.chatId,
+                  step: stepAtCall,
+                  totalTokens: ctx.totalTokens,
+                  maxTokens: ctx.maxTokens,
+                  percentage: ctx.percentage,
+                  isAutoCompactEnabled: ctx.isAutoCompactEnabled,
+                  autoCompactThreshold: ctx.autoCompactThreshold,
+                  messageBreakdown: ctx.messageBreakdown,
+                }),
+              )
+              .catch((err) => this.diagLog({ kind: 'ctx-diag-error', chatId: req.chatId, step: stepAtCall, error: String(err) }));
+          }
           for (const block of msg.message?.content ?? []) {
             if (block.type === 'tool_use') {
               req.onEvent({ type: 'tool-start', toolId: block.id, name: block.name, input: block.input });
@@ -374,6 +529,13 @@ export class AgentRuntime {
           stopReason = msg.subtype ?? 'end_turn';
           numTurns = typeof msg.num_turns === 'number' ? msg.num_turns : null;
           sawRefusal = /refusal/i.test(String(msg.result ?? '')) && msg.subtype !== 'success';
+          if (req.kind === 'user') {
+            // Reconciliation: does our per-step sum match the CLI's own
+            // final aggregate? A mismatch means the instrumentation's
+            // assumption (each assistant message's usage is that one API
+            // call's own usage, summable across the turn) is wrong.
+            this.diagLog({ kind: 'usage-diag-final', chatId: req.chatId, steps: stepCount, cumUsage, resultUsage: msg.usage ?? null });
+          }
           this.recordUsage(model, req, msg);
           req.onEvent({
             type: 'turn-end',
@@ -463,6 +625,25 @@ export class AgentRuntime {
     } catch {
       return '';
     }
+  }
+
+  /**
+   * Step 0 diagnostic harness (2026-07-16, joint design w/ benji): mid-turn
+   * visibility into where a long user turn's cache_read actually goes,
+   * before we tune options.settings.autoCompactWindow (Step 1) or add a
+   * PostToolUse truncation hook (Step 2). Best-effort JSONL append under
+   * CABINET_DATA_DIR — deliberately NOT console.log, since pm2 currently
+   * writes to its own default (root-owned, unreadable) log dir rather than
+   * the error_file/out_file paths in ecosystem.config.js. Strip this method
+   * and its call sites once Steps 1-2 land and we no longer need to watch
+   * this live.
+   */
+  private diagLog(record: Record<string, unknown>): void {
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n';
+    const path = join(this.opts.dataDir ?? '/srv/benloe/data/cabinet', 'usage-diag.jsonl');
+    appendFile(path, line).catch(() => {
+      // best-effort only — never let diagnostic logging break a real turn
+    });
   }
 
   private recordUsage(model: string, req: TurnRequest, result: Record<string, any>): void {
