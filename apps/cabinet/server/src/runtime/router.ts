@@ -25,11 +25,16 @@ export interface RouteInput {
 }
 
 /**
- * Temporary: main user loop runs on Fable (max) while stabilizing Cabinet's
- * architecture/UI — needs maximum planning/architecture judgment. Flip back
- * to 'default' (Sonnet) once stable. — Ben, 2026-07-15
+ * Main user loop: Sonnet 5 at xhigh thinking. (Ran on Fable/max while
+ * stabilizing the architecture/UI; moved to Sonnet 5 — still xhigh effort —
+ * for everyday cost/latency. — Ben, 2026-07-16)
+ *
+ * Route is 'default' (Sonnet) but effort is pinned separately so the shared
+ * 'default' tier — used by per-chat overrides and the fallback below — keeps
+ * its own 'high' effort.
  */
-const USER_TURN_ROUTE: Route = 'max';
+const USER_TURN_ROUTE: Route = 'default';
+const USER_TURN_EFFORT: (typeof EFFORT)[Route] = 'xhigh';
 
 export function route(input: RouteInput): { model: string; route: Route; effort: (typeof EFFORT)[Route] } {
   if (input.override) {
@@ -50,7 +55,7 @@ export function route(input: RouteInput): { model: string; route: Route; effort:
   }
   if (input.kind === 'heartbeat') return { model: MODELS.nano, route: 'nano', effort: EFFORT.nano };
   if (input.kind === 'cron' && input.deep) return { model: MODELS.deep, route: 'deep', effort: EFFORT.deep };
-  if (input.kind === 'user') return { model: MODELS[USER_TURN_ROUTE], route: USER_TURN_ROUTE, effort: EFFORT[USER_TURN_ROUTE] };
+  if (input.kind === 'user') return { model: MODELS[USER_TURN_ROUTE], route: USER_TURN_ROUTE, effort: USER_TURN_EFFORT };
   return { model: MODELS.default, route: 'default', effort: EFFORT.default };
 }
 
