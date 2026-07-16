@@ -8,7 +8,11 @@ import type { ApprovalPacket } from '../tiers/approvals.js';
  */
 export type MessagePart =
   | { type: 'text'; text: string }
-  | { type: 'tool-run'; toolId: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean }
+  /** `at` (ISO, stamped at fold time when the tool call starts) powers the
+   *  Slack-style hover timestamp on each tool card — messages carry their own
+   *  created_at, but parts inside one need their own clock. Optional: parts
+   *  persisted before 2026-07-16 predate it. */
+  | { type: 'tool-run'; toolId: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean; at?: string }
   | { type: 'widget'; widgetType: string; data: unknown }
   | { type: 'approval'; packet: ApprovalPacket }
   | { type: 'notice'; level: string; text: string }
@@ -48,7 +52,7 @@ export function foldEvent(parts: MessagePart[], e: TurnEvent | { type: 'widget';
       return parts;
     }
     case 'tool-start':
-      parts.push({ type: 'tool-run', toolId: e.toolId, name: e.name, input: e.input, done: false });
+      parts.push({ type: 'tool-run', toolId: e.toolId, name: e.name, input: e.input, done: false, at: new Date().toISOString() });
       return parts;
     case 'tool-end': {
       const run = parts.find((p) => p.type === 'tool-run' && p.toolId === e.toolId && !p.done) as

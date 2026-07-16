@@ -398,7 +398,7 @@ describe('chat stream', () => {
     const parts = JSON.parse(rows[1]!.parts) as MessagePart[];
     expect(parts).toEqual([
       { type: 'text', text: 'Working' },
-      { type: 'tool-run', toolId: 'tu1', name: 'Bash', input: { command: 'ls' }, output: 'ok', isError: false, done: true },
+      { type: 'tool-run', toolId: 'tu1', name: 'Bash', input: { command: 'ls' }, output: 'ok', isError: false, done: true, at: expect.any(String) },
       { type: 'text', text: ' — done.' },
     ]);
   });
@@ -425,7 +425,7 @@ describe('chat stream', () => {
     await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ chatId: id, text: 'go' }) }));
     expect(sawMidTurnRow).toBeDefined();
     const parts = JSON.parse(sawMidTurnRow!.parts) as MessagePart[];
-    expect(parts).toEqual([{ type: 'tool-run', toolId: 'tu1', name: 'Bash', input: { command: 'ls' }, output: 'ok', isError: false, done: true }]);
+    expect(parts).toEqual([{ type: 'tool-run', toolId: 'tu1', name: 'Bash', input: { command: 'ls' }, output: 'ok', isError: false, done: true, at: expect.any(String) }]);
   });
 
   it('auto-titles an untitled chat from its first turn, but never re-titles', async () => {

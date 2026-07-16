@@ -3,8 +3,18 @@ import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ChatSummary } from '../lib/cabinet.js';
 import { streamChat, foldTurn, uploadAttachment, interruptChat } from '../lib/chat.js';
 import { usingMock } from '../lib/cabinet.js';
-import { Paperclip, ArrowUp, Square, X } from 'lucide-react';
+import { Paperclip, ArrowUp, Square, X, Bold, Italic, Underline, Strikethrough, Link2, List, ListOrdered } from 'lucide-react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import './chat.css';
+
+/** GFM + a safety pass. rehype-raw lets the composer's <u> underline through;
+ *  the sanitizer then strips everything not on the allowlist (default GitHub
+ *  schema + u/ins), so pasted or model-emitted HTML can't script anything. */
+const MD_SCHEMA = { ...defaultSchema, tagNames: [...(defaultSchema.tagNames ?? []), 'u', 'ins'] };
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
@@ -68,6 +78,15 @@ export function relativeTime(d: Date, now: Date): string {
   return `${hh}:${mm} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
+/** "12:03 AM" — the Slack-style hover stamp on entries and tool calls. */
+export function clockTime(iso: string): string {
+  const d = parseServerDate(iso);
+  const h = d.getHours();
+  const hh = h % 12 || 12;
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
 /** Full precision, for the `title` hover attribute — nothing lost to the calm view. */
 export function fullStamp(iso: string): string {
   const d = parseServerDate(iso);
@@ -89,7 +108,7 @@ export interface RenderRun {
   fromAgent: boolean;
   role: ChatMessage['role'];
   timeIso: string;
-  entries: { id: string; parts: MessagePart[]; isLive?: boolean }[];
+  entries: { id: string; parts: MessagePart[]; timeIso: string; isLive?: boolean }[];
 }
 
 export function buildRenderRuns(messages: ChatMessage[], live: MessagePart[] | null, now: Date): RenderRun[] {
@@ -104,7 +123,7 @@ export function buildRenderRuns(messages: ChatMessage[], live: MessagePart[] | n
     const identityKey = `${m.role}:${m.author ?? ''}`;
     const last = runs.at(-1);
     if (last && last.identityKey === identityKey && last.dayKey === dayKey) {
-      last.entries.push({ id: m.id, parts: m.parts, isLive: m.isLive });
+      last.entries.push({ id: m.id, parts: m.parts, timeIso: m.created_at, isLive: m.isLive });
       continue;
     }
     const fromAgent = m.role === 'user' && agentName(m.author) !== null;
@@ -117,7 +136,7 @@ export function buildRenderRuns(messages: ChatMessage[], live: MessagePart[] | n
       fromAgent,
       role: m.role,
       timeIso: m.created_at,
-      entries: [{ id: m.id, parts: m.parts, isLive: m.isLive }],
+      entries: [{ id: m.id, parts: m.parts, timeIso: m.created_at, isLive: m.isLive }],
     });
   }
   return runs;
@@ -639,6 +658,78 @@ function Conversation({
     void send(next!.text, next!.attachments);
   }, [sending, queued, send]);
 
+  // Formatting toolbar (Slack-style): every action rewrites the draft's
+  // selected range with markdown (underline rides as <u> — sanitized on
+  // render, see MD_SCHEMA). wrap() toggles: wrapping an already-wrapped
+  // selection unwraps it instead of stacking markers.
+  const applyFormat = useCallback(
+    (kind: 'bold' | 'italic' | 'underline' | 'strike' | 'link' | 'ul' | 'ol') => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const start = el.selectionStart ?? draft.length;
+      const end = el.selectionEnd ?? draft.length;
+      const sel = draft.slice(start, end);
+      let next = draft;
+      let selStart = start;
+      let selEnd = end;
+
+      const wrap = (m: string, mEnd = m) => {
+        const before = draft.slice(0, start);
+        const after = draft.slice(end);
+        if (before.endsWith(m) && after.startsWith(mEnd)) {
+          next = before.slice(0, before.length - m.length) + sel + after.slice(mEnd.length);
+          selStart = start - m.length;
+          selEnd = end - m.length;
+        } else if (sel.startsWith(m) && sel.endsWith(mEnd) && sel.length >= m.length + mEnd.length) {
+          const inner = sel.slice(m.length, sel.length - mEnd.length);
+          next = before + inner + after;
+          selEnd = start + inner.length;
+        } else {
+          next = before + m + sel + mEnd + after;
+          selStart = start + m.length;
+          selEnd = end + m.length;
+        }
+      };
+
+      const lines = (prefix: (i: number) => string) => {
+        const from = draft.lastIndexOf('\n', start - 1) + 1;
+        const lineEnd = draft.indexOf('\n', end);
+        const to = lineEnd === -1 ? draft.length : lineEnd;
+        const block = draft.slice(from, to);
+        const out = block
+          .split('\n')
+          .map((l, i) => prefix(i) + l)
+          .join('\n');
+        next = draft.slice(0, from) + out + draft.slice(to);
+        selStart = from;
+        selEnd = from + out.length;
+      };
+
+      switch (kind) {
+        case 'bold': wrap('**'); break;
+        case 'italic': wrap('_'); break;
+        case 'strike': wrap('~~'); break;
+        case 'underline': wrap('<u>', '</u>'); break;
+        case 'ul': lines(() => '- '); break;
+        case 'ol': lines((i) => `${i + 1}. `); break;
+        case 'link': {
+          const text = sel || 'link text';
+          next = `${draft.slice(0, start)}[${text}](url)${draft.slice(end)}`;
+          // leave "url" selected so typing (or pasting) replaces it
+          selStart = start + text.length + 3;
+          selEnd = selStart + 3;
+          break;
+        }
+      }
+      setDraft(next);
+      requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(selStart, selEnd);
+      });
+    },
+    [draft],
+  );
+
   // Stop button: a real cancel — POSTs /api/interrupt, which aborts the
   // turn server-side (AgentRuntime.interrupt) rather than just dropping this
   // tab's connection, so the agent loop actually stops instead of running on
@@ -703,6 +794,11 @@ function Conversation({
                   </div>
                   {run.entries.map((entry) => (
                     <div className="msg-parts" key={entry.id}>
+                      {!entry.isLive && (
+                        <span className="msg-entry-when data" title={fullStamp(entry.timeIso)}>
+                          {clockTime(entry.timeIso)}
+                        </span>
+                      )}
                       {entry.parts.map((p, i) => (
                         <MessagePartView key={i} part={p} />
                       ))}
@@ -778,6 +874,17 @@ function Conversation({
             ))}
           </div>
         )}
+        <div className="composer-tools" role="toolbar" aria-label="Formatting">
+          <button type="button" onClick={() => applyFormat('bold')} aria-label="Bold" title="Bold (⌘B)"><Bold size={14} /></button>
+          <button type="button" onClick={() => applyFormat('italic')} aria-label="Italic" title="Italic (⌘I)"><Italic size={14} /></button>
+          <button type="button" onClick={() => applyFormat('underline')} aria-label="Underline" title="Underline (⌘U)"><Underline size={14} /></button>
+          <button type="button" onClick={() => applyFormat('strike')} aria-label="Strikethrough" title="Strikethrough (⌘⇧X)"><Strikethrough size={14} /></button>
+          <span className="composer-tools-sep" aria-hidden="true" />
+          <button type="button" onClick={() => applyFormat('link')} aria-label="Link" title="Link (⌘⇧U)"><Link2 size={14} /></button>
+          <span className="composer-tools-sep" aria-hidden="true" />
+          <button type="button" onClick={() => applyFormat('ol')} aria-label="Numbered list" title="Numbered list (⌘⇧7)"><ListOrdered size={14} /></button>
+          <button type="button" onClick={() => applyFormat('ul')} aria-label="Bulleted list" title="Bulleted list (⌘⇧8)"><List size={14} /></button>
+        </div>
         <div className="composer">
           <input
             ref={fileInputRef}
@@ -813,6 +920,23 @@ function Conversation({
               }
             }}
             onKeyDown={(e) => {
+              if (e.metaKey || e.ctrlKey) {
+                // Slack's bindings; ⌘K stays with the command bar.
+                const k = e.key.toLowerCase();
+                const fmt =
+                  k === 'b' ? 'bold'
+                  : k === 'i' ? 'italic'
+                  : k === 'u' ? (e.shiftKey ? 'link' : 'underline')
+                  : e.shiftKey && k === 'x' ? 'strike'
+                  : e.shiftKey && k === '7' ? 'ol'
+                  : e.shiftKey && k === '8' ? 'ul'
+                  : null;
+                if (fmt) {
+                  e.preventDefault();
+                  applyFormat(fmt);
+                  return;
+                }
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 submit(draft, pending);
@@ -939,7 +1063,19 @@ export function summarizeToolCall(name: string, input: unknown): string {
 function MessagePartView({ part }: { part: MessagePart }) {
   switch (part.type) {
     case 'text':
-      return <p className="msg-text">{part.text}</p>;
+      return (
+        <div className="msg-text">
+          <Markdown
+            remarkPlugins={[remarkGfm, remarkBreaks]}
+            rehypePlugins={[rehypeRaw, [rehypeSanitize, MD_SCHEMA]]}
+            components={{
+              a: ({ node: _n, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+            }}
+          >
+            {part.text}
+          </Markdown>
+        </div>
+      );
 
     case 'image':
       return <img className="msg-image" src={`/api/attachments/${encodeURIComponent(part.id)}`} alt="Attached" loading="lazy" />;
@@ -954,6 +1090,11 @@ function MessagePartView({ part }: { part: MessagePart }) {
               {!part.done && <span className="msg-tool-pulse" aria-hidden="true" />}
               {summarizeToolCall(part.name, part.input)}
             </span>
+            {part.at && (
+              <span className="msg-tool-when data" title={fullStamp(part.at)}>
+                {clockTime(part.at)}
+              </span>
+            )}
             <span className="msg-tool-state data">{!part.done ? 'running…' : part.isError ? 'error' : 'ok'}</span>
           </div>
           {hasDetails && (

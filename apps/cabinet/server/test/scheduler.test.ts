@@ -471,7 +471,7 @@ describe('jobs', () => {
     expect(JSON.parse(rows[0]!.parts)).toEqual([{ type: 'text', text: expect.stringContaining('Run the weekly review') }]);
     expect(JSON.parse(rows[1]!.parts)).toEqual([
       { type: 'text', text: 'Reviewed the week: no domain has real data yet.' },
-      { type: 'tool-run', toolId: 't1', name: 'mcp__cabinet__query_db', input: { sql: 'select 1' }, output: '[]', isError: false, done: true },
+      { type: 'tool-run', toolId: 't1', name: 'mcp__cabinet__query_db', input: { sql: 'select 1' }, output: '[]', isError: false, done: true, at: expect.any(String) },
     ]);
   });
 
