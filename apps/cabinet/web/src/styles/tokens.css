@@ -92,6 +92,11 @@
      two can't drift apart and content can't end flush against it. */
   --content-max: clamp(1140px, 79vw, 1480px);
   --footer-h: 44px;
+  /* --header-h pairs with --footer-h: the rail's brandmark block and the
+     topbar share it (and the rail's principal block shares --footer-h), so
+     the shell's horizontal rules run continuously across both columns —
+     one drawn grid, not two columns with coincidentally similar dividers. */
+  --header-h: 64px;
 
   /* ---- elevation (warm, low, like light raking across a desk) ---- */
   --elev-1: 0 1px 0 #ffffff08, 0 2px 8px #00000040;
