@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Navigate, Route, Routes, useLocation, useMatch, useNavigate } from 'react-router';
 import { api, usingMock, type PresenceState } from './lib/cabinet.js';
 import type { ChatSummary } from './lib/cabinet.js';
 import { AuthRequiredError } from './lib/client.js';
@@ -26,7 +27,15 @@ function toLogin() {
 /** The v2 console: the shell + surface routing. Chat is a surface, reached
     from the rail's accordion — you direct Cabinet through the command bar (⌘K). */
 export default function App() {
-  const [active, setActive] = useState<SurfaceId>('today');
+  const location = useLocation();
+  const navigate = useNavigate();
+  // useMatch (not useParams) because chatId is also needed by the Rail's
+  // chatNav, which lives outside the <Routes> tree as sibling shell chrome —
+  // useParams only resolves inside a matched Route's own element.
+  const chatMatch = useMatch('/chat/:chatId');
+  const chatId = chatMatch?.params.chatId ?? null;
+  const active = (location.pathname.split('/')[1] || 'today') as SurfaceId;
+  const onNavigate = useCallback((id: SurfaceId) => navigate('/' + id), [navigate]);
   const [presence, setPresence] = useState<PresenceState>('idle');
   const [presenceMeta, setPresenceMeta] = useState<string>('');
   const [authState, setAuthState] = useState<'checking' | 'ok' | 'login'>('checking');
@@ -36,7 +45,6 @@ export default function App() {
   // are two projections of the same list/selection) ----
   const [chats, setChats] = useState<ChatSummary[] | null>(null);
   const [chatsError, setChatsError] = useState<string | null>(null);
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   // A conversation opened from the command bar: chat id + a first message to send.
@@ -113,25 +121,23 @@ export default function App() {
     api
       .createChat()
       .then(({ id }) => {
-        setSelectedChatId(id);
-        setActive('chat');
+        navigate(`/chat/${id}`);
         refreshChats();
       })
       .catch((e: unknown) => setCreateError(e instanceof Error ? e.message : "Couldn't start a new conversation."))
       .finally(() => setCreating(false));
-  }, [creating, refreshChats]);
+  }, [creating, navigate, refreshChats]);
 
   const onCommand = useCallback((intent: string) => {
     // Open a fresh conversation and send the intent as its first message.
     api.createChat()
       .then(({ id }) => {
         setSeed({ id, text: intent });
-        setSelectedChatId(id);
-        setActive('chat');
+        navigate(`/chat/${id}`);
         refreshChats();
       })
       .catch(() => {});
-  }, [refreshChats]);
+  }, [navigate, refreshChats]);
 
   if (authState === 'checking') return <div className="boot"><span className="wordmark">CABINET</span></div>;
   if (authState === 'login') {
@@ -146,42 +152,60 @@ export default function App() {
 
   // A just-created chat won't be in the fetched list yet — synthesize a stub.
   const selectedChat: ChatSummary | null =
-    chats?.find((c) => c.id === selectedChatId) ??
-    (selectedChatId
-      ? { id: selectedChatId, title: null, model_override: null, archived: 0, updated_at: new Date().toISOString(), messages: 0 }
+    chats?.find((c) => c.id === chatId) ??
+    (chatId
+      ? { id: chatId, title: null, model_override: null, archived: 0, updated_at: new Date().toISOString(), messages: 0 }
       : null);
 
   return (
     <AppShell
       active={active}
-      onNavigate={setActive}
+      onNavigate={onNavigate}
       onCommand={onCommand}
       chatNav={{
         chats,
         loadError: chatsError,
-        selectedId: selectedChatId,
+        selectedId: chatId,
         resumingIds,
         creating,
         createError,
-        onSelect: setSelectedChatId,
+        onSelect: (id) => navigate(`/chat/${id}`),
         onNew: handleNewChat,
       }}
       datestamp={<Datestamp now={now} />}
       presence={presence}
       presenceMeta={presenceMeta}
     >
-      {active === 'today' && <Today onNavigate={(s) => setActive(s)} />}
-      {active === 'domains' && <Domains />}
-      {active === 'ops' && <Ops />}
-      {active === 'brain' && <Brain />}
-      {active === 'chat' && (
-        <Chat
-          chat={selectedChat}
-          seed={seed && seed.id === selectedChatId ? seed.text : undefined}
-          onSeedConsumed={() => setSeed(null)}
-          onResumeState={setResumeState}
+      <Routes>
+        <Route path="/" element={<Navigate to="/today" replace />} />
+        <Route path="/today" element={<Today onNavigate={(s) => navigate('/' + s)} />} />
+        <Route path="/domains" element={<Domains />} />
+        <Route path="/ops" element={<Ops />} />
+        <Route path="/brain" element={<Brain />} />
+        <Route
+          path="/chat"
+          element={
+            <Chat
+              chat={null}
+              seed={undefined}
+              onSeedConsumed={() => setSeed(null)}
+              onResumeState={setResumeState}
+            />
+          }
         />
-      )}
+        <Route
+          path="/chat/:chatId"
+          element={
+            <Chat
+              chat={selectedChat}
+              seed={seed && seed.id === chatId ? seed.text : undefined}
+              onSeedConsumed={() => setSeed(null)}
+              onResumeState={setResumeState}
+            />
+          }
+        />
+        <Route path="*" element={<Navigate to="/today" replace />} />
+      </Routes>
     </AppShell>
   );
 }
