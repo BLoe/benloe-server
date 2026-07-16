@@ -553,10 +553,17 @@ describe('chat stream', () => {
 
       const { id } = await (await asOwner('/api/chats', { method: 'POST', body: JSON.stringify({}) })).json();
 
-      // Fresh profile — incomplete.
+      // Fresh profile — incomplete. First turn in this chat: full doc attached.
       await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ chatId: id, text: 'hey' }) }));
       expect(capturedPromptInput?.profileGap).toContain('still need');
       expect(capturedPromptInput?.domainFiles).toEqual(['ONBOARDING.md']);
+
+      // Second turn, same chat, gap still open: reminder stays, but the
+      // ~1,450-token doc does NOT re-inject (Step 2, 2026-07-16) — it's
+      // already been shown once for this chat (chat.onboarding_shown_at).
+      await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ chatId: id, text: 'hey once more' }) }));
+      expect(capturedPromptInput?.profileGap).toContain('still need');
+      expect(capturedPromptInput?.domainFiles).toBeUndefined();
 
       // Fill every dimension via sentinels — now complete.
       upsertGoal(cabinet.db, { domain: 'nutrition', title: 'protein', target_value: 180, unit: 'g' });
@@ -573,6 +580,40 @@ describe('chat stream', () => {
       upsertConstraint(cabinet.db, { kind: 'physical', confirmedNone: true });
 
       await collectSse(await asOwner('/api/chat', { method: 'POST', body: JSON.stringify({ chatId: id, text: 'hey again' }) }));
+      expect(capturedPromptInput?.profileGap).toBeUndefined();
+      expect(capturedPromptInput?.domainFiles).toBeUndefined();
+    } finally {
+      rmSync(memDir, { recursive: true, force: true });
+    }
+  });
+
+  it("/api/chat skips profileGap AND domainFiles entirely for a non-owner interlocutor — an agent peer can't answer Ben's interview (Step 2, 2026-07-16)", async () => {
+    const memDir = mkdtempSync(join(tmpdir(), 'cabinet-profile-agent-'));
+    const memory = new MemoryStore(memDir);
+    memory.ensureTemplates();
+    try {
+      let capturedPromptInput: { profileGap?: string; domainFiles?: string[] } | undefined;
+      const runtime = {
+        authMode: 'subscription' as const,
+        queue: { depth: 0 },
+        interrupt: () => true,
+        titleFor: async () => null,
+        run: async (req: { promptInput?: typeof capturedPromptInput; onEvent: (e: TurnEvent) => void }) => {
+          capturedPromptInput = req.promptInput;
+          req.onEvent({ type: 'turn-end', usage: null, sessionId: 's1', stopReason: 'success' });
+          return { stopReason: 'success' as const, sessionId: 's1' };
+        },
+      };
+      const app = buildApp({ db: cabinet.db, runtime: runtime as never, approvals, widgetBus, ownerEmail: OWNER, authFetch: fakeAuthFetch, memory });
+      server = app.listen(0, '127.0.0.1');
+      await new Promise((r) => server.once('listening', r));
+      base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const asAgent = (path: string, init: RequestInit = {}) =>
+        fetch(base + path, { ...init, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer agk_benji_test', ...(init.headers ?? {}) } });
+
+      // Profile is (still) incomplete — a fresh MemoryStore always is.
+      const { id } = await (await asAgent('/api/chats', { method: 'POST', body: JSON.stringify({}) })).json();
+      await collectSse(await asAgent('/api/chat', { method: 'POST', body: JSON.stringify({ chatId: id, text: 'hey' }) }));
       expect(capturedPromptInput?.profileGap).toBeUndefined();
       expect(capturedPromptInput?.domainFiles).toBeUndefined();
     } finally {

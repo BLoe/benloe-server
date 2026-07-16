@@ -1,0 +1,12 @@
+-- Step 2 (2026-07-16, token-cost work w/ benji): the profile-interview gate
+-- (domains/profile.ts's profileGap()) attached ONBOARDING.md's full ~1,450-
+-- token body to EVERY user-kind turn while any profile dimension was
+-- incomplete — permanently, since nothing ever marked it "already shown."
+-- Confirmed in production data: 32 of the last ~75 real user-turns paying
+-- this tax were from benji (an agent peer who cannot fill in Ben's personal
+-- profile at all — that traffic was pure waste), and even Ben's own 43 owner
+-- turns re-received the identical file every turn rather than once per chat.
+-- This column lets gateway/app.ts inject the full interview doc once per
+-- chat (the first owner turn where a gap is found) and fall back to the
+-- cheap one-line profileGap reminder on every turn after.
+ALTER TABLE chat ADD COLUMN onboarding_shown_at TEXT;

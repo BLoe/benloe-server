@@ -241,8 +241,8 @@ export function buildApp(deps: GatewayDeps) {
     if (typeof chatId !== 'string' || typeof text !== 'string' || (!text.trim() && attachmentRefs.length === 0)) {
       return res.status(400).json({ error: 'chatId and text (or an attachment) required' });
     }
-    const chat = deps.db.prepare('SELECT id, title FROM chat WHERE id = ?').get(chatId) as
-      | { id: string; title: string | null }
+    const chat = deps.db.prepare('SELECT id, title, onboarding_shown_at FROM chat WHERE id = ?').get(chatId) as
+      | { id: string; title: string | null; onboarding_shown_at: string | null }
       | undefined;
     if (!chat) return res.status(404).json({ error: 'no such chat' });
 
@@ -316,16 +316,34 @@ export function buildApp(deps: GatewayDeps) {
 
     // Profile-completeness check (mentorship Phase B) — cheap (a few indexed
     // COUNT queries + 3 file reads), self-quieting once genuinely complete.
-    // When there's a gap, load ONBOARDING.md alongside it in the same turn
-    // so the interview discipline (bright-line rules, the both-kinds-
-    // sentinel requirement) is present the moment the gap is surfaced, not
-    // just a bare "something's missing" note with no guidance attached.
+    //
+    // Step 2 (2026-07-16, token-cost work w/ benji): this is Ben's personal
+    // interview — skip it entirely for a non-owner interlocutor (an agent
+    // peer, or another benloe.com user). They can't answer for him, so both
+    // the reminder and the doc are pure waste on that traffic. Confirmed in
+    // production: 32 of the last ~75 real user-turns paying this tax were
+    // benji's, 100% avoidable.
+    //
+    // For Ben himself: load ONBOARDING.md's full body alongside the gap note
+    // only on the first turn of a chat where the gap is found (tracked via
+    // chat.onboarding_shown_at, migration 011) — every later turn in that
+    // same chat gets just the one-line profileGapText reminder. That matches
+    // the doc's own guidance ("a brief one-line mention beats hijacking the
+    // turn" once the moment's passed) instead of re-injecting ~1,450 tokens
+    // of static instructions every single turn indefinitely. A fresh chat
+    // clears the flag, so the full doc reappears at the next natural moment.
     let profileGapText: string | null = null;
-    if (deps.memory) {
+    let showOnboardingDoc = false;
+    const isOwnerTurn = !principal || principal.isOwner;
+    if (deps.memory && isOwnerTurn) {
       try {
         profileGapText = profileGap(deps.db, deps.memory);
       } catch (err) {
         console.warn(`chat: profile completeness check failed for chat ${chatId}: ${(err as Error).message}`);
+      }
+      if (profileGapText && !chat.onboarding_shown_at) {
+        showOnboardingDoc = true;
+        deps.db.prepare("UPDATE chat SET onboarding_shown_at = datetime('now') WHERE id = ?").run(chatId);
       }
     }
 
@@ -344,7 +362,7 @@ export function buildApp(deps: GatewayDeps) {
           // Tell Cabinet who it's talking to (Ben vs an agent like Benji).
           ...(principal ? { interlocutor: { name: principal.name ?? principal.email, role: principal.role, isOwner: principal.isOwner } } : {}),
           ...(lessons.length ? { lessons: lessons.map((l) => ({ text: l.text, domain: l.domain })) } : {}),
-          ...(profileGapText ? { profileGap: profileGapText, domainFiles: ['ONBOARDING.md'] } : {}),
+          ...(profileGapText ? { profileGap: profileGapText, ...(showOnboardingDoc ? { domainFiles: ['ONBOARDING.md'] } : {}) } : {}),
         },
       });
     } catch (err) {
