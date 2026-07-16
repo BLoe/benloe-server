@@ -4,19 +4,18 @@ import {
   buildRenderRuns,
   dayLabel,
   fullStamp,
+  htmlToMarkdown,
   parseServerDate,
   relativeTime,
   summarizeToolCall,
 } from '../src/surfaces/Chat.js';
 import type { ChatMessage } from '../src/lib/contracts.js';
 
-// Pure-logic coverage for the chat-UX pass (§ changes 2 + 3): the component
-// test harness (@testing-library/react under React 19) currently can't
-// render anything at all — every existing *.test.tsx fails at `render()`
-// with "React.act is not a function", a pre-existing environment break
-// unrelated to this change (confirmed via `git stash` bisection against
-// main). These helpers are plain functions with no React dependency, so
-// they get real regression coverage without going anywhere near that break.
+// Pure-logic coverage for the chat-UX pass (§ changes 2 + 3). These helpers
+// are plain functions with no rendering dependency, so they get regression
+// coverage independent of the heavier @testing-library/react harness (see
+// chat.test.tsx for the component-level tests — the harness itself is fine
+// as of the NODE_ENV=development vitest pin, 2026-07-16).
 
 describe('parseServerDate', () => {
   it('reads a SQLite datetime(\'now\') string (space-separated, no zone) as UTC, not the runner\'s local zone', () => {
@@ -171,5 +170,58 @@ describe('summarizeToolCall (change 2: human-facing tool calls)', () => {
   it('never throws on missing/malformed input — falls back to the generic line', () => {
     expect(() => summarizeToolCall('mcp__cabinet__upsert_goal', undefined)).not.toThrow();
     expect(summarizeToolCall('mcp__cabinet__upsert_goal', undefined)).toContain('Saved goal');
+  });
+});
+
+describe('htmlToMarkdown (the rich composer -> markdown at send time)', () => {
+  const fromHtml = (html: string): string => {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    return htmlToMarkdown(div);
+  };
+
+  it('bold via <b> or <strong>', () => {
+    expect(fromHtml('hello <b>world</b>')).toBe('hello **world**');
+    expect(fromHtml('hello <strong>world</strong>')).toBe('hello **world**');
+  });
+
+  it('italic via <i> or <em>', () => {
+    expect(fromHtml('<i>hi</i> there')).toBe('_hi_ there');
+    expect(fromHtml('<em>hi</em> there')).toBe('_hi_ there');
+  });
+
+  it('underline via <u> rides as raw <u> (matches MD_SCHEMA\'s allowlisted tag)', () => {
+    expect(fromHtml('<u>under</u>')).toBe('<u>under</u>');
+  });
+
+  it('strikethrough via <strike>, <s>, or <del> (execCommand output varies by browser)', () => {
+    expect(fromHtml('<strike>gone</strike>')).toBe('~~gone~~');
+    expect(fromHtml('<s>gone</s>')).toBe('~~gone~~');
+    expect(fromHtml('<del>gone</del>')).toBe('~~gone~~');
+  });
+
+  it('nested formatting composes in DOM order', () => {
+    expect(fromHtml('<b><i>both</i></b>')).toBe('**_both_**');
+  });
+
+  it('a link keeps its href', () => {
+    expect(fromHtml('<a href="https://x.com">x</a>')).toBe('[x](https://x.com)');
+  });
+
+  it('bulleted and numbered lists', () => {
+    expect(fromHtml('<ul><li>a</li><li>b</li></ul>')).toBe('- a\n- b');
+    expect(fromHtml('<ol><li>a</li><li>b</li></ol>')).toBe('1. a\n2. b');
+  });
+
+  it('a <br> (Shift+Enter) becomes a real newline', () => {
+    expect(fromHtml('line1<br>line2')).toBe('line1\nline2');
+  });
+
+  it('plain text passes through untouched', () => {
+    expect(fromHtml('just plain text')).toBe('just plain text');
+  });
+
+  it('an empty composer serializes to an empty string', () => {
+    expect(fromHtml('')).toBe('');
   });
 });

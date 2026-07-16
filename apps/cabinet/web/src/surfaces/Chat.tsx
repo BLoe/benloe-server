@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ChatSummary } from '../lib/cabinet.js';
 import { streamChat, foldTurn, uploadAttachment, interruptChat } from '../lib/chat.js';
@@ -85,6 +85,58 @@ export function clockTime(iso: string): string {
   const hh = h % 12 || 12;
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${hh}:${mm} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * The composer is a real contentEditable (bold/italic/underline/strike/lists
+ * render live as you type, via document.execCommand — a Slack-style rich
+ * composer, not a plain textarea with markdown syntax sitting in it as text)
+ * — this walks its DOM at send time and serializes back to the markdown the
+ * server persists and MessagePartView renders. Handles exactly the tags
+ * execCommand/our toolbar can produce; anything else (a stray span from a
+ * paste, say) just passes its children through unwrapped.
+ */
+export function htmlToMarkdown(root: Node): string {
+  const walk = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+    const el = node as HTMLElement;
+    const inner = Array.from(el.childNodes).map(walk).join('');
+    switch (el.tagName) {
+      case 'B':
+      case 'STRONG':
+        return inner.trim() ? `**${inner}**` : inner;
+      case 'I':
+      case 'EM':
+        return inner.trim() ? `_${inner}_` : inner;
+      case 'U':
+        return inner.trim() ? `<u>${inner}</u>` : inner;
+      case 'S':
+      case 'STRIKE':
+      case 'DEL':
+        return inner.trim() ? `~~${inner}~~` : inner;
+      case 'A':
+        return `[${inner || el.getAttribute('href') || 'link'}](${el.getAttribute('href') ?? ''})`;
+      case 'BR':
+        return '\n';
+      case 'LI':
+        return inner;
+      case 'UL':
+        return `${Array.from(el.children).map((li) => `- ${walk(li).trim()}`).join('\n')}\n`;
+      case 'OL':
+        return `${Array.from(el.children).map((li, i) => `${i + 1}. ${walk(li).trim()}`).join('\n')}\n`;
+      case 'DIV':
+      case 'P':
+        return `${inner}\n`;
+      default:
+        return inner;
+    }
+  };
+  return walk(root).replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /** Full precision, for the `title` hover attribute — nothing lost to the calm view. */
@@ -210,11 +262,18 @@ function Conversation({
   const [liveTurn, setLiveTurn] = useState(false);
   const [live, setLive] = useState<MessagePart[] | null>(null);
   const [sending, setSending] = useState(false);
-  const [draft, setDraft] = useState('');
+  // Whether the (uncontrolled — see editorRef) composer holds any text.
+  // Only used to drive the Send button's disabled state; the actual content
+  // is read straight off the DOM at send time (submitFromEditor).
+  const [hasText, setHasText] = useState(false);
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [queued, setQueued] = useState<QueuedMessage[]>([]);
   const readerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // The composer itself: a real contentEditable, not a plain textarea — see
+  // htmlToMarkdown/exec/insertLink below. Uncontrolled by design: React
+  // fighting a contentEditable's own cursor/selection management on every
+  // keystroke is a well-known source of cursor-jump bugs.
+  const editorRef = useRef<HTMLDivElement>(null);
   // Whether the viewer is parked at (or near) the bottom of the scrollback —
   // gates auto-scroll-on-stream so a user who scrolled up to read history
   // doesn't get yanked back down by the next token. Starts true: a freshly
@@ -398,16 +457,6 @@ function Conversation({
     if (host) host.scrollTop = host.scrollHeight;
   }, [messages, live, scrollHost]);
 
-  // The textarea grows with its content instead of clipping to one line —
-  // reset to 'auto' first so shrinking (e.g. after send clears the draft)
-  // isn't stuck at the tallest height it ever reached.
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  }, [draft]);
-
   // Relative times ("3m ago") go stale sitting still — nudge a re-render
   // periodically so an open conversation keeps ticking forward without
   // needing a new message to land.
@@ -513,7 +562,6 @@ function Conversation({
       const t = text.trim();
       const ready = attachments.filter((a) => a.id && a.mediaType && !a.error) as (PendingAttachment & { id: string; mediaType: string })[];
       if ((!t && ready.length === 0) || sending) return;
-      setDraft('');
       setPending([]);
       setError(null);
       stickToBottomRef.current = true;
@@ -634,7 +682,6 @@ function Conversation({
       if (!t && ready.length === 0) return;
       if (sending) {
         setQueued((q) => [...q, { id: `q-${Date.now()}-${Math.random().toString(36).slice(2)}`, text, attachments }]);
-        setDraft('');
         setPending([]);
         return;
       }
@@ -658,77 +705,54 @@ function Conversation({
     void send(next!.text, next!.attachments);
   }, [sending, queued, send]);
 
-  // Formatting toolbar (Slack-style): every action rewrites the draft's
-  // selected range with markdown (underline rides as <u> — sanitized on
-  // render, see MD_SCHEMA). wrap() toggles: wrapping an already-wrapped
-  // selection unwraps it instead of stacking markers.
-  const applyFormat = useCallback(
-    (kind: 'bold' | 'italic' | 'underline' | 'strike' | 'link' | 'ul' | 'ol') => {
-      const el = textareaRef.current;
-      if (!el) return;
-      const start = el.selectionStart ?? draft.length;
-      const end = el.selectionEnd ?? draft.length;
-      const sel = draft.slice(start, end);
-      let next = draft;
-      let selStart = start;
-      let selEnd = end;
+  // Formatting toolbar (Slack-style, real WYSIWYG — 2026-07-16 rewrite): the
+  // composer is a contentEditable, so document.execCommand toggles real
+  // <b>/<i>/<u>/<s>/<ul>/<ol> on the current selection and the browser
+  // renders it live (bold text looks bold while you type — the whole point;
+  // the prior version wrapped a plain textarea's value in literal "**"
+  // characters, which never visually rendered anything). Serialized back to
+  // markdown at send time by htmlToMarkdown above.
+  const exec = useCallback((command: string) => {
+    const el = editorRef.current;
+    // execCommand is unimplemented in some environments (notably jsdom, our
+    // test harness) — real browsers (Chrome/Firefox/Safari) still support
+    // these basic commands despite the API's deprecated status. Guard so a
+    // toolbar click is a no-op rather than a hard throw where it's missing.
+    if (!el || typeof document.execCommand !== 'function') return;
+    el.focus();
+    document.execCommand(command);
+    setHasText(!!el.textContent?.trim());
+  }, []);
 
-      const wrap = (m: string, mEnd = m) => {
-        const before = draft.slice(0, start);
-        const after = draft.slice(end);
-        if (before.endsWith(m) && after.startsWith(mEnd)) {
-          next = before.slice(0, before.length - m.length) + sel + after.slice(mEnd.length);
-          selStart = start - m.length;
-          selEnd = end - m.length;
-        } else if (sel.startsWith(m) && sel.endsWith(mEnd) && sel.length >= m.length + mEnd.length) {
-          const inner = sel.slice(m.length, sel.length - mEnd.length);
-          next = before + inner + after;
-          selEnd = start + inner.length;
-        } else {
-          next = before + m + sel + mEnd + after;
-          selStart = start + m.length;
-          selEnd = end + m.length;
-        }
-      };
+  // Toolbar buttons use onMouseDown+preventDefault (not onClick alone) so the
+  // click never steals focus/collapses the text selection before execCommand
+  // runs — the standard trick for a toolbar sitting outside the editable
+  // element itself.
+  const holdSelection = useCallback((e: MouseEvent) => e.preventDefault(), []);
 
-      const lines = (prefix: (i: number) => string) => {
-        const from = draft.lastIndexOf('\n', start - 1) + 1;
-        const lineEnd = draft.indexOf('\n', end);
-        const to = lineEnd === -1 ? draft.length : lineEnd;
-        const block = draft.slice(from, to);
-        const out = block
-          .split('\n')
-          .map((l, i) => prefix(i) + l)
-          .join('\n');
-        next = draft.slice(0, from) + out + draft.slice(to);
-        selStart = from;
-        selEnd = from + out.length;
-      };
+  const insertLink = useCallback(() => {
+    const el = editorRef.current;
+    if (!el || typeof document.execCommand !== 'function') return;
+    el.focus();
+    const sel = window.getSelection();
+    const hasSelection = !!sel && !sel.isCollapsed && sel.rangeCount > 0 && el.contains(sel.anchorNode);
+    const url = window.prompt(hasSelection ? 'Link URL' : 'Link URL (select text first to link existing words)');
+    if (!url) return;
+    if (hasSelection) document.execCommand('createLink', false, url);
+    else document.execCommand('insertHTML', false, `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`);
+    setHasText(!!el.textContent?.trim());
+  }, []);
 
-      switch (kind) {
-        case 'bold': wrap('**'); break;
-        case 'italic': wrap('_'); break;
-        case 'strike': wrap('~~'); break;
-        case 'underline': wrap('<u>', '</u>'); break;
-        case 'ul': lines(() => '- '); break;
-        case 'ol': lines((i) => `${i + 1}. `); break;
-        case 'link': {
-          const text = sel || 'link text';
-          next = `${draft.slice(0, start)}[${text}](url)${draft.slice(end)}`;
-          // leave "url" selected so typing (or pasting) replaces it
-          selStart = start + text.length + 3;
-          selEnd = selStart + 3;
-          break;
-        }
-      }
-      setDraft(next);
-      requestAnimationFrame(() => {
-        el.focus();
-        el.setSelectionRange(selStart, selEnd);
-      });
-    },
-    [draft],
-  );
+  // Reads the composer's live DOM, converts to markdown, hands off to the
+  // existing submit()/queue machinery, then clears the (uncontrolled) editor.
+  const submitFromEditor = useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const text = htmlToMarkdown(el);
+    submit(text, pending);
+    el.textContent = '';
+    setHasText(false);
+  }, [submit, pending]);
 
   // Stop button: a real cancel — POSTs /api/interrupt, which aborts the
   // turn server-side (AgentRuntime.interrupt) rather than just dropping this
@@ -839,7 +863,7 @@ function Conversation({
         }}
         onSubmit={(e) => {
           e.preventDefault();
-          submit(draft, pending);
+          submitFromEditor();
         }}
       >
         {queued.length > 0 && (
@@ -875,17 +899,6 @@ function Conversation({
           </div>
         )}
         <div className="composer-tools" role="toolbar" aria-label="Formatting">
-          <button type="button" onClick={() => applyFormat('bold')} aria-label="Bold" title="Bold (⌘B)"><Bold size={14} /></button>
-          <button type="button" onClick={() => applyFormat('italic')} aria-label="Italic" title="Italic (⌘I)"><Italic size={14} /></button>
-          <button type="button" onClick={() => applyFormat('underline')} aria-label="Underline" title="Underline (⌘U)"><Underline size={14} /></button>
-          <button type="button" onClick={() => applyFormat('strike')} aria-label="Strikethrough" title="Strikethrough (⌘⇧X)"><Strikethrough size={14} /></button>
-          <span className="composer-tools-sep" aria-hidden="true" />
-          <button type="button" onClick={() => applyFormat('link')} aria-label="Link" title="Link (⌘⇧U)"><Link2 size={14} /></button>
-          <span className="composer-tools-sep" aria-hidden="true" />
-          <button type="button" onClick={() => applyFormat('ol')} aria-label="Numbered list" title="Numbered list (⌘⇧7)"><ListOrdered size={14} /></button>
-          <button type="button" onClick={() => applyFormat('ul')} aria-label="Bulleted list" title="Bulleted list (⌘⇧8)"><List size={14} /></button>
-        </div>
-        <div className="composer">
           <input
             ref={fileInputRef}
             type="file"
@@ -897,54 +910,83 @@ function Conversation({
               e.target.value = '';
             }}
           />
-          <button type="button" className="composer-attach-btn" onClick={() => fileInputRef.current?.click()} aria-label="Attach image">
-            <Paperclip size={18} />
-          </button>
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+          {/* Pinned to the top corner of the composer (2026-07-16, Ben's
+              request) — living beside the formatting tools instead of the
+              main input row, where it used to sink to the bottom as the
+              message grew past one line. */}
+          <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach image" title="Attach image"><Paperclip size={14} /></button>
+          <span className="composer-tools-sep" aria-hidden="true" />
+          <button type="button" onMouseDown={holdSelection} onClick={() => exec('bold')} aria-label="Bold" title="Bold (⌘B)"><Bold size={14} /></button>
+          <button type="button" onMouseDown={holdSelection} onClick={() => exec('italic')} aria-label="Italic" title="Italic (⌘I)"><Italic size={14} /></button>
+          <button type="button" onMouseDown={holdSelection} onClick={() => exec('underline')} aria-label="Underline" title="Underline (⌘U)"><Underline size={14} /></button>
+          <button type="button" onMouseDown={holdSelection} onClick={() => exec('strikeThrough')} aria-label="Strikethrough" title="Strikethrough (⌘⇧X)"><Strikethrough size={14} /></button>
+          <span className="composer-tools-sep" aria-hidden="true" />
+          <button type="button" onMouseDown={holdSelection} onClick={insertLink} aria-label="Link" title="Link (⌘⇧U)"><Link2 size={14} /></button>
+          <span className="composer-tools-sep" aria-hidden="true" />
+          <button type="button" onMouseDown={holdSelection} onClick={() => exec('insertOrderedList')} aria-label="Numbered list" title="Numbered list (⌘⇧7)"><ListOrdered size={14} /></button>
+          <button type="button" onMouseDown={holdSelection} onClick={() => exec('insertUnorderedList')} aria-label="Bulleted list" title="Bulleted list (⌘⇧8)"><List size={14} /></button>
+        </div>
+        <div className="composer">
+          <div
+            ref={editorRef}
+            className="composer-editor"
+            contentEditable
+            data-placeholder={sending ? 'Message Cabinet… (queues until this turn finishes)' : 'Message Cabinet…'}
+            role="textbox"
+            aria-multiline="true"
+            aria-label="Message Cabinet"
+            onInput={() => setHasText(!!editorRef.current?.textContent?.trim())}
             onPaste={(e) => {
               const items = e.clipboardData?.items;
-              if (!items) return;
               const files: File[] = [];
-              for (const item of items) {
-                if (item.kind === 'file' && item.type.startsWith('image/')) {
-                  const f = item.getAsFile();
-                  if (f) files.push(f);
+              if (items) {
+                for (const item of items) {
+                  if (item.kind === 'file' && item.type.startsWith('image/')) {
+                    const f = item.getAsFile();
+                    if (f) files.push(f);
+                  }
                 }
               }
               if (files.length > 0) {
                 e.preventDefault();
                 addFiles(files);
+                return;
               }
+              // Plain-text paste only: pasted rich HTML (e.g. from a web page)
+              // could carry arbitrary nested markup our toolbar never
+              // produces — inserting as text keeps htmlToMarkdown's surface
+              // exactly the tags we control.
+              e.preventDefault();
+              document.execCommand('insertText', false, e.clipboardData?.getData('text/plain') ?? '');
             }}
             onKeyDown={(e) => {
               if (e.metaKey || e.ctrlKey) {
                 // Slack's bindings; ⌘K stays with the command bar.
                 const k = e.key.toLowerCase();
-                const fmt =
+                const cmd =
                   k === 'b' ? 'bold'
                   : k === 'i' ? 'italic'
-                  : k === 'u' ? (e.shiftKey ? 'link' : 'underline')
-                  : e.shiftKey && k === 'x' ? 'strike'
-                  : e.shiftKey && k === '7' ? 'ol'
-                  : e.shiftKey && k === '8' ? 'ul'
+                  : k === 'u' && !e.shiftKey ? 'underline'
+                  : e.shiftKey && k === 'x' ? 'strikeThrough'
+                  : e.shiftKey && k === '7' ? 'insertOrderedList'
+                  : e.shiftKey && k === '8' ? 'insertUnorderedList'
                   : null;
-                if (fmt) {
+                if (cmd) {
                   e.preventDefault();
-                  applyFormat(fmt);
+                  exec(cmd);
+                  return;
+                }
+                if (k === 'u' && e.shiftKey) {
+                  e.preventDefault();
+                  insertLink();
                   return;
                 }
               }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                submit(draft, pending);
+                submitFromEditor();
               }
             }}
-            placeholder={sending ? 'Message Cabinet… (queues until this turn finishes)' : 'Message Cabinet…'}
-            rows={1}
-            aria-label="Message Cabinet"
           />
           {sending && (
             <button type="button" className="composer-stop-btn" aria-label="Stop" onClick={stop}>
@@ -955,7 +997,7 @@ function Conversation({
             type="submit"
             className="composer-send-btn"
             aria-label={sending ? 'Queue message' : 'Send'}
-            disabled={pending.some((p) => p.uploading) || (!draft.trim() && !pending.some((p) => p.id && !p.error))}
+            disabled={pending.some((p) => p.uploading) || (!hasText && !pending.some((p) => p.id && !p.error))}
           >
             <ArrowUp size={18} />
           </button>

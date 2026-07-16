@@ -378,9 +378,13 @@
   gap: var(--sp-2);
   align-items: flex-end;
 }
-.composer textarea {
+/* ---- the composer itself: a real contentEditable (2026-07-16 rewrite) —
+   bold/italic/underline/strike/lists render live as actual <b>/<i>/<u>/<s>/
+   <ul>/<ol>, not markdown syntax sitting in a textarea as plain characters.
+   Uncontrolled (see editorRef in Chat.tsx); the empty-state placeholder is
+   pure CSS since there's no value prop to read. ---- */
+.composer-editor {
   flex: 1;
-  resize: none;
   background: var(--inset);
   color: var(--linen);
   border: 1px solid var(--rule);
@@ -393,8 +397,19 @@
   min-height: 42px;
   overflow-y: auto;
   outline: none;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
-.composer textarea:focus { border-color: var(--brass-dim); }
+.composer-editor:focus { border-color: var(--brass-dim); }
+.composer-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--linen-faint);
+  pointer-events: none;
+}
+.composer-editor b, .composer-editor strong { font-weight: 700; }
+.composer-editor a { color: var(--brass); text-decoration: underline; text-underline-offset: 2px; }
+.composer-editor ul, .composer-editor ol { margin: 0; padding-left: var(--sp-5); }
 .composer button {
   display: flex;
   align-items: center;
@@ -415,7 +430,6 @@
   outline: none;
 }
 .composer button:disabled { cursor: default; }
-.composer-attach-btn { color: var(--linen-dim); }
 .composer-send-btn { color: var(--linen-faint); }
 .composer-send-btn:not(:disabled) { color: var(--brass); }
 .composer-send-btn:not(:disabled):hover,
