@@ -124,7 +124,7 @@ export function foldTurn(parts: MessagePart[], e: TurnEvent): void {
       break;
     }
     case 'tool-start':
-      parts.push({ type: 'tool-run', toolId: e.toolId, name: e.name, input: e.input, done: false });
+      parts.push({ type: 'tool-run', toolId: e.toolId, name: e.name, input: e.input, done: false, at: new Date().toISOString() });
       break;
     case 'tool-end': {
       for (let i = parts.length - 1; i >= 0; i--) {

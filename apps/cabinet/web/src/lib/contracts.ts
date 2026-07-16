@@ -25,7 +25,7 @@ export type InstrumentSpec =
 export type MessageRole = 'user' | 'assistant' | 'system';
 export type MessagePart =
   | { type: 'text'; text: string }
-  | { type: 'tool-run'; toolId: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean }
+  | { type: 'tool-run'; toolId: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean; at?: string }
   | { type: 'notice'; level: 'info' | 'warn'; text: string }
   | { type: 'widget'; widgetType: string; data: unknown }
   | { type: 'approval'; packet: ApprovalPacket }

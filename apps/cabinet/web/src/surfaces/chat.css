@@ -128,17 +128,78 @@
 }
 
 .msg-parts {
+  position: relative; /* anchors the Slack-style hover stamp below */
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
 }
 
+/* Slack-style per-message timestamp: invisible until the message is hovered,
+   full precision on the title attribute. Sits in the top-right of the entry. */
+.msg-entry-when {
+  position: absolute;
+  top: 2px;
+  right: var(--sp-2);
+  font-size: var(--fs-cap);
+  color: var(--linen-faint);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-1);
+}
+.msg-parts:hover .msg-entry-when { opacity: 1; }
+.msg--user .msg-entry-when { top: var(--sp-2); }
+
 .msg-text {
   font-size: var(--fs-body);
   line-height: var(--lh-body);
   color: var(--linen);
-  white-space: pre-wrap;
 }
+
+/* ---- rendered markdown inside a message ---- */
+.msg-text p { margin: 0 0 var(--sp-2); }
+.msg-text > *:last-child, .msg-text p:last-child { margin-bottom: 0; }
+.msg-text a { color: var(--brass); text-decoration: underline; text-underline-offset: 2px; }
+.msg-text a:hover { color: var(--brass-hi); }
+.msg-text code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--inset);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r-1);
+  padding: 1px 5px;
+}
+.msg-text pre {
+  background: var(--inset);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r-2);
+  padding: var(--sp-3);
+  overflow-x: auto;
+  margin: 0 0 var(--sp-2);
+}
+.msg-text pre code { background: none; border: none; padding: 0; font-size: var(--fs-fine); }
+.msg-text ul, .msg-text ol { margin: 0 0 var(--sp-2); padding-left: var(--sp-6); }
+.msg-text li { margin-bottom: var(--sp-1); }
+.msg-text li::marker { color: var(--linen-dim); }
+.msg-text blockquote {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-left: 2px solid var(--brass-dim);
+  color: var(--linen-dim);
+}
+.msg-text h1, .msg-text h2, .msg-text h3, .msg-text h4 {
+  font-family: var(--serif);
+  color: var(--linen);
+  margin: var(--sp-3) 0 var(--sp-2);
+  line-height: var(--lh-snug);
+}
+.msg-text h1 { font-size: var(--fs-read); }
+.msg-text h2 { font-size: 18px; }
+.msg-text h3, .msg-text h4 { font-size: var(--fs-body); }
+.msg-text hr { border: none; border-top: 1px solid var(--rule-soft); margin: var(--sp-3) 0; }
+.msg-text table { border-collapse: collapse; margin: 0 0 var(--sp-2); font-size: var(--fs-sm); }
+.msg-text th, .msg-text td { border: 1px solid var(--rule-soft); padding: var(--sp-1) var(--sp-2); text-align: left; }
+.msg-text th { color: var(--linen-dim); font-weight: 600; }
+.msg-text img { max-width: 100%; border-radius: var(--r-2); }
 
 .msg--user .msg-text {
   background: var(--panel-2);
@@ -170,9 +231,17 @@
 .msg-tool-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: var(--sp-3);
 }
+.msg-tool-summary { flex: 1; min-width: 0; }
+.msg-tool-when {
+  font-size: var(--fs-cap);
+  color: var(--linen-faint);
+  opacity: 0;
+  transition: opacity var(--dur-1);
+  white-space: nowrap;
+}
+.msg-tool:hover .msg-tool-when { opacity: 1; }
 
 .msg-tool-name {
   color: var(--linen);
@@ -274,6 +343,35 @@
   margin-top: var(--sp-4);
   padding-top: var(--sp-4);
   border-top: 1px solid var(--rule-soft);
+}
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: var(--sp-2);
+}
+.composer-tools button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-1);
+  color: var(--linen-faint);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color var(--dur-1), background var(--dur-1);
+}
+.composer-tools button:hover,
+.composer-tools button:focus-visible {
+  color: var(--brass);
+  background: #ffffff08;
+}
+.composer-tools-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--rule-soft);
+  margin: 0 var(--sp-1);
 }
 .composer {
   display: flex;
