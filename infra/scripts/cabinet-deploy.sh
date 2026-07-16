@@ -65,9 +65,18 @@ HOME=/home/claude-worker git push
 
 echo "cabinet-deploy: build..."
 (cd "$SERVER_DIR" && HOME=/home/claude-worker npm run build)
+# Build output must end up claude-worker-owned regardless of who ran this
+# script. Ben sometimes deploys his own commits from a real root shell
+# (bypassing the agent entirely) — when that happens the build steps above
+# run as root and leave root-owned dist/ output that then EACCES-blocks the
+# next unprivileged (claude-worker) rebuild. Self-chown is a no-op when this
+# script is already running as claude-worker (the normal path); it's the fix
+# when it's not. See PLATFORM.md / dist-poisoned-<epoch> incident, 2026-07-16.
+chown -R claude-worker:claude-worker "$SERVER_DIR/dist"
 
 echo "cabinet-deploy: build web..."
 (cd "$REPO_ROOT/apps/cabinet/web" && HOME=/home/claude-worker npm run build)
+chown -R claude-worker:claude-worker "$REPO_ROOT/apps/cabinet/web/dist"
 
 TARGET_SHA="$(node -p "require('$SERVER_DIR/dist/build-info.json').sha")"
 
