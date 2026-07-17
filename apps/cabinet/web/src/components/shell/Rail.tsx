@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ChevronLeft, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { ChatSummary } from '../../lib/contracts.js';
 import { hasDraft } from '../../lib/draft.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
@@ -206,26 +206,44 @@ export function Rail({
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
 }) {
+  // The collapse toggle lives inside the brandmark box itself (2026-07-17,
+  // Ben's request — it used to be its own button centered in a row below
+  // the logo, which read as an orphaned, awkwardly-placed control). Two
+  // shapes, not one: expanded shows the full wordmark with a small chevron
+  // pinned to the row's trailing edge; collapsed has no room for a second
+  // target next to the icon-only glyph, so the whole brandmark becomes the
+  // (re)expand button instead — click the logo to bring the sidebar back.
   return (
     <aside className="rail">
-      <div className="brandmark">
-        <span className="glyph" aria-hidden="true" />
-        <div>
-          <div className="word">CABINET</div>
-          <div className="sub">Ben&rsquo;s office</div>
-        </div>
-      </div>
-
-      {onToggleCollapsed && (
+      {collapsed && onToggleCollapsed ? (
         <button
           type="button"
-          className="rail-collapse-toggle"
+          className="brandmark brandmark--collapsed"
           onClick={onToggleCollapsed}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label="Expand sidebar"
+          title="Expand sidebar"
         >
-          {collapsed ? <ChevronRight size={13} aria-hidden="true" /> : <ChevronLeft size={13} aria-hidden="true" />}
+          <span className="glyph" aria-hidden="true" />
         </button>
+      ) : (
+        <div className="brandmark">
+          <span className="glyph" aria-hidden="true" />
+          <div>
+            <div className="word">CABINET</div>
+            <div className="sub">Ben&rsquo;s office</div>
+          </div>
+          {onToggleCollapsed && (
+            <button
+              type="button"
+              className="rail-collapse-toggle"
+              onClick={onToggleCollapsed}
+              aria-label="Collapse sidebar"
+              title="Collapse sidebar"
+            >
+              <ChevronLeft size={13} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       )}
 
       <nav className="rail-nav" aria-label="Surfaces">

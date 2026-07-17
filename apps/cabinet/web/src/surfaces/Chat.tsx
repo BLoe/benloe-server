@@ -805,13 +805,6 @@ function Conversation({
 
   return (
     <div className="reader">
-      <header className="reader-head">
-        <div className="reader-title">
-          <h2>{chat.title ?? 'New conversation'}</h2>
-          <span className="reader-meta data">{chat.messages > 0 ? `${chat.messages} messages · ` : ''}Cabinet</span>
-        </div>
-      </header>
-
       <ol className="reader-log" ref={logRef}>
         {!messages && !error ? (
           <li>
@@ -828,7 +821,7 @@ function Conversation({
               );
             }
             rows.push(
-              <li key={run.key}>
+              <li key={run.key} className={`reader-row reader-row--${run.role}`}>
                 <div className={`msg msg--${run.role}${run.fromAgent ? ' msg--agent' : ''}`}>
                   <div className="msg-meta">
                     <span className={`msg-who data${run.fromAgent ? ' msg-who--agent' : ''}`}>{run.who}</span>

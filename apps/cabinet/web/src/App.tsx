@@ -20,6 +20,18 @@ function Datestamp({ now }: { now: Date }) {
   return <>{DAYS[now.getDay()]} · <b>{now.getDate()} {MONTHS[now.getMonth()]}</b> · {hh}:{mm}</>;
 }
 
+/** The active conversation's title, in the topbar (2026-07-17 — see
+ *  AppShell's headerTitle prop). Only rendered while the Chat surface has a
+ *  conversation selected (App gates this at the call site). */
+function ChatHeaderTitle({ chat }: { chat: ChatSummary }) {
+  return (
+    <>
+      <span className="topbar-title-text">{chat.title ?? 'New conversation'}</span>
+      {chat.messages > 0 && <span className="topbar-title-count data">{chat.messages} messages</span>}
+    </>
+  );
+}
+
 function toLogin() {
   window.location.href = `https://auth.benloe.com/?redirect=${encodeURIComponent(window.location.href)}`;
 }
@@ -187,6 +199,7 @@ export default function App() {
         onDelete: handleDeleteChat,
       }}
       datestamp={<Datestamp now={now} />}
+      headerTitle={active === 'chat' && selectedChat ? <ChatHeaderTitle chat={selectedChat} /> : undefined}
       presence={presence}
       presenceMeta={presenceMeta}
     >

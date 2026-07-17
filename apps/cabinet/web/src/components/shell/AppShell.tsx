@@ -11,6 +11,13 @@ interface AppShellProps {
   /** Conversation list state for the rail's Chat accordion (owned by App). */
   chatNav?: ChatNav;
   datestamp?: ReactNode;
+  /** The active chat's title, shown in the topbar next to the datestamp
+   *  (2026-07-17) — App passes this only while the Chat surface has a
+   *  conversation selected. Lives here instead of inside the Chat surface
+   *  itself because the topbar was otherwise mostly empty dead space while
+   *  the reading column's own title banner ate into its already-limited
+   *  vertical budget. */
+  headerTitle?: ReactNode;
   presence?: PresenceState;
   presenceMeta?: string;
   children: ReactNode;
@@ -23,7 +30,7 @@ const COLLAPSE_KEY = 'cabinet:rail-collapsed';
  *  component that persists across surface switches, and it's the thing that
  *  actually has to resize .shell's grid columns around the rail, so the
  *  state lives here rather than inside Rail itself. */
-export function AppShell({ active, onNavigate, onCommand, chatNav, datestamp, presence = 'idle', presenceMeta, children }: AppShellProps) {
+export function AppShell({ active, onNavigate, onCommand, chatNav, datestamp, headerTitle, presence = 'idle', presenceMeta, children }: AppShellProps) {
   const [railCollapsed, setRailCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSE_KEY) === '1';
@@ -45,6 +52,7 @@ export function AppShell({ active, onNavigate, onCommand, chatNav, datestamp, pr
       <div className="main">
         <header className="topbar">
           {datestamp && <div className="datestamp">{datestamp}</div>}
+          {headerTitle && <div className="topbar-title">{headerTitle}</div>}
           <CommandBar onSubmit={onCommand} />
         </header>
         <main className="surface" aria-label={active}>{children}</main>
