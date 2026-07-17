@@ -35,12 +35,26 @@
 .rail .brandmark .word { font-family: var(--serif); font-size: 20px; font-weight: 600; letter-spacing: var(--tracking-word); color: var(--linen); }
 .rail .brandmark .sub { font-family: var(--mono); font-size: 9px; letter-spacing: 0.26em; color: var(--brass-dim); text-transform: uppercase; margin-left: -3px; }
 
+/* The collapse toggle (2026-07-17) lives inside the brandmark row itself —
+   a small chevron pinned to its trailing edge via margin-left: auto — rather
+   than a separate button centered underneath the logo, which read as an
+   orphaned control disconnected from anything. */
 .rail-collapse-toggle {
-  flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 8px auto 0; padding: 0;
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin-left: auto; padding: 0;
   border: 1px solid var(--rule); border-radius: var(--r-2); background: transparent; color: var(--linen-faint);
   cursor: pointer; transition: color var(--dur-1), border-color var(--dur-1);
 }
 .rail-collapse-toggle:hover, .rail-collapse-toggle:focus-visible { color: var(--linen); border-color: var(--brass-dim); }
+
+/* Collapsed state (2026-07-17): 64px leaves no room for a wordmark or a
+   second target beside it, so the whole brandmark becomes the re-expand
+   button — a plain <button class="brandmark brandmark--collapsed"> wrapping
+   just the glyph. It inherits height/padding/border-bottom from `.rail
+   .brandmark` above (button chrome itself is already reset globally, see
+   base.css) — only the extra width/centering/hover affordance needed since
+   it's now a click target rather than static chrome. */
+.brandmark.brandmark--collapsed { width: 100%; justify-content: center; transition: background var(--dur-1); }
+.brandmark.brandmark--collapsed:hover, .brandmark.brandmark--collapsed:focus-visible { background: #ffffff08; }
 
 .rail-nav { display: flex; flex-direction: column; gap: 2px; padding: 14px; overflow-y: auto; min-height: 0; }
 .rail-item {
@@ -64,8 +78,9 @@
 .rail .principal .role { font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; color: var(--linen-faint); text-transform: uppercase; }
 
 /* ---- icon-only collapsed rail (2026-07-17) ---- */
-.rail-collapsed .brandmark { padding: 0; justify-content: center; }
-.rail-collapsed .brandmark .word, .rail-collapsed .brandmark .sub { display: none; }
+/* Note: no .rail-collapsed .brandmark override needed here — the collapsed
+   branch renders a wholly different element (button.brandmark--collapsed,
+   see above) that never contains .word/.sub in the first place. */
 .rail-collapsed .rail-item { justify-content: center; gap: 0; padding: 9px 0; }
 .rail-collapsed .rail-item .txt { display: none; }
 /* No room for the search box + list at 64px — collapses back to nav icons
@@ -83,8 +98,16 @@
    growing to fit oversized content instead of clipping it into a scrollbox. */
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .topbar { display: flex; align-items: center; gap: 16px; padding: 0 26px; height: var(--header-h); box-sizing: border-box; flex: none; border-bottom: 1px solid var(--rule); background: linear-gradient(180deg, #1b120a, transparent); }
-.topbar .datestamp { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; color: var(--linen-dim); text-transform: uppercase; white-space: nowrap; }
+.topbar .datestamp { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; color: var(--linen-dim); text-transform: uppercase; white-space: nowrap; flex: none; }
 .topbar .datestamp b { color: var(--brass); font-weight: 500; }
+/* The active chat's title (2026-07-17) — fills the topbar space that used to
+   sit empty next to the datestamp, freeing the equivalent banner's worth of
+   height inside .chat itself (see .reader in chat.css). flex: 1 + min-width:
+   0 lets it take the rest of the bar and actually truncate instead of
+   pushing the bar wider than .topbar allows. */
+.topbar-title { display: flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0; padding-left: 16px; margin-left: 2px; border-left: 1px solid var(--rule); }
+.topbar-title-text { font-family: var(--serif); font-size: var(--fs-read); color: var(--linen); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-title-count { flex: none; font-size: var(--fs-cap); color: var(--linen-faint); white-space: nowrap; }
 /* flex:1 + overflow-y:auto makes .surface the one scroll container for every
    surface. padding-bottom reserves the presence strip's height at the end of
    the scrollable content so the last card/row always has breathing room

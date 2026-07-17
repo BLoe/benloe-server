@@ -12,13 +12,17 @@
    box — a one-surface exception to ".surface is the one scroll container"
    (see .reader-log below for why: Chat is the one surface with a composer
    that has to stay put). */
+/* No bottom padding here (2026-07-17 fix) — .surface already reserves
+   --footer-h below .chat (see shell.css) so the composer never sits flush
+   against the presence strip; adding another sp-6 on top of that just
+   stacked redundant dead air under the composer. */
 .chat {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: var(--sp-6);
+  padding: var(--sp-6) var(--sp-6) 0;
   width: 100%;
 }
 
@@ -44,14 +48,20 @@
 }
 
 /* Narrower than .chat's own (already-centered) box on purpose (2026-07-17):
-   the reading pane — header, log, and composer together — shares this one
-   width so the whole conversation reads as a single centered column instead
-   of edge-hugging bubbles stretched across --content-max. See --chat-col.
+   the reading pane — log and composer together — shares this one width so
+   the whole conversation reads as a single centered column instead of
+   edge-hugging bubbles stretched across --content-max. See --chat-col.
+
+   The conversation's title used to live in a .reader-head banner at the top
+   of this column — moved to .topbar-title (shell.css/App.tsx) instead
+   (2026-07-17, Ben's request): the app's own header bar sat mostly empty
+   above the chat, while the in-column banner ate a fixed slice of .chat's
+   already-limited height on every conversation. .reader now has one job:
+   split its fixed height between a scrolling log and one flex-none anchor —
+   see .reader-log and .composer-form.
 
    height: 100% + min-height: 0 (2026-07-17) makes .reader fill .chat's fixed
-   box exactly, so its three children (head / log / composer) can split that
-   fixed height between a scrolling log and two flex-none anchors — see
-   .reader-log and .composer-form. */
+   box exactly. */
 .reader {
   display: flex;
   flex-direction: column;
@@ -64,27 +74,6 @@
   margin-inline: auto;
 }
 
-.reader-head {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-4);
-  padding-bottom: var(--sp-4);
-  border-bottom: 1px solid var(--rule-soft);
-  flex: none;
-}
-
-.reader-title h2 {
-  font-family: var(--serif);
-  font-size: var(--fs-h2);
-  color: var(--linen);
-  margin: 0;
-}
-
-.reader-meta {
-  font-size: var(--fs-cap);
-  color: var(--linen-faint);
-}
-
 /* The ONLY scroll container inside Chat (2026-07-17 rewrite — replaces the
    position:sticky composer). Previously the composer was sticky within
    .surface's scroll, which only *approximates* "always visible": sticky
@@ -92,13 +81,13 @@
    edge, and in a short conversation (little content after a long message)
    that trigger point can land mid-message — the composer would visibly cut
    into a message being read, with more of that same message still below it.
-   Giving the log its own scroll region, with .reader-head and
-   .composer-form as fixed (flex: none) siblings above/below it, means the
-   composer is simply never inside the thing that scrolls — it can't overlap
-   message content no matter how short the conversation is, and its own
-   bottom edge/send button can never fall below the fold (see
-   .composer-editor's max-height: 32dvh — the log just yields space as the
-   composer grows). scrollHost() in Chat.tsx targets this element directly. */
+   Giving the log its own scroll region, with .composer-form as a fixed
+   (flex: none) sibling below it, means the composer is simply never inside
+   the thing that scrolls — it can't overlap message content no matter how
+   short the conversation is, and its own bottom edge/send button can never
+   fall below the fold (see .composer-editor's max-height: 32dvh — the log
+   just yields space as the composer grows). scrollHost() in Chat.tsx targets
+   this element directly. */
 .reader-log {
   list-style: none;
   margin: 0;
@@ -131,6 +120,18 @@
   background: var(--rule-soft);
 }
 
+/* Each message row is its own single-item flex row (2026-07-17 fix): a run's
+   <li> in .reader-log carries .reader-row, and .reader-row--user is the one
+   that actually pushes the bubble to the right edge via justify-content.
+   Before this, .msg--user set align-self: flex-end directly on .msg — a
+   no-op, because .msg's *actual* parent (the bare <li>) was plain block flow
+   (display: list-item), not a flex container, so align-self had nothing to
+   attach to. The bubble sat flush left like every other message, with the
+   82%-cap's leftover space stranded on the right instead of the left —
+   exactly backwards from "a bubble arriving from the right." */
+.reader-row { display: flex; }
+.reader-row--user { justify-content: flex-end; }
+
 .msg {
   display: flex;
   flex-direction: column;
@@ -139,19 +140,10 @@
 }
 
 .msg--user {
-  align-self: flex-end;
   align-items: flex-end;
   /* percentage cap (not just the 72ch on .msg) guarantees a left gutter even
      on a message that would otherwise brush the reading column's edge */
   max-width: min(72ch, 82%);
-}
-
-.msg--assistant,
-.msg--system {
-  align-self: flex-start;
-  /* slight indent off the reading column's right edge — the bubble stops
-     short instead of running the full width (2026-07-17, Ben's request) */
-  margin-right: var(--sp-6);
 }
 
 .msg-meta {
