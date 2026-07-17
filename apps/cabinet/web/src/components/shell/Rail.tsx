@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { Fragment, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { ChatSummary } from '../../lib/contracts.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
@@ -30,6 +30,37 @@ export interface ChatNav {
 
 function matches(c: ChatSummary, needle: string): boolean {
   return `${c.title ?? ''} ${c.preview ?? ''}`.toLowerCase().includes(needle);
+}
+
+/** Sidebar titles are truncated with ellipsis by default (see .rail-convo-title
+ *  in shell.css); on hover, if the title actually overflows its box, it
+ *  marquees to reveal the rest and resets. Measured lazily on first hover
+ *  (not on every list render) via scrollWidth vs clientWidth — titles that
+ *  fit are left completely alone (distance stays 0, animation is a no-op). */
+function ConvoTitle({ title }: { title: string }) {
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const innerRef = useRef<HTMLSpanElement>(null);
+  const [distance, setDistance] = useState(0);
+
+  const measure = () => {
+    const wrap = wrapRef.current;
+    const inner = innerRef.current;
+    if (!wrap || !inner) return;
+    setDistance(Math.max(0, inner.scrollWidth - wrap.clientWidth));
+  };
+
+  const style =
+    distance > 0
+      ? ({ '--marquee-dist': `-${distance}px`, '--marquee-dur': `${Math.max(2, distance / 30)}s` } as CSSProperties)
+      : undefined;
+
+  return (
+    <span className="rail-convo-title" ref={wrapRef} onMouseEnter={measure}>
+      <span className="rail-convo-title-inner" ref={innerRef} style={style}>
+        {title}
+      </span>
+    </span>
+  );
 }
 
 /** The conversation list, folded into the rail under the Chat item — an
@@ -108,7 +139,7 @@ function ChatAccordion({ nav }: { nav: ChatNav }) {
                 onClick={() => nav.onSelect(c.id)}
                 title={c.title ?? 'Untitled chat'}
               >
-                <span className="rail-convo-title">{c.title ?? 'Untitled chat'}</span>
+                <ConvoTitle title={c.title ?? 'Untitled chat'} />
                 {nav.resumingIds.has(c.id) && <span className="resume-dot" aria-hidden="true" />}
               </button>
               <button
@@ -178,7 +209,6 @@ export function Rail({
                 {ICONS[s.id]}
               </svg>
               <span className="txt">{s.label}</span>
-              <span className="k">{s.key}</span>
             </button>
             {s.id === 'chat' && s.id === active && chatNav && <ChatAccordion nav={chatNav} />}
           </Fragment>

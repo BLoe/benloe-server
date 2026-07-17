@@ -34,7 +34,6 @@
   transition: color var(--dur-1), background var(--dur-1);
 }
 .rail-item .ico { width: 16px; height: 16px; flex: none; opacity: .82; }
-.rail-item .k { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--linen-faint); }
 .rail-item:hover { background: #ffffff08; color: var(--linen); }
 .rail-item.active { color: var(--linen); background: #ffffff09; }
 .rail-item.active::before { content: ""; position: absolute; left: -14px; top: 8px; bottom: 8px; width: var(--rail); background: var(--brass); border-radius: 0 2px 2px 0; box-shadow: 0 0 10px #c99b5366; }
@@ -119,7 +118,7 @@
   .rail .brandmark { height: auto; border-bottom: none; padding: 0 10px 0 0; }
   .rail-nav { padding: 0; overflow-y: visible; }
   .topbar { height: auto; padding: 14px 26px; }
-  .rail .brandmark .sub, .rail-item .k, .rail-item .txt, .rail .spacer, .rail .principal { display: none; }
+  .rail .brandmark .sub, .rail-item .txt, .rail .spacer, .rail .principal { display: none; }
   .rail-nav { flex-direction: row; }
   .rail-item.active::before { display: none; }
   .rail-item.active { box-shadow: inset 0 -2px 0 var(--brass); }
@@ -140,7 +139,7 @@
 .rail-convos-search::placeholder { color: var(--linen-faint); }
 .rail-convos-search:focus-visible { border-color: var(--brass-dim); }
 .rail-convos-new {
-  flex: none; display: grid; place-items: center; width: 24px; height: 24px;
+  flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
   border: 1px solid var(--rule); border-radius: var(--r-2); background: transparent; color: var(--brass);
   cursor: pointer; transition: border-color var(--dur-1), background var(--dur-1);
 }
@@ -157,13 +156,29 @@
 }
 .rail-convo:hover { background: #ffffff08; color: var(--linen); }
 .rail-convo.active { background: #ffffff0c; color: var(--linen); box-shadow: inset 2px 0 0 var(--brass); }
-.rail-convo-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-convo-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; min-width: 0; }
 .rail-convo .resume-dot { margin-left: auto; width: 6px; height: 6px; }
+
+/* Marquee-on-hover (2026-07-17, Ben's request): the wrapper (.rail-convo-title)
+   keeps its ellipsis truncation as the resting state; on row hover the inner
+   span slides left by --marquee-dist and back, revealing the full title.
+   Rail.tsx only sets --marquee-dist/--marquee-dur when a title actually
+   overflows its box (via scrollWidth vs clientWidth) — a title that fits
+   never gets the animation at all (defaulting to 0/0s is a no-op). */
+.rail-convo-title-inner { display: inline-block; will-change: transform; }
+.rail-convo-row:hover .rail-convo-title { text-overflow: clip; }
+.rail-convo-row:hover .rail-convo-title-inner {
+  animation: rail-marquee var(--marquee-dur, 0s) ease-in-out 0.5s infinite alternate;
+}
+@keyframes rail-marquee {
+  0%, 15% { transform: translateX(0); }
+  85%, 100% { transform: translateX(var(--marquee-dist, 0)); }
+}
 
 /* Delete stays out of the way until the row is actually in play — hover,
    focus, or the keyboard reaching it — so the list reads clean by default. */
 .rail-convo-delete {
-  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0;
   border-radius: var(--r-2); color: var(--linen-faint); opacity: 0;
   transition: opacity var(--dur-1), color var(--dur-1), background var(--dur-1);
 }
