@@ -44,14 +44,13 @@ export function CommandBar({ onSubmit }: { onSubmit?: (intent: string) => void }
     setOpen(false);
   };
 
+  // No visible trigger in the header (removed 2026-07-17, Ben's request) —
+  // the presence strip already carries the same "⌘K to direct Cabinet" hint,
+  // and a second box that does nothing but open the same modal was dead
+  // weight. This component still mounts (for the keydown listener) and still
+  // renders the overlay itself; ⌘K/⌃K is now the only way in.
   return (
     <>
-      <button className="cmd-trigger" onClick={() => setOpen(true)} aria-label="Open command bar" aria-haspopup="dialog">
-        <span className="lead" aria-hidden="true">&rsaquo;</span>
-        <span>Tell the cabinet what to do&hellip;</span>
-        <span className="kbd">&#8984;K</span>
-      </button>
-
       {open && (
         <div className="cmd-overlay" role="dialog" aria-modal="true" aria-label="Command bar" onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}>
           <div className="cmd-box">

@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppShell } from '../src/components/shell/index.js';
 
+beforeEach(() => localStorage.clear());
 afterEach(cleanup);
 
 describe('AppShell', () => {
@@ -34,6 +35,21 @@ describe('AppShell', () => {
       expect(screen.getByRole('button', { name }).textContent).not.toMatch(/[0-9]/);
     }
   });
+
+  it('collapses the rail to icons-only on toggle and persists the preference (2026-07-17)', async () => {
+    const { container, unmount } = render(<AppShell active="today" onNavigate={() => {}}><div /></AppShell>);
+    expect(container.querySelector('.shell')?.className).not.toMatch(/rail-collapsed/);
+    await userEvent.click(screen.getByRole('button', { name: /Collapse sidebar/ }));
+    expect(container.querySelector('.shell')?.className).toMatch(/rail-collapsed/);
+    expect(localStorage.getItem('cabinet:rail-collapsed')).toBe('1');
+    // still addressable by label with the text hidden
+    expect(screen.getByRole('button', { name: /Today/ })).toBeTruthy();
+    unmount();
+
+    // a fresh mount picks the persisted preference back up
+    render(<AppShell active="today" onNavigate={() => {}}><div /></AppShell>);
+    expect(screen.getByRole('button', { name: /Expand sidebar/ })).toBeTruthy();
+  });
 });
 
 describe('CommandBar', () => {
@@ -55,11 +71,5 @@ describe('CommandBar', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
-  it('the top-bar trigger also opens the command bar', async () => {
-    render(<AppShell active="today" onNavigate={() => {}}><div /></AppShell>);
-    await userEvent.click(screen.getByRole('button', { name: /Open command bar/ }));
-    expect(screen.getByRole('dialog')).toBeTruthy();
   });
 });

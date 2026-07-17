@@ -1,6 +1,7 @@
-import { Fragment, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { ChatSummary } from '../../lib/contracts.js';
+import { hasDraft } from '../../lib/draft.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { SURFACES, type SurfaceId } from './surfaces.js';
 
@@ -70,6 +71,18 @@ function ChatAccordion({ nav }: { nav: ChatNav }) {
   const [pendingDelete, setPendingDelete] = useState<ChatSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // hasDraft() reads localStorage directly — cheap, but nothing here re-runs
+  // when a draft is saved/cleared from inside the (separately-mounted) Chat
+  // surface. lib/draft.ts fires a 'cabinet:draft' window event on every
+  // change; this just forces a re-render so the pencil badges stay current
+  // without threading draft state through props.
+  const [, forceRerender] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    window.addEventListener('cabinet:draft', forceRerender);
+    return () => window.removeEventListener('cabinet:draft', forceRerender);
+  }, []);
+
   const filtered = useMemo(() => {
     if (!nav.chats) return null;
     const needle = query.trim().toLowerCase();
@@ -140,6 +153,7 @@ function ChatAccordion({ nav }: { nav: ChatNav }) {
                 title={c.title ?? 'Untitled chat'}
               >
                 <ConvoTitle title={c.title ?? 'Untitled chat'} />
+                {hasDraft(c.id) && <Pencil className="rail-convo-draft" size={11} aria-label="Draft saved" />}
                 {nav.resumingIds.has(c.id) && <span className="resume-dot" aria-hidden="true" />}
               </button>
               <button
@@ -181,10 +195,16 @@ export function Rail({
   active,
   onNavigate,
   chatNav,
+  collapsed = false,
+  onToggleCollapsed,
 }: {
   active: SurfaceId;
   onNavigate: (id: SurfaceId) => void;
   chatNav?: ChatNav;
+  /** Icon-only rail (2026-07-17) — state lives in AppShell, which also owns
+   *  .shell's grid columns that have to resize around it. */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
   return (
     <aside className="rail">
@@ -196,6 +216,18 @@ export function Rail({
         </div>
       </div>
 
+      {onToggleCollapsed && (
+        <button
+          type="button"
+          className="rail-collapse-toggle"
+          onClick={onToggleCollapsed}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? <ChevronRight size={13} aria-hidden="true" /> : <ChevronLeft size={13} aria-hidden="true" />}
+        </button>
+      )}
+
       <nav className="rail-nav" aria-label="Surfaces">
         {SURFACES.map((s) => (
           <Fragment key={s.id}>
@@ -203,6 +235,8 @@ export function Rail({
               className={`rail-item${s.id === active ? ' active' : ''}`}
               aria-current={s.id === active ? 'page' : undefined}
               aria-expanded={s.id === 'chat' ? s.id === active : undefined}
+              aria-label={s.label}
+              title={collapsed ? s.label : undefined}
               onClick={() => onNavigate(s.id)}
             >
               <svg className="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">

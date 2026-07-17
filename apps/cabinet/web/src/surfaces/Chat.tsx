@@ -1145,8 +1145,10 @@ function MessagePartView({ part }: { part: MessagePart }) {
       return <img className="msg-image" src={`/api/attachments/${encodeURIComponent(part.id)}`} alt="Attached" loading="lazy" />;
 
     case 'tool-run': {
-      const input = safeJson(part.input);
-      const hasDetails = !!input || !!part.output;
+      // Deliberately no raw input/output disclosure here (2026-07-17, Ben's
+      // request): tool call results are context for the model, not for the
+      // reader — if Ben wants one printed out, he can just ask for it in the
+      // conversation. This is a ledger line, not a debugger.
       return (
         <div className={`msg-tool${part.isError ? ' is-error' : ''}${!part.done ? ' is-running' : ''}`}>
           <div className="msg-tool-head">
@@ -1161,13 +1163,6 @@ function MessagePartView({ part }: { part: MessagePart }) {
             )}
             <span className="msg-tool-state data">{!part.done ? 'running…' : part.isError ? 'error' : 'ok'}</span>
           </div>
-          {hasDetails && (
-            <details className="msg-tool-details">
-              <summary>Details · {part.name}</summary>
-              {input && <pre className="msg-tool-io data">{input}</pre>}
-              {part.output && <pre className="msg-tool-io data">{part.output}</pre>}
-            </details>
-          )}
         </div>
       );
     }
