@@ -128,6 +128,19 @@ export default function App() {
       .finally(() => setCreating(false));
   }, [creating, navigate, refreshChats]);
 
+  // Delete an archived conversation. Rail owns the confirm dialog + the
+  // in-flight/error UI around this call; here we only do the actual work —
+  // hit the API, refresh the list, and bail out of the surface if the chat
+  // deleted out from under it was the one open.
+  const handleDeleteChat = useCallback(
+    (id: string) =>
+      api.deleteChat(id).then(() => {
+        refreshChats();
+        if (chatId === id) navigate('/chat');
+      }),
+    [chatId, navigate, refreshChats],
+  );
+
   const onCommand = useCallback((intent: string) => {
     // Open a fresh conversation and send the intent as its first message.
     api.createChat()
@@ -171,6 +184,7 @@ export default function App() {
         createError,
         onSelect: (id) => navigate(`/chat/${id}`),
         onNew: handleNewChat,
+        onDelete: handleDeleteChat,
       }}
       datestamp={<Datestamp now={now} />}
       presence={presence}

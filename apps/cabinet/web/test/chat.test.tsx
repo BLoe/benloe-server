@@ -67,6 +67,7 @@ function nav(overrides: Partial<ChatNav> = {}): ChatNav {
     createError: null,
     onSelect: () => {},
     onNew: () => {},
+    onDelete: () => Promise.resolve(),
     ...overrides,
   };
 }
@@ -117,6 +118,59 @@ describe('rail Chat accordion', () => {
     await user.click(screen.getByText('Cabinet Systems Status Report'));
 
     expect(onSelect).toHaveBeenCalledWith('t-5dd8');
+  });
+
+  it('clicking delete opens a confirmation dialog instead of deleting outright', async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    const onSelect = vi.fn();
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav({ onDelete, onSelect })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Delete “Cabinet Systems Status Report”' }));
+
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(screen.getByText(/Delete this conversation/)).toBeTruthy();
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled(); // the delete icon must not also select the row
+  });
+
+  it('Esc and Cancel both dismiss the dialog without deleting', async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav({ onDelete })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Delete “Cabinet Systems Status Report”' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Delete “Cabinet Systems Status Report”' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it('confirming deletes the chat and closes the dialog', async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav({ onDelete })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Delete “Cabinet Systems Status Report”' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(onDelete).toHaveBeenCalledWith('t-5dd8');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('a failed delete shows an error and leaves the dialog open to retry', async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn().mockRejectedValue(new Error('409 chat is mid-turn'));
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav({ onDelete })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Delete “Cabinet Systems Status Report”' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByText('409 chat is mid-turn')).toBeTruthy();
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
   });
 });
 

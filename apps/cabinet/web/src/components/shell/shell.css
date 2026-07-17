@@ -149,8 +149,9 @@
 .rail-convos-note { padding: 4px 8px 6px 2px; font-size: 11px; color: var(--linen-faint); }
 .rail-convos-list, .rail-convos-list li { list-style: none; margin: 0; padding: 0; }
 .rail-convos-list { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; max-height: 44dvh; padding-right: 2px; }
+.rail-convo-row { display: flex; align-items: center; gap: 2px; }
 .rail-convo {
-  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; text-align: left;
   padding: 6px 8px; border-radius: var(--r-2); color: var(--linen-dim); font-size: 12.5px;
   transition: color var(--dur-1), background var(--dur-1);
 }
@@ -158,6 +159,49 @@
 .rail-convo.active { background: #ffffff0c; color: var(--linen); box-shadow: inset 2px 0 0 var(--brass); }
 .rail-convo-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-convo .resume-dot { margin-left: auto; width: 6px; height: 6px; }
+
+/* Delete stays out of the way until the row is actually in play — hover,
+   focus, or the keyboard reaching it — so the list reads clean by default. */
+.rail-convo-delete {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: var(--r-2); color: var(--linen-faint); opacity: 0;
+  transition: opacity var(--dur-1), color var(--dur-1), background var(--dur-1);
+}
+.rail-convo-row:hover .rail-convo-delete,
+.rail-convo-row:focus-within .rail-convo-delete { opacity: 1; }
+.rail-convo-delete:hover, .rail-convo-delete:focus-visible { background: var(--vermilion-dim); color: var(--linen); }
+/* No hover on touch — hiding it there would mean no way to reach it at all. */
+@media (hover: none) {
+  .rail-convo-delete { opacity: 1; }
+}
+
+/* ---- confirm dialog (destructive actions) ----
+   Same backdrop language as .cmd-overlay, centered rather than top-anchored
+   — a confirmation interrupts, it doesn't invite typing, so it reads as a
+   deliberate stop in the middle of the desk instead of a dropdown. */
+.confirm-overlay {
+  position: fixed; inset: 0; z-index: 60; background: #0a0603cc; backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  animation: cmd-fade var(--dur-2) ease both;
+}
+.confirm-box {
+  width: min(380px, 100%); background: linear-gradient(180deg, var(--panel-2), var(--inset));
+  border: 1px solid var(--vermilion-dim); border-radius: var(--r-4); box-shadow: var(--elev-2);
+  padding: 20px 20px 16px;
+}
+.confirm-title { font-family: var(--serif); font-size: var(--fs-read); color: var(--linen); margin-bottom: 8px; }
+.confirm-body { font-size: var(--fs-sm); line-height: var(--lh-body); color: var(--linen-dim); }
+.confirm-error { margin-top: 10px; font-size: var(--fs-fine); color: var(--vermilion); }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.confirm-actions button {
+  padding: 7px 14px; border-radius: var(--r-2); font-size: var(--fs-sm);
+  transition: background var(--dur-1), border-color var(--dur-1), opacity var(--dur-1);
+}
+.confirm-cancel { border: 1px solid var(--rule); color: var(--linen-dim); background: transparent; }
+.confirm-cancel:hover:not(:disabled), .confirm-cancel:focus-visible:not(:disabled) { border-color: var(--brass-dim); color: var(--linen); }
+.confirm-danger { border: 1px solid var(--vermilion-dim); color: var(--linen); background: var(--vermilion-dim); }
+.confirm-danger:hover:not(:disabled), .confirm-danger:focus-visible:not(:disabled) { background: var(--vermilion); border-color: var(--vermilion); }
+.confirm-actions button:disabled { opacity: .55; cursor: default; }
 
 /* mobile: the rail is a top bar — let it wrap and give the accordion the
    full width as a second, vertically-scrollable row under the tabs. */

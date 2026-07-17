@@ -358,6 +358,41 @@ describe('chats', () => {
     const msgs = await (await asOwner(`/api/chats/${id}/messages`)).json();
     expect(msgs.messages).toEqual([]);
   });
+
+  it('delete removes the chat (and cascades its messages) and 404s a second time', async () => {
+    await startApp();
+    const { id } = await (await asOwner('/api/chats', { method: 'POST', body: JSON.stringify({ title: 'scratch' }) })).json();
+    cabinet.db.prepare(`INSERT INTO message (id, chat_id, role, parts) VALUES ('m1', ?, 'user', '[]')`).run(id);
+    expect((await asOwner(`/api/chats/${id}/messages`)).status).toBe(200);
+
+    expect((await asOwner(`/api/chats/${id}`, { method: 'DELETE' })).status).toBe(200);
+    expect(deps_chat(id)).toBeUndefined();
+    expect(cabinet.db.prepare('SELECT id FROM message WHERE chat_id = ?').all(id)).toEqual([]);
+
+    expect((await asOwner(`/api/chats/${id}`, { method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('refuses to delete a chat with a turn actively running on it', async () => {
+    const runtime = fakeRuntime();
+    await startApp(runtime);
+    const { id } = await (await asOwner('/api/chats', { method: 'POST', body: JSON.stringify({}) })).json();
+    (runtime as unknown as { currentChat: string | null }).currentChat = id;
+
+    const res = await asOwner(`/api/chats/${id}`, { method: 'DELETE' });
+    expect(res.status).toBe(409);
+    expect(deps_chat(id)).toBeTruthy();
+
+    (runtime as unknown as { currentChat: string | null }).currentChat = null;
+    expect((await asOwner(`/api/chats/${id}`, { method: 'DELETE' })).status).toBe(200);
+  });
+
+  it('a non-owner cannot delete a chat', async () => {
+    await startApp();
+    const { id } = await (await asOwner('/api/chats', { method: 'POST', body: JSON.stringify({}) })).json();
+    const res = await fetch(base + `/api/chats/${id}`, { method: 'DELETE', headers: { Cookie: 'token=guest' } });
+    expect(res.status).toBe(403);
+    expect(deps_chat(id)).toBeTruthy();
+  });
 });
 
 const deps_chat = (id: string) => cabinet.db.prepare('SELECT title FROM chat WHERE id = ?').get(id) as { title: string | null };
