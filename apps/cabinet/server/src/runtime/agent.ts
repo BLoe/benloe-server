@@ -319,6 +319,19 @@ export class AgentRuntime {
           resume: req.kind === 'user' ? (chat.sdk_session_id ?? undefined) : undefined,
           maxTurns: MAX_TURNS_BY_KIND[req.kind],
           includePartialMessages: true,
+          // Pin the permission mode explicitly. The SDK 0.3.202 -> 0.3.210
+          // upgrade (2026-07-16) changed the headless default away from
+          // 'default': non-pre-approved built-in tools (Bash/Read/Grep/Glob/
+          // Edit/Write) started getting mode-auto-denied BEFORE canUseTool or
+          // the PreToolUse hook were ever consulted (no action_audit rows for
+          // them; tool_result was the CLI's canned "The user doesn't want to
+          // take this action right now" deny). We rely on canUseTool as the
+          // headless permission handler, so we must state 'default' — the only
+          // mode that routes an un-pre-approved tool through canUseTool instead
+          // of a classifier/auto-deny. Everything is still allowed there
+          // (gate returns allow under autonomy:'full'); HARD_DENIES stays the
+          // floor via disallowedTools.
+          permissionMode: 'default',
           settingSources: [],
           // Step 1: tighten native auto-compact so it can actually fire
           // mid-turn instead of sitting at ~96.6% of the window (see
