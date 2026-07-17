@@ -269,7 +269,11 @@ function Conversation({
   const [hasText, setHasText] = useState(false);
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [queued, setQueued] = useState<QueuedMessage[]>([]);
-  const readerRef = useRef<HTMLDivElement>(null);
+  // The log's own scroll region (see .reader-log in chat.css, 2026-07-17
+  // rewrite) — the sole scrollable element inside Chat now that the
+  // composer sits outside it as a fixed flex sibling. scrollHost below
+  // targets this directly instead of climbing to .surface.
+  const logRef = useRef<HTMLOListElement>(null);
   // The composer itself: a real contentEditable, not a plain textarea — see
   // htmlToMarkdown/exec/insertLink below. Uncontrolled by design: React
   // fighting a contentEditable's own cursor/selection management on every
@@ -446,15 +450,13 @@ function Conversation({
     return undefined;
   }, [restartWait]);
 
-  // The reading pane has no scroll container of its own — the whole surface
-  // (header, log, and composer together) scrolls inside <main class="surface">
-  // (see shell.css). Anchoring auto-scroll to an element *inside* the log
-  // (the old approach: an empty ref just before the composer, scrolled to
-  // the viewport's bottom edge via scrollIntoView) put the composer itself
-  // — which sits after that anchor in the DOM — below the fold on every
-  // streamed token. Scroll the real host to its true bottom instead, which
-  // includes the composer, and only while the viewer is already there.
-  const scrollHost = useCallback((): HTMLElement | null => readerRef.current?.closest<HTMLElement>('.surface') ?? null, []);
+  // .reader-log is its own scroll region (see chat.css, 2026-07-17 rewrite —
+  // the composer used to share .surface's scroll with the log, which could
+  // let it drift into the middle of a long message on a short conversation;
+  // it's now a fixed sibling outside the scrollable area entirely). Auto-
+  // scroll targets the log directly, and only while the viewer is already
+  // parked at its bottom.
+  const scrollHost = useCallback((): HTMLElement | null => logRef.current, []);
 
   useEffect(() => {
     const host = scrollHost();
@@ -802,7 +804,7 @@ function Conversation({
   const runs = buildRenderRuns(messages ?? [], live, new Date());
 
   return (
-    <div className="reader" ref={readerRef}>
+    <div className="reader">
       <header className="reader-head">
         <div className="reader-title">
           <h2>{chat.title ?? 'New conversation'}</h2>
@@ -810,7 +812,7 @@ function Conversation({
         </div>
       </header>
 
-      <ol className="reader-log">
+      <ol className="reader-log" ref={logRef}>
         {!messages && !error ? (
           <li>
             <p className="chat-loading data">Pulling the scrollback…</p>

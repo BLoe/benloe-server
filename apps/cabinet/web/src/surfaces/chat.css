@@ -4,10 +4,20 @@
    the reader + composer. Tokens only; no shared selectors.
    ========================================================================== */
 
-/* width + centering come from the shared .surface > * rule in shell.css */
+/* width + centering come from the shared .surface > * rule in shell.css.
+   Height is deliberate too (2026-07-17 rewrite): .chat fills exactly the
+   space .surface gives it (a definite height, since .surface is itself a
+   flex:1 child of a height:100dvh chain — see shell.css) and never
+   overflows it (overflow: hidden). That makes .chat itself a NON-scrolling
+   box — a one-surface exception to ".surface is the one scroll container"
+   (see .reader-log below for why: Chat is the one surface with a composer
+   that has to stay put). */
 .chat {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   padding: var(--sp-6);
   width: 100%;
 }
@@ -23,7 +33,8 @@
 .chat-reader-empty {
   display: grid;
   place-items: center;
-  min-height: 50dvh;
+  flex: 1;
+  min-height: 0;
   padding: var(--sp-7);
 }
 
@@ -35,7 +46,12 @@
 /* Narrower than .chat's own (already-centered) box on purpose (2026-07-17):
    the reading pane — header, log, and composer together — shares this one
    width so the whole conversation reads as a single centered column instead
-   of edge-hugging bubbles stretched across --content-max. See --chat-col. */
+   of edge-hugging bubbles stretched across --content-max. See --chat-col.
+
+   height: 100% + min-height: 0 (2026-07-17) makes .reader fill .chat's fixed
+   box exactly, so its three children (head / log / composer) can split that
+   fixed height between a scrolling log and two flex-none anchors — see
+   .reader-log and .composer-form. */
 .reader {
   display: flex;
   flex-direction: column;
@@ -43,6 +59,8 @@
   padding: var(--sp-2) 0;
   max-width: var(--chat-col);
   width: 100%;
+  height: 100%;
+  min-height: 0;
   margin-inline: auto;
 }
 
@@ -52,6 +70,7 @@
   gap: var(--sp-4);
   padding-bottom: var(--sp-4);
   border-bottom: 1px solid var(--rule-soft);
+  flex: none;
 }
 
 .reader-title h2 {
@@ -66,6 +85,20 @@
   color: var(--linen-faint);
 }
 
+/* The ONLY scroll container inside Chat (2026-07-17 rewrite — replaces the
+   position:sticky composer). Previously the composer was sticky within
+   .surface's scroll, which only *approximates* "always visible": sticky
+   only pins once the composer's natural flow position nears the viewport
+   edge, and in a short conversation (little content after a long message)
+   that trigger point can land mid-message — the composer would visibly cut
+   into a message being read, with more of that same message still below it.
+   Giving the log its own scroll region, with .reader-head and
+   .composer-form as fixed (flex: none) siblings above/below it, means the
+   composer is simply never inside the thing that scrolls — it can't overlap
+   message content no matter how short the conversation is, and its own
+   bottom edge/send button can never fall below the fold (see
+   .composer-editor's max-height: 32dvh — the log just yields space as the
+   composer grows). scrollHost() in Chat.tsx targets this element directly. */
 .reader-log {
   list-style: none;
   margin: 0;
@@ -73,6 +106,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* ---- day divider: a calendar-day boundary between runs (change 3) ---- */
@@ -342,19 +378,14 @@
 .msg-who--agent { color: var(--brass); }
 
 /* ---- live conversation: composer + streaming ---- */
-/* Sticky, not just in-flow (2026-07-17 fix): .surface is the app's one
-   scroll container (see shell.css), and a plain in-flow composer let the
-   browser's native "scroll the caret into view" behavior — which only
-   guarantees the caret's line clears the viewport, not the whole element —
-   leave the box's own bottom edge and the send button cut off below the
-   fold as a multi-line message grew. Pinning it to the bottom of the
-   scrollport means it can't be scrolled past regardless of how tall it
-   gets; the opaque background keeps message text from showing through as
-   the log scrolls underneath it. */
+/* Fixed (flex: none), not scrolling with the log (2026-07-17, superseding an
+   earlier position:sticky attempt — see .reader-log's comment for why sticky
+   fell over on short conversations). .reader-log is the only thing that
+   scrolls now, so the composer just sits at a constant place in the layout:
+   it can never be covered by message content and its bottom edge/send
+   button can never land below the fold. */
 .composer-form {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
+  flex: none;
   background: var(--ground);
   margin-top: var(--sp-4);
   padding: var(--sp-3) 0 var(--sp-4);
@@ -583,7 +614,7 @@
   object-fit: contain;
 }
 
-.reader-error { color: var(--vermilion); font-size: var(--fs-sm); margin-top: var(--sp-3); }
+.reader-error { color: var(--vermilion); font-size: var(--fs-sm); margin-top: var(--sp-3); flex: none; }
 .msg-cursor {
   display: inline-block;
   width: 7px;
@@ -610,6 +641,7 @@
   border: 1px solid var(--rule-soft);
   border-radius: 6px;
   background: var(--panel-2);
+  flex: none;
 }
 .resume-text {
   font-size: var(--fs-cap);
