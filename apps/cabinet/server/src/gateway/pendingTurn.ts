@@ -164,7 +164,16 @@ function resumePrompt(marker: PendingTurnMarker): string {
  */
 export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> {
   const marker = takePendingTurn(deps.dataDir);
-  if (!marker) return false;
+  if (!marker) {
+    // Deliberately logged, not silent: this is the ONLY line that
+    // distinguishes "the boot-resume check ran and found nothing to do"
+    // (normal — most restarts aren't mid-turn) from "the check never ran at
+    // all" in the logs. Found live 2026-07-17: two self-redeploys mid-turn
+    // left the chat silently unresumed for 6+ hours with zero log trace
+    // either way, so this couldn't be diagnosed after the fact.
+    console.log('pendingTurn: boot resume check found no marker — clean start');
+    return false;
+  }
 
   const ageMs = Date.now() - Date.parse(marker.startedAt);
   if (!Number.isFinite(ageMs) || ageMs > MAX_RESUME_AGE_MS) {
@@ -240,6 +249,9 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
  */
 export function scheduleInterruptedTurnResume(deps: ResumeDeps, delayMs = 4000): void {
   const timer = setTimeout(() => {
+    // Unconditional — pairs with the "no marker" log above so a silent gap
+    // is diagnosable: if neither line shows up, the timer itself never fired.
+    console.log('pendingTurn: boot resume check firing');
     resumeInterruptedTurn(deps).catch((err) =>
       console.error('pendingTurn: resume failed —', err instanceof Error ? err.message : err),
     );
