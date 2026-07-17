@@ -46,6 +46,7 @@ export const fetchApi: CabinetApi = {
   recall: (query: string) => get<RecallResponse>(`/api/recall${qs({ q: query })}`),
   chats: () => get<{ chats: ChatSummary[] }>('/api/chats'),
   createChat: () => send<{ id: string }>('/api/chats', 'POST', {}),
+  deleteChat: (chatId: string) => send<{ ok: boolean }>(`/api/chats/${chatId}`, 'DELETE'),
   messages: (chatId: string) => get<{ messages: ChatMessage[] }>(`/api/chats/${chatId}/messages`),
   command: (intent: string) => send<{ chatId: string }>('/api/command', 'POST', { intent }),
 };

@@ -1,6 +1,7 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
-import { Plus } from 'lucide-react';
+import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
 import type { ChatSummary } from '../../lib/contracts.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
 import { SURFACES, type SurfaceId } from './surfaces.js';
 
 const ICONS: Record<SurfaceId, ReactNode> = {
@@ -23,6 +24,8 @@ export interface ChatNav {
   createError: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  /** Rejects with an Error whose message is shown in the confirm dialog. */
+  onDelete: (id: string) => Promise<void>;
 }
 
 function matches(c: ChatSummary, needle: string): boolean {
@@ -33,11 +36,34 @@ function matches(c: ChatSummary, needle: string): boolean {
  *  accordion: expanded exactly while the Chat surface is active. */
 function ChatAccordion({ nav }: { nav: ChatNav }) {
   const [query, setQuery] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<ChatSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const filtered = useMemo(() => {
     if (!nav.chats) return null;
     const needle = query.trim().toLowerCase();
     return needle ? nav.chats.filter((c) => matches(c, needle)) : nav.chats;
   }, [nav.chats, query]);
+
+  const askDelete = (e: MouseEvent, c: ChatSummary) => {
+    e.stopPropagation();
+    setDeleteError(null);
+    setPendingDelete(c);
+  };
+  const cancelDelete = () => {
+    if (deleting) return; // let the in-flight call land before the dialog can be dismissed
+    setPendingDelete(null);
+    setDeleteError(null);
+  };
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    nav
+      .onDelete(pendingDelete.id)
+      .then(() => setPendingDelete(null))
+      .catch((e: unknown) => setDeleteError(e instanceof Error ? e.message : "Couldn't delete that conversation."))
+      .finally(() => setDeleting(false));
+  };
 
   return (
     <div className="rail-convos">
@@ -73,7 +99,7 @@ function ChatAccordion({ nav }: { nav: ChatNav }) {
       ) : (
         <ul className="rail-convos-list" role="listbox" aria-label="Conversations">
           {filtered.map((c) => (
-            <li key={c.id}>
+            <li key={c.id} className="rail-convo-row">
               <button
                 type="button"
                 role="option"
@@ -85,9 +111,36 @@ function ChatAccordion({ nav }: { nav: ChatNav }) {
                 <span className="rail-convo-title">{c.title ?? 'Untitled chat'}</span>
                 {nav.resumingIds.has(c.id) && <span className="resume-dot" aria-hidden="true" />}
               </button>
+              <button
+                type="button"
+                className="rail-convo-delete"
+                onClick={(e) => askDelete(e, c)}
+                aria-label={`Delete “${c.title ?? 'Untitled chat'}”`}
+                title="Delete conversation"
+              >
+                <Trash2 size={13} aria-hidden="true" />
+              </button>
             </li>
           ))}
         </ul>
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete this conversation?"
+          body={
+            <>
+              &ldquo;{pendingDelete.title ?? 'Untitled chat'}&rdquo;
+              {pendingDelete.messages > 0 && <> and its {pendingDelete.messages} message{pendingDelete.messages === 1 ? '' : 's'}</>} will be
+              gone for good — this can&rsquo;t be undone.
+            </>
+          }
+          confirmLabel={deleting ? 'Deleting…' : 'Delete'}
+          error={deleteError}
+          busy={deleting}
+          onConfirm={confirmDelete}
+          onCancel={cancelDelete}
+        />
       )}
     </div>
   );

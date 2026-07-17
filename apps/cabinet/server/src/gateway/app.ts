@@ -178,6 +178,21 @@ export function buildApp(deps: GatewayDeps) {
     res.json({ ok: true });
   });
 
+  app.delete('/api/chats/:id', (req, res) => {
+    const id = req.params.id;
+    // Refuse to pull a chat out from under a turn that's actively running on
+    // it — interrupt (or let it finish) first, then delete.
+    if (deps.runtime.currentChat === id) {
+      return res.status(409).json({ error: 'a turn is running on this chat — interrupt it first' });
+    }
+    // message.chat_id REFERENCES chat(id) ON DELETE CASCADE (foreign_keys=ON,
+    // see db/index.ts) — the chat's messages go with it, no manual cleanup.
+    const r = deps.db.prepare('DELETE FROM chat WHERE id = ?').run(id);
+    if (r.changes === 0) return res.status(404).json({ error: 'no such chat' });
+    broadcast('chat-activity', { chatId: id });
+    res.json({ ok: true });
+  });
+
   app.get('/api/chats/:id/messages', (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
     const before = String(req.query.before ?? '9999-12-31');

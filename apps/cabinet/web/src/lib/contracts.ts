@@ -149,6 +149,7 @@ export interface CabinetApi {
   recall(query: string): Promise<RecallResponse>;
   chats(): Promise<{ chats: ChatSummary[] }>;
   createChat(): Promise<{ id: string }>;
+  deleteChat(chatId: string): Promise<{ ok: boolean }>;
   /** `live` — a turn is executing on this chat server-side right now
    *  (reattach-on-load; optional so the mock backend can ignore it). */
   messages(chatId: string): Promise<{ messages: ChatMessage[]; live?: boolean }>;

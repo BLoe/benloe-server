@@ -181,6 +181,11 @@ export const mockApi: CabinetApi = {
   recall: (q) => delay(recallFor(q)),
   chats: () => delay({ chats }),
   createChat: () => delay({ id: 't-new' }),
+  deleteChat: (id) => {
+    const idx = chats.findIndex((c) => c.id === id);
+    if (idx >= 0) chats.splice(idx, 1);
+    return delay({ ok: true });
+  },
   messages: () => delay({ messages: sampleMessages }),
   command: () => delay({ chatId: 't-new' }),
 };
