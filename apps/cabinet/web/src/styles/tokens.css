@@ -91,6 +91,12 @@
      itself and the scroll container's bottom padding reference it, so the
      two can't drift apart and content can't end flush against it. */
   --content-max: clamp(1140px, 79vw, 1480px);
+  /* --chat-col is narrower than --content-max on purpose (2026-07-17): the
+     Chat surface's reading pane + composer share this width and center
+     within the wider --content-max box, so the conversation reads as one
+     coherent column instead of bubbles stretched thin across the full
+     surface width — see .reader in chat.css. */
+  --chat-col: 820px;
   --footer-h: 44px;
   /* --header-h pairs with --footer-h: the rail's brandmark block and the
      topbar share it (and the rail's principal block shares --footer-h), so

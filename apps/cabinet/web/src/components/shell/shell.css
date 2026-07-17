@@ -6,7 +6,15 @@
    inside .surface below. Confirmed live via the UI harness (benji): shellH
    correctly capped at 900 while documentH still hit 1212 — the cap existed
    but nothing enforced it. */
-.shell { display: grid; grid-template-columns: 232px 1fr; height: 100dvh; overflow: hidden; }
+.shell { display: grid; grid-template-columns: 232px 1fr; height: 100dvh; overflow: hidden; transition: grid-template-columns var(--dur-2); }
+/* Icon-only collapse (2026-07-17, Ben's request) — desktop only (min-width
+   guard): at <=860px the rail is already a horizontal top bar via the media
+   query at the bottom of this file, and .shell.rail-collapsed's higher
+   specificity would otherwise fight that layout if the class carried over
+   from a resized desktop window. */
+@media (min-width: 861px) {
+  .shell.rail-collapsed { grid-template-columns: 64px 1fr; }
+}
 
 /* ---- rail ---- */
 .rail {
@@ -26,6 +34,13 @@
 .rail .brandmark .glyph::after { content: ""; position: absolute; inset: 3px; border: 1px solid var(--brass-dim); border-radius: 1px; }
 .rail .brandmark .word { font-family: var(--serif); font-size: 20px; font-weight: 600; letter-spacing: var(--tracking-word); color: var(--linen); }
 .rail .brandmark .sub { font-family: var(--mono); font-size: 9px; letter-spacing: 0.26em; color: var(--brass-dim); text-transform: uppercase; margin-left: -3px; }
+
+.rail-collapse-toggle {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 8px auto 0; padding: 0;
+  border: 1px solid var(--rule); border-radius: var(--r-2); background: transparent; color: var(--linen-faint);
+  cursor: pointer; transition: color var(--dur-1), border-color var(--dur-1);
+}
+.rail-collapse-toggle:hover, .rail-collapse-toggle:focus-visible { color: var(--linen); border-color: var(--brass-dim); }
 
 .rail-nav { display: flex; flex-direction: column; gap: 2px; padding: 14px; overflow-y: auto; min-height: 0; }
 .rail-item {
@@ -47,6 +62,18 @@
 .rail .principal .seal { width: 26px; height: 26px; border-radius: 50%; flex: none; background: radial-gradient(circle at 35% 30%, #3a2b18, #1c130a); border: 1px solid var(--brass-dim); color: var(--brass); display: grid; place-items: center; font-family: var(--serif); font-size: 14px; font-weight: 600; }
 .rail .principal .who { font-size: 13px; color: var(--linen); }
 .rail .principal .role { font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; color: var(--linen-faint); text-transform: uppercase; }
+
+/* ---- icon-only collapsed rail (2026-07-17) ---- */
+.rail-collapsed .brandmark { padding: 0; justify-content: center; }
+.rail-collapsed .brandmark .word, .rail-collapsed .brandmark .sub { display: none; }
+.rail-collapsed .rail-item { justify-content: center; gap: 0; padding: 9px 0; }
+.rail-collapsed .rail-item .txt { display: none; }
+/* No room for the search box + list at 64px — collapses back to nav icons
+   only; ChatAccordion stays mounted underneath (its own state, e.g. the
+   search query, survives) so it's exactly as it was on re-expand. */
+.rail-collapsed .rail-convos { display: none; }
+.rail-collapsed .principal { justify-content: center; padding: 0; }
+.rail-collapsed .principal > div:not(.seal) { display: none; }
 
 /* ---- main column ---- */
 /* min-height: 0 on both flex children below breaks the flex intrinsic-min-
@@ -73,16 +100,7 @@
    genuinely wants full-bleed should override explicitly, not by omission. */
 .surface > * { max-width: var(--content-max); margin-inline: auto; }
 
-/* ---- command bar (trigger + overlay) ---- */
-.cmd-trigger {
-  margin: 0 auto; width: min(560px, 60%); display: flex; align-items: center; gap: 10px;
-  padding: 9px 14px; border: 1px solid var(--rule); border-radius: var(--r-3); background: var(--inset);
-  color: var(--linen-faint); font-size: 13.5px; cursor: text; transition: border-color var(--dur-1);
-}
-.cmd-trigger:hover { border-color: var(--brass-dim); }
-.cmd-trigger .lead { color: var(--brass); font-family: var(--mono); }
-.cmd-trigger .kbd { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--brass); border: 1px solid var(--rule); border-radius: 5px; padding: 2px 7px; background: #00000030; }
-
+/* ---- command bar (⌘K overlay only — no header trigger, removed 2026-07-17) ---- */
 .cmd-overlay { position: fixed; inset: 0; z-index: 50; background: #0a0603cc; backdrop-filter: blur(2px); display: flex; align-items: flex-start; justify-content: center; padding-top: 18dvh; animation: cmd-fade var(--dur-2) ease both; }
 @keyframes cmd-fade { from { opacity: 0; } }
 .cmd-box { width: min(620px, 92vw); background: linear-gradient(180deg, var(--panel-2), var(--inset)); border: 1px solid var(--brass-dim); border-radius: var(--r-4); box-shadow: var(--elev-2); overflow: hidden; }
@@ -122,9 +140,11 @@
   .rail-nav { flex-direction: row; }
   .rail-item.active::before { display: none; }
   .rail-item.active { box-shadow: inset 0 -2px 0 var(--brass); }
-  /* datestamp on its own line, command bar full-width beneath it */
   .topbar { flex-wrap: wrap; }
-  .cmd-trigger { width: 100%; }
+  /* the icon-only desktop collapse is a different affordance for a
+     different problem (reclaiming screen width) — mobile's rail is already
+     a compact icon+label bar, so the toggle has nothing left to do here */
+  .rail-collapse-toggle { display: none; }
 }
 
 /* ---- rail: Chat accordion (the conversation list) ----
@@ -157,6 +177,10 @@
 .rail-convo:hover { background: #ffffff08; color: var(--linen); }
 .rail-convo.active { background: #ffffff0c; color: var(--linen); box-shadow: inset 2px 0 0 var(--brass); }
 .rail-convo-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; min-width: 0; }
+/* Draft badge (2026-07-17, Ben's request) — sits close to the title it
+   belongs to, not shoved to the far right like .resume-dot, which marks
+   something happening to the row rather than a property of its content. */
+.rail-convo .rail-convo-draft { flex: none; margin-left: 4px; color: var(--linen-faint); }
 .rail-convo .resume-dot { margin-left: auto; width: 6px; height: 6px; }
 
 /* Marquee-on-hover (2026-07-17, Ben's request): the wrapper (.rail-convo-title)

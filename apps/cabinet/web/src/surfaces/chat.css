@@ -32,11 +32,18 @@
   font-style: italic;
 }
 
+/* Narrower than .chat's own (already-centered) box on purpose (2026-07-17):
+   the reading pane — header, log, and composer together — shares this one
+   width so the whole conversation reads as a single centered column instead
+   of edge-hugging bubbles stretched across --content-max. See --chat-col. */
 .reader {
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
   padding: var(--sp-2) 0;
+  max-width: var(--chat-col);
+  width: 100%;
+  margin-inline: auto;
 }
 
 .reader-head {
@@ -98,12 +105,17 @@
 .msg--user {
   align-self: flex-end;
   align-items: flex-end;
-  text-align: right;
+  /* percentage cap (not just the 72ch on .msg) guarantees a left gutter even
+     on a message that would otherwise brush the reading column's edge */
+  max-width: min(72ch, 82%);
 }
 
 .msg--assistant,
 .msg--system {
   align-self: flex-start;
+  /* slight indent off the reading column's right edge — the bubble stops
+     short instead of running the full width (2026-07-17, Ben's request) */
+  margin-right: var(--sp-6);
 }
 
 .msg-meta {
@@ -201,10 +213,23 @@
 .msg-text th { color: var(--linen-dim); font-weight: 600; }
 .msg-text img { max-width: 100%; border-radius: var(--r-2); }
 
+/* Chat-bubble treatment (2026-07-17, Ben's request): each side's bubble
+   squares off the corner nearest its "origin" edge — user from the right,
+   assistant from the left — the standard speech-bubble tail convention. */
 .msg--user .msg-text {
   background: var(--panel-2);
   border: 1px solid var(--rule-soft);
   border-radius: var(--r-3);
+  border-top-right-radius: 0;
+  padding: var(--sp-3) var(--sp-4);
+  text-align: left;
+}
+
+.msg--assistant .msg-text {
+  background: var(--panel);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r-3);
+  border-top-left-radius: 0;
   padding: var(--sp-3) var(--sp-4);
 }
 
@@ -287,28 +312,6 @@
   .msg-tool-pulse { animation: none; opacity: 0.9; }
 }
 
-.msg-tool-details {
-  margin-top: var(--sp-2);
-}
-.msg-tool-details summary {
-  cursor: pointer;
-  font-size: var(--fs-cap);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-cap);
-  color: var(--linen-faint);
-  list-style: none;
-}
-.msg-tool-details summary::-webkit-details-marker { display: none; }
-.msg-tool-details summary::before {
-  content: '▸';
-  display: inline-block;
-  width: 1em;
-  transition: transform 0.15s ease;
-}
-.msg-tool-details[open] summary::before { transform: rotate(90deg); }
-.msg-tool-details summary:hover { color: var(--linen-dim); }
-.msg-tool-details .msg-tool-io { padding-left: 1em; }
-
 /* ---- notices ---- */
 .msg-notice {
   font-size: var(--fs-sm);
@@ -339,9 +342,22 @@
 .msg-who--agent { color: var(--brass); }
 
 /* ---- live conversation: composer + streaming ---- */
+/* Sticky, not just in-flow (2026-07-17 fix): .surface is the app's one
+   scroll container (see shell.css), and a plain in-flow composer let the
+   browser's native "scroll the caret into view" behavior — which only
+   guarantees the caret's line clears the viewport, not the whole element —
+   leave the box's own bottom edge and the send button cut off below the
+   fold as a multi-line message grew. Pinning it to the bottom of the
+   scrollport means it can't be scrolled past regardless of how tall it
+   gets; the opaque background keeps message text from showing through as
+   the log scrolls underneath it. */
 .composer-form {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  background: var(--ground);
   margin-top: var(--sp-4);
-  padding-top: var(--sp-4);
+  padding: var(--sp-3) 0 var(--sp-4);
   border-top: 1px solid var(--rule-soft);
 }
 .composer-tools {

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { clearDraft, loadDraft, saveDraft } from '../src/lib/draft.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { clearDraft, hasDraft, loadDraft, saveDraft } from '../src/lib/draft.js';
 
 afterEach(() => localStorage.clear());
 
@@ -21,5 +21,22 @@ describe('draft', () => {
     saveDraft('c1', 'hi');
     clearDraft('c1');
     expect(loadDraft('c1')).toBeNull();
+  });
+
+  it('hasDraft reflects presence/absence (2026-07-17, backs the rail pencil badge)', () => {
+    expect(hasDraft('c1')).toBe(false);
+    saveDraft('c1', 'hi');
+    expect(hasDraft('c1')).toBe(true);
+    clearDraft('c1');
+    expect(hasDraft('c1')).toBe(false);
+  });
+
+  it('fires a cabinet:draft window event on save and clear, so other mounted trees can react (2026-07-17)', () => {
+    const onEvent = vi.fn();
+    window.addEventListener('cabinet:draft', onEvent);
+    saveDraft('c1', 'hi');
+    clearDraft('c1');
+    window.removeEventListener('cabinet:draft', onEvent);
+    expect(onEvent).toHaveBeenCalledTimes(2);
   });
 });

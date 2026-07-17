@@ -22,6 +22,7 @@ vi.mock('../src/lib/chat.js', async (importActual) => {
 
 import { Chat } from '../src/surfaces/Chat.js';
 import { Rail, type ChatNav } from '../src/components/shell/Rail.js';
+import { saveDraft } from '../src/lib/draft.js';
 
 const CHATS: ChatSummary[] = [
   {
@@ -76,14 +77,26 @@ beforeEach(() => {
   messagesMock.mockReset();
   streamChatMock.mockReset();
   messagesMock.mockResolvedValue({ messages: MESSAGES });
+  localStorage.clear();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 describe('rail Chat accordion', () => {
   it('lists conversations by title when the Chat surface is active', () => {
     render(<Rail active="chat" onNavigate={() => {}} chatNav={nav()} />);
     expect(screen.getByText('Cabinet Systems Status Report')).toBeTruthy();
     expect(screen.getByText('Weight tracker + macro ring')).toBeTruthy();
+  });
+
+  it('badges a conversation with a pencil icon only while it has a saved draft (2026-07-17)', () => {
+    saveDraft('t-5dd8', '<p>half-typed thought</p>');
+    render(<Rail active="chat" onNavigate={() => {}} chatNav={nav()} />);
+    expect(screen.getByLabelText('Draft saved')).toBeTruthy();
+    // the other conversation has no draft — only one badge total
+    expect(screen.getAllByLabelText('Draft saved')).toHaveLength(1);
   });
 
   it('stays collapsed when another surface is active', () => {
@@ -187,11 +200,10 @@ describe('Chat surface', () => {
     await waitFor(() => expect(messagesMock).toHaveBeenCalledWith('t-5dd8'));
     expect(await screen.findByText('How are the services looking?')).toBeTruthy();
     expect(screen.getByText(/All green\. Nine services up/)).toBeTruthy();
-    // tool-run part rendered as a compact card: human summary line + raw
-    // name in the details disclosure
+    // tool-run part rendered as a compact ledger line only — no raw
+    // input/output disclosure (removed 2026-07-17, Ben's request: tool
+    // results are context for the model, not reading material for Ben).
     expect(screen.getByText('Ran pm2 list')).toBeTruthy();
-    expect(screen.getByText(/pm2_list/)).toBeTruthy();
-    expect(screen.getByText('9 online')).toBeTruthy();
   });
 
   it('a mid-turn network drop (e.g. the server restarting) still leaves the tool call it already ran visible, not wiped (2026-07-15 fix)', async () => {
