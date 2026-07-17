@@ -27,6 +27,13 @@ describe('AppShell', () => {
     await userEvent.click(screen.getByRole('button', { name: /Ops/ }));
     expect(onNavigate).toHaveBeenCalledWith('ops');
   });
+
+  it('does not render the numeric hotkey hints in the rail (removed, 2026-07-17 — decorative only, never wired to keys)', () => {
+    render(<AppShell active="today" onNavigate={() => {}}><div /></AppShell>);
+    for (const name of [/Today/, /Domains/, /Ops/, /Brain/, /Chat/]) {
+      expect(screen.getByRole('button', { name }).textContent).not.toMatch(/[0-9]/);
+    }
+  });
 });
 
 describe('CommandBar', () => {

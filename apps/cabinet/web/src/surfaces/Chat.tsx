@@ -3,6 +3,7 @@ import { api } from '../lib/cabinet.js';
 import type { ChatMessage, MessagePart, ChatSummary } from '../lib/cabinet.js';
 import { streamChat, foldTurn, uploadAttachment, interruptChat } from '../lib/chat.js';
 import { usingMock } from '../lib/cabinet.js';
+import { loadDraft, saveDraft, clearDraft } from '../lib/draft.js';
 import { Paperclip, ArrowUp, Square, X, Bold, Italic, Underline, Strikethrough, Link2, List, ListOrdered } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -302,6 +303,20 @@ function Conversation({
   const mountedRef = useRef(true);
   useEffect(() => () => {
     mountedRef.current = false;
+  }, []);
+
+  // Restore a saved draft (lib/draft.ts): runs once per mount, and
+  // Conversation remounts per chat (key={chat.id} at the call site — see
+  // Chat()), so this fires exactly once per chat open, before the user can
+  // type anything to race it.
+  useEffect(() => {
+    const el = editorRef.current;
+    const saved = loadDraft(chat.id);
+    if (el && saved) {
+      el.innerHTML = saved;
+      setHasText(!!el.textContent?.trim());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -722,7 +737,8 @@ function Conversation({
     el.focus();
     document.execCommand(command);
     setHasText(!!el.textContent?.trim());
-  }, []);
+    saveDraft(chat.id, el.innerHTML);
+  }, [chat.id]);
 
   // Toolbar buttons use onMouseDown+preventDefault (not onClick alone) so the
   // click never steals focus/collapses the text selection before execCommand
@@ -741,7 +757,8 @@ function Conversation({
     if (hasSelection) document.execCommand('createLink', false, url);
     else document.execCommand('insertHTML', false, `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`);
     setHasText(!!el.textContent?.trim());
-  }, []);
+    saveDraft(chat.id, el.innerHTML);
+  }, [chat.id]);
 
   // Reads the composer's live DOM, converts to markdown, hands off to the
   // existing submit()/queue machinery, then clears the (uncontrolled) editor.
@@ -752,7 +769,8 @@ function Conversation({
     submit(text, pending);
     el.textContent = '';
     setHasText(false);
-  }, [submit, pending]);
+    clearDraft(chat.id);
+  }, [submit, pending, chat.id]);
 
   // Stop button: a real cancel — POSTs /api/interrupt, which aborts the
   // turn server-side (AgentRuntime.interrupt) rather than just dropping this
@@ -935,7 +953,11 @@ function Conversation({
             role="textbox"
             aria-multiline="true"
             aria-label="Message Cabinet"
-            onInput={() => setHasText(!!editorRef.current?.textContent?.trim())}
+            onInput={() => {
+              const el = editorRef.current;
+              setHasText(!!el?.textContent?.trim());
+              if (el) saveDraft(chat.id, el.innerHTML);
+            }}
             onPaste={(e) => {
               const items = e.clipboardData?.items;
               const files: File[] = [];

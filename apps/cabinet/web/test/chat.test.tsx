@@ -216,3 +216,47 @@ describe('Chat surface', () => {
     expect(await screen.findByText('Ran: ls')).toBeTruthy();
   });
 });
+
+describe('composer drafts', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it('restores a draft after navigating away and back to the same chat', async () => {
+    const user = userEvent.setup();
+    const first = render(<Chat chat={CHATS[0]!} />);
+    await screen.findByText('How are the services looking?');
+
+    await user.type(screen.getByLabelText('Message Cabinet'), 'a draft in progress');
+    expect(screen.getByLabelText('Message Cabinet').textContent).toBe('a draft in progress');
+
+    first.unmount();
+    render(<Chat chat={CHATS[0]!} />);
+    await screen.findByText('How are the services looking?');
+    expect(screen.getByLabelText('Message Cabinet').textContent).toBe('a draft in progress');
+  });
+
+  it('keeps drafts separate per chat', async () => {
+    const user = userEvent.setup();
+    const first = render(<Chat chat={CHATS[0]!} />);
+    await screen.findByText('How are the services looking?');
+    await user.type(screen.getByLabelText('Message Cabinet'), 'draft for chat one');
+    first.unmount();
+
+    messagesMock.mockResolvedValue({ messages: [] });
+    render(<Chat chat={CHATS[1]!} />);
+    await waitFor(() => expect(messagesMock).toHaveBeenCalledWith('t-1a2b'));
+    expect(screen.getByLabelText('Message Cabinet').textContent).toBe('');
+  });
+
+  it('clears the draft once the message is actually sent', async () => {
+    const user = userEvent.setup();
+    streamChatMock.mockImplementation(async () => {});
+    render(<Chat chat={CHATS[0]!} />);
+    await screen.findByText('How are the services looking?');
+
+    await user.type(screen.getByLabelText('Message Cabinet'), 'sent and gone');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(localStorage.getItem('cabinet:draft:t-5dd8')).toBeNull();
+  });
+});
