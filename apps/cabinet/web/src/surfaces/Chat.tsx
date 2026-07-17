@@ -43,6 +43,7 @@ interface QueuedMessage {
 }
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 /**
  * A real Date from either timestamp shape a ChatMessage.created_at carries:
@@ -67,16 +68,47 @@ export function dayLabel(d: Date, now: Date): string {
   return `${MONTHS[d.getMonth() + 1] ?? ''} ${d.getDate()}`;
 }
 
-/** "just now" / "3m ago" / a 12-hour clock time — a day-divider row already
- *  carries the date, so a run's meta row only needs to say *when today*. */
+/** Always a relative label, never a clock time (2026-07-17, Ben's request —
+ *  the old version fell back to a bare "2:05 PM" past the one-hour mark,
+ *  which read as an odd mix of registers next to "just now"/"3m ago". A
+ *  day-divider row already carries the exact date and the hover title
+ *  carries the exact time (fullStamp below), so this only ever needs to say
+ *  *roughly* when — a calm ladder that gets vaguer the further back it goes:
+ *  just now → a few minutes ago → an hour ago → a few hours ago → yesterday →
+ *  a weekday name → last week → N weeks/months/years ago.
+ *
+ *  The first three rungs are elapsed-time based (not calendar-day based) on
+ *  purpose: a message from 11:58pm is still "a few hours ago" at 12:02am,
+ *  not a calendar-boundary-confused "yesterday" four minutes later. Only
+ *  once a full day has actually elapsed does the ladder switch to calendar
+ *  days, where "yesterday"/weekday-name/"last week" are calendar concepts
+ *  anyway. */
 export function relativeTime(d: Date, now: Date): string {
-  const diffMin = (now.getTime() - d.getTime()) / 60_000;
+  const diffMs = Math.max(0, now.getTime() - d.getTime());
+  const diffMin = diffMs / 60_000;
+  const diffHr = diffMs / 3_600_000;
+
   if (diffMin < 1) return 'just now';
-  if (diffMin < 60) return `${Math.floor(diffMin)}m ago`;
-  const h = d.getHours();
-  const hh = h % 12 || 12;
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm} ${h >= 12 ? 'PM' : 'AM'}`;
+  if (diffMin < 45) return 'a few minutes ago';
+  if (diffHr < 1.5) return 'an hour ago';
+  if (diffHr < 24) return 'a few hours ago';
+
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+
+  if (diffDays <= 1) return 'yesterday';
+  if (diffDays < 7) return WEEKDAYS[d.getDay()] ?? '';
+  if (diffDays < 14) return 'last week';
+  if (diffDays < 30) {
+    const weeks = Math.floor(diffDays / 7);
+    return `${weeks} week${weeks === 1 ? '' : 's'} ago`;
+  }
+  if (diffDays < 365) {
+    const months = Math.floor(diffDays / 30);
+    return `${months} month${months === 1 ? '' : 's'} ago`;
+  }
+  const years = Math.floor(diffDays / 365);
+  return `${years} year${years === 1 ? '' : 's'} ago`;
 }
 
 /** "12:03 AM" — the Slack-style hover stamp on entries and tool calls. */
