@@ -44,17 +44,43 @@ describe('dayLabel', () => {
 });
 
 describe('relativeTime', () => {
-  const now = new Date('2026-07-11T17:20:00.000Z');
+  const now = new Date('2026-07-11T17:20:00.000Z'); // a Saturday
 
   it('"just now" under a minute', () => {
     expect(relativeTime(new Date('2026-07-11T17:19:45.000Z'), now)).toBe('just now');
   });
-  it('"Nm ago" under an hour', () => {
-    expect(relativeTime(new Date('2026-07-11T17:03:00.000Z'), now)).toBe('17m ago');
+  it('"a few minutes ago" under 45 minutes', () => {
+    expect(relativeTime(new Date('2026-07-11T17:03:00.000Z'), now)).toBe('a few minutes ago');
   });
-  it('falls back to a 12-hour clock time past an hour', () => {
-    expect(relativeTime(new Date('2026-07-11T14:05:00.000Z'), now)).toBe('2:05 PM');
-    expect(relativeTime(new Date('2026-07-11T00:05:00.000Z'), now)).toBe('12:05 AM');
+  it('"an hour ago" between 45 and 90 minutes', () => {
+    expect(relativeTime(new Date('2026-07-11T16:10:00.000Z'), now)).toBe('an hour ago');
+  });
+  it('"a few hours ago" from 90 minutes up to a full elapsed day, never a clock time', () => {
+    expect(relativeTime(new Date('2026-07-11T14:05:00.000Z'), now)).toBe('a few hours ago');
+    expect(relativeTime(new Date('2026-07-11T00:05:00.000Z'), now)).toBe('a few hours ago');
+  });
+  it('is elapsed-time based, not calendar-midnight based — 3 hours ago is still "a few hours ago" even after crossing a midnight boundary', () => {
+    const justAfterMidnight = new Date('2026-07-12T00:02:00.000Z');
+    expect(relativeTime(new Date('2026-07-11T20:58:00.000Z'), justAfterMidnight)).toBe('a few hours ago');
+  });
+  it('"yesterday" once a full day has actually elapsed', () => {
+    expect(relativeTime(new Date('2026-07-10T10:00:00.000Z'), now)).toBe('yesterday');
+  });
+  it('a weekday name for 2–6 days back', () => {
+    // now is Saturday 2026-07-11; three days back is Wednesday 2026-07-08.
+    expect(relativeTime(new Date('2026-07-08T17:20:00.000Z'), now)).toBe('Wednesday');
+  });
+  it('"last week" for 7–13 days back', () => {
+    expect(relativeTime(new Date('2026-07-02T17:20:00.000Z'), now)).toBe('last week');
+  });
+  it('"N weeks ago" for 14–29 days back', () => {
+    expect(relativeTime(new Date('2026-06-20T17:20:00.000Z'), now)).toBe('3 weeks ago');
+  });
+  it('"N months ago" for 30–364 days back', () => {
+    expect(relativeTime(new Date('2026-04-11T17:20:00.000Z'), now)).toBe('3 months ago');
+  });
+  it('"N years ago" past 365 days back', () => {
+    expect(relativeTime(new Date('2024-01-11T17:20:00.000Z'), now)).toBe('2 years ago');
   });
 });
 

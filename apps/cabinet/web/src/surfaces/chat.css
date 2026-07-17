@@ -175,19 +175,29 @@
 }
 
 /* Slack-style per-message timestamp: invisible until the message is hovered,
-   full precision on the title attribute. Sits in the top-right of the entry. */
+   full precision on the title attribute. Floats out into the gutter beside
+   the bubble (2026-07-17, Ben's request) — the same space the bubble-
+   alignment fix (.reader-row/.msg--user, above) opened up, rather than
+   overlapping the bubble's own corner. .msg-parts stretches to the bubble's
+   actual content width (it's a column-flex child of .msg, whose own width is
+   shrink-to-fit up to its max-width cap), so left/right: 100% always lands
+   flush against the bubble's outer edge regardless of message length.
+   Default (assistant/system, left-aligned bubble) floats right; .msg--user
+   overrides to float left, mirroring its right-aligned bubble. */
 .msg-entry-when {
   position: absolute;
   top: 2px;
-  right: var(--sp-2);
+  left: 100%;
+  margin-left: var(--sp-3);
   font-size: var(--fs-cap);
   color: var(--linen-faint);
   opacity: 0;
   pointer-events: none;
+  white-space: nowrap;
   transition: opacity var(--dur-1);
 }
 .msg-parts:hover .msg-entry-when { opacity: 1; }
-.msg--user .msg-entry-when { top: var(--sp-2); }
+.msg--user .msg-entry-when { top: var(--sp-2); left: auto; right: 100%; margin-left: 0; margin-right: var(--sp-3); }
 
 .msg-text {
   font-size: var(--fs-body);
