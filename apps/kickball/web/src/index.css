@@ -1,0 +1,248 @@
+@import '@fontsource-variable/archivo';
+@import '@fontsource/instrument-sans/400.css';
+@import '@fontsource/instrument-sans/500.css';
+@import '@fontsource/instrument-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+@import 'tailwindcss';
+
+/*
+ * Design language: a paper lineup card on a Central Park dirt field at dusk.
+ *
+ * The ground is a deep, green-tinted dark — the field once the lights come on,
+ * not a neutral black. Content sits on it as chalk-white cards, the way a
+ * manager's lineup card sits on the grass. Accents are the two objects actually
+ * present: the red rubber ball, and the amber of the park lamps and the bar
+ * afterwards. Nothing here is a joke about the shirts.
+ */
+@theme {
+  --color-field: #12241b;
+  --color-field-deep: #0b1711;
+  --color-rail: #1b3327;
+  --color-rail-line: #274b39;
+
+  --color-chalk: #f4f1e8;
+  --color-chalk-dim: #ddd7c7;
+  --color-chalk-line: #cfc7b2;
+  --color-ink: #16201a;
+  --color-ink-soft: #55605a;
+
+  --color-rubber: #d8412f;
+  --color-rubber-deep: #a82f20;
+  --color-lamp: #e9a83c;
+  --color-dirt: #b08968;
+  --color-turf: #4e9c6b;
+
+  --font-display: 'Archivo Variable', system-ui, sans-serif;
+  --font-sans: 'Instrument Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --radius-card: 14px;
+}
+
+@layer base {
+  html {
+    background-color: var(--color-field-deep);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--color-field);
+    /* A faint dirt-and-grass wash so the ground is not a flat block. */
+    background-image:
+      radial-gradient(120% 80% at 50% 105%, rgba(176, 137, 104, 0.16), transparent 62%),
+      radial-gradient(80% 60% at 50% -10%, rgba(233, 168, 60, 0.09), transparent 70%);
+    background-attachment: fixed;
+    color: var(--color-chalk);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-variation-settings: 'wdth' 112;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.02;
+    margin: 0;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-lamp);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--color-lamp);
+    color: var(--color-ink);
+  }
+}
+
+@layer components {
+  /* Stadium-signage lettering: expanded, tight, all caps. */
+  .display {
+    font-family: var(--font-display);
+    font-variation-settings: 'wdth' 118;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+    line-height: 0.95;
+  }
+
+  /* Small structural labels. These name a thing; they never decorate. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-chalk) 55%, transparent);
+  }
+
+  .eyebrow-ink {
+    color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  }
+
+  /* The lineup card: a warm paper surface lifted off the field. */
+  .card {
+    background: var(--color-chalk);
+    color: var(--color-ink);
+    border-radius: var(--radius-card);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.5) inset,
+      0 18px 40px -24px rgba(0, 0, 0, 0.75),
+      0 2px 6px -2px rgba(0, 0, 0, 0.35);
+  }
+
+  /* A darker panel that stays on the field rather than becoming paper. */
+  .panel {
+    background: color-mix(in srgb, var(--color-rail) 88%, transparent);
+    border: 1px solid var(--color-rail-line);
+    border-radius: var(--radius-card);
+  }
+
+  .rule {
+    border-bottom: 1px solid var(--color-chalk-line);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1.05rem;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    cursor: pointer;
+    transition:
+      transform 120ms ease,
+      background-color 120ms ease,
+      border-color 120ms ease,
+      opacity 120ms ease;
+  }
+
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-rubber);
+    color: #fff;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-rubber-deep);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border-color: var(--color-rail-line);
+    color: var(--color-chalk);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-rail) 70%, transparent);
+  }
+
+  .btn-chalk {
+    background: transparent;
+    border-color: var(--color-chalk-line);
+    color: var(--color-ink);
+  }
+
+  .btn-chalk:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-chalk-dim) 55%, transparent);
+  }
+
+  .field-input {
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    border-radius: 8px;
+    border: 1px solid var(--color-chalk-line);
+    background: #fff;
+    color: var(--color-ink);
+  }
+
+  .field-input:disabled {
+    background: var(--color-chalk-dim);
+  }
+
+  /* Position codes, jersey numbers, inning headers: always monospace so the
+     lineup grid lines up like a printed scorecard. */
+  .code {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
