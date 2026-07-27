@@ -97,6 +97,10 @@ Current secrets:
 | fantasy-hawk-api | 3005 | apps/fantasy-hawk | Fantasy sports analytics |
 | gamenight-frontend | 3000 | apps/gamenight | Game night frontend |
 | gamenight-api | 3001 | apps/gamenight | Game night API |
+| yahoo-fantasy-mcp | 3006 | apps/yahoo-fantasy-mcp | Yahoo Fantasy MCP server |
+| fitness-api | 3007 | apps/fitness | Fitness director API |
+| cabinet-api | 3008 | apps/cabinet | Cabinet personal agent |
+| kickball-api | 3009 | apps/kickball | Kickball lineups (next free port: 3010) |
 
 Check services: `pm2 list`
 
