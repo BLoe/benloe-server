@@ -242,6 +242,22 @@ test.describe('Position fit table', () => {
     expect(ascValues[ascValues.length - 1]).toBe(Math.max(...ascValues));
   });
 
+  test('column headers read as clickable controls', async ({ page }) => {
+    await page.goto('/');
+    await openTab(page, 'Ratings');
+    await expect(page.getByRole('heading', { name: 'Position fit' })).toBeVisible();
+
+    const header = page.getByRole('button', { name: 'RF', exact: true });
+    // A bare <button> is cursor:default, which makes a sortable header feel
+    // like text rather than a control.
+    await expect(header).toHaveCSS('cursor', 'pointer');
+
+    const background = () => header.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const resting = await background();
+    await header.hover();
+    await expect.poll(background).not.toBe(resting);
+  });
+
   test('only one column is sorted at a time', async ({ page }) => {
     await page.goto('/');
     await openTab(page, 'Ratings');

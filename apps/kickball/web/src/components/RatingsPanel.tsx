@@ -46,6 +46,15 @@ function SortMark({ direction }: { direction?: 'asc' | 'desc' }) {
   );
 }
 
+/**
+ * Shared look for the sortable column headers. The button fills its cell so the
+ * whole header is the click target, and it carries a pointer cursor and a soft
+ * hover wash — a bare <button> defaults to cursor:default, which makes a
+ * clickable header feel like inert text.
+ */
+const sortHeaderClass =
+  'flex w-full cursor-pointer select-none items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-chalk-dim/70 hover:text-ink';
+
 function ariaSort(sort: FitSort, key: string): 'ascending' | 'descending' | 'none' {
   if (sort?.key !== key) return 'none';
   return sort.direction === 'asc' ? 'ascending' : 'descending';
@@ -250,7 +259,10 @@ export function RatingsPanel({ meta }: { meta: Meta }) {
                   <button
                     type="button"
                     onClick={() => toggleFitSort('name')}
-                    className="eyebrow eyebrow-ink inline-flex items-center gap-1 hover:text-ink"
+                    title="Sort by player name"
+                    className={`${sortHeaderClass} eyebrow ${
+                      fitSort?.key === 'name' ? 'bg-chalk-dim/70 text-ink' : 'eyebrow-ink'
+                    }`}
                   >
                     Player
                     <SortMark direction={fitSort?.key === 'name' ? fitSort.direction : undefined} />
@@ -267,8 +279,8 @@ export function RatingsPanel({ meta }: { meta: Meta }) {
                       type="button"
                       onClick={() => toggleFitSort(position.key)}
                       title={`Sort by ${position.alias ?? position.name}`}
-                      className={`code inline-flex items-center gap-0.5 text-xs hover:text-ink ${
-                        fitSort?.key === position.key ? 'text-ink' : 'text-ink-soft'
+                      className={`${sortHeaderClass} code justify-center gap-0.5 px-1.5 text-xs ${
+                        fitSort?.key === position.key ? 'bg-chalk-dim/70 text-ink' : 'text-ink-soft'
                       }`}
                     >
                       {position.code}
