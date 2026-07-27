@@ -158,6 +158,105 @@ test.describe('Rating game', () => {
   });
 });
 
+test.describe('Position fit table', () => {
+  /** Player names down the first column, in the order currently displayed. */
+  async function columnOrder(page: Page): Promise<string[]> {
+    return page.locator('table tbody tr td:first-child').allInnerTexts();
+  }
+
+  const fitTable = (page: Page) => page.locator('table').filter({ has: page.getByRole('button', { name: 'Player' }) });
+
+  test('sorts by player name and toggles direction', async ({ page }) => {
+    await page.goto('/');
+    await openTab(page, 'Ratings');
+    await expect(page.getByRole('heading', { name: 'Position fit' })).toBeVisible();
+
+    const header = fitTable(page).locator('th').first();
+    await expect(header).toHaveAttribute('aria-sort', 'none');
+
+    await page.getByRole('button', { name: 'Player' }).click();
+    await expect(header).toHaveAttribute('aria-sort', 'ascending');
+    const ascending = await columnOrder(page);
+    expect(ascending).toEqual([...ascending].sort((a, b) => a.localeCompare(b)));
+
+    await page.getByRole('button', { name: 'Player' }).click();
+    await expect(header).toHaveAttribute('aria-sort', 'descending');
+    expect(await columnOrder(page)).toEqual([...ascending].reverse());
+  });
+
+  test('sorts by a position column, best first', async ({ page, request, baseURL }) => {
+    // Position fit is computed from the defensive stats only, and so far the
+    // game has recorded nothing but offense. Without this the whole column
+    // would be one repeated value and the ordering assertion below would hold
+    // no matter how the comparator behaved.
+    const roster = (await (await request.get(`${baseURL}/api/public/raters`)).json()).players as {
+      id: string;
+      name: string;
+    }[];
+    const idOf = (name: string) => roster.find((p) => p.name === name)!.id;
+
+    for (const [statKey, best] of [
+      ['pop_flies', 'Cleo Nakamura'],
+      ['infielding', 'Hank Ito'],
+    ] as const) {
+      const winner = idOf(best);
+      for (const other of roster) {
+        if (other.id === winner) continue;
+        for (let i = 0; i < 3; i++) {
+          await request.post(`${baseURL}/api/public/comparison`, {
+            data: { statKey, playerA: winner, playerB: other.id, winnerId: winner, raterId: null, passcode: '' },
+          });
+        }
+      }
+    }
+
+    await page.goto('/');
+    await openTab(page, 'Ratings');
+    await expect(page.getByRole('heading', { name: 'Position fit' })).toBeVisible();
+
+    // Shortstop leans on infield fielding (0.35) far more than pop flies
+    // (0.15), so the infield specialist seeded above is unambiguously first.
+    // Catcher would not do: it weights those two equally, so the two
+    // specialists tie there and the name tie-break decides the order.
+    const header = fitTable(page).getByRole('columnheader', { name: /^SS/ }).first();
+    const button = page.getByRole('button', { name: 'SS', exact: true });
+    const values = async () =>
+      (await fitTable(page).locator('tbody tr td:nth-child(6)').allInnerTexts()).map(Number);
+
+    await button.click();
+    // A position column opens best-first rather than ascending.
+    await expect(header).toHaveAttribute('aria-sort', 'descending');
+    const descending = await columnOrder(page);
+    const descValues = await values();
+
+    expect(descValues).toEqual([...descValues].sort((a, b) => b - a));
+    // The column has to actually vary, or the assertion above proves nothing.
+    expect(new Set(descValues).size).toBeGreaterThan(1);
+    expect(descending[0]).toBe('Hank Ito');
+
+    await button.click();
+    await expect(header).toHaveAttribute('aria-sort', 'ascending');
+    expect(await columnOrder(page)).toEqual([...descending].reverse());
+    const ascValues = await values();
+    expect(ascValues).toEqual([...ascValues].sort((a, b) => a - b));
+    expect(ascValues[ascValues.length - 1]).toBe(Math.max(...ascValues));
+  });
+
+  test('only one column is sorted at a time', async ({ page }) => {
+    await page.goto('/');
+    await openTab(page, 'Ratings');
+    await expect(page.getByRole('heading', { name: 'Position fit' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Player' }).click();
+    await page.getByRole('button', { name: 'SS', exact: true }).click();
+
+    const sorted = await fitTable(page)
+      .locator('th')
+      .evaluateAll((cells) => cells.filter((c) => c.getAttribute('aria-sort') !== 'none').length);
+    expect(sorted).toBe(1);
+  });
+});
+
 test.describe('Game workflow', () => {
   test('refuses to generate without enough players', async ({ page }) => {
     await page.goto('/');

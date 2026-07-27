@@ -29,6 +29,28 @@ function rampStyle(value: number): React.CSSProperties {
   return { backgroundColor: `oklch(${lightness}% ${chroma / 100} 152)` };
 }
 
+type FitSort = { key: string; direction: 'asc' | 'desc' } | null;
+
+/**
+ * The sort arrow. It keeps its width when inactive so that clicking between
+ * columns does not shuffle the header widths around.
+ */
+function SortMark({ direction }: { direction?: 'asc' | 'desc' }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`inline-block w-2 text-[0.55rem] leading-none ${direction ? 'opacity-70' : 'opacity-0'}`}
+    >
+      {direction === 'asc' ? '▲' : '▼'}
+    </span>
+  );
+}
+
+function ariaSort(sort: FitSort, key: string): 'ascending' | 'descending' | 'none' {
+  if (sort?.key !== key) return 'none';
+  return sort.direction === 'asc' ? 'ascending' : 'descending';
+}
+
 function Meter({ value, max = 100 }: { value: number; max?: number }) {
   const fraction = Math.max(0, Math.min(1, value / max));
   return (
@@ -46,6 +68,7 @@ export function RatingsPanel({ meta }: { meta: Meta }) {
   const [data, setData] = useState<RatingData | null>(null);
   const [includeSelf, setIncludeSelf] = useState(true);
   const [statKey, setStatKey] = useState(meta.stats[0]?.key ?? '');
+  const [fitSort, setFitSort] = useState<FitSort>(null);
 
   useEffect(() => {
     api.players.list().then((r) => setPlayers(r.players.filter((p) => p.active)));
@@ -69,6 +92,38 @@ export function RatingsPanel({ meta }: { meta: Meta }) {
     () => (data ? Object.values(data.counts).reduce((s, v) => s + v, 0) : 0),
     [data]
   );
+
+  const fitsById = useMemo(
+    () => new Map((data?.fits ?? []).map((entry) => [entry.playerId, entry.fits])),
+    [data]
+  );
+
+  /**
+   * A first click sorts names A to Z but positions best-first, since the
+   * question a position column answers is "who should be playing here".
+   * Clicking the same column again flips it.
+   */
+  const toggleFitSort = (key: string) =>
+    setFitSort((current) =>
+      current?.key === key
+        ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: key === 'name' ? 'asc' : 'desc' }
+    );
+
+  const sortedForFit = useMemo(() => {
+    if (!fitSort) return players;
+    const byName = (a: Player, b: Player) => a.name.localeCompare(b.name);
+    return [...players].sort((a, b) => {
+      if (fitSort.key === 'name') {
+        return fitSort.direction === 'asc' ? byName(a, b) : byName(b, a);
+      }
+      const left = fitsById.get(a.id)?.[fitSort.key] ?? 0;
+      const right = fitsById.get(b.id)?.[fitSort.key] ?? 0;
+      // Ties fall back to the name so the order never looks arbitrary.
+      const compared = left === right ? byName(a, b) : left - right;
+      return fitSort.direction === 'asc' ? compared : -compared;
+    });
+  }, [players, fitSort, fitsById]);
 
   if (!data) {
     return <p className="eyebrow animate-pulse">Fitting ratings…</p>;
@@ -184,21 +239,47 @@ export function RatingsPanel({ meta }: { meta: Meta }) {
 
       <section className="card p-6">
         <h2 className="display text-xl">Position fit</h2>
-        <p className="eyebrow eyebrow-ink mb-5 mt-1">How well each player suits each spot, from their ratings</p>
+        <p className="eyebrow eyebrow-ink mb-5 mt-1">
+          How well each player suits each spot · click a column to sort
+        </p>
         <div className="-mx-2 overflow-x-auto px-2">
           <table className="w-full min-w-[40rem] border-collapse text-sm">
             <thead>
               <tr>
-                <th className="eyebrow eyebrow-ink pb-2 text-left font-normal">Player</th>
+                <th scope="col" aria-sort={ariaSort(fitSort, 'name')} className="pb-2 text-left font-normal">
+                  <button
+                    type="button"
+                    onClick={() => toggleFitSort('name')}
+                    className="eyebrow eyebrow-ink inline-flex items-center gap-1 hover:text-ink"
+                  >
+                    Player
+                    <SortMark direction={fitSort?.key === 'name' ? fitSort.direction : undefined} />
+                  </button>
+                </th>
                 {meta.positions.map((position) => (
-                  <th key={position.key} className="code pb-2 text-center text-xs text-ink-soft" title={position.alias ?? position.name}>
-                    {position.code}
+                  <th
+                    key={position.key}
+                    scope="col"
+                    aria-sort={ariaSort(fitSort, position.key)}
+                    className="pb-2 text-center"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleFitSort(position.key)}
+                      title={`Sort by ${position.alias ?? position.name}`}
+                      className={`code inline-flex items-center gap-0.5 text-xs hover:text-ink ${
+                        fitSort?.key === position.key ? 'text-ink' : 'text-ink-soft'
+                      }`}
+                    >
+                      {position.code}
+                      <SortMark direction={fitSort?.key === position.key ? fitSort.direction : undefined} />
+                    </button>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {players.map((player) => {
+              {sortedForFit.map((player) => {
                 const fits = data.fits.find((f) => f.playerId === player.id)?.fits ?? {};
                 const best = Math.max(...meta.positions.map((p) => fits[p.key] ?? 0));
                 return (
