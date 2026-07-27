@@ -7,7 +7,7 @@ import {
   positionFit,
 } from './defense';
 import type { DefensePlayer, DefenseResult, Gender } from './defense';
-import { FIELDERS_PER_INNING, POSITIONS } from './domain';
+import { DEFENSE_KEYS, FIELDERS_PER_INNING, POSITIONS, getPosition } from './domain';
 
 const INNINGS = 6;
 
@@ -62,6 +62,59 @@ function expectLegalLineup(
   const total = Object.values(result.inningsPlayed).reduce((s, v) => s + v, 0);
   expect(total).toBe(innings * FIELDERS_PER_INNING);
 }
+
+describe('POSITIONS weighting', () => {
+  const weightOf = (positionKey: string, statKey: string) =>
+    getPosition(positionKey)!.weights[statKey] ?? 0;
+
+  it('gives every position weights that sum to exactly 1', () => {
+    for (const position of POSITIONS) {
+      const sum = Object.values(position.weights).reduce((s, v) => s + v, 0);
+      expect(sum, `${position.key} weights`).toBeCloseTo(1, 8);
+    }
+  });
+
+  it('only weights defensive stats', () => {
+    for (const position of POSITIONS) {
+      for (const statKey of Object.keys(position.weights)) {
+        expect(DEFENSE_KEYS, `${position.key} uses ${statKey}`).toContain(statKey);
+      }
+    }
+  });
+
+  it('never asks the catcher to catch a pop fly', () => {
+    // There is no bat in kickball, so nothing pops up behind the plate. This
+    // is a baseball assumption that does not survive contact with the sport.
+    expect(weightOf('catcher', 'pop_flies')).toBe(0);
+  });
+
+  it('leaves bunt coverage overwhelmingly with the striker', () => {
+    for (const position of POSITIONS) {
+      if (position.key === 'third') continue;
+      expect(weightOf('third', 'striking'), `vs ${position.key}`).toBeGreaterThan(
+        weightOf(position.key, 'striking')
+      );
+    }
+    // The pitcher and first baseman take the occasional one; nobody else.
+    expect(weightOf('pitcher', 'striking')).toBeGreaterThan(0);
+    expect(weightOf('first', 'striking')).toBeGreaterThan(0);
+    expect(weightOf('catcher', 'striking')).toBe(0);
+  });
+
+  it('gives the roamer more range than the corner outfielders', () => {
+    for (const key of ['left', 'left_center', 'right']) {
+      expect(weightOf('right_center', 'outfielding')).toBeGreaterThan(weightOf(key, 'outfielding'));
+    }
+  });
+
+  it('makes hands the biggest part of playing first base and catcher', () => {
+    for (const key of ['first', 'catcher']) {
+      const weights = getPosition(key)!.weights;
+      const top = Object.entries(weights).sort((a, b) => b[1] - a[1])[0][0];
+      expect(top, `${key} should lean on infielding`).toBe('infielding');
+    }
+  });
+});
 
 describe('positionFit', () => {
   it('treats an unrated player as league average', () => {
