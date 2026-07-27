@@ -28,8 +28,9 @@ const ROSTER = [
 
 test.describe.configure({ mode: 'serial' });
 
+/** The tabs are real links now, each with its own URL. */
 async function openTab(page: Page, label: string) {
-  await page.getByRole('button', { name: label, exact: true }).click();
+  await page.getByRole('link', { name: label, exact: true }).click();
 }
 
 /**
@@ -529,5 +530,74 @@ test.describe('Responsive', () => {
     await page.setViewportSize(PHONE);
     await startGame(page, 'Ana Reyes');
     expect(await horizontalOverflow(page)).toBeLessThanOrEqual(1);
+  });
+});
+
+test.describe('URL routing', () => {
+  test('the root redirects to the games tab', async ({ page }) => {
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/games$/);
+  });
+
+  test('deep links straight to a tab', async ({ page }) => {
+    await page.goto('/ratings');
+    await expect(page.getByRole('heading', { name: 'Coverage' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Ratings' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  test('stays on the tab through a refresh', async ({ page }) => {
+    await page.goto('/');
+    await openTab(page, 'Ratings');
+    await expect(page).toHaveURL(/\/ratings$/);
+
+    await page.reload();
+    await expect(page).toHaveURL(/\/ratings$/);
+    await expect(page.getByRole('heading', { name: 'Coverage' })).toBeVisible();
+  });
+
+  test('remembers which stat was being viewed', async ({ page }) => {
+    await page.goto('/ratings');
+    await page.getByRole('button', { name: 'Pitching', exact: true }).click();
+    await expect(page).toHaveURL(/stat=pitching/);
+
+    await page.reload();
+    await expect(page).toHaveURL(/stat=pitching/);
+    // The chip is still the selected one after the reload.
+    await expect(page.getByRole('button', { name: 'Pitching', exact: true })).toHaveClass(/bg-ink/);
+  });
+
+  test('gives each game its own URL that survives a refresh', async ({ page }) => {
+    await page.goto('/games');
+    await page.getByRole('button', { name: /Base Invaders/ }).click();
+    await expect(page).toHaveURL(/\/games\/[0-9a-f-]{36}$/);
+    const url = page.url();
+
+    await page.reload();
+    expect(page.url()).toBe(url);
+    await expect(page.getByRole('heading', { name: 'Base Invaders' })).toBeVisible();
+  });
+
+  test('walks back through history', async ({ page }) => {
+    await page.goto('/games');
+    await openTab(page, 'Roster');
+    await expect(page).toHaveURL(/\/roster$/);
+    await openTab(page, 'Settings');
+    await expect(page).toHaveURL(/\/settings$/);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/roster$/);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/games$/);
+  });
+
+  test('falls back to the list for a game that no longer exists', async ({ page }) => {
+    await page.goto('/games/00000000-0000-0000-0000-000000000000');
+    await expect(page).toHaveURL(/\/games$/);
+    await expect(page.getByRole('heading', { name: 'Pick a game' })).toBeVisible();
+  });
+
+  test('still 404s on a genuinely unknown path', async ({ page }) => {
+    await page.goto('/dugout');
+    await expect(page.getByRole('heading', { name: 'Nothing at this address' })).toBeVisible();
   });
 });

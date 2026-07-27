@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import type { GamePayload, GameSummaryRow, Player } from '../lib/api';
 import type { Meta } from '../pages/Dashboard';
@@ -7,8 +8,12 @@ import { FieldDiagram } from './FieldDiagram';
 export function GamesPanel({ meta }: { meta: Meta }) {
   const [games, setGames] = useState<GameSummaryRow[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
   const [payload, setPayload] = useState<GamePayload | null>(null);
+  // Which game is open lives in the URL, so a refresh or a shared link lands
+  // back on the same week.
+  const { gameId } = useParams<{ gameId?: string }>();
+  const navigate = useNavigate();
+  const selected = gameId ?? null;
   const [creating, setCreating] = useState(false);
   const [playedOn, setPlayedOn] = useState(new Date().toISOString().slice(0, 10));
   const [opponent, setOpponent] = useState('');
@@ -25,8 +30,21 @@ export function GamesPanel({ meta }: { meta: Meta }) {
       setPayload(null);
       return;
     }
-    api.games.get(selected).then(setPayload);
-  }, [selected]);
+    let cancelled = false;
+    setPayload(null);
+    api.games
+      .get(selected)
+      .then((result) => {
+        if (!cancelled) setPayload(result);
+      })
+      .catch(() => {
+        // A stale or hand-typed link to a game that no longer exists.
+        if (!cancelled) navigate('/games', { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, navigate]);
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -34,8 +52,8 @@ export function GamesPanel({ meta }: { meta: Meta }) {
     try {
       const created = await api.games.create({ playedOn, opponent });
       await loadGames();
-      setSelected(created.game.id);
       setOpponent('');
+      navigate(`/games/${created.game.id}`);
     } finally {
       setCreating(false);
     }
@@ -86,8 +104,9 @@ export function GamesPanel({ meta }: { meta: Meta }) {
               {games.map((game) => (
                 <li key={game.id}>
                   <button
-                    onClick={() => setSelected(game.id)}
-                    className={`w-full rounded-lg px-3 py-2.5 text-left transition ${
+                    onClick={() => navigate(`/games/${game.id}`)}
+                    aria-current={selected === game.id ? 'page' : undefined}
+                    className={`w-full cursor-pointer rounded-lg px-3 py-2.5 text-left transition ${
                       selected === game.id ? 'bg-rail' : 'hover:bg-rail/60'
                     }`}
                   >
@@ -120,7 +139,7 @@ export function GamesPanel({ meta }: { meta: Meta }) {
             loadGames();
           }}
           onDeleted={() => {
-            setSelected(null);
+            navigate('/games', { replace: true });
             loadGames();
           }}
         />

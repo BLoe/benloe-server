@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import type { Player } from '../lib/api';
 import type { Meta } from '../pages/Dashboard';
@@ -76,8 +77,20 @@ export function RatingsPanel({ meta }: { meta: Meta }) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [data, setData] = useState<RatingData | null>(null);
   const [includeSelf, setIncludeSelf] = useState(true);
-  const [statKey, setStatKey] = useState(meta.stats[0]?.key ?? '');
   const [fitSort, setFitSort] = useState<FitSort>(null);
+
+  // The chosen stat rides in the query string so a refresh keeps the view.
+  // Replaced rather than pushed, so Back leaves the tab instead of walking
+  // through every chip that was clicked on the way here.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get('stat');
+  const statKey =
+    requested && meta.stats.some((s) => s.key === requested) ? requested : meta.stats[0]?.key ?? '';
+  const setStatKey = (key: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('stat', key);
+    setSearchParams(next, { replace: true });
+  };
 
   useEffect(() => {
     api.players.list().then((r) => setPlayers(r.players.filter((p) => p.active)));
