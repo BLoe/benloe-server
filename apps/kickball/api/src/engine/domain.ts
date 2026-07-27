@@ -64,7 +64,7 @@ export const STATS: StatDef[] = [
     key: 'pop_flies',
     name: 'Catching pop flies',
     category: 'defense',
-    description: 'Tracking a ball in the air and squeezing it. Also good hands on a throw.',
+    description: 'Tracking a ball in the air and squeezing it.',
     prompt: 'Who is more reliable catching a ball in the air?',
   },
   {
@@ -78,8 +78,9 @@ export const STATS: StatDef[] = [
     key: 'infielding',
     name: 'Infield fielding',
     category: 'defense',
-    description: 'Handling a ball on the ground in the dirt, cleanly and quickly.',
-    prompt: 'Who fields a grounder more cleanly?',
+    description:
+      'Everything in the dirt: grounders handled cleanly, and catching a throw at the bag with a runner bearing down.',
+    prompt: 'Who has better hands in the infield?',
   },
   {
     key: 'throwing',
@@ -132,9 +133,20 @@ export interface PositionDef {
 /**
  * The ten defensive positions.
  *
- * Weights encode which rated skills actually matter at each spot. Third base is
- * the striker, so it leans hard on the striking rating; right-center is the
- * roamer, who moves around and needs the read more than raw range.
+ * Weights encode which rated skills actually matter at each spot, and they are
+ * kickball weights, not baseball ones. Two corrections worth remembering,
+ * because both are easy to get wrong by analogy:
+ *
+ *   - The catcher never catches a pop fly. There is no bat, so nothing pops up
+ *     behind the plate. Their job is covering home for force outs and tags and
+ *     receiving throws with a runner bearing down, which is why the row below
+ *     is hands, decision making and arm, with no pop-fly term at all.
+ *   - Bunt coverage is overwhelmingly the striker's, which is the entire point
+ *     of the position. The pitcher only takes what is right at them and the
+ *     first baseman only rarely, so those carry token striking weight.
+ *
+ * The roamer covers more ground than the corner outfielders, not less, so their
+ * outfielding weight sits above everyone else's.
  */
 export const POSITIONS: PositionDef[] = [
   {
@@ -142,7 +154,8 @@ export const POSITIONS: PositionDef[] = [
     code: 'P',
     name: 'Pitcher',
     zone: 'battery',
-    weights: { pitching: 0.45, defense_iq: 0.2, infielding: 0.15, throwing: 0.15, pop_flies: 0.05 },
+    // Only fields the bunts hit straight back at them; the striker has the rest.
+    weights: { pitching: 0.45, defense_iq: 0.2, infielding: 0.15, throwing: 0.1, striking: 0.1 },
     x: 0.5,
     y: 0.55,
   },
@@ -151,7 +164,9 @@ export const POSITIONS: PositionDef[] = [
     code: 'C',
     name: 'Catcher',
     zone: 'battery',
-    weights: { infielding: 0.2, throwing: 0.2, defense_iq: 0.2, striking: 0.2, pop_flies: 0.2 },
+    // Receives the throw, knows the play, makes the next throw. No pop flies,
+    // and the bunts belong to the striker.
+    weights: { infielding: 0.45, defense_iq: 0.3, throwing: 0.25 },
     x: 0.5,
     y: 0.93,
   },
@@ -160,7 +175,8 @@ export const POSITIONS: PositionDef[] = [
     code: '1B',
     name: 'First base',
     zone: 'infield',
-    weights: { pop_flies: 0.3, infielding: 0.3, defense_iq: 0.2, throwing: 0.2 },
+    // Catching the throw is the job, and infielding now covers that.
+    weights: { infielding: 0.5, defense_iq: 0.2, throwing: 0.18, striking: 0.07, pop_flies: 0.05 },
     x: 0.74,
     y: 0.58,
   },
@@ -169,7 +185,7 @@ export const POSITIONS: PositionDef[] = [
     code: '2B',
     name: 'Second base',
     zone: 'infield',
-    weights: { infielding: 0.35, throwing: 0.25, defense_iq: 0.25, pop_flies: 0.15 },
+    weights: { infielding: 0.4, throwing: 0.25, defense_iq: 0.2, pop_flies: 0.15 },
     x: 0.66,
     y: 0.42,
   },
@@ -178,7 +194,7 @@ export const POSITIONS: PositionDef[] = [
     code: 'SS',
     name: 'Shortstop',
     zone: 'infield',
-    weights: { infielding: 0.35, throwing: 0.3, defense_iq: 0.2, pop_flies: 0.15 },
+    weights: { infielding: 0.4, throwing: 0.28, defense_iq: 0.17, pop_flies: 0.15 },
     x: 0.34,
     y: 0.42,
   },
@@ -188,7 +204,8 @@ export const POSITIONS: PositionDef[] = [
     name: 'Third base',
     alias: 'Striker',
     zone: 'infield',
-    weights: { striking: 0.4, infielding: 0.25, throwing: 0.2, defense_iq: 0.15 },
+    // Bunt coverage is almost entirely this position. That is the point of it.
+    weights: { striking: 0.5, infielding: 0.22, throwing: 0.18, defense_iq: 0.1 },
     x: 0.26,
     y: 0.58,
   },
@@ -216,7 +233,10 @@ export const POSITIONS: PositionDef[] = [
     name: 'Right-center field',
     alias: 'Roamer',
     zone: 'outfield',
-    weights: { defense_iq: 0.3, outfielding: 0.25, striking: 0.2, pop_flies: 0.15, throwing: 0.1 },
+    // Covers the most ground of anyone, so outfielding sits above the corners.
+    // The token striking is for pressing up on the first-base side against a
+    // bunt, which is the one bunt duty that is not the striker's.
+    weights: { outfielding: 0.45, defense_iq: 0.25, pop_flies: 0.15, throwing: 0.1, striking: 0.05 },
     x: 0.63,
     y: 0.11,
   },
