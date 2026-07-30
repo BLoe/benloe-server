@@ -31,6 +31,7 @@ export interface Settings {
   team_name: string;
   innings: number;
   min_women_in_field: number;
+  max_same_gender_run: number;
   rating_game_passcode: string;
   admin_emails: string;
 }

@@ -11,7 +11,7 @@ import { fitBradleyTerry } from '../engine/ratings';
 import type { Comparison, PlayerRating } from '../engine/ratings';
 import { optimizeBattingOrder } from '../engine/batting';
 import type { OffenseProfile } from '../engine/batting';
-import { optimizeDefense, positionFit } from '../engine/defense';
+import { countsTowardMinimum, optimizeDefense, positionFit } from '../engine/defense';
 import type { DefenseLock, DefensePlayer, Gender } from '../engine/defense';
 
 export interface PlayerRow {
@@ -130,9 +130,24 @@ function thetaOf(table: RatingTable, statKey: string, playerId: string): number 
   return table.get(statKey)?.get(playerId)?.theta ?? 0;
 }
 
-export function offenseProfile(playerId: string, table: RatingTable): OffenseProfile {
+/** The two buckets the batting-order spread constraint alternates between. */
+export function battingGroup(player: Player): string {
+  return countsTowardMinimum({ playerId: player.id, gender: player.gender, ratings: {} })
+    ? 'counted'
+    : 'other';
+}
+
+export function offenseProfile(
+  playerId: string,
+  table: RatingTable,
+  player?: Player
+): OffenseProfile {
   return {
     playerId,
+    // Bucketed exactly like the field minimum, so the spread-out constraint
+    // never strands a non-binary player as a group of one who can never
+    // alternate with anybody.
+    group: player ? battingGroup(player) : undefined,
     onBase: thetaOf(table, 'on_base', playerId),
     power: thetaOf(table, 'power', playerId),
     bunting: thetaOf(table, 'bunting', playerId),
@@ -242,8 +257,12 @@ export function generateLineup(
   const seed = options.seed || gameId;
 
   const battingResult = optimizeBattingOrder(
-    available.map((p) => offenseProfile(p.id, table)),
-    { seed: `${seed}:batting` }
+    available.map((p) => offenseProfile(p.id, table, p)),
+    {
+      seed: `${seed}:batting`,
+      maxSameGroupRun:
+        settings.max_same_gender_run > 0 ? settings.max_same_gender_run : undefined,
+    }
   );
 
   const defenseResult = optimizeDefense(
@@ -268,7 +287,7 @@ export function generateLineup(
       inningsPlayed: defenseResult.inningsPlayed,
       fairShare: defenseResult.fairShare,
       positionsPlayed: defenseResult.positionsPlayed,
-      warnings: defenseResult.warnings,
+      warnings: [...battingResult.warnings, ...defenseResult.warnings],
       insights: buildInsights(battingResult.order, table, nameOf, defenseResult.assignment),
       generatedAt: new Date().toISOString(),
     },
