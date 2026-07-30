@@ -133,6 +133,12 @@ test.describe('Rating game', () => {
     await page.keyboard.press('ArrowLeft');
     await expect(page.getByText('3 yours · 3 team')).toBeVisible();
 
+    // Wait for the next matchup to actually be on screen before pressing again.
+    // Keys are ignored while the game is fetching, which is honest behaviour;
+    // the earlier version of this test only passed because a buggy parallel
+    // prefetch happened to make the next matchup available instantly.
+    await expect(page.locator('button.card')).toHaveCount(2);
+
     await page.keyboard.press('ArrowRight');
     await expect(page.getByText('4 yours · 4 team')).toBeVisible();
   });
@@ -150,11 +156,82 @@ test.describe('Rating game', () => {
     await expect(page.getByText('0 yours · 4 team')).toBeVisible();
   });
 
+  test('never asks the same thing twice in a row', async ({ page }) => {
+    // Reported from real use: the same stat and the same pair would often come
+    // straight back after answering, sometimes with the two names swapped over.
+    // A pair was only marked seen once answered, so the prefetch replacing it
+    // did not exclude what was still on screen; and the two initial prefetches
+    // were issued together with identical exclusions.
+    await startGame(page, 'Ana Reyes');
+
+    const fingerprint = async () => {
+      const prompt = await page.locator('h1.display').innerText();
+      const names = await page.locator('button.card .display').allInnerTexts();
+      // Sorted, so a left/right swap counts as the same question.
+      return `${prompt}::${names.sort().join('|')}`;
+    };
+
+    const seen: string[] = [await fingerprint()];
+    for (let i = 0; i < 14; i++) {
+      const before = seen[seen.length - 1];
+      await page.locator('button.card').first().click();
+      await expect.poll(fingerprint).not.toBe(before);
+      seen.push(await fingerprint());
+    }
+
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i], `question ${i + 1} repeated the one before it`).not.toBe(seen[i - 1]);
+    }
+    // And it should not be cycling round a tiny handful either.
+    expect(new Set(seen).size).toBeGreaterThanOrEqual(seen.length - 1);
+  });
+
+  test('tells the server what is already on screen', async ({ page }) => {
+    // The precise mechanism behind the repeats, and the version of this that
+    // fails deterministically. The behavioural test above only catches it when
+    // the scoring happens to be peaked enough to pick the same pair twice, which
+    // is common on a real database with hundreds of comparisons and rare on a
+    // fresh one — so on its own it would have shipped the bug happily.
+    const served: string[] = [];
+    const excluded: string[][] = [];
+
+    page.on('response', async (response) => {
+      if (!response.url().includes('/api/public/matchup')) return;
+      try {
+        const body = await response.json();
+        if (body?.pairKey) served.push(body.pairKey);
+      } catch {
+        /* not a matchup payload */
+      }
+    });
+    page.on('request', (request) => {
+      if (!request.url().includes('/api/public/matchup')) return;
+      const seen = new URL(request.url()).searchParams.get('seen') ?? '';
+      excluded.push(seen.split(',').filter(Boolean));
+    });
+
+    await startGame(page, 'Ana Reyes');
+    for (let i = 0; i < 5; i++) {
+      await page.locator('button.card').first().click();
+      await expect(page.locator('button.card')).toHaveCount(2);
+    }
+    await expect.poll(() => excluded.length).toBeGreaterThan(4);
+
+    // Requests go out one at a time, so request i answers response i. Every
+    // request after the first has to exclude the matchup already served before
+    // it — otherwise the server is free to hand back what is on screen.
+    for (let i = 1; i < Math.min(excluded.length, served.length); i++) {
+      expect(excluded[i], `request ${i + 1} did not exclude the previous matchup`).toContain(
+        served[i - 1]
+      );
+    }
+  });
+
   test('feeds the dashboard coverage view', async ({ page }) => {
     await page.goto('/');
     await openTab(page, 'Ratings');
     await expect(page.getByRole('heading', { name: 'Coverage' })).toBeVisible();
-    await expect(page.getByText('4 total')).toBeVisible();
+    await expect(page.getByText('23 total')).toBeVisible();
     await expect(page.getByText('No comparisons yet')).toBeHidden();
   });
 });
