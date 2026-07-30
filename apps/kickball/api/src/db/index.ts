@@ -128,6 +128,7 @@ function seedSettings(db: DB): void {
   insert.run('innings', String(DEFAULT_SETTINGS.innings));
   insert.run('min_women_in_field', String(DEFAULT_SETTINGS.min_women_in_field));
   insert.run('rating_game_passcode', '');
+  insert.run('max_same_gender_run', '2');
   const seededAdmins = process.env.KICKBALL_ADMIN_EMAILS || process.env.CABINET_OWNER_EMAIL || '';
   insert.run('admin_emails', seededAdmins);
 }
@@ -136,6 +137,8 @@ export interface Settings {
   team_name: string;
   innings: number;
   min_women_in_field: number;
+  /** Most consecutive kickers of the same gender in the batting order. 0 = off. */
+  max_same_gender_run: number;
   rating_game_passcode: string;
   admin_emails: string;
 }
@@ -147,6 +150,7 @@ export function readSettings(db: DB): Settings {
     team_name: map.get('team_name') ?? DEFAULT_SETTINGS.team_name,
     innings: Number(map.get('innings') ?? DEFAULT_SETTINGS.innings),
     min_women_in_field: Number(map.get('min_women_in_field') ?? DEFAULT_SETTINGS.min_women_in_field),
+    max_same_gender_run: Number(map.get('max_same_gender_run') ?? DEFAULT_SETTINGS.max_same_gender_run),
     rating_game_passcode: map.get('rating_game_passcode') ?? '',
     admin_emails: map.get('admin_emails') ?? '',
   };

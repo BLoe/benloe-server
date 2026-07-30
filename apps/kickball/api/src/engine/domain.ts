@@ -311,6 +311,8 @@ export const DEFAULT_SETTINGS = {
   team_name: 'No New Friends',
   innings: 6,
   min_women_in_field: 3,
+  /** Spreading the order out costs about 0.05 runs a game. Effectively free. */
+  max_same_gender_run: 2,
   /** Neutral starting rating on the 0-100 display scale. */
   default_rating: 50,
 };

@@ -83,6 +83,27 @@ export function SettingsPanel({ meta, onChange }: { meta: Meta; onChange: (setti
           </p>
 
           <div>
+            <label className="eyebrow eyebrow-ink mb-1.5 block" htmlFor="max-run">
+              Most of the same gender in a row
+            </label>
+            <input
+              id="max-run"
+              type="number"
+              min={0}
+              max={20}
+              className="field-input"
+              value={draft.max_same_gender_run}
+              onChange={(e) => setDraft({ ...draft, max_same_gender_run: Number(e.target.value) })}
+            />
+            <p className="mt-1.5 text-sm text-ink-soft">
+              Spreads the batting order out. Without it the order sorts itself by ability, and if that happens
+              to track gender you get every man and then every woman. Costs about 0.05 runs a game, against
+              roughly a run that the ordering is worth in the first place. Set to 0 to turn it off; if the
+              turnout makes your number impossible, the closest achievable spread is used instead.
+            </p>
+          </div>
+
+          <div>
             <label className="eyebrow eyebrow-ink mb-1.5 block" htmlFor="passcode">
               Rating game code
             </label>

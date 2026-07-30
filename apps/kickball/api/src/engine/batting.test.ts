@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_CALIBRATION,
+  longestSameGroupRun,
+  smallestFeasibleRun,
   evaluateOrder,
   heuristicOrder,
   hitDistribution,
@@ -333,5 +335,115 @@ describe('optimizeBattingOrder', () => {
     const started = Date.now();
     optimizeBattingOrder(roster, { seed: 'perf' });
     expect(Date.now() - started).toBeLessThan(10000);
+  });
+});
+
+describe('spreading the order out', () => {
+  /** `pattern` like 'MMMWW' builds a roster with matching groups and abilities. */
+  function roster(pattern: string, abilityByIndex = (i: number) => 1 - i * 0.2): OffenseProfile[] {
+    return [...pattern].map((ch, i) =>
+      player(`${ch}${i}`, {
+        group: ch === 'M' ? 'other' : 'counted',
+        onBase: abilityByIndex(i),
+        power: abilityByIndex(i),
+        baserunning: abilityByIndex(i),
+        iq: abilityByIndex(i),
+      })
+    );
+  }
+  const groupsOf = (ids: string[]) => ids.map((id) => id[0]).join('');
+
+  describe('longestSameGroupRun', () => {
+    it('counts the longest stretch', () => {
+      expect(longestSameGroupRun(roster('MMMMWWWW'))).toBe(4);
+      expect(longestSameGroupRun(roster('MWMWMWMW'))).toBe(1);
+      expect(longestSameGroupRun(roster('MMWMMWMM'))).toBe(2);
+    });
+
+    it('handles trivial rosters', () => {
+      expect(longestSameGroupRun([])).toBe(0);
+      expect(longestSameGroupRun(roster('M'))).toBe(1);
+    });
+  });
+
+  describe('smallestFeasibleRun', () => {
+    it('is 1 when the groups are the same size', () => {
+      expect(smallestFeasibleRun(roster('MMMWWW'))).toBe(1);
+    });
+
+    it('reports what a lopsided roster can actually manage', () => {
+      // Ten men and six women: six women open seven gaps, so two men per gap.
+      expect(smallestFeasibleRun(roster('MMMMMMMMMMWWWWWW'))).toBe(2);
+      // Twelve men and two women can only manage four in a row.
+      expect(smallestFeasibleRun(roster('MMMMMMMMMMMMWW'))).toBe(4);
+    });
+
+    it('gives up gracefully when everyone is in one group', () => {
+      expect(smallestFeasibleRun(roster('MMMM'))).toBe(4);
+    });
+  });
+
+  describe('optimizeBattingOrder with a cap', () => {
+    // Ability descends with index, and every man precedes every woman, so an
+    // unconstrained search sorts into all men then all women. This is the exact
+    // shape that showed up on the real roster.
+    const lopsided = roster('MMMMMMMMMMWWWWWW');
+    const fast = { searchGames: 120, finalGames: 1500, restarts: 1, maxPasses: 2 };
+
+    it('stacks the groups when nothing stops it', () => {
+      const result = optimizeBattingOrder(lopsided, { ...fast, seed: 'stack' });
+      expect(result.longestSameGroupRun).toBeGreaterThan(4);
+    });
+
+    it('honours the cap', () => {
+      for (const seed of ['a', 'b', 'c']) {
+        const result = optimizeBattingOrder(lopsided, { ...fast, seed, maxSameGroupRun: 2 });
+        expect(result.longestSameGroupRun, `seed ${seed}`).toBeLessThanOrEqual(2);
+        expect(result.order).toHaveLength(lopsided.length);
+        expect(new Set(result.order).size).toBe(lopsided.length);
+        expect(result.warnings).toEqual([]);
+      }
+    });
+
+    it('raises an impossible cap to the closest achievable one, with a warning', () => {
+      const result = optimizeBattingOrder(lopsided, { ...fast, seed: 'tight', maxSameGroupRun: 1 });
+      // Strict alternation cannot be done with ten and six.
+      expect(result.longestSameGroupRun).toBe(2);
+      expect(result.warnings.join(' ')).toMatch(/2 in a row/);
+    });
+
+    it('does not fall apart when everyone is in the same group', () => {
+      const oneGroup = roster('MMMMMMMMMMMM');
+      const result = optimizeBattingOrder(oneGroup, { ...fast, seed: 'one', maxSameGroupRun: 2 });
+      expect(new Set(result.order).size).toBe(oneGroup.length);
+    });
+
+    it('still keeps the stronger kickers near the top', () => {
+      const result = optimizeBattingOrder(lopsided, { ...fast, seed: 'quality', maxSameGroupRun: 2 });
+      const index = new Map(result.order.map((id, i) => [id, i]));
+      // Ability descends with roster index, so within each group the ordering
+      // should still broadly favour the better kickers.
+      const menPositions = lopsided
+        .filter((p) => p.group === 'other')
+        .map((p) => index.get(p.playerId)!);
+      const firstHalf = menPositions.slice(0, 5).reduce((s, v) => s + v, 0) / 5;
+      const secondHalf = menPositions.slice(5).reduce((s, v) => s + v, 0) / 5;
+      expect(firstHalf).toBeLessThan(secondHalf);
+    });
+
+    it('costs very little in runs', () => {
+      // The whole justification for having this on by default.
+      //
+      // This roster is a deliberately extreme case: ability descends straight
+      // down the list and correlates perfectly with the group, so the cap is
+      // fighting the run-maximizing order as hard as it ever could. It costs
+      // about a third of a run here. Measured against the real roster, where
+      // the correlation is real but far from perfect, the cost was 0.05 runs
+      // out of roughly 16 — against about 1.1 runs of gain over a random order.
+      const free = optimizeBattingOrder(lopsided, { seed: 'cost' });
+      const capped = optimizeBattingOrder(lopsided, { seed: 'cost', maxSameGroupRun: 2 });
+      expect(capped.expectedRuns).toBeGreaterThan(free.expectedRuns - 0.5);
+      expect(longestSameGroupRun(lopsided)).toBeGreaterThan(2);
+    });
   });
 });

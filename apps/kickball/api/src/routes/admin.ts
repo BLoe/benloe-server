@@ -64,6 +64,14 @@ export function adminRoutes(db: DB): Router {
       }
       writeSetting(db, 'min_women_in_field', String(min));
     }
+    if (body.max_same_gender_run !== undefined) {
+      const run = Number(body.max_same_gender_run);
+      if (!Number.isInteger(run) || run < 0 || run > 20) {
+        res.status(400).json({ error: 'That has to be a whole number between 0 and 20.' });
+        return;
+      }
+      writeSetting(db, 'max_same_gender_run', String(run));
+    }
     if (typeof body.rating_game_passcode === 'string') {
       writeSetting(db, 'rating_game_passcode', body.rating_game_passcode.trim());
     }

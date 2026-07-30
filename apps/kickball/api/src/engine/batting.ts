@@ -25,6 +25,73 @@ export interface OffenseProfile {
   bunting: number;
   baserunning: number;
   iq: number;
+  /**
+   * The group used by the spread-out constraint. Gender in practice, bucketed
+   * the same way the league's field minimum buckets it, so that a non-binary
+   * player is never left as a group of one who can never satisfy alternation.
+   */
+  group?: string;
+}
+
+/** Longest stretch of consecutive kickers from the same group. */
+export function longestSameGroupRun(order: readonly OffenseProfile[]): number {
+  let best = 0;
+  let run = 0;
+  for (let i = 0; i < order.length; i++) {
+    run = i > 0 && order[i].group === order[i - 1].group ? run + 1 : 1;
+    if (run > best) best = run;
+  }
+  return best;
+}
+
+/**
+ * The tightest cap this roster can actually meet.
+ *
+ * Ten men and six women can never alternate strictly: six women only open seven
+ * gaps, and ten men will not fit one to a gap. Asking for something impossible
+ * has to become the closest achievable thing rather than an error, because it is
+ * a normal Sunday when only four women turn up.
+ */
+export function smallestFeasibleRun(order: readonly OffenseProfile[]): number {
+  const counts = new Map<string, number>();
+  for (const p of order) counts.set(p.group ?? '', (counts.get(p.group ?? '') ?? 0) + 1);
+  if (counts.size <= 1) return Math.max(1, order.length);
+  const largest = Math.max(...counts.values());
+  const rest = order.length - largest;
+  return Math.max(1, Math.ceil(largest / (rest + 1)));
+}
+
+/**
+ * Lays the groups out as evenly as the cap allows, keeping each group in the
+ * order it was handed over so a quality ordering within a group survives.
+ */
+function interleaveGroups(order: readonly OffenseProfile[], cap: number): OffenseProfile[] {
+  const remaining = new Map<string, OffenseProfile[]>();
+  for (const p of order) {
+    const key = p.group ?? '';
+    if (!remaining.has(key)) remaining.set(key, []);
+    remaining.get(key)!.push(p);
+  }
+
+  const out: OffenseProfile[] = [];
+  let lastKey: string | null = null;
+  let run = 0;
+
+  while ([...remaining.values()].some((list) => list.length > 0)) {
+    const available = [...remaining.entries()].filter(([, list]) => list.length > 0);
+    // Prefer a group that will not break the cap; fall back only when the cap
+    // cannot be met at all, which smallestFeasibleRun should have prevented.
+    const allowed = available.filter(([key]) => !(key === lastKey && run >= cap));
+    const pool = allowed.length > 0 ? allowed : available;
+    // Whichever group has the most left to place goes next, which spreads the
+    // larger group across the order instead of stacking it at one end.
+    pool.sort((a, b) => b[1].length - a[1].length);
+    const [key, list] = pool[0];
+    out.push(list.shift()!);
+    run = key === lastKey ? run + 1 : 1;
+    lastKey = key;
+  }
+  return out;
 }
 
 export interface BattingCalibration {
@@ -326,6 +393,9 @@ export interface BattingOrderResult {
   baselineScore: number;
   /** Candidate orders evaluated during the search. */
   iterations: number;
+  /** Longest stretch of the same group in the returned order. */
+  longestSameGroupRun: number;
+  warnings: string[];
 }
 
 /**
@@ -354,6 +424,11 @@ export function optimizeBattingOrder(
     calibration?: BattingCalibration;
     restarts?: number;
     maxPasses?: number;
+    /**
+     * Most consecutive kickers allowed from the same group. Omit for no
+     * constraint. Raised automatically if the roster cannot meet it.
+     */
+    maxSameGroupRun?: number;
   } = {}
 ): BattingOrderResult {
   const cal = options.calibration ?? DEFAULT_CALIBRATION;
@@ -363,16 +438,45 @@ export function optimizeBattingOrder(
   const restarts = options.restarts ?? 2;
   const maxPasses = options.maxPasses ?? 4;
   const searchRng = new Rng(seed);
+  const warnings: string[] = [];
+
+  // Spreading the groups out costs almost nothing in runs but stops the order
+  // coming out as every man and then every woman, which is what a pure
+  // run-maximizing search produces whenever ability happens to split that way.
+  let cap = options.maxSameGroupRun ?? Infinity;
+  if (Number.isFinite(cap) && players.length > 0) {
+    const floor = smallestFeasibleRun(players);
+    if (cap < floor) {
+      warnings.push(
+        `With this turnout the closest to spreading the order out is ${floor} in a row, not ${cap}.`
+      );
+      cap = floor;
+    }
+  }
+  const respectsCap = (order: readonly OffenseProfile[]) =>
+    !Number.isFinite(cap) || longestSameGroupRun(order) <= cap;
 
   // The run-off stream is deliberately unrelated to the search stream.
   const judge = (order: readonly OffenseProfile[]) =>
     evaluateOrder(order, { games: finalGames, seed: `${seed}:runoff`, calibration: cal });
 
   if (players.length === 0) {
-    return { order: [], expectedRuns: 0, runsByInning: [], score: 0, baselineScore: 0, iterations: 0 };
+    return {
+      order: [],
+      expectedRuns: 0,
+      runsByInning: [],
+      score: 0,
+      baselineScore: 0,
+      iterations: 0,
+      longestSameGroupRun: 0,
+      warnings,
+    };
   }
 
-  const seedOrder = heuristicOrder(players);
+  // The heuristic order, then spread out if a cap applies. Interleaving keeps
+  // each group in the quality order the heuristic put them in.
+  const heuristic = heuristicOrder(players);
+  const seedOrder = Number.isFinite(cap) ? interleaveGroups(heuristic, cap) : heuristic;
   const baseline = judge(seedOrder);
 
   if (players.length < 3) {
@@ -384,6 +488,8 @@ export function optimizeBattingOrder(
       ...evaluation,
       baselineScore: baseline.score,
       iterations: 0,
+      longestSameGroupRun: longestSameGroupRun(best),
+      warnings,
     };
   }
 
@@ -396,7 +502,9 @@ export function optimizeBattingOrder(
   let iterations = 0;
 
   for (let restart = 0; restart <= restarts; restart++) {
-    let current = restart === 0 ? seedOrder : searchRng.shuffle(players);
+    const shuffled = searchRng.shuffle(players);
+    let current =
+      restart === 0 ? seedOrder : Number.isFinite(cap) ? interleaveGroups(shuffled, cap) : shuffled;
     let currentScore = explore(current);
 
     for (let pass = 0; pass < maxPasses; pass++) {
@@ -405,6 +513,7 @@ export function optimizeBattingOrder(
         for (let j = i + 1; j < current.length; j++) {
           const candidate = current.slice();
           [candidate[i], candidate[j]] = [candidate[j], candidate[i]];
+          if (!respectsCap(candidate)) continue;
           const candidateScore = explore(candidate);
           iterations++;
           if (candidateScore > currentScore) {
@@ -436,5 +545,7 @@ export function optimizeBattingOrder(
     score: bestEval.score,
     baselineScore: baseline.score,
     iterations,
+    longestSameGroupRun: longestSameGroupRun(best),
+    warnings,
   };
 }
