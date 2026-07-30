@@ -129,11 +129,44 @@ describe('POSITIONS weighting', () => {
     expect(ranked.slice(0, 2).sort()).toEqual(['catcher', 'right']);
   });
 
-  it('has the shortstop catching more than fielding grounders', () => {
-    // The job there is short-left pop-ups and backing up second.
-    const weights = getPosition('shortstop')!.weights;
-    const top = Object.entries(weights).sort((a, b) => b[1] - a[1])[0][0];
-    expect(top).toBe('pop_flies');
+  it('has the middle infield catching more than fielding grounders', () => {
+    // The striker-pitcher-first line across covers most of what is played on
+    // the ground, leaving these two handling pop-ups to their areas.
+    for (const key of ['second', 'shortstop']) {
+      const weights = getPosition(key)!.weights;
+      const top = Object.entries(weights).sort((a, b) => b[1] - a[1])[0][0];
+      expect(top, `${key} should lean on catching`).toBe('pop_flies');
+    }
+  });
+
+  it('puts the line across the front above the middle infield', () => {
+    const importance = (key: string) => getPosition(key)!.importance;
+    for (const front of ['third', 'pitcher', 'first']) {
+      for (const middle of ['second', 'shortstop']) {
+        expect(importance(front), `${front} vs ${middle}`).toBeGreaterThan(importance(middle));
+      }
+    }
+  });
+
+  it('groups left field with the centre spots, not with right field', () => {
+    const importance = (key: string) => getPosition(key)!.importance;
+    // Left field sees almost as many long fly balls as the two centre spots,
+    // and a drop there is extra bases. Right field is where a weaker fielder
+    // gets rested. So left field belongs at the top of the outfield, not the
+    // bottom, and it must outrank the whole middle infield.
+    expect(importance('left')).toBeGreaterThan(importance('second'));
+    expect(importance('left')).toBeGreaterThan(importance('shortstop'));
+
+    const gapToCentre = importance('left_center') - importance('left');
+    const gapToRight = importance('left') - importance('right');
+    expect(gapToRight).toBeGreaterThan(gapToCentre * 3);
+  });
+
+  it('leans the long-ball outfield spots on catching as much as range', () => {
+    for (const key of ['left', 'left_center']) {
+      const weights = getPosition(key)!.weights;
+      expect(weights.pop_flies, `${key} catching`).toBeGreaterThanOrEqual(weights.outfielding);
+    }
   });
 
   it('keeps first base on the foul-line pop-ups', () => {
@@ -497,11 +530,19 @@ describe('optimizeDefense: positions and consistency', () => {
       const ranks = result.assignment.map(
         (row) => rankedForFirst.indexOf(row[firstIndex]) + 1
       );
-      // Nobody from the weaker half of the roster, ever. Requiring the very top
-      // few every inning would be too strict: fairness caps how long any one
-      // player is on the field, and the other infield spots want the same hands.
+      // Never from the bottom third. The reported defect was ranks 13 and 14 of
+      // 16, so that is the floor this guards.
+      //
+      // Not tighter, and the reason is arithmetic rather than taste. Six
+      // positions now rank above ordinary — pitcher, striker, first base, both
+      // centre-field spots and left field — while fairness caps anyone at four
+      // of six innings. The top six players can therefore supply 24 slots
+      // against the 36 those positions need, so ranks 7 through 10 have to turn
+      // up somewhere demanding. Before loosening this again, check the
+      // comparative assertions below still hold; those are the real guarantee.
+      const bottomThird = Math.ceil((players.length * 2) / 3);
       for (const [inning, rank] of ranks.entries()) {
-        expect(rank, `seed ${seed}, inning ${inning + 1} first base`).toBeLessThanOrEqual(8);
+        expect(rank, `seed ${seed}, inning ${inning + 1} first base`).toBeLessThanOrEqual(bottomThird);
       }
       // Stated without an arbitrary rank cutoff, which is the part I kept
       // fitting to whatever the optimizer happened to produce: the hands

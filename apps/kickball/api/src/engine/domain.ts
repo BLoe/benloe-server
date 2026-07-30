@@ -162,11 +162,17 @@ export interface PositionDef {
  * Kickers either bunt or kick it on. Bunts go almost always down the third-base
  * line, which is why the striker is second only to the pitcher and why first
  * base — taking the throw on every one of those plays — is third. A long kick
- * either pops up on the right side of the infield or carries to left-centre or
- * right-centre, so those two outfield spots outrank the corners. Shortstop is
- * rarely kicked to at all, because the pitcher and striker cover that ground
- * from closer in. Catcher and right field are the two spots this team uses to
- * rest a weaker fielder, so they rank last by design rather than by accident.
+ * either pops up on the right side of the infield or carries to the outfield.
+ *
+ * The three positions across the front — striker, pitcher, first base — cover
+ * most of what is played on the ground. Second base and shortstop are left
+ * handling pop-ups to their areas far more than grounders, which is why both
+ * are pop-fly led and why both rank low despite being infielders.
+ *
+ * Left field ranks with the centre spots, not with right field. It sees almost
+ * as many long fly balls, and a drop out there is extra bases or a home run
+ * rather than a runner reaching first. Only catcher and right field are places
+ * this team rests a weaker fielder, so only those two rank last.
  */
 export const POSITIONS: PositionDef[] = [
   {
@@ -214,10 +220,11 @@ export const POSITIONS: PositionDef[] = [
     code: '2B',
     name: 'Second base',
     zone: 'infield',
-    // A long kick that stays up tends to pop up on this side of the infield.
-    weights: { infielding: 0.35, pop_flies: 0.25, throwing: 0.2, defense_iq: 0.2 },
-    // Some grounders, plus the pop-ups to the right side of the infield.
-    importance: 1.0,
+    // A long kick that stays up tends to pop up on this side of the infield,
+    // and that is most of what this position actually handles.
+    weights: { pop_flies: 0.32, infielding: 0.26, throwing: 0.22, defense_iq: 0.2 },
+    // Mostly pop-ups. The third-pitcher-first line across covers the ground balls.
+    importance: 0.9,
     x: 0.66,
     y: 0.42,
   },
@@ -231,7 +238,7 @@ export const POSITIONS: PositionDef[] = [
     // left and backing up second, so this leans on catching and coverage rather
     // than grounder fielding.
     weights: { pop_flies: 0.3, infielding: 0.28, defense_iq: 0.22, throwing: 0.2 },
-    // Rarely kicked to: the pitcher and striker cover much of this ground. Mostly short-left pop-ups and backing up second.
+    // Same as second: pop-ups to its area far more than anything on the ground.
     importance: 0.85,
     x: 0.34,
     y: 0.42,
@@ -254,9 +261,10 @@ export const POSITIONS: PositionDef[] = [
     code: 'LF',
     name: 'Left field',
     zone: 'outfield',
-    weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
-    // A step below the two centre spots.
-    importance: 0.9,
+    // Getting there and catching it matter equally on a long fly ball.
+    weights: { outfielding: 0.35, pop_flies: 0.35, throwing: 0.2, defense_iq: 0.1 },
+    // Almost as many long fly balls as the centre spots. Not a place to hide anyone: a drop here is extra bases or a home run.
+    importance: 1.2,
     x: 0.13,
     y: 0.2,
   },
@@ -265,7 +273,8 @@ export const POSITIONS: PositionDef[] = [
     code: 'LC',
     name: 'Left-center field',
     zone: 'outfield',
-    weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
+    // Getting there and catching it matter equally on a long fly ball.
+    weights: { outfielding: 0.35, pop_flies: 0.35, throwing: 0.2, defense_iq: 0.1 },
     // One of the two places a long kick actually lands.
     importance: 1.25,
     x: 0.37,
@@ -280,7 +289,7 @@ export const POSITIONS: PositionDef[] = [
     // Covers the most ground of anyone, so outfielding sits above the corners.
     // The token striking is for pressing up on the first-base side against a
     // bunt, which is the one bunt duty that is not the striker's.
-    weights: { outfielding: 0.45, defense_iq: 0.25, pop_flies: 0.15, throwing: 0.1, striking: 0.05 },
+    weights: { outfielding: 0.45, pop_flies: 0.2, defense_iq: 0.2, throwing: 0.1, striking: 0.05 },
     // The other one, and shades over to cover right field too.
     importance: 1.25,
     x: 0.63,
@@ -291,7 +300,8 @@ export const POSITIONS: PositionDef[] = [
     code: 'RF',
     name: 'Right field',
     zone: 'outfield',
-    weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
+    // Getting there and catching it matter equally on a long fly ball.
+    weights: { outfielding: 0.35, pop_flies: 0.35, throwing: 0.2, defense_iq: 0.1 },
     // The most deprioritised spot on the field, and the roamer can shade across to help.
     importance: 0.6,
     x: 0.87,
