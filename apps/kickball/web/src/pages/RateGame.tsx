@@ -26,17 +26,67 @@ export function RateGame() {
   const [error, setError] = useState<string | null>(null);
 
   const [matchup, setMatchup] = useState<Matchup | null>(null);
-  const [nextMatchup, setNextMatchup] = useState<Matchup | null>(null);
   const [counts, setCounts] = useState({ yours: 0, total: 0 });
   const [choosing, setChoosing] = useState<string | null>(null);
 
-  // Recently shown pairs, so the game does not double back immediately.
+  /**
+   * Pairs the game should not come back to yet, and the matchups already
+   * prefetched but not shown.
+   *
+   * A pair is marked seen when it is *shown*, not when it is answered. Marking
+   * it on answer leaves the pair currently on screen out of the exclusion list,
+   * so the prefetch that replaces it happily returns that same pair and it
+   * appears twice in a row. The queue is part of the exclusion list for the same
+   * reason: two prefetches issued together, with the same exclusions, can both
+   * come back with the same matchup.
+   */
   const seenRef = useRef<string[]>([]);
+  const queueRef = useRef<Matchup[]>([]);
+  const QUEUE_DEPTH = 2;
+  const SEEN_MEMORY = 10;
+
+  const markSeen = (pairKey: string) => {
+    seenRef.current = [...seenRef.current.filter((k) => k !== pairKey), pairKey].slice(-SEEN_MEMORY);
+  };
 
   const fetchMatchup = useCallback(
-    async (code: string) => publicApi.matchup(seenRef.current.slice(-8), code),
+    async (code: string) =>
+      publicApi.matchup([...seenRef.current, ...queueRef.current.map((m) => m.pairKey)], code),
     []
   );
+
+  /**
+   * Refills the queue one request at a time. Sequentially, deliberately: each
+   * request has to be able to see the previous result already in the queue.
+   */
+  const topUpQueue = useCallback(
+    async (code: string) => {
+      while (queueRef.current.length < QUEUE_DEPTH) {
+        try {
+          const next = await fetchMatchup(code);
+          if (
+            queueRef.current.some((m) => m.pairKey === next.pairKey) ||
+            seenRef.current.includes(next.pairKey)
+          ) {
+            // The server had nothing new to offer; stop rather than spin.
+            break;
+          }
+          queueRef.current = [...queueRef.current, next];
+        } catch {
+          break;
+        }
+      }
+    },
+    [fetchMatchup]
+  );
+
+  /** Takes the next queued matchup, dropping any that have since been shown. */
+  const takeQueued = (): Matchup | null => {
+    queueRef.current = queueRef.current.filter((m) => !seenRef.current.includes(m.pairKey));
+    const next = queueRef.current.shift() ?? null;
+    if (next) markSeen(next.pairKey);
+    return next;
+  };
 
   useEffect(() => {
     (async () => {
@@ -83,15 +133,14 @@ export function RateGame() {
     let cancelled = false;
     (async () => {
       try {
-        const [progress, first, second] = await Promise.all([
-          publicApi.progress(raterId),
-          fetchMatchup(passcode),
-          fetchMatchup(passcode),
-        ]);
+        const progress = await publicApi.progress(raterId);
+        const first = await fetchMatchup(passcode);
         if (cancelled) return;
+        markSeen(first.pairKey);
         setCounts({ yours: progress.yourComparisons, total: progress.totalComparisons });
         setMatchup(first);
-        setNextMatchup(second);
+        // Only now fill the queue, so it cannot duplicate what is on screen.
+        void topUpQueue(passcode);
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Could not load a matchup.');
@@ -102,15 +151,15 @@ export function RateGame() {
     return () => {
       cancelled = true;
     };
-  }, [phase, raterId, passcode, fetchMatchup]);
+  }, [phase, raterId, passcode, fetchMatchup, topUpQueue]);
 
   const answer = useCallback(
     async (winnerId: string | null) => {
       if (!matchup || choosing) return;
       setChoosing(winnerId ?? 'tie');
 
-      seenRef.current = [...seenRef.current, matchup.pairKey].slice(-16);
-      const queued = nextMatchup;
+      markSeen(matchup.pairKey);
+      const queued = takeQueued();
 
       try {
         const result = await publicApi.submit({
@@ -128,16 +177,20 @@ export function RateGame() {
         return;
       }
 
-      // Show the queued matchup immediately, then refill the queue.
+      // Show the queued matchup immediately, then refill behind it.
       setMatchup(queued);
-      setNextMatchup(null);
       setChoosing(null);
       if (!queued) {
-        fetchMatchup(passcode).then(setMatchup).catch(() => undefined);
+        fetchMatchup(passcode)
+          .then((next) => {
+            markSeen(next.pairKey);
+            setMatchup(next);
+          })
+          .catch(() => undefined);
       }
-      fetchMatchup(passcode).then(setNextMatchup).catch(() => undefined);
+      void topUpQueue(passcode);
     },
-    [matchup, nextMatchup, choosing, raterId, passcode, fetchMatchup]
+    [matchup, choosing, raterId, passcode, fetchMatchup, topUpQueue]
   );
 
   // Bound once on mount and driven through refs, so the very first key press
