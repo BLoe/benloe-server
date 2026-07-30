@@ -252,20 +252,6 @@ export function PublicLineup() {
           </div>
         </section>
 
-        {lineup.insights.length > 0 && (
-          <section className="rise mt-6" style={{ animationDelay: '320ms' }}>
-            <p className="eyebrow mb-3">Why it looks like this</p>
-            <ul className="space-y-2">
-              {lineup.insights.map((insight, index) => (
-                <li key={index} className="flex gap-3 text-chalk/75">
-                  <span className="mt-2.5 h-1 w-1 shrink-0 rounded-full bg-lamp" />
-                  <span>{insight}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-
         <footer className="mt-14 border-t border-rail-line pt-6">
           <p className="eyebrow">{lineup.teamName}</p>
         </footer>
