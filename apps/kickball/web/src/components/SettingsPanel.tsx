@@ -156,7 +156,7 @@ export function SettingsPanel({ meta, onChange }: { meta: Meta; onChange: (setti
               ],
               [
                 'Skill at the position',
-                'Decides where the people who are on the field get placed, using the ratings from the game.',
+                'Decides where the people on the field get placed, using the ratings from the game. Positions are not weighted equally — the pitcher, first base and the striker matter most, because they touch the ball on nearly every play, while a corner outfielder may not see one all game.',
               ],
               [
                 'Staying put',

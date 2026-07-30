@@ -78,7 +78,11 @@ export interface ObjectiveWeights {
  */
 export const DEFAULT_WEIGHTS: ObjectiveWeights = {
   fit: 20,
-  fairness: 2.0,
+  // Raised from 2.0 when positions gained importance weighting. Weighting the
+  // demanding spots more heavily also strengthened fit against fairness at
+  // exactly those spots, which was enough to let a strong player steal an extra
+  // inning. Playing time has to stay the thing that wins.
+  fairness: 3.0,
   consistency: 1.2,
   rest: 0.3,
 };
@@ -237,15 +241,19 @@ function womenInInning(ctx: Context, row: readonly string[]): number {
  * weights stay comparable no matter how many people showed up.
  */
 export function scoreAssignment(ctx: Context, assignment: readonly string[][]): { score: number; meanFit: number } {
-  const slots = ctx.innings * FIELDERS_PER_INNING;
-
+  // Fit is weighted by how much each position matters. A plain sum treats a
+  // botched first base the same as a botched right field, which is how the two
+  // worst fielders end up taking every throw of the game.
   let fitTotal = 0;
+  let importanceTotal = 0;
   for (let inning = 0; inning < ctx.innings; inning++) {
     for (let pos = 0; pos < FIELDERS_PER_INNING; pos++) {
-      fitTotal += fitOf(ctx, assignment[inning][pos], pos);
+      const importance = POSITIONS[pos].importance;
+      fitTotal += importance * fitOf(ctx, assignment[inning][pos], pos);
+      importanceTotal += importance;
     }
   }
-  const meanFit = fitTotal / slots;
+  const meanFit = fitTotal / importanceTotal;
 
   // Innings played and the set of positions each player saw.
   const played = new Map<string, number>();

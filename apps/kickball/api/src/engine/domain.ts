@@ -125,6 +125,16 @@ export interface PositionDef {
   zone: PositionZone;
   /** Weights over defensive stat keys. Always sums to 1. */
   weights: Record<string, number>;
+  /**
+   * How much getting this spot wrong actually costs.
+   *
+   * Without this the optimizer maximizes the plain sum of fit across all sixty
+   * slots and treats every one as equally important, which lets it park the two
+   * worst fielders at first base to buy a fraction of fit in right field. First
+   * base takes every throw of the game; right field may not see a ball. 1.0 is
+   * an ordinary position.
+   */
+  importance: number;
   /** Fractional coordinates on the field diagram, origin at home plate. */
   x: number;
   y: number;
@@ -156,6 +166,8 @@ export const POSITIONS: PositionDef[] = [
     zone: 'battery',
     // Only fields the bunts hit straight back at them; the striker has the rest.
     weights: { pitching: 0.45, defense_iq: 0.2, infielding: 0.15, throwing: 0.1, striking: 0.1 },
+    // Touches nearly every play and sets up every out.
+    importance: 1.7,
     x: 0.5,
     y: 0.55,
   },
@@ -167,6 +179,8 @@ export const POSITIONS: PositionDef[] = [
     // Receives the throw, knows the play, makes the next throw. No pop flies,
     // and the bunts belong to the striker.
     weights: { infielding: 0.45, defense_iq: 0.3, throwing: 0.25 },
+    // Receives throws at home for force outs.
+    importance: 1.15,
     x: 0.5,
     y: 0.93,
   },
@@ -175,8 +189,13 @@ export const POSITIONS: PositionDef[] = [
     code: '1B',
     name: 'First base',
     zone: 'infield',
-    // Catching the throw is the job, and infielding now covers that.
-    weights: { infielding: 0.5, defense_iq: 0.2, throwing: 0.18, striking: 0.07, pop_flies: 0.05 },
+    // Two things and not much else: catch the ball, and know when to cover the
+    // bag. Catching a throw lives in infielding, and the covering decision is
+    // why decision making is weighted so much higher here than at second or
+    // short. No pop flies — a first baseman's catching is receiving throws.
+    weights: { infielding: 0.5, defense_iq: 0.3, throwing: 0.15, striking: 0.05 },
+    // Every force-out throw in the game goes here.
+    importance: 1.5,
     x: 0.74,
     y: 0.58,
   },
@@ -186,6 +205,7 @@ export const POSITIONS: PositionDef[] = [
     name: 'Second base',
     zone: 'infield',
     weights: { infielding: 0.4, throwing: 0.25, defense_iq: 0.2, pop_flies: 0.15 },
+    importance: 1.05,
     x: 0.66,
     y: 0.42,
   },
@@ -195,6 +215,7 @@ export const POSITIONS: PositionDef[] = [
     name: 'Shortstop',
     zone: 'infield',
     weights: { infielding: 0.4, throwing: 0.28, defense_iq: 0.17, pop_flies: 0.15 },
+    importance: 1.1,
     x: 0.34,
     y: 0.42,
   },
@@ -206,6 +227,8 @@ export const POSITIONS: PositionDef[] = [
     zone: 'infield',
     // Bunt coverage is almost entirely this position. That is the point of it.
     weights: { striking: 0.5, infielding: 0.22, throwing: 0.18, defense_iq: 0.1 },
+    // Fields every bunt.
+    importance: 1.3,
     x: 0.26,
     y: 0.58,
   },
@@ -215,6 +238,7 @@ export const POSITIONS: PositionDef[] = [
     name: 'Left field',
     zone: 'outfield',
     weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
+    importance: 0.75,
     x: 0.13,
     y: 0.2,
   },
@@ -224,6 +248,7 @@ export const POSITIONS: PositionDef[] = [
     name: 'Left-center field',
     zone: 'outfield',
     weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
+    importance: 0.85,
     x: 0.37,
     y: 0.11,
   },
@@ -237,6 +262,8 @@ export const POSITIONS: PositionDef[] = [
     // The token striking is for pressing up on the first-base side against a
     // bunt, which is the one bunt duty that is not the striker's.
     weights: { outfielding: 0.45, defense_iq: 0.25, pop_flies: 0.15, throwing: 0.1, striking: 0.05 },
+    // Ranges everywhere, so mistakes are visible.
+    importance: 1.0,
     x: 0.63,
     y: 0.11,
   },
@@ -246,6 +273,7 @@ export const POSITIONS: PositionDef[] = [
     name: 'Right field',
     zone: 'outfield',
     weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
+    importance: 0.75,
     x: 0.87,
     y: 0.2,
   },
