@@ -215,14 +215,14 @@ test.describe('Position fit table', () => {
     await openTab(page, 'Ratings');
     await expect(page.getByRole('heading', { name: 'Position fit' })).toBeVisible();
 
-    // Shortstop leans on infield fielding (0.35) far more than pop flies
-    // (0.15), so the infield specialist seeded above is unambiguously first.
-    // Catcher would not do: it weights those two equally, so the two
-    // specialists tie there and the name tie-break decides the order.
-    const header = fitTable(page).getByRole('columnheader', { name: /^SS/ }).first();
-    const button = page.getByRole('button', { name: 'SS', exact: true });
+    // Catcher weights infield fielding at 0.45 and pop flies at nothing at all,
+    // so the infield specialist seeded above is unambiguously first there.
+    // Shortstop would not do any more: its dominant stat is now pop flies,
+    // because the job there is short-left pop-ups rather than grounders.
+    const header = fitTable(page).getByRole('columnheader', { name: /^C/ }).first();
+    const button = page.getByRole('button', { name: 'C', exact: true });
     const values = async () =>
-      (await fitTable(page).locator('tbody tr td:nth-child(6)').allInnerTexts()).map(Number);
+      (await fitTable(page).locator('tbody tr td:nth-child(3)').allInnerTexts()).map(Number);
 
     await button.click();
     // A position column opens best-first rather than ascending.
