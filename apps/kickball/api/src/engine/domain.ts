@@ -157,6 +157,16 @@ export interface PositionDef {
  *
  * The roamer covers more ground than the corner outfielders, not less, so their
  * outfielding weight sits above everyone else's.
+ *
+ * The importance values come from where the ball actually goes in this league.
+ * Kickers either bunt or kick it on. Bunts go almost always down the third-base
+ * line, which is why the striker is second only to the pitcher and why first
+ * base — taking the throw on every one of those plays — is third. A long kick
+ * either pops up on the right side of the infield or carries to left-centre or
+ * right-centre, so those two outfield spots outrank the corners. Shortstop is
+ * rarely kicked to at all, because the pitcher and striker cover that ground
+ * from closer in. Catcher and right field are the two spots this team uses to
+ * rest a weaker fielder, so they rank last by design rather than by accident.
  */
 export const POSITIONS: PositionDef[] = [
   {
@@ -166,7 +176,7 @@ export const POSITIONS: PositionDef[] = [
     zone: 'battery',
     // Only fields the bunts hit straight back at them; the striker has the rest.
     weights: { pitching: 0.45, defense_iq: 0.2, infielding: 0.15, throwing: 0.1, striking: 0.1 },
-    // Touches nearly every play and sets up every out.
+    // In every at-bat, and covers the infield near home that the shortstop cannot reach.
     importance: 1.7,
     x: 0.5,
     y: 0.55,
@@ -179,8 +189,8 @@ export const POSITIONS: PositionDef[] = [
     // Receives the throw, knows the play, makes the next throw. No pop flies,
     // and the bunts belong to the striker.
     weights: { infielding: 0.45, defense_iq: 0.3, throwing: 0.25 },
-    // Receives throws at home for force outs.
-    importance: 1.15,
+    // Deliberately a place to rest a weaker fielder — this team does not send the catcher after bunts.
+    importance: 0.6,
     x: 0.5,
     y: 0.93,
   },
@@ -189,12 +199,12 @@ export const POSITIONS: PositionDef[] = [
     code: '1B',
     name: 'First base',
     zone: 'infield',
-    // Two things and not much else: catch the ball, and know when to cover the
-    // bag. Catching a throw lives in infielding, and the covering decision is
-    // why decision making is weighted so much higher here than at second or
-    // short. No pop flies — a first baseman's catching is receiving throws.
-    weights: { infielding: 0.5, defense_iq: 0.3, throwing: 0.15, striking: 0.05 },
-    // Every force-out throw in the game goes here.
+    // Stretching for the throw on every bunt play is the job, and that lives in
+    // infielding; covering the bag is why decision making outweighs second and
+    // short here. Pop flies are back: a right-footed kicker shanking one off the
+    // outside of the foot pops it up down this line.
+    weights: { infielding: 0.45, defense_iq: 0.25, pop_flies: 0.15, throwing: 0.1, striking: 0.05 },
+    // Receives the throw on every bunt play, stretching for it, plus foul pop-ups down the line.
     importance: 1.5,
     x: 0.74,
     y: 0.58,
@@ -204,8 +214,10 @@ export const POSITIONS: PositionDef[] = [
     code: '2B',
     name: 'Second base',
     zone: 'infield',
-    weights: { infielding: 0.4, throwing: 0.25, defense_iq: 0.2, pop_flies: 0.15 },
-    importance: 1.05,
+    // A long kick that stays up tends to pop up on this side of the infield.
+    weights: { infielding: 0.35, pop_flies: 0.25, throwing: 0.2, defense_iq: 0.2 },
+    // Some grounders, plus the pop-ups to the right side of the infield.
+    importance: 1.0,
     x: 0.66,
     y: 0.42,
   },
@@ -214,8 +226,13 @@ export const POSITIONS: PositionDef[] = [
     code: 'SS',
     name: 'Shortstop',
     zone: 'infield',
-    weights: { infielding: 0.4, throwing: 0.28, defense_iq: 0.17, pop_flies: 0.15 },
-    importance: 1.1,
+    // Hardly anyone kicks it here on the ground, because the pitcher and striker
+    // cover that ground from closer in. The real job is pop-ups to very short
+    // left and backing up second, so this leans on catching and coverage rather
+    // than grounder fielding.
+    weights: { pop_flies: 0.3, infielding: 0.28, defense_iq: 0.22, throwing: 0.2 },
+    // Rarely kicked to: the pitcher and striker cover much of this ground. Mostly short-left pop-ups and backing up second.
+    importance: 0.85,
     x: 0.34,
     y: 0.42,
   },
@@ -227,8 +244,8 @@ export const POSITIONS: PositionDef[] = [
     zone: 'infield',
     // Bunt coverage is almost entirely this position. That is the point of it.
     weights: { striking: 0.5, infielding: 0.22, throwing: 0.18, defense_iq: 0.1 },
-    // Fields every bunt.
-    importance: 1.3,
+    // Bunts are almost always down this line, and roughly half of all kickers bunt.
+    importance: 1.6,
     x: 0.26,
     y: 0.58,
   },
@@ -238,7 +255,8 @@ export const POSITIONS: PositionDef[] = [
     name: 'Left field',
     zone: 'outfield',
     weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
-    importance: 0.75,
+    // A step below the two centre spots.
+    importance: 0.9,
     x: 0.13,
     y: 0.2,
   },
@@ -248,7 +266,8 @@ export const POSITIONS: PositionDef[] = [
     name: 'Left-center field',
     zone: 'outfield',
     weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
-    importance: 0.85,
+    // One of the two places a long kick actually lands.
+    importance: 1.25,
     x: 0.37,
     y: 0.11,
   },
@@ -262,8 +281,8 @@ export const POSITIONS: PositionDef[] = [
     // The token striking is for pressing up on the first-base side against a
     // bunt, which is the one bunt duty that is not the striker's.
     weights: { outfielding: 0.45, defense_iq: 0.25, pop_flies: 0.15, throwing: 0.1, striking: 0.05 },
-    // Ranges everywhere, so mistakes are visible.
-    importance: 1.0,
+    // The other one, and shades over to cover right field too.
+    importance: 1.25,
     x: 0.63,
     y: 0.11,
   },
@@ -273,7 +292,8 @@ export const POSITIONS: PositionDef[] = [
     name: 'Right field',
     zone: 'outfield',
     weights: { outfielding: 0.4, pop_flies: 0.3, throwing: 0.2, defense_iq: 0.1 },
-    importance: 0.75,
+    // The most deprioritised spot on the field, and the roamer can shade across to help.
+    importance: 0.6,
     x: 0.87,
     y: 0.2,
   },
