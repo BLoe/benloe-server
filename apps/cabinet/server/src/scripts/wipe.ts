@@ -108,6 +108,15 @@ export const CABINET_KEEP_TABLES = [
   // break RHYTHM's whole schedule with no visible cause — the same reasoning
   // that carves out STANDING_ORDERS.md on the memory side.
   'push_subscription',
+  // Integration credentials (migration 016). Same reasoning as
+  // push_subscription, one step stronger: these are not records ABOUT Ben,
+  // they're how Cabinet reaches Plaid/insurers/APIs on his behalf, and the
+  // rows are ciphertext this process may not even be able to read. Wiping
+  // them would silently unlink every integration and force Ben to re-issue
+  // tokens from four different portals to recover from a data reset.
+  // Revoking a credential is a deliberate, per-name act (DELETE
+  // /api/credentials/:name), never a side effect of clearing QS records.
+  'credential',
 ];
 export const CABINET_CLEAR_TABLES = [
   'account',

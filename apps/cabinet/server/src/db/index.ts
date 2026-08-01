@@ -51,7 +51,15 @@ export function migrate(db: Database.Database): string[] {
   return ran;
 }
 
-const FORBIDDEN = /\b(pragma|attach|detach|vacuum|reindex)\b/i;
+// `credential` is here for a different reason than the rest of this list: it
+// isn't a write or a schema escape, it's the one table whose CONTENTS the
+// agent must never pull into chat context. The rows are AES-GCM ciphertext and
+// useless without CABINET_CRED_KEY (which this process can't read), but the
+// charter's rule is that secret material — including the encrypted form, the
+// IVs and the tags — does not get rendered into a transcript. query_db is the
+// only tool that could otherwise reach it, since domains/credentials.ts
+// exposes metadata-only reads by construction. Defense in depth, one line.
+const FORBIDDEN = /\b(pragma|attach|detach|vacuum|reindex|credential)\b/i;
 const MAX_ROWS = 500;
 
 export class QueryGuardError extends Error {}

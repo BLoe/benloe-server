@@ -16,6 +16,9 @@ import { planActivity, listActivityPlan, updateActivityEntry, removeActivityEntr
 import { logBodyMetric, logWorkout } from '../domains/training.js';
 import { logSubstance, substanceDay, substanceNights } from '../domains/substances.js';
 import { ingestHealthDay, recentHealth } from '../domains/health.js';
+import { logCraving, resolveCraving, cravingsOn, redirectRanking, e1Readout } from '../domains/cravings.js';
+import { logSymptom, symptomsOn, symptomHistory, ankleLoadResponse, ankleThreshold } from '../domains/symptoms.js';
+import { markHabit, deriveHabits, adherence } from '../domains/adherence.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
 import {
   addJournal, addPriceWatch, importTransactionsCsv, listConstraints, logMood,
@@ -115,6 +118,89 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       "The Phase 0 / TUNING E2 read: one row per day joining cannabis timing and dose, alcohol, caffeine, sleep minutes, and calories logged after 8pm. Use for weekly review. Under ~10 days of rows this is a table, not a correlation — report it as such rather than claiming a relationship.",
       { days: z.number().optional() },
       async ({ days }) => ok(substanceNights(ctx.db, days ?? 14)),
+    ),
+    tool(
+      'log_craving',
+      "Log a craving/urge event the moment it happens — this is the response variable for the whole evening program. `redirect` is the concrete move Cabinet offered (the stocked counter-snack, seltzer, the 15-minute delay, pivoting into tonight's block); `outcome` is what actually happened afterward. Leave outcome empty if it isn't resolved yet and close it later with resolve_craving — never guess it, a guessed outcome corrupts the redirect ranking. 'held' and 'planned_snack' are BOTH successes: an evening snack is in the budget on purpose.",
+      {
+        intensity: z.number().optional(),
+        trigger: z.string().optional(),
+        context: z.string().optional(),
+        redirect: z.string().optional(),
+        outcome: z.enum(['held', 'planned_snack', 'unplanned_intake', 'ordered_out']).optional(),
+        minutes_to_resolve: z.number().optional(),
+        notes: z.string().optional(),
+        when: z.string().optional(),
+      },
+      async ({ when, minutes_to_resolve, ...rest }) =>
+        ok(logCraving(ctx.db, { ...rest, occurredAt: when, minutesToResolve: minutes_to_resolve })),
+    ),
+    tool(
+      'resolve_craving',
+      'Close out a craving event once you know how it ended. Use the id returned by log_craving.',
+      {
+        id: z.number(),
+        outcome: z.enum(['held', 'planned_snack', 'unplanned_intake', 'ordered_out']).optional(),
+        redirect: z.string().optional(),
+        minutes_to_resolve: z.number().optional(),
+        notes: z.string().optional(),
+      },
+      async ({ id, minutes_to_resolve, ...rest }) =>
+        ok({ updated: resolveCraving(ctx.db, id, { ...rest, minutesToResolve: minutes_to_resolve }) }),
+    ),
+    tool(
+      'craving_report',
+      "PLAYBOOK P4's ranking: which redirect actually works on Ben, by success count then rate. Read this BEFORE offering a move in a live craving moment — offer the one with the best record, not the first one that comes to mind. Also returns the TUNING E1 readout (3:30pm protein snack vs. late-evening cravings); its verdict stays null until both arms have enough days, and a null verdict means say 'not yet', not 'no effect'.",
+      { days: z.number().optional() },
+      async ({ days }) =>
+        ok({
+          today: cravingsOn(ctx.db),
+          redirect_ranking: redirectRanking(ctx.db, days ?? 30),
+          e1: e1Readout(ctx.db, Math.min(days ?? 14, 28)),
+        }),
+    ),
+    tool(
+      'log_symptom',
+      "Record a symptom severity for a day (0-10). Canonical keys: 'ankle_ache_am' (morning — this is a verdict on YESTERDAY's walking load), 'ankle_ache_pm' (evening — same-day load), 'sore_throat'. One row per day+symptom; re-logging corrects rather than duplicates. The ankle readings are what make step counts mean anything, so capture them in the morning check-in and the wind-down.",
+      {
+        symptom: z.string(),
+        severity: z.number().optional(),
+        local_day: z.string().optional(),
+        context: z.string().optional(),
+        notes: z.string().optional(),
+      },
+      async ({ local_day, ...rest }) => ok(logSymptom(ctx.db, { ...rest, localDay: local_day })),
+    ),
+    tool(
+      'symptom_days',
+      "Symptom history. With no `symptom`, returns today's readings; with one, returns its trend over `days`. Also returns the ankle load-vs-response join (morning ache paired against the PREVIOUS day's steps, because flares lag load by a day) and a first read on Ben's step ceiling.",
+      { symptom: z.string().optional(), days: z.number().optional() },
+      async ({ symptom, days }) =>
+        ok(
+          symptom
+            ? { history: symptomHistory(ctx.db, symptom, days ?? 30) }
+            : {
+                today: symptomsOn(ctx.db),
+                ankle: ankleLoadResponse(ctx.db, days ?? 21),
+                ankle_threshold: ankleThreshold(ctx.db),
+              },
+        ),
+    ),
+    tool(
+      'mark_habit',
+      "Mark a goal satisfied (or explicitly not) for a day. ONLY needed for goals no query can see — wind-down started, evening block started, out-of-apartment evening. Weigh-in, any-signal, trainer sessions and Phase 0 instrumentation derive themselves from logged data; marking those by hand is redundant. Idempotent per goal+day.",
+      { goal_id: z.number(), local_day: z.string().optional(), done: z.boolean().optional() },
+      async ({ goal_id, local_day, done }) =>
+        ok(markHabit(ctx.db, { goalId: goal_id, localDay: local_day, done })),
+    ),
+    tool(
+      'adherence_report',
+      "Per-goal expected-vs-actual over a trailing window, with streaks. Run derive first so logged data counts. Read `unmeasured: true` as 'nobody wrote it down', NOT as 'Ben failed' — reporting an unmeasured goal as a zero is the one error that would make Cabinet confidently wrong at Sunday review.",
+      { days: z.number().optional(), derive: z.boolean().optional() },
+      async ({ days, derive }) => {
+        const derived = derive === false ? null : deriveHabits(ctx.db);
+        return ok({ derived, goals: adherence(ctx.db, days ?? 7) });
+      },
     ),
     tool(
       'log_workout',
