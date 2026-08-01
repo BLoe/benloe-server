@@ -5,14 +5,23 @@ export type Route = 'nano' | 'default' | 'deep' | 'max';
 export const MODELS: Record<Route, string> = {
   nano: 'claude-haiku-4-5',
   default: 'claude-sonnet-5',
-  deep: 'claude-opus-4-8',
+  deep: 'claude-opus-5',
   max: 'claude-fable-5',
 };
 
+/**
+ * Effort per route. 'deep' is Opus 5 and deliberately sits at 'high' — the
+ * API default — not 'xhigh': Anthropic's Opus 5 guidance is to start at the
+ * default and treat low/medium as the primary cost/latency control, stepping
+ * up to xhigh only for demanding coding/agentic work where evals show it pays.
+ * Opus 5 at 'high' is both cheaper and faster than the Sonnet-5-at-'xhigh'
+ * this replaced, and effort is a request-level setting that invalidates the
+ * prompt cache when it changes mid-conversation, so it stays constant.
+ */
 export const EFFORT: Record<Route, 'low' | 'medium' | 'high' | 'xhigh'> = {
   nano: 'low',
   default: 'high',
-  deep: 'xhigh',
+  deep: 'high',
   max: 'xhigh',
 };
 
@@ -25,16 +34,25 @@ export interface RouteInput {
 }
 
 /**
- * Main user loop: Sonnet 5 at xhigh thinking. (Ran on Fable/max while
- * stabilizing the architecture/UI; moved to Sonnet 5 — still xhigh effort —
- * for everyday cost/latency. — Ben, 2026-07-16)
+ * Main user loop: Opus 5 at 'high' effort (2026-08-01, Ben's call).
  *
- * Route is 'default' (Sonnet) but effort is pinned separately so the shared
- * 'default' tier — used by per-chat overrides and the fallback below — keeps
- * its own 'high' effort.
+ * History: Fable/max while stabilizing the architecture → Sonnet 5 at xhigh
+ * for everyday cost/latency (2026-07-16) → Opus 5. The reason is the job, not
+ * the benchmark: Cabinet is a chief advisor that reasons about Ben's life,
+ * pushes back, and holds a plan across weeks — not a data-entry worker. That
+ * warrants the frontier model on the main loop.
+ *
+ * This is NOT a straight cost increase over the Sonnet-5-at-xhigh it replaces:
+ * Opus 5 at 'high' spends far fewer thinking tokens per step, and the
+ * dominant cost line in Cabinet's token_usage is cache_read across long
+ * multi-step turns, which shrinks with the step count.
+ *
+ * Route is pinned separately from effort so the shared 'deep' tier — used by
+ * per-chat overrides and the cron weekly review — keeps its own value if this
+ * one is retuned.
  */
-const USER_TURN_ROUTE: Route = 'default';
-const USER_TURN_EFFORT: (typeof EFFORT)[Route] = 'xhigh';
+const USER_TURN_ROUTE: Route = 'deep';
+const USER_TURN_EFFORT: (typeof EFFORT)[Route] = 'high';
 
 export function route(input: RouteInput): { model: string; route: Route; effort: (typeof EFFORT)[Route] } {
   if (input.override) {
@@ -59,7 +77,7 @@ export function route(input: RouteInput): { model: string; route: Route; effort:
   return { model: MODELS.default, route: 'default', effort: EFFORT.default };
 }
 
-/** Fable 5 refusals fall back to Opus 4.8 (§9.2 / §14). */
+/** Fable 5 refusals fall back to the deep route (Opus 5) (§9.2 / §14). */
 export function refusalFallback(model: string): string | null {
   return model === MODELS.max ? MODELS.deep : null;
 }
