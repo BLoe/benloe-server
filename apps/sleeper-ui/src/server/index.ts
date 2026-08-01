@@ -24,6 +24,7 @@ import {
   buildAllPlay,
   currentStreak,
   buildRosterView,
+  buildChatFeed,
   type PlayerIndex,
 } from '../lib/derive.js';
 
@@ -34,6 +35,11 @@ const CACHE_DIR = process.env.SLEEPER_CACHE_DIR || join(ROOT, '.cache');
 const PORT = Number(process.env.PORT || 3010);
 const SOURCE = (process.env.SLEEPER_SOURCE || 'live') as 'live' | 'fixtures';
 const USERNAME = process.env.SLEEPER_USERNAME || 'BenLoe';
+
+/** Bearer token for league chat. Absent means chat is simply unavailable. */
+const SLEEPER_TOKEN = process.env.SLEEPER_TOKEN || '';
+/** Posting writes to a real league, so it stays off unless explicitly enabled. */
+const ALLOW_POSTING = process.env.SLEEPER_ALLOW_POSTING === 'true';
 
 /** Fixture label -> league id, so fixture mode can answer by real league id. */
 const FIXTURE_LEAGUES: Record<string, string> = {
@@ -168,7 +174,12 @@ const wrap =
     Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, source: SOURCE, cache: stats() });
+  res.json({
+    ok: true,
+    source: SOURCE,
+    chat: { enabled: !!SLEEPER_TOKEN, canPost: ALLOW_POSTING },
+    cache: stats(),
+  });
 });
 
 app.post('/api/cache/flush', (_req, res) => {
@@ -401,6 +412,91 @@ app.get(
       .sort((a: any, b: any) => b.created - a.created);
 
     res.json({ transactions: items });
+  })
+);
+
+/* ------------------------------------------------------------------ *
+ * League chat
+ *
+ * The only part of the app that needs a Sleeper token, and the only part that
+ * can write. Reading is on whenever a token is present; posting additionally
+ * requires SLEEPER_ALLOW_POSTING, because it puts a real message in a real
+ * league in front of real people.
+ * ------------------------------------------------------------------ */
+
+const chatOpts = () => ({ token: SLEEPER_TOKEN });
+
+app.get(
+  '/api/league/:leagueId/chat',
+  wrap(async (req, res) => {
+    const { leagueId } = req.params;
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+
+    if (!useFixtures() && !SLEEPER_TOKEN) {
+      return res.status(503).json({
+        error: 'Chat needs a Sleeper token. Set SLEEPER_TOKEN in /srv/benloe/.env.',
+        needsToken: true,
+      });
+    }
+
+    const [rosters, users, user] = await Promise.all([
+      loadRosters(leagueId),
+      loadLeagueUsers(leagueId),
+      loadUser(),
+    ]);
+
+    // Fixture mode has no token, so the screenshot harness reads a synthetic
+    // feed shaped exactly like a real one.
+    // Deliberately uncached in live mode: chat is the one surface where
+    // staleness is immediately obvious.
+    const raw = useFixtures()
+      ? await readFixture('chat.sample').catch(() => [])
+      : await S.getLeagueMessages(leagueId, { ...chatOpts(), before });
+
+    res.json({
+      messages: buildChatFeed(raw, {
+        teams: buildTeams(rosters, users),
+        rosters,
+        myUserId: user.user_id,
+      }),
+      // The oldest id in this page is the cursor for loading older messages.
+      nextCursor: raw.length ? raw[raw.length - 1].message_id : null,
+      canPost: ALLOW_POSTING,
+    });
+  })
+);
+
+app.post(
+  '/api/league/:leagueId/chat',
+  express.json({ limit: '16kb' }),
+  wrap(async (req, res) => {
+    if (!SLEEPER_TOKEN) {
+      return res.status(503).json({ error: 'Chat needs a Sleeper token.', needsToken: true });
+    }
+    if (!ALLOW_POSTING) {
+      return res.status(403).json({
+        error: 'Posting is off. Set SLEEPER_ALLOW_POSTING=true to enable it.',
+      });
+    }
+
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text) return res.status(400).json({ error: 'Message is empty.' });
+    if (text.length > 2000) return res.status(400).json({ error: 'Message is too long.' });
+
+    const sent = await S.postLeagueMessage(req.params.leagueId, text, chatOpts());
+    const [rosters, users, user] = await Promise.all([
+      loadRosters(req.params.leagueId),
+      loadLeagueUsers(req.params.leagueId),
+      loadUser(),
+    ]);
+
+    res.json({
+      message: buildChatFeed([sent], {
+        teams: buildTeams(rosters, users),
+        rosters,
+        myUserId: user.user_id,
+      })[0],
+    });
   })
 );
 

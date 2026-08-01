@@ -103,6 +103,23 @@ export interface Matchup {
   total: number;
 }
 
+export interface ChatMessage {
+  id: string;
+  text: string;
+  created: number;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string | null;
+  isBot: boolean;
+  isMine: boolean;
+  pinned: boolean;
+  edited: boolean;
+  continues: boolean;
+  dayLabel: string | null;
+  reactions: Array<{ emoji: string; count: number }>;
+  hasAttachment: boolean;
+}
+
 export interface Transaction {
   id: string;
   type: string;

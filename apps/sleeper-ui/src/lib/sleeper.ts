@@ -149,6 +149,87 @@ export async function getPlayerOutlook(playerId: string, season: string, o?: Fet
   return d.get_player_outlook;
 }
 
+/* ------------------------------------------------------------------ *
+ * GraphQL — league chat (requires a bearer token)
+ *
+ * A Sleeper league is itself the message parent: the league object carries
+ * last_message_id / last_author_id / last_message_time, and chat is simply
+ * messages(parent_id: <league_id>). There is no separate channel to resolve.
+ * ------------------------------------------------------------------ */
+
+export interface RawMessage {
+  message_id: string;
+  parent_id: string;
+  text: string | null;
+  created: number;
+  author_id: string;
+  author_display_name: string | null;
+  author_avatar: string | null;
+  author_is_bot: boolean;
+  attachment: unknown;
+  reactions: Record<string, unknown> | null;
+  pinned: boolean;
+  edited: number | null;
+}
+
+const MESSAGE_FIELDS = `
+  message_id parent_id text created author_id author_display_name
+  author_avatar author_is_bot attachment reactions pinned edited
+`;
+
+/**
+ * A page of league chat, newest first.
+ * `before` is a message_id cursor — pass the oldest id you have to page back.
+ */
+export async function getLeagueMessages(
+  leagueId: string,
+  opts: FetchOpts & { before?: string } = {}
+): Promise<RawMessage[]> {
+  if (!opts.token) throw new SleeperError('Chat requires a Sleeper token', 401, GQL);
+  const before = opts.before ? `, before: "${opts.before}"` : '';
+  const d = await graphql(
+    `query { messages(parent_id: "${leagueId}", order_by: "created"${before}) { ${MESSAGE_FIELDS} } }`,
+    opts
+  );
+  return d.messages ?? [];
+}
+
+export async function getPinnedMessages(
+  leagueId: string,
+  opts: FetchOpts = {}
+): Promise<RawMessage[]> {
+  if (!opts.token) throw new SleeperError('Chat requires a Sleeper token', 401, GQL);
+  const d = await graphql(
+    `query { pinned_messages(parent_id: "${leagueId}") { ${MESSAGE_FIELDS} } }`,
+    opts
+  );
+  return d.pinned_messages ?? [];
+}
+
+/**
+ * Post to league chat. This is the only write in the whole app and is gated
+ * behind SLEEPER_ALLOW_POSTING — it puts a real message in a real league.
+ */
+export async function postLeagueMessage(
+  leagueId: string,
+  text: string,
+  opts: FetchOpts & { clientId?: string } = {}
+): Promise<RawMessage> {
+  if (!opts.token) throw new SleeperError('Posting requires a Sleeper token', 401, GQL);
+  // client_id lets Sleeper dedupe if a request is retried.
+  const clientId = opts.clientId ?? `desk-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const d = await graphql(
+    `mutation { create_message(
+        parent_id: "${leagueId}",
+        parent_type: "league",
+        text: ${JSON.stringify(text)},
+        client_id: ${JSON.stringify(clientId)}
+      ) { ${MESSAGE_FIELDS} } }`,
+    opts
+  );
+  return d.create_message;
+}
+
 export const AVATAR = (id?: string | null) =>
   id ? `https://sleepercdn.com/avatars/thumbs/${id}` : null;
 

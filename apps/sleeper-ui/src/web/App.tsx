@@ -5,12 +5,14 @@ import Dashboard from './pages/Dashboard';
 import Matchups from './pages/Matchups';
 import TeamPage from './pages/Team';
 import Activity from './pages/Activity';
+import Chat from './pages/Chat';
 
 const NAV = [
   { to: '', label: 'Overview', end: true },
   { to: 'matchups', label: 'Matchups' },
   { to: 'teams', label: 'Teams' },
   { to: 'activity', label: 'Activity' },
+  { to: 'chat', label: 'Chat' },
 ];
 
 export default function App() {
@@ -53,6 +55,7 @@ function LeagueShell({ me }: { me: Me }) {
               <Route path="teams" element={<TeamPage bundle={bundle.data} />} />
               <Route path="teams/:rosterId" element={<TeamPage bundle={bundle.data} />} />
               <Route path="activity" element={<Activity bundle={bundle.data} />} />
+              <Route path="chat" element={<Chat bundle={bundle.data} />} />
             </Routes>
           )}
         </main>
