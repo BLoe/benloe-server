@@ -196,6 +196,11 @@ export interface RenderRun {
   entries: { id: string; parts: MessagePart[]; timeIso: string; isLive?: boolean }[];
 }
 
+/** "~1.2k tokens" — approximate by construction, so it reads that way. */
+function fmtThinking(tokens: number): string {
+  return tokens >= 1000 ? `~${(tokens / 1000).toFixed(1)}k tokens` : `~${tokens} tokens`;
+}
+
 export function buildRenderRuns(messages: ChatMessage[], live: MessagePart[] | null, now: Date): RenderRun[] {
   type Raw = { id: string; role: ChatMessage['role']; author?: string | null; parts: MessagePart[]; created_at: string; isLive?: boolean };
   const all: Raw[] = messages.map((m) => ({ id: m.id, role: m.role, author: m.author, parts: m.parts, created_at: m.created_at }));
@@ -294,6 +299,20 @@ function Conversation({
   // turn's real progress) until the server reports the turn over.
   const [liveTurn, setLiveTurn] = useState(false);
   const [live, setLive] = useState<MessagePart[] | null>(null);
+  /**
+   * The pulse: what Cabinet is doing RIGHT NOW, held outside `live` because
+   * none of it belongs in the transcript. Before this existed, a turn that
+   * thought for forty seconds and then ran six tools showed the reader
+   * nothing at all until the first tool card appeared — indistinguishable
+   * from a hung request. Cleared on turn-end.
+   */
+  const [pulse, setPulse] = useState<{
+    thinking: string;
+    thinkingTokens: number;
+    step: number;
+    tools: number;
+    elapsedMs: number;
+  } | null>(null);
   const [sending, setSending] = useState(false);
   // Whether the (uncontrolled — see editorRef) composer holds any text.
   // Only used to drive the Send button's disabled state; the actual content
@@ -649,6 +668,27 @@ function Conversation({
             }
             return;
           }
+          const blank = { thinking: '', thinkingTokens: 0, step: 0, tools: 0, elapsedMs: 0 };
+          if (e.type === 'thinking-delta') {
+            // Keep only the tail: this is a glimpse of live reasoning, not a
+            // transcript of it, and an unbounded string here would grow to
+            // tens of KB on a long turn and re-render the whole strip.
+            setPulse((p) => ({ ...(p ?? blank), thinking: ((p?.thinking ?? '') + e.delta).slice(-800) }));
+            return;
+          }
+          if (e.type === 'thinking-tokens') {
+            setPulse((p) => ({ ...(p ?? blank), thinkingTokens: e.estimated }));
+            return;
+          }
+          if (e.type === 'step') {
+            setPulse((p) => ({ ...(p ?? blank), step: e.step, tools: e.tools, elapsedMs: e.elapsedMs }));
+            return;
+          }
+          // Cabinet started speaking — the reasoning glimpse has served its
+          // purpose and the real answer takes the space.
+          if (e.type === 'text-delta') {
+            setPulse((p) => (p && (p.thinking || p.thinkingTokens) ? { ...p, thinking: '', thinkingTokens: 0 } : p));
+          }
           foldTurn(parts, e);
           setLive([...parts]);
         });
@@ -710,6 +750,7 @@ function Conversation({
         reconcileAfterDrop(chat.id, preSendCount);
       } finally {
         setLive(null);
+        setPulse(null);
         setSending(false);
         interruptingRef.current = false;
       }
@@ -883,6 +924,21 @@ function Conversation({
       </ol>
 
       {error && <p className="reader-error voice">{error}</p>}
+
+      {pulse && (pulse.thinking || pulse.thinkingTokens > 0 || pulse.step > 0) && (
+        <div className="pulse-strip" role="status" aria-live="off">
+          <span className="pulse-dot" aria-hidden="true" />
+          <div className="pulse-body">
+            <span className="pulse-meta data">
+              {pulse.thinkingTokens > 0 ? 'thinking' : pulse.step > 0 ? `step ${pulse.step}` : 'thinking'}
+              {pulse.thinkingTokens > 0 && ` · ${fmtThinking(pulse.thinkingTokens)}`}
+              {pulse.thinkingTokens === 0 && pulse.tools > 0 && ` · ${pulse.tools} ${pulse.tools === 1 ? 'tool' : 'tools'}`}
+              {pulse.elapsedMs > 1500 && ` · ${Math.round(pulse.elapsedMs / 1000)}s`}
+            </span>
+            {pulse.thinking && <p className="pulse-thinking voice">{pulse.thinking}</p>}
+          </div>
+        </div>
+      )}
 
       {(restartWait || liveTurn) && (
         <div className="resume-strip" role="status" aria-live="polite">
