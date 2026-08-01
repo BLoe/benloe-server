@@ -123,6 +123,26 @@ describe('prompt assembly', () => {
     expect(p1.turnContext).not.toBe(p2.turnContext); // per-turn context does differ
   });
 
+  // Regression, 2026-08-01: turnContext used to carry only the UTC ISO string,
+  // leaving the agent to apply the Eastern offset itself. It read 21:34Z as
+  // 9:34pm, told Ben it was "past nine" at 5:34pm, and invented a two-hour
+  // errand to explain the missing time. Assert the wall-clock is pre-computed.
+  it('renders Ben wall-clock time, not UTC, and handles DST both ways', () => {
+    const edt = assemblePrompt(mem, { kind: 'user', now: new Date('2026-08-01T21:34:00Z') });
+    expect(edt.turnContext).toContain('5:34 PM EDT');
+    expect(edt.turnContext).toContain('Saturday');
+    expect(edt.turnContext).toContain('August 1, 2026');
+
+    // Standard time: UTC-5. Same instant-of-day, five hours back.
+    const est = assemblePrompt(mem, { kind: 'user', now: new Date('2026-01-15T21:34:00Z') });
+    expect(est.turnContext).toContain('4:34 PM EST');
+
+    // Midnight-crossing: 03:00Z on the 2nd is still 11:00pm on the 1st in NY.
+    const rollover = assemblePrompt(mem, { kind: 'user', now: new Date('2026-08-02T03:00:00Z') });
+    expect(rollover.turnContext).toContain('August 1, 2026');
+    expect(rollover.turnContext).toContain('11:00 PM EDT');
+  });
+
   it('datetime and interlocutor never leak into systemPrompt — they live in turnContext', () => {
     const p = assemblePrompt(mem, {
       kind: 'user',
