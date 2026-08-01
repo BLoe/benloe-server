@@ -13,7 +13,12 @@ import { EMBEDDABLE_TABLES, type EpisodicStore } from '../episodic/index.js';
 import type { Embedder } from '../embeddings/index.js';
 import { persistAssistantMessage, runAgentCronJob, systemChat } from '../gateway/transcript.js';
 import type { InstrumentSpec } from '../gateway/surfaces.js';
-import { nextDaily, nextHeartbeat, nextWeekly } from './clock.js';
+import { substanceNights } from '../domains/substances.js';
+import { recentHealth } from '../domains/health.js';
+import { adherence, deriveHabits, deriveHabitsRange } from '../domains/adherence.js';
+import { cravingsOn } from '../domains/cravings.js';
+import { ankleLoadResponse } from '../domains/symptoms.js';
+import { nextDaily, nextHeartbeat, nextWeekly, nyParts } from './clock.js';
 import type { JobSpec } from './index.js';
 
 export interface JobDeps {
@@ -79,6 +84,26 @@ const RHYTHM_PINGS: { name: string; hh: number; mm: number; title: string; body:
     silent: true,
   },
 ];
+
+/**
+ * Ben's actual week (RHYTHM.md, confirmed by Ben 2026-08-01), indexed by
+ * day-of-week so the morning brief can state the day's real shape instead of
+ * asking him what's on. These are FIXED facts about his calendar, not
+ * suggestions — the brief reads them out; it does not re-decide them.
+ *
+ * Kept here rather than in the prompt text because a cron prompt is a string
+ * the model can drift from, while a snapshot field is data it was told to
+ * quote verbatim.
+ */
+const DAY_ANCHORS: Record<number, string[]> = {
+  0: ['Unstructured by default — weekend design is the open gap', 'Weekly review this evening'],
+  1: ['WFH', 'Darts league in the evening (protected, social, out of the apartment)'],
+  2: ['Office, 10 E 40th', 'Leaves ~5:30 and WALKS 40th → 27th to Emanuel — real ankle load right before lifting', 'Trainer ~5:45pm'],
+  3: ['WFH — deep-work day, few meetings', 'NO evening anchor: structurally the worst night of the week, first target for evening design'],
+  4: ['Office, 10 E 40th (sometimes skipped when tired)', 'Kickball at Heckscher Fields, bar after, Citi Bike home with Zach — social-night variant by default'],
+  5: ['WFH', 'Trainer 9am on 27th', 'Tompkins Sq. Bagels after — protected ritual, budget around it, never target it'],
+  6: ['Unstructured by default — weekend design is the open gap'],
+};
 
 /**
  * Soft usage-budget alert (v1: simple absolute threshold).
@@ -180,32 +205,118 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     },
   };
 
+  /**
+   * The brief is WRITTEN at 06:30 and ANNOUNCED later, deliberately.
+   *
+   * Until tonight this job pushed an alerting notification at 06:30. Ben woke
+   * at 09:03 on 2026-08-01; RHYTHM's wording is "brief waiting at wake," which
+   * is not the same thing as a phone buzzing two and a half hours before he
+   * opens his eyes. A system whose first act of the day is to wake him early
+   * and then ask him to rate his restfulness is measuring its own interference.
+   *
+   * So: generate early, so it is genuinely waiting whenever he surfaces; alert
+   * separately, at an hour he is plausibly already awake (`morning-nudge`).
+   */
   const briefing: JobSpec = {
     name: 'morning-briefing',
     next: (from) => nextDaily(6, 30, from),
     run: async () => {
       const today = localDay();
+      const yesterday = localDay(new Date(Date.now() - 86_400_000));
+      const dow = nyParts(new Date()).dow;
+
+      // Derive yesterday's habits before reading adherence, so anything logged
+      // late last night counts toward the streak Ben sees this morning.
+      deriveHabits(db, yesterday);
+      deriveHabits(db, today);
+
       const assembly = {
         date: today,
+        weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dow],
+        anchors: DAY_ANCHORS[dow] ?? [],
         weightTrend: weightTrend(db, 30),
-        yesterdayMacros: dailyTotals(db, localDay(new Date(Date.now() - 86_400_000))),
+        yesterdayMacros: dailyTotals(db, yesterday),
+        lastNight: substanceNights(db, 2)[0] ?? null,
+        health: recentHealth(db, 3),
+        ankle: ankleLoadResponse(db, 3),
+        adherence: adherence(db, 7),
+        cravingsYesterday: cravingsOn(db, yesterday).length,
+        plannedMeals: db
+          .prepare(
+            `SELECT m.meal, COALESCE(r.title, m.ad_hoc_description) AS title, m.status
+               FROM meal_plan_entry m LEFT JOIN recipe r ON r.id = m.recipe_id
+              WHERE m.local_day = ? ORDER BY m.meal`,
+          )
+          .all(today),
+        plannedActivity: db
+          .prepare('SELECT kind, title, is_anchor, status FROM activity_plan_entry WHERE local_day = ? ORDER BY is_anchor DESC, id')
+          .all(today),
+        pantryStaples: db
+          .prepare("SELECT name, location FROM pantry_item WHERE COALESCE(quantity, 1) > 0 ORDER BY is_staple DESC, name LIMIT 60")
+          .all(),
         medsLow: medicationsLow(db),
         tasksToday: db.prepare("SELECT title, due_on, priority FROM task WHERE status='open' AND (due_on IS NULL OR due_on <= ?) ORDER BY priority LIMIT 5").all(today),
         pendingApprovals: deps.approvals.pending().length,
       };
+
       const chatId = systemChat(db, 'sys-briefing', 'cron', 'Briefings');
       await runAgentCronJob(deps.runtime, db, {
         chatId,
         kind: 'cron',
-        prompt:
-          'Assemble the morning briefing from the deterministic snapshot below. Call mcp__cabinet__render_widget with widgetType "briefing" and a sectioned data payload, then write a 2-3 sentence narrative. Numbers must come from the snapshot verbatim.',
+        // RHYTHM specifies this brief's SEQUENCE, and the old prompt ("assemble
+        // a briefing, 2-3 sentences") produced none of it — no call to action,
+        // no named breakfast, no named evening block. Those three are the
+        // entire mechanism: PLAYBOOK P1 says Ben executes appointments and not
+        // intentions, and TUNING E4 says a block chosen at the morning brief
+        // survives while one chosen at 6pm does not. A brief that reports
+        // numbers and stops is a dashboard, not scaffolding.
+        prompt: [
+          'Write the morning brief. RHYTHM.md fixes the order; follow it exactly and do not reorder or drop steps.',
+          '',
+          '1. WEIGH-IN + MOOD PROMPT. Open by asking for this morning\'s weight and a mood/restfulness read. One line.',
+          '2. THE DAY, COMPRESSED. Trend line vs. band, today\'s anchors (in `anchors`), what is already on the calendar. Numbers verbatim from the snapshot — never invent one.',
+          '3. TONIGHT, ALREADY DECIDED. Name ONE dinner and ONE evening block, as decisions already made, not options. Use `plannedMeals`/`plannedActivity` if populated; otherwise CHOOSE them yourself from `pantryStaples` and the day\'s anchors and state the choice flatly. A menu here is a failure — the charter\'s prime directive is to remove decisions, and E4 says a block named now survives while one named at 6pm dies.',
+          '4. THE CALL TO ACTION. One direct imperative line: up now, ten minutes of floor work, timer framing. This ends the scroll and it is the single most load-bearing line in the brief. Never soften it into an invitation.',
+          '5. BREAKFAST, NAMED. Protein-forward, from what is actually in `pantryStaples`. No decision left for Ben.',
+          '',
+          'Then call mcp__cabinet__render_widget with widgetType "briefing" and a sectioned payload carrying the same content.',
+          '',
+          'Constraints: Phase 0 has NO calorie or protein target — report intake as observation, never as a percentage of a target you invented. Ben cooks on a poor electric stove; prefer the Instant Pot and air fryer. He likes heat, dislikes yellow mustard and pickles, and would pick fish last. If `adherence` shows a goal with unmeasured=true, that means nobody wrote it down — do NOT report it as a miss.',
+        ].join('\n'),
         promptInput: { snapshot: JSON.stringify(assembly) },
       });
       push(deps, 'notice', { level: 'info', text: 'Morning briefing ready.', source: 'briefing' });
+    },
+  };
+
+  /**
+   * The alerting half of the morning brief.
+   *
+   * Later on weekends, because Ben's weekends are unstructured by his own
+   * account and an 8am buzz on a Saturday buys nothing. Skipped entirely once
+   * a weight is already logged — he is demonstrably up and the ping would be
+   * pure noise, and a notification that fires when it has nothing to add is
+   * how a channel gets muted.
+   */
+  const morningNudge: JobSpec = {
+    name: 'morning-nudge',
+    next: (from) => {
+      const weekday = nextDaily(8, 0, from);
+      const weekend = nextDaily(9, 30, from);
+      // Pick whichever of the two lands on the correct kind of day first.
+      const isWeekend = (d: Date) => [0, 6].includes(nyParts(d).dow);
+      return isWeekend(weekday) ? weekend : weekday;
+    },
+    run: async () => {
+      const today = localDay();
+      const weighed = db
+        .prepare("SELECT 1 FROM body_metric WHERE local_day = ? AND lower(metric) LIKE '%weight%' LIMIT 1")
+        .get(today);
+      if (weighed) return;
       notify(deps, {
         kind: 'briefing',
         title: 'Morning',
-        body: "Today's brief is ready — weight, the day's shape, tonight's block.",
+        body: "Brief's waiting — weight, the day's shape, tonight's block.",
         tag: 'cabinet-briefing',
       });
     },
@@ -223,7 +334,14 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
           sub: `${Math.round(totals.kcal)} kcal · ${totals.entries} meal${totals.entries === 1 ? '' : 's'}`,
         },
       ];
-      const prompt = 'How was today? Tap mood / energy / stress.';
+      // The check-in is the ONLY collection point for the three things no
+      // query can see: the evening ankle reading, whether tonight's block
+      // actually started, and whether Ben left the apartment. Goals 4/5/6 are
+      // unscoreable without them, and the ankle number is what turns the step
+      // count from a dose into a dose-response. Asking for them here costs one
+      // extra line; not asking costs the entire measurement.
+      const prompt =
+        'How was today? Tap mood / energy / stress — then one line back: ankle out of 10, did tonight\'s block start, were you out of the apartment.';
       const payload = { vitals, prompt };
       // Durable write (mentorship: Today surface, briefing/checkin durability)
       // — no agent turn here on purpose (deliberately cheap, SQL-only, same
@@ -246,7 +364,13 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
 
   const weekly: JobSpec = {
     name: 'weekly-review',
-    next: (from) => nextWeekly(0, 9, 0, from), // Sunday 09:00 NY
+    // Sunday 19:30 NY. RHYTHM.md puts the weekly review on Sunday EVENING —
+    // it is the week's finish line (PLAYBOOK P3), and it sets the headline
+    // target for the week that starts the next morning. Firing it at 09:00
+    // reviewed a Sunday that hadn't happened yet and landed the plan for the
+    // week ten hours before Ben would act on it. 19:30 puts it after dinner,
+    // at the head of the main block, with Monday still ahead of him.
+    next: (from) => nextWeekly(0, 19, 30, from),
     run: async () => {
       const chatId = systemChat(db, 'sys-weekly', 'cron', 'Weekly review');
       const prompt = [
@@ -294,7 +418,7 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     },
   }));
 
-  return [heartbeat, briefing, checkin, weekly, maintenance, ...rhythmPings];
+  return [heartbeat, briefing, morningNudge, checkin, weekly, maintenance, ...rhythmPings];
 }
 
 /** 03:00 job (§11): backups, WAL checkpoint, embedding backfill, approval sweep, rotation. */
@@ -336,6 +460,17 @@ export async function runMaintenance(deps: JobDeps): Promise<{ backups: string[]
     console.warn(`maintenance: zero backups produced (dataDir=${dataDir})`);
     db.prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES ('maintenance-zero-backups','WARNED','cron')").run();
   }
+
+  // Re-derive habit marks across the trailing fortnight.
+  //
+  // Derivation is idempotent, so this is cheap; the reason it runs nightly is
+  // LATE-LANDING DATA. The Apple Health Shortcut fires at 23:45, a forgotten
+  // meal gets logged the next morning, a weight gets backdated after a trip.
+  // Any of those should retroactively count toward the day they belong to, and
+  // without a sweep the only derivation that ever ran was the one at the
+  // moment of the morning brief — permanently missing everything that arrived
+  // afterward, which on the health-ingest path is nearly everything.
+  deriveHabitsRange(db, 14);
 
   // Rotation: keep the newest 30 daily backups per database file.
   for (const name of ['cabinet.db', 'episodic.db']) {

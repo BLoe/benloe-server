@@ -19,9 +19,42 @@ import type { MessagePart } from './fold.js';
 import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
 import { markTurnInFlight, clearTurnInFlightIf } from './pendingTurn.js';
 import { registerSurfaceRoutes } from './surfaces.js';
+import { registerCredentialRoutes } from './credentialRoutes.js';
+import { credKey } from '../domains/credentials.js';
 import { createPerfRecorder, nullPerf, perfEnabled, perfRecentTurns, perfSummary } from '../runtime/perf.js';
 import type { PushService } from '../push/index.js';
 import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, type ImageMime } from './attachments.js';
+
+/**
+ * Resolve CABINET_CRED_KEY once, scrub it from the environment, and never let
+ * a bad value take the server down.
+ *
+ * Two things are load-bearing here.
+ *
+ * The SCRUB: Cabinet's own agent runs Bash, and a child shell inherits
+ * process.env — so an un-scrubbed key is one `env` away from being printed
+ * into a transcript. Same reasoning (and same fix) as the GitHub App private
+ * key in integrations/githubApp.ts.
+ *
+ * The CATCH: credKey throws on a present-but-malformed key, which is the right
+ * call for a caller that can handle it — a truncated key means nothing can
+ * decrypt anything, and that should be loud. But thrown from buildApp it would
+ * take the entire Cabinet offline over a typo in one optional integration's
+ * config. So it's logged (the message reports byte length only, never key
+ * material) and the store runs in the metadata-only mode it already supports.
+ */
+let credKeyCache: Buffer | null | undefined;
+function safeCredKey(): Buffer | null {
+  if (credKeyCache !== undefined) return credKeyCache;
+  try {
+    credKeyCache = credKey();
+  } catch (err) {
+    console.error('credentials: %s Store is in read-metadata-only mode.', err instanceof Error ? err.message : err);
+    credKeyCache = null;
+  }
+  delete process.env.CABINET_CRED_KEY;
+  return credKeyCache;
+}
 
 export interface GatewayDeps {
   db: Database.Database;
@@ -476,6 +509,14 @@ export function buildApp(deps: GatewayDeps) {
     const days = Number(req.query.days ?? 14);
     res.json({ days: recentHealth(deps.db, Number.isFinite(days) ? days : 14) });
   });
+
+  // Credential store. Mounted here so it sits inside the same owner-auth wall
+  // as the rest of /api. The key is read ONCE at wiring time and held in a
+  // closure — process.env is scrubbed of it at boot (same pattern as the
+  // GitHub App private key), so nothing downstream can read it back out of the
+  // environment, and no route in this file can return a decrypted secret
+  // because credentialRoutes.ts never imports the function that decrypts.
+  registerCredentialRoutes(app, { db: deps.db, key: safeCredKey() });
 
   app.get('/api/push/key', (_req, res) => {
     const push = deps.push;

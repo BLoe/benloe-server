@@ -519,7 +519,14 @@ describe('jobs', () => {
     expect(parts[0].data.vitals).toEqual([
       { kind: 'stat', label: 'Protein · tonight', big: '42', unit: 'g', sub: '620 kcal · 1 meal' },
     ]);
-    expect(parts[0].data.prompt).toBe('How was today? Tap mood / energy / stress.');
+    // Asserted by intent, not by exact copy: the check-in is the only
+    // collection point for the three signals no query can derive (ankle,
+    // whether the block started, whether he left the apartment), so those
+    // asks are the contract — the wording around them is free to change.
+    expect(parts[0].data.prompt).toMatch(/mood \/ energy \/ stress/);
+    expect(parts[0].data.prompt).toMatch(/ankle/i);
+    expect(parts[0].data.prompt).toMatch(/block/i);
+    expect(parts[0].data.prompt).toMatch(/apartment/i);
   });
 
   it('evening-checkin still fires its ephemeral widgetBus push, same payload as the durable write', async () => {

@@ -147,10 +147,28 @@ function markerPctFor(points: number[], latest: number | null): number | undefin
  * calorie goal now, so the id-DESC collision FINDING 1 fixed is moot.
  */
 export function goalTarget(db: Database.Database, domain: string, titleLike: string, fallback: number): number {
+  return goalTargetOrNull(db, domain, titleLike) ?? fallback;
+}
+
+/**
+ * The target Ben actually agreed to, or null if there isn't one.
+ *
+ * This exists because the nutrition instruments used to fall back to 2200 kcal
+ * / 165 g protein — numbers nobody ever set. Phase 0 deliberately sets NO
+ * intake target (the whole point of the fortnight is to measure what Ben's
+ * normal actually is before prescribing anything), so the dial was reporting
+ * "68% of target" against a target that existed only in this line of code.
+ *
+ * A fabricated denominator is worse than a missing one: it makes every meal
+ * look like progress toward, or a failure against, a plan that was never
+ * agreed. Callers now render intake as a plain observation when this returns
+ * null, and only draw a percentage when there is a real goal row behind it.
+ */
+export function goalTargetOrNull(db: Database.Database, domain: string, titleLike: string): number | null {
   const row = db
     .prepare(`SELECT target_value FROM goal WHERE active = 1 AND domain = ? AND lower(title) LIKE ? ORDER BY id DESC LIMIT 1`)
     .get(domain, `%${titleLike}%`) as { target_value: number | null } | undefined;
-  return row?.target_value ?? fallback;
+  return row?.target_value ?? null;
 }
 
 /* ---------- today ---------- */
@@ -160,8 +178,8 @@ function todayView(db: Database.Database) {
 
   // Nutrition
   const totals = dailyTotals(db, today);
-  const proteinTarget = goalTarget(db, 'nutrition', 'protein', 165);
-  const kcalTarget = goalTarget(db, 'nutrition', 'calor', 2200);
+  const proteinTarget = goalTargetOrNull(db, 'nutrition', 'protein');
+  const kcalTarget = goalTargetOrNull(db, 'nutrition', 'calor');
 
   // Weight
   const wt = weightTrend(db, 7);
@@ -184,12 +202,17 @@ function todayView(db: Database.Database) {
   const cashPoints = dailyNet.map((r) => Math.round(r.net));
 
   const vitals: InstrumentSpec[] = [
+    // With no agreed target (Phase 0), the dial reports what was eaten and
+    // says so — 'observing' — instead of scoring it against an invented one.
     {
       kind: 'dial', label: 'Nutrition · today',
-      tag: totals.protein_g >= proteinTarget ? 'on track' : `${Math.round((totals.protein_g / proteinTarget) * 100)}%`,
-      value: Math.round(totals.protein_g), max: Math.round(proteinTarget),
-      unit: `/ ${Math.round(proteinTarget)} g protein`,
-      sub: `${Math.round(totals.kcal)} / ${Math.round(kcalTarget)} kcal · ${totals.entries} meal${totals.entries === 1 ? '' : 's'}`,
+      tag: proteinTarget === null
+        ? 'observing'
+        : totals.protein_g >= proteinTarget ? 'on track' : `${Math.round((totals.protein_g / proteinTarget) * 100)}%`,
+      value: Math.round(totals.protein_g),
+      max: Math.round(proteinTarget ?? Math.max(totals.protein_g, 1)),
+      unit: proteinTarget === null ? 'g protein' : `/ ${Math.round(proteinTarget)} g protein`,
+      sub: `${Math.round(totals.kcal)}${kcalTarget === null ? '' : ` / ${Math.round(kcalTarget)}`} kcal · ${totals.entries} meal${totals.entries === 1 ? '' : 's'}`,
     },
     {
       kind: 'rule', label: 'Weight · 7-day',
@@ -313,22 +336,31 @@ function domainView(id: string, db: Database.Database) {
 
   if (id === 'nutrition') {
     const totals = dailyTotals(db, today);
-    const proteinTarget = goalTarget(db, 'nutrition', 'protein', 165);
-    const kcalTarget = goalTarget(db, 'nutrition', 'calor', 2200);
+    const proteinTarget = goalTargetOrNull(db, 'nutrition', 'protein');
+    const kcalTarget = goalTargetOrNull(db, 'nutrition', 'calor');
     const wt = weightTrend(db, 30);
     const points = wt.points.map((p) => p.value);
     const instruments: InstrumentSpec[] = [
       {
         kind: 'dial', label: 'Protein · today',
-        tag: totals.protein_g >= proteinTarget ? 'on track' : `${Math.round((totals.protein_g / proteinTarget) * 100)}%`,
-        value: Math.round(totals.protein_g), max: Math.round(proteinTarget), unit: `/ ${Math.round(proteinTarget)} g`,
-        sub: `${Math.round((totals.protein_g / proteinTarget) * 100)}% of target`,
+        tag: proteinTarget === null
+          ? 'observing'
+          : totals.protein_g >= proteinTarget ? 'on track' : `${Math.round((totals.protein_g / proteinTarget) * 100)}%`,
+        value: Math.round(totals.protein_g),
+        max: Math.round(proteinTarget ?? Math.max(totals.protein_g, 1)),
+        unit: proteinTarget === null ? 'g' : `/ ${Math.round(proteinTarget)} g`,
+        sub: proteinTarget === null
+          ? 'no target set — Phase 0 is measuring baseline'
+          : `${Math.round((totals.protein_g / proteinTarget) * 100)}% of target`,
       },
       {
         kind: 'gauge', label: 'Calories · today',
-        value: Math.round(totals.kcal), max: Math.round(kcalTarget),
-        leftLabel: `${Math.round((totals.kcal / kcalTarget) * 100)}%`,
-        rightLabel: `${Math.max(0, Math.round(kcalTarget - totals.kcal))} left`,
+        value: Math.round(totals.kcal),
+        max: Math.round(kcalTarget ?? Math.max(totals.kcal, 1)),
+        leftLabel: kcalTarget === null ? 'observing' : `${Math.round((totals.kcal / kcalTarget) * 100)}%`,
+        rightLabel: kcalTarget === null
+          ? `${Math.round(totals.kcal)} logged`
+          : `${Math.max(0, Math.round(kcalTarget - totals.kcal))} left`,
       },
     ];
     if (points.length) instruments.push({ kind: 'rule', label: 'Weight · 30-day', readout: String(wt.latest), unit: 'lb', points, markerPct: markerPctFor(points, wt.latest) });
