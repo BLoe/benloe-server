@@ -38,7 +38,9 @@ function fillEverythingExcept(skip: Dimension | null) {
     memory.update('plans/health.md', '# PLAN: health\n\nPhase 0 confirmed with Ben 2026-08-01. 2,300 kcal, 190g protein.', 'confirmed');
   }
   if (skip !== 'goal') upsertGoal(cabinet.db, { domain: 'nutrition', title: 'protein', target_value: 180, unit: 'g' });
-  if (skip !== 'height') logBodyMetric(cabinet.db, { metric: 'height', value: 72 });
+  // The live schema names the unit into the metric ('height_in'), so the
+  // test uses the real shape rather than a tidier invented one.
+  if (skip !== 'height') logBodyMetric(cabinet.db, { metric: 'height_in', value: 72 });
   if (skip !== 'metric') logBodyMetric(cabinet.db, { metric: 'weight_lb', value: 278 });
   if (skip !== 'dietary') upsertConstraint(cabinet.db, { kind: 'dietary', confirmedNone: true });
   if (skip !== 'physical') upsertConstraint(cabinet.db, { kind: 'physical', confirmedNone: true });

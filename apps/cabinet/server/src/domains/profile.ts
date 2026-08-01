@@ -52,11 +52,19 @@ export function profileGap(db: Database.Database, memory: MemoryReadable): strin
   // Height is separate from "any body metric": every calorie and TDEE number
   // in plans/health.md is computed from it, and it is the one measurement that
   // never arrives on its own from a morning weigh-in.
+  // body_metric.metric is free text and the unit rides in the name — the live
+  // row is 'height_in', not 'height' (found the hard way, 2026-08-01: an
+  // equality match reported a gap Ben had already closed). Prefix-match so a
+  // future 'height_cm' counts too.
   const heightCount = (
-    db.prepare("SELECT COUNT(*) AS n FROM body_metric WHERE metric = 'height'").get() as { n: number }
+    db.prepare("SELECT COUNT(*) AS n FROM body_metric WHERE metric = 'height' OR metric LIKE 'height\\_%' ESCAPE '\\'").get() as {
+      n: number;
+    }
   ).n;
   const otherCount = (
-    db.prepare("SELECT COUNT(*) AS n FROM body_metric WHERE metric <> 'height'").get() as { n: number }
+    db.prepare("SELECT COUNT(*) AS n FROM body_metric WHERE metric <> 'height' AND metric NOT LIKE 'height\\_%' ESCAPE '\\'").get() as {
+      n: number;
+    }
   ).n;
   if (heightCount === 0 || otherCount === 0) missing.push('missing baseline measurements');
 
