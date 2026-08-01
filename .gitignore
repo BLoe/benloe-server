@@ -69,3 +69,6 @@ api-dumps/
 apps/*/prisma/*.db
 apps/*/prisma/*.db-shm
 apps/*/prisma/*.db-wal
+
+# Personal / health data — never commit. Backed up outside the repo.
+docs/personal_data/
