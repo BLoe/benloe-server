@@ -14,6 +14,7 @@ import { refusalFallback, route } from './router.js';
 import { TurnQueue, type TurnKind } from './queue.js';
 import { generateTitle } from './titler.js';
 import { truncateForModel } from './toolTruncate.js';
+import { createPerfRecorder, nullPerf, perfEnabled, type PerfRecorder } from './perf.js';
 
 /**
  * Per-kind agentic-turn budget. User turns can involve multi-file builds,
@@ -48,6 +49,25 @@ const AUTO_COMPACT_WINDOW = Number(process.env.CABINET_AUTO_COMPACT_WINDOW) || 2
  */
 export const MAX_AUTO_CONTINUATIONS = 3;
 
+/**
+ * Advisory per-turn token budget for the whole agentic loop (§task budgets).
+ * Returns null for models that don't support the feature — the API rejects
+ * `output_config.task_budget` on Sonnet 5 and Haiku 4.5 — and for turn kinds
+ * whose maxTurns ceiling is already tight enough to be the real limit.
+ *
+ * Sizes come from observed production spend (token_usage, 2026-07): the
+ * heaviest real user turns ran ~85k output tokens plus tool results, so 400k
+ * leaves generous headroom while still landing well inside a turn that would
+ * otherwise grind through all 120 steps. The documented floor is 20k, and an
+ * undersized budget causes refusal-like behavior, so err high.
+ */
+export function taskBudgetFor(model: string, kind: TurnKind): number | null {
+  const supported = /opus-5|opus-4-8|opus-4-7|fable-5|mythos-5/.test(model);
+  if (!supported) return null;
+  if (kind !== 'user') return null;
+  return Number(process.env.CABINET_TASK_BUDGET) || 400_000;
+}
+
 /** Was this turn cut off by the maxTurns ceiling, or did it end some other way (success, or any other terminal error)? */
 export type TurnOutcome = 'clean' | 'max_turns_cutoff';
 
@@ -59,6 +79,31 @@ export function classifyStop(subtype: string | null | undefined): TurnOutcome {
 export type TurnEvent =
   | { type: 'turn-start'; messageId: string; chatId: string; model: string }
   | { type: 'text-delta'; delta: string }
+  /**
+   * Live reasoning (2026-08-01). Previously the only thing the stream carried
+   * between "turn-start" and the first tool result was nothing at all: the
+   * model's thinking was dropped on the floor, so a turn that spent 40s
+   * reasoning before its first tool call was indistinguishable from a hung
+   * process. Rendered as ephemeral, de-emphasized text in the chat surface and
+   * deliberately NOT persisted to the transcript — thinking is a liveness
+   * signal, not a record.
+   */
+  | { type: 'thinking-delta'; delta: string }
+  /**
+   * Redacted-thinking progress. On the subscription path Opus 5 streams
+   * `thinking_delta` frames that carry only a token estimate — the reasoning
+   * text itself is not exposed (verified live 2026-08-01: ttf_thinking fired
+   * at 2.1s while zero characters arrived). The CLI digests those frames into
+   * a system/thinking_tokens message, which is the only honest liveness
+   * signal available during a long think. Drives the "thinking · ~1.2k" pill.
+   */
+  | { type: 'thinking-tokens'; estimated: number }
+  /**
+   * Agentic-loop progress (2026-08-01). One per assistant message, so the UI
+   * can show "step 7 · 3 tools · 18s" instead of a silent spinner during a
+   * long multi-tool turn.
+   */
+  | { type: 'step'; step: number; tools: number; elapsedMs: number }
   | { type: 'tool-start'; toolId: string; name: string; input: unknown }
   | { type: 'tool-end'; toolId: string; output: string; isError: boolean }
   | { type: 'widget'; widgetType: string; data: unknown }
@@ -94,6 +139,13 @@ export interface TurnRequest {
   /** Composer image attachments (§ vision spike, 2026-07-11) — decoded bytes
    *  already read off disk by /api/chat, base64-ready for the turn. */
   images?: { mediaType: ImageMime; base64: string }[];
+  /**
+   * Latency recorder for this turn. The gateway creates it so its own
+   * pre-turn work (lesson recall, profileGap, queue wait) shares one turn_id
+   * with everything the runtime records; when absent — cron, heartbeat, tests
+   * — the runtime makes its own.
+   */
+  perf?: PerfRecorder;
   onEvent(e: TurnEvent): void;
 }
 
@@ -210,7 +262,13 @@ export class AgentRuntime {
 
   /** Serialized entry point: all turns pass through the queue. */
   run(req: TurnRequest): Promise<{ stopReason: string; sessionId: string | null }> {
-    return this.queue.submit(req.kind, () => this.executeTurn(req));
+    // Time spent waiting behind another turn is latency Ben feels but that no
+    // model-side metric would ever explain, so it gets its own span.
+    const stopWait = req.perf?.start('queue_wait', { label: req.kind });
+    return this.queue.submit(req.kind, () => {
+      stopWait?.({ depth: this.queue.depth });
+      return this.executeTurn(req);
+    });
   }
 
   /**
@@ -250,9 +308,19 @@ export class AgentRuntime {
       ? { model: modelOverride, effort: 'xhigh' as const }
       : route({ kind: req.kind, override: chat.model_override, deep: req.deep });
 
-    const standingOrders = this.safeRead('STANDING_ORDERS.md');
-    const ctx: GateContext = { chatId: req.chatId, sessionKind: req.kind, standingOrders };
     const messageId = randomUUID();
+    const perf =
+      req.perf ??
+      (perfEnabled()
+        ? createPerfRecorder({ db: this.opts.db, turnId: messageId, chatId: req.chatId, sessionKind: req.kind })
+        : nullPerf());
+    perf.describe({ model });
+    const turnClock = perf.start('turn_total');
+
+    const stopRead = perf.start('prompt_assemble', { label: 'STANDING_ORDERS.md' });
+    const standingOrders = this.safeRead('STANDING_ORDERS.md');
+    stopRead();
+    const ctx: GateContext = { chatId: req.chatId, sessionKind: req.kind, standingOrders };
     const abort = req.abort ?? new AbortController();
     this.currentOnEvent = req.onEvent;
     this.currentAbort = abort;
@@ -263,8 +331,10 @@ export class AgentRuntime {
     // prompt cache to hit — everything per-turn (datetime, interlocutor,
     // lessons, snapshot, topic domain files) is wrapped into the message
     // instead, never glued into the system prompt.
+    const stopAssemble = perf.start('prompt_assemble', { label: 'promptCore' });
     const { systemPrompt, turnContext } = assemblePrompt(this.opts.memory, { kind: req.kind, ...req.promptInput });
     const wrappedPrompt = `<turn-context>\n${turnContext}\n</turn-context>\n\n${req.prompt}`;
+    stopAssemble({ systemPromptChars: systemPrompt.length, turnContextChars: turnContext.length });
 
     // Vision (§ vision spike, 2026-07-11): query()'s `prompt` accepts a plain
     // string OR an AsyncIterable<SDKUserMessage> (sdk.d.ts) — the latter is
@@ -306,6 +376,20 @@ export class AgentRuntime {
     let stepCount = 0;
     const cumUsage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
 
+    // Latency probes. `initAt` anchors the time-to-first-* measurements to the
+    // moment the CLI subprocess was actually ready, so subprocess spawn cost
+    // (sdk_spawn) and model cost (ttf_*) stay separable — the whole point of
+    // the exercise, since one is ours to fix and the other isn't.
+    let initAt = 0;
+    let stepAt = 0;
+    let sawThinking = false;
+    let sawText = false;
+    let sawTool = false;
+    let toolCount = 0;
+    /** tool_use id → the open 'tool' span, closed by its matching tool_result. */
+    const openTools = new Map<string, { name: string; stop: (meta?: Record<string, unknown>) => void }>();
+    const stopSpawn = perf.start('sdk_spawn');
+
     try {
       const q = this.queryFn({
         prompt: promptPayload,
@@ -319,6 +403,19 @@ export class AgentRuntime {
           resume: req.kind === 'user' ? (chat.sdk_session_id ?? undefined) : undefined,
           maxTurns: MAX_TURNS_BY_KIND[req.kind],
           includePartialMessages: true,
+          // Opus 5 migration (2026-08-01). maxTurns is a cliff: the turn runs
+          // full speed into the wall and gets cut off mid-action, which is
+          // what the continuation machinery below exists to paper over. A task
+          // budget is the graceful version — the model sees a server-side
+          // countdown across the whole agentic loop and paces itself, wrapping
+          // up with a real answer instead of being guillotined. Advisory, not
+          // enforced; maxTurns stays as the hard ceiling.
+          //
+          // Only sent for models that support it (Opus/Fable — NOT Sonnet 5 or
+          // Haiku, where the API rejects it), and sized well above observed
+          // per-turn spend: an undersized budget makes the model decline or
+          // scope down the work, which is a far worse failure than a long turn.
+          ...(taskBudgetFor(model, req.kind) ? { taskBudget: { total: taskBudgetFor(model, req.kind)! } } : {}),
           // Pin the permission mode explicitly. The SDK 0.3.202 -> 0.3.210
           // upgrade (2026-07-16) changed the headless default away from
           // 'default': non-pre-approved built-in tools (Bash/Read/Grep/Glob/
@@ -344,7 +441,12 @@ export class AgentRuntime {
           disallowedTools: HARD_DENIES,
           mcpServers: this.opts.mcpServers as never,
           canUseTool: async (toolName: string, input: Record<string, unknown>) => {
+            // The gate sits in the critical path of EVERY non-pre-approved
+            // tool call; if classification or the audit insert ever gets
+            // expensive, this is where it shows up.
+            const stop = perf.start('gate', { label: toolName });
             const r = await this.gate(toolName, input, ctx);
+            stop({ behavior: r.behavior });
             return r.behavior === 'allow'
               ? { behavior: 'allow' as const, updatedInput: r.updatedInput }
               : { behavior: 'deny' as const, message: r.message };
@@ -354,6 +456,7 @@ export class AgentRuntime {
               {
                 hooks: [
                   async (hookInput: { tool_name?: string; tool_input?: unknown }) => {
+                    const stop = perf.start('hook_pre', { label: hookInput.tool_name ?? 'unknown' });
                     // Audit-only hook: covers the narrow auto-approved class
                     // that never reaches canUseTool (Appendix B).
                     this.opts.db
@@ -367,6 +470,7 @@ export class AgentRuntime {
                         req.chatId,
                         req.kind,
                       );
+                    stop();
                     return {};
                   },
                 ],
@@ -386,6 +490,7 @@ export class AgentRuntime {
               {
                 hooks: [
                   async (hookInput: { tool_name?: string; tool_response?: unknown }) => {
+                    const stopHook = perf.start('hook_post', { label: hookInput.tool_name ?? 'unknown' });
                     try {
                       const name = hookInput.tool_name;
                       const resp = hookInput.tool_response as Record<string, unknown> | undefined;
@@ -420,6 +525,8 @@ export class AgentRuntime {
                     } catch (err) {
                       this.diagLog({ kind: 'tool-truncate-error', chatId: req.chatId, error: String(err) });
                       return {};
+                    } finally {
+                      stopHook();
                     }
                   },
                 ],
@@ -470,19 +577,57 @@ export class AgentRuntime {
       } as Parameters<QueryFn>[0]);
 
       for await (const msg of q as AsyncIterable<Record<string, any>>) {
+        if (msg.type === 'system' && msg.subtype === 'thinking_tokens') {
+          if (!sawThinking && initAt) {
+            sawThinking = true;
+            perf.mark('ttf_thinking', performance.now() - initAt, { meta: { step: stepCount, redacted: true } });
+          }
+          req.onEvent({ type: 'thinking-tokens', estimated: Number(msg.estimated_tokens) || 0 });
+          continue;
+        }
         if (msg.type === 'system' && msg.subtype === 'init') {
           sessionId = msg.session_id ?? sessionId;
+          stopSpawn({ resumed: !!chat.sdk_session_id });
+          initAt = performance.now();
+          stepAt = initAt;
           continue;
         }
         if (msg.type === 'stream_event') {
           const ev = msg.event;
           if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+            if (!sawText && initAt) {
+              sawText = true;
+              perf.mark('ttf_text', performance.now() - initAt, { meta: { step: stepCount } });
+            }
             req.onEvent({ type: 'text-delta', delta: ev.delta.text });
+          } else if (ev?.type === 'content_block_delta' && ev.delta?.type === 'thinking_delta') {
+            // Summarized-thinking path: real reasoning text. On the
+            // subscription/redacted path these frames carry no `thinking`
+            // string at all (only a token estimate, handled above as
+            // thinking-tokens), so an empty delta is normal — drop it rather
+            // than emitting an event that renders as nothing.
+            const text = typeof ev.delta.thinking === 'string' ? ev.delta.thinking : '';
+            if (!text) continue;
+            if (!sawThinking && initAt) {
+              sawThinking = true;
+              perf.mark('ttf_thinking', performance.now() - initAt, { meta: { step: stepCount } });
+            }
+            req.onEvent({ type: 'thinking-delta', delta: text });
           }
           continue;
         }
         if (msg.type === 'assistant') {
           stepCount++;
+          if (stepAt) {
+            perf.mark('step', performance.now() - stepAt, { meta: { step: stepCount } });
+            stepAt = performance.now();
+          }
+          req.onEvent({
+            type: 'step',
+            step: stepCount,
+            tools: toolCount,
+            elapsedMs: initAt ? Math.round(performance.now() - initAt) : 0,
+          });
           const stepUsage = msg.message?.usage as Record<string, number> | undefined;
           if (stepUsage) {
             cumUsage.input_tokens += stepUsage.input_tokens ?? 0;
@@ -520,6 +665,21 @@ export class AgentRuntime {
           }
           for (const block of msg.message?.content ?? []) {
             if (block.type === 'tool_use') {
+              if (!sawTool && initAt) {
+                sawTool = true;
+                perf.mark('ttf_tool', performance.now() - initAt, {
+                  label: block.name,
+                  // The narration check, as data: did any visible text reach
+                  // Ben before the first tool call, or did the turn dive
+                  // straight in? Queryable regression test for the voice rule.
+                  meta: { step: stepCount, narratedFirst: sawText },
+                });
+              }
+              toolCount++;
+              openTools.set(block.id, {
+                name: block.name,
+                stop: perf.start('tool', { label: block.name }),
+              });
               req.onEvent({ type: 'tool-start', toolId: block.id, name: block.name, input: block.input });
               lastToolName = block.name;
             }
@@ -533,6 +693,11 @@ export class AgentRuntime {
                 typeof block.content === 'string'
                   ? block.content
                   : (block.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
+              const open = openTools.get(block.tool_use_id);
+              if (open) {
+                open.stop({ isError: !!block.is_error, outputChars: text.length });
+                openTools.delete(block.tool_use_id);
+              }
               req.onEvent({ type: 'tool-end', toolId: block.tool_use_id, output: text.slice(0, 4000), isError: !!block.is_error });
             }
           }
@@ -565,6 +730,17 @@ export class AgentRuntime {
       this.currentOnEvent = null;
       this.currentAbort = null;
       this.currentChatId = null;
+      // A tool still open here never got its result — an abort, an error, or
+      // a turn that ended mid-flight. Close the span rather than dropping it,
+      // so "aborted during a 90s Bash" is visible in the data.
+      stopSpawn();
+      for (const [, open] of openTools) open.stop({ orphaned: true });
+      openTools.clear();
+      turnClock({ steps: stepCount, tools: toolCount, stopReason });
+      // A continuation re-enters executeTurn with a fresh recorder; flushing
+      // here means each round's spans land under its own turn_id instead of
+      // being lost if a later round throws.
+      if (!req.perf) perf.flush();
     }
 
     if (sessionId && sessionId !== chat.sdk_session_id) {

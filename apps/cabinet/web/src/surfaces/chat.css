@@ -664,3 +664,61 @@
 @media (prefers-reduced-motion: reduce) {
   .resume-dot { animation: none; }
 }
+
+/* ---- the pulse: what Cabinet is doing right now (2026-08-01) ----
+   Sits directly above the composer, in the same status-strip family as
+   .resume-strip. Two jobs: prove the turn is alive during a long silent
+   stretch, and show the shape of the work (step count, tools, elapsed).
+   The reasoning glimpse is deliberately de-emphasized — --linen-faint, one
+   size down, fading at the top edge — because it is a peek at Cabinet's
+   thinking, not Cabinet talking to Ben. When Cabinet actually speaks, the
+   glimpse clears and the answer takes the space. */
+.pulse-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  background: var(--panel-2);
+  flex: none;
+}
+.pulse-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+  flex: 1;
+}
+.pulse-meta {
+  font-size: var(--fs-cap);
+  color: var(--linen-dim);
+  letter-spacing: 0.02em;
+}
+.pulse-thinking {
+  margin: 0;
+  font-size: var(--fs-cap);
+  line-height: 1.5;
+  color: var(--linen-faint);
+  /* Show the tail of the reasoning, faded at the top: a window that scrolls
+     itself rather than a growing block that shoves the composer down. */
+  max-height: 4.5em;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  mask-image: linear-gradient(to bottom, transparent, #000 1.6em);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.6em);
+}
+.pulse-dot {
+  flex: none;
+  margin-top: 0.35em;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brass);
+  animation: resume-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot { animation: none; }
+}

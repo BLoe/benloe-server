@@ -10,6 +10,14 @@ import type { MessagePart, ApprovalPacket } from './contracts.js';
 export type TurnEvent =
   | { type: 'turn-start'; messageId: string; chatId: string; model: string }
   | { type: 'text-delta'; delta: string }
+  /** Live reasoning — ephemeral. Rendered while the turn runs, never folded
+   *  into a MessagePart and never persisted (see foldTurn's default case). */
+  | { type: 'thinking-delta'; delta: string }
+  /** Redacted-thinking progress: the only liveness signal available while the
+   *  model reasons on the subscription path (no reasoning text is exposed). */
+  | { type: 'thinking-tokens'; estimated: number }
+  /** Agentic-loop progress: one per assistant message. */
+  | { type: 'step'; step: number; tools: number; elapsedMs: number }
   | { type: 'tool-start'; toolId: string; name: string; input: unknown }
   | { type: 'tool-end'; toolId: string; output: string; isError: boolean }
   | { type: 'widget'; widgetType: string; data: unknown }
@@ -148,6 +156,9 @@ export function foldTurn(parts: MessagePart[], e: TurnEvent): void {
       parts.push({ type: 'approval', packet: e.packet });
       break;
     default:
+      // 'thinking-delta' and 'step' fall through deliberately: they are
+      // liveness, not transcript. The Chat surface renders them from its own
+      // ephemeral state and drops them when the turn ends.
       break;
   }
 }

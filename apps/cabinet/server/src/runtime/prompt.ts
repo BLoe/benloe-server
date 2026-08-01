@@ -44,6 +44,55 @@ export interface AssembledPrompt {
   turnContext: string;
 }
 
+/**
+ * Late-position operational reminder (2026-08-01, Opus 5 migration).
+ *
+ * Anthropic's Opus 5 prompting guide is explicit about two things Cabinet was
+ * getting wrong on the main loop:
+ *   1. "In a long system prompt, pair the instruction with a short reminder
+ *      near the end of the prompt." VOICE.md's narration rule sits ~6 memory
+ *      files deep in a cache-stable prefix that runs thousands of tokens; by
+ *      the time the model reaches Ben's actual message it has been outweighed
+ *      by tool schemas and turn data. This block rides at the END of
+ *      turnContext, immediately before the user's words.
+ *   2. Narration cadence is tuned by DESCRIBING the shape you want, and
+ *      positive examples of the wanted style beat prohibitions.
+ *
+ * Deliberately NOT here: any "double-check your work" / "verify before
+ * responding" instruction. Opus 5 self-corrects without being told, and the
+ * guide is explicit that such instructions compound into over-verification
+ * and wasted tokens.
+ *
+ * This is register discipline, not personality — the character lives in
+ * CHARTER.md / VOICE.md and must keep winning any conflict.
+ */
+export const TURN_DISCIPLINE = `<turn-discipline>
+Before your first tool call, say in one short line what you're about to do —
+always, even when the work is obvious and even when you intend to call several
+tools. Silence followed by a wall of tool results is the single worst failure
+mode of this interface: Ben cannot see tool calls in flight, so a turn that
+goes straight to tools is indistinguishable from a frozen one.
+
+While working, drop another short line whenever something material changes: a
+phase finishes, a result surprises you, you change direction, or you're moving
+to verification. Not a play-by-play — updates that carry information.
+
+When you finish, lead with the outcome. The first sentence answers "what
+happened" or "what did you find"; supporting detail comes after it.
+
+RIGHT: "Pulling the last two weeks of weigh-ins." → [tools] → "Trend's 277.1,
+third week in the band. Two flat days both landed on skipped-snack days."
+WRONG: [six tool calls, no text] → a wall of results.
+
+Length: desk register stays tight — most replies are a few sentences. Counsel
+register (goals, plans, reflection, anything about what Ben should want) is
+exempt: there, the conversation IS the work and length limits are suspended.
+
+Deliver what was asked, at the scope intended. Make routine judgment calls
+yourself. If the request seems mistaken or a better approach exists, say so in
+a sentence and continue rather than quietly widening or narrowing the task.
+</turn-discipline>`;
+
 /** A line telling Cabinet who it's talking to, and how to stand with them. */
 export function interlocutorLine(who: Interlocutor): string {
   if (who.isOwner) {
@@ -102,6 +151,11 @@ export function assemblePrompt(mem: MemoryStore, input: PromptInput): AssembledP
       /* missing domain file is fine */
     }
   }
+
+  // Last block in turnContext, so it lands immediately before Ben's message —
+  // the highest-salience position available. Heartbeats are machine-facing
+  // and have no one to narrate to, so they skip it.
+  if (input.kind !== 'heartbeat') context.push(TURN_DISCIPLINE);
 
   return { systemPrompt, turnContext: context.join('\n\n') };
 }
