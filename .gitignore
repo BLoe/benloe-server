@@ -25,6 +25,9 @@ logs/
 
 # Build outputs
 dist/
+# Recovery copies the deploy script leaves behind when a build lands in a bad
+# state — same artifacts, so the same rule should have covered them.
+dist-poisoned-*/
 build/
 .next/
 .vite/
