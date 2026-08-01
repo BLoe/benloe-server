@@ -13,11 +13,12 @@ import { AgentRuntime, configureAuth, classifyStop, MAX_AUTO_CONTINUATIONS, AGEN
 describe('router', () => {
   it('routes by session kind', () => {
     expect(route({ kind: 'heartbeat' }).model).toBe(MODELS.nano);
-    // Main user loop: Sonnet 5 (default route) at xhigh effort — see router.ts.
+    // Main user loop: Opus 5 (deep route) at 'high' effort — see router.ts.
     const userRoute = route({ kind: 'user' });
-    expect(userRoute.model).toBe(MODELS.default);
-    expect(userRoute.route).toBe('default');
-    expect(userRoute.effort).toBe('xhigh');
+    expect(userRoute.model).toBe(MODELS.deep);
+    expect(MODELS.deep).toBe('claude-opus-5');
+    expect(userRoute.route).toBe('deep');
+    expect(userRoute.effort).toBe('high');
     expect(route({ kind: 'cron', deep: true }).model).toBe(MODELS.deep);
     expect(route({ kind: 'cron' }).model).toBe(MODELS.default);
   });
@@ -163,7 +164,7 @@ describe('prompt assembly', () => {
   it('ONBOARDING.md loads into turnContext only when the caller sets domainFiles for it — mirrors how gateway/app.ts pairs profileGap with domainFiles: ["ONBOARDING.md"]', () => {
     const withGap = assemblePrompt(mem, { kind: 'user', profileGap: 'still need: goals', domainFiles: ['ONBOARDING.md'] });
     expect(withGap.turnContext).toContain('ONBOARDING.md');
-    expect(withGap.turnContext).toContain('bright-line test'); // real seed content, not just the filename tag
+    expect(withGap.turnContext).toContain('The interview is dead'); // real seed content, not just the filename tag
 
     const withoutGap = assemblePrompt(mem, { kind: 'user' });
     expect(withoutGap.turnContext).not.toContain('ONBOARDING.md');
@@ -264,7 +265,9 @@ describe('AgentRuntime.run (fake SDK)', () => {
 
     expect(res).toEqual({ stopReason: 'success', sessionId: 'sess-123' });
     expect(events.map((e) => e.type)).toEqual([
-      'turn-start', 'text-delta', 'text-delta', 'tool-start', 'tool-end', 'turn-end',
+      // 'step' rides on each assistant message — the agentic-loop progress
+      // signal the chat surface renders while a multi-tool turn is running.
+      'turn-start', 'text-delta', 'text-delta', 'step', 'tool-start', 'tool-end', 'turn-end',
     ]);
     // Appendix B invariants baked into the options:
     expect(seenOptions.allowedTools).toEqual([]); // no gated tools bare-listed
@@ -391,7 +394,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
     );
     const events: TurnEvent[] = [];
     const res = await rt.run({ chatId: 't1', prompt: 'build it', kind: 'user', onEvent: (e) => events.push(e) });
-    expect(modelsSeen).toEqual(['claude-fable-5', 'claude-opus-4-8']);
+    expect(modelsSeen).toEqual(['claude-fable-5', MODELS.deep]);
     expect(res.stopReason).toBe('success');
     expect(events.some((e) => e.type === 'notice')).toBe(true);
   });
