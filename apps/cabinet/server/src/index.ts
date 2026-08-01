@@ -56,6 +56,7 @@ import { buildApp } from './gateway/app.js';
 import { seedInsurancePlan } from './domains/healthcare.js';
 import { Scheduler } from './scheduler/index.js';
 import { buildJobs } from './scheduler/jobs.js';
+import { PushService, pushConfigFromEnv } from './push/index.js';
 import { schedulePendingDeployConfirmationWatch } from './deploy/pendingConfirmation.js';
 import { markShutdown, scheduleInterruptedTurnResume } from './gateway/pendingTurn.js';
 import { startGithubAppTokenLoop } from './integrations/githubApp.js';
@@ -135,12 +136,20 @@ const runtime = new AgentRuntime({
   mcpServers: { cabinet: cabinetMcp, ...buildExternalMcpServers(process.env) },
 });
 
+// Web push. Configured means VAPID keys are present; unconfigured is a valid
+// state (the routes say so and the UI offers nothing to turn on) rather than a
+// startup failure — a server without notifications still works, it just can't
+// reach Ben when a tab isn't open.
+const pushConfig = pushConfigFromEnv();
+const pushService = new PushService(cabinet.db, pushConfig);
+if (!pushConfig) console.warn('push: no VAPID keys configured — scheduled pings cannot reach any device');
+
 // Built unconditionally (constructing it arms nothing — only .start() does)
 // so it can back both the real cron timers below AND the authenticated
 // manual trigger (gateway/app.ts's POST /api/admin/jobs/:name/run), which
 // needs the exact same JobSpec array the timers use, not a rebuilt copy.
 const scheduler = new Scheduler(
-  buildJobs({ db: cabinet.db, runtime, approvals, widgetBus, episodic, embedder, dataDir: DATA_DIR }),
+  buildJobs({ db: cabinet.db, runtime, approvals, widgetBus, episodic, embedder, dataDir: DATA_DIR, pushService }),
 );
 
 const app = buildApp({
@@ -156,6 +165,7 @@ const app = buildApp({
   scheduler,
   buildMarker: buildInfo.sha,
   dataDir: DATA_DIR,
+  push: pushService,
 });
 
 app.listen(PORT, '127.0.0.1', () => {

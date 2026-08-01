@@ -413,3 +413,54 @@
     display: none;
   }
 }
+
+/* ---- notifications panel (2026-08-01) ----
+   Operational state, not a preference: "can Cabinet reach me" sits beside
+   "what has it been doing" and "how fast is it". Brass on the primary action
+   because turning this on is Cabinet gaining a voice — the one place the
+   accent genuinely means liveness rather than decoration. */
+.ops-push {
+  margin-bottom: var(--sp-6);
+}
+.ops-push-lede {
+  margin: 0 0 var(--sp-3);
+  max-width: 62ch;
+  color: var(--linen-dim);
+}
+.ops-push-actions {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.ops-push-btn {
+  font: inherit;
+  font-size: var(--fs-cap);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: 4px;
+  border: 1px solid var(--brass);
+  background: transparent;
+  color: var(--brass);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.ops-push-btn:hover:not(:disabled) {
+  background: var(--brass);
+  color: var(--ground);
+}
+.ops-push-btn.subtle {
+  border-color: var(--rule);
+  color: var(--linen-dim);
+}
+.ops-push-btn.subtle:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--linen);
+}
+.ops-push-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ops-push-note {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-cap);
+  color: var(--linen-faint);
+}

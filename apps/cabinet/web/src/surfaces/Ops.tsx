@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/cabinet.js';
 import type { OpsEntry, OpsKind, UsageDay, UsageWindow, InstrumentSpec, PerfView, PerfPhaseSummary } from '../lib/cabinet.js';
 import { Instrument, SectionLabel } from '../components/instruments/index.js';
+import { disablePush, enablePush, pushState, testPush, type PushState } from '../lib/push.js';
 import './ops.css';
 
 /**
@@ -183,6 +184,98 @@ function PhaseTable({
   );
 }
 
+/**
+ * Notifications panel. Lives on Ops rather than a settings page because this
+ * is operational state — "can Cabinet actually reach me" belongs beside "what
+ * has Cabinet been doing" and "how fast is it", not buried in preferences.
+ */
+function PushPanel() {
+  const [state, setState] = useState<PushState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    pushState()
+      .then((s) => live && setState(s))
+      .catch(() => live && setState({ status: 'unsupported', reason: "couldn't read notification state" }));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const act = async (fn: () => Promise<PushState>, after?: string) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      setState(await fn());
+      if (after) setNote(after);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : 'That failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!state) return null;
+
+  return (
+    <section className="ops-push" aria-label="Notifications">
+      <SectionLabel>Notifications</SectionLabel>
+      {state.status === 'on' ? (
+        <>
+          <p className="ops-push-lede">
+            This device is on the list. Morning brief, the 3:30 snack, the evening block, wind-down.
+          </p>
+          <div className="ops-push-actions">
+            <button
+              type="button"
+              className="ops-push-btn"
+              disabled={busy}
+              onClick={() =>
+                act(async () => {
+                  const r = await testPush();
+                  setNote(r.sent > 0 ? `Sent to ${r.sent} device${r.sent === 1 ? '' : 's'}.` : 'Nothing was delivered — check the log below.');
+                  return state;
+                })
+              }
+            >
+              Send a test
+            </button>
+            <button type="button" className="ops-push-btn subtle" disabled={busy} onClick={() => act(disablePush, 'Off. Cabinet can still reach you in the app.')}>
+              Turn off
+            </button>
+          </div>
+        </>
+      ) : state.status === 'off' ? (
+        <>
+          <p className="ops-push-lede">
+            Cabinet can't reach you unless a tab is open. The day's structure — the morning brief, the
+            3:30 snack, the evening block — only works if it arrives.
+          </p>
+          <div className="ops-push-actions">
+            <button type="button" className="ops-push-btn" disabled={busy} onClick={() => act(enablePush)}>
+              Turn on notifications
+            </button>
+          </div>
+        </>
+      ) : state.status === 'denied' ? (
+        <p className="ops-push-lede">
+          Notifications are blocked for this site. Only you can undo that, in your browser's settings for
+          cabinet.benloe.com.
+        </p>
+      ) : state.status === 'unconfigured' ? (
+        <p className="ops-push-lede">
+          Push isn't configured on the server — no VAPID keys. Nothing to turn on yet.
+        </p>
+      ) : (
+        <p className="ops-push-lede">{state.reason}.</p>
+      )}
+      {note && <p className="ops-push-note data">{note}</p>}
+    </section>
+  );
+}
+
 export function Ops() {
   const [filter, setFilter] = useState<Filter>('all');
   const [entries, setEntries] = useState<OpsEntry[] | null>(null);
@@ -291,6 +384,8 @@ export function Ops() {
           <p className="ops-usage-cost data">{usage.costLine}</p>
         </section>
       )}
+
+      <PushPanel />
 
       {perf && perf.turns > 0 && (
         <section className="ops-perf" aria-label="Latency">

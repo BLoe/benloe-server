@@ -24,9 +24,61 @@ export interface JobDeps {
   episodic: EpisodicStore;
   embedder: Embedder;
   dataDir: string;
+  /**
+   * Web push. Optional so tests and any future headless composition don't have
+   * to stand one up — but in production its absence is the difference between
+   * RHYTHM's schedule existing and RHYTHM's schedule happening.
+   */
+  pushService?: { send(msg: { kind: string; title: string; body: string; tag?: string; url?: string; silent?: boolean }): Promise<unknown> };
 }
 
 const push = (deps: JobDeps, event: string, data: unknown) => deps.widgetBus.emit('push', { event, data });
+
+/**
+ * Send a notification to Ben's devices, and never let a delivery failure take
+ * down the job that was trying to send it. Fire-and-forget by design: a job's
+ * real work (writing the briefing, logging the check-in) has already happened
+ * by the time this runs, and blocking on a push service's latency would be
+ * backwards.
+ */
+function notify(deps: JobDeps, msg: { kind: string; title: string; body: string; tag?: string; url?: string; silent?: boolean }): void {
+  void deps.pushService?.send(msg)?.catch(() => {
+    /* push/index.ts already records the failure in push_delivery */
+  });
+}
+
+/**
+ * The RHYTHM slots (RHYTHM.md, 2026-08-01). These are the load-bearing ones:
+ * plans/health.md calls the 3:30 protein snack "the late-spike defuser" and
+ * PLAYBOOK P4 says the evening war is won at 2pm, not 10pm. Each is a
+ * deliberately cheap, model-free push — the point is that the appointment
+ * arrives on time, not that Cabinet composes something clever about it.
+ * Anything needing judgment belongs in the morning brief, which Ben reads.
+ *
+ * Times are NY wall clock and DST-safe via nextDaily (scheduler/clock.ts).
+ */
+const RHYTHM_PINGS: { name: string; hh: number; mm: number; title: string; body: string; silent?: boolean }[] = [
+  {
+    name: 'ping-afternoon-snack',
+    hh: 15, mm: 30,
+    title: 'Protein snack',
+    body: "3:30. This is the one that defuses tonight — don't skip it.",
+  },
+  {
+    name: 'ping-evening-block',
+    hh: 19, mm: 30,
+    title: "Tonight's block",
+    body: 'Block starts now, before the craving window — not after.',
+  },
+  {
+    name: 'ping-wind-down',
+    hh: 22, mm: 30,
+    title: 'Wind-down',
+    body: 'Screens off. Ten minutes of stretching, then the book.',
+    // Deliberately quiet: a wind-down ping that jolts is self-defeating.
+    silent: true,
+  },
+];
 
 /**
  * Soft usage-budget alert (v1: simple absolute threshold).
@@ -150,6 +202,12 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
         promptInput: { snapshot: JSON.stringify(assembly) },
       });
       push(deps, 'notice', { level: 'info', text: 'Morning briefing ready.', source: 'briefing' });
+      notify(deps, {
+        kind: 'briefing',
+        title: 'Morning',
+        body: "Today's brief is ready — weight, the day's shape, tonight's block.",
+        tag: 'cabinet-briefing',
+      });
     },
   };
 
@@ -177,6 +235,12 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
       // Ephemeral live push, unchanged in spirit — kept for a future SSE
       // consumer; the durable write above is what actually closes the gap.
       push(deps, 'widget', payload);
+      notify(deps, {
+        kind: 'checkin',
+        title: 'Check-in',
+        body: `${Math.round(totals.protein_g)}g protein today. How did it go?`,
+        tag: 'cabinet-checkin',
+      });
     },
   };
 
@@ -200,6 +264,12 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
       ].join('\n');
       await runAgentCronJob(deps.runtime, db, { chatId, kind: 'cron', deep: true, prompt });
       push(deps, 'notice', { level: 'info', text: 'Weekly review complete.', source: 'weekly' });
+      notify(deps, {
+        kind: 'weekly',
+        title: 'Weekly review',
+        body: "The week's read is up. This is the finish line — worth ten minutes.",
+        tag: 'cabinet-weekly',
+      });
     },
   };
 
@@ -213,7 +283,18 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     run: () => runMaintenance(deps),
   };
 
-  return [heartbeat, briefing, checkin, weekly, maintenance];
+  // RHYTHM's fixed slots, each its own JobSpec so the scheduler's own health
+  // surface reports them individually — a ping that silently stopped firing
+  // should be visible as one dead job, not hidden inside a composite.
+  const rhythmPings: JobSpec[] = RHYTHM_PINGS.map((p) => ({
+    name: p.name,
+    next: (from) => nextDaily(p.hh, p.mm, from),
+    run: async () => {
+      notify(deps, { kind: p.name, title: p.title, body: p.body, tag: p.name, silent: p.silent });
+    },
+  }));
+
+  return [heartbeat, briefing, checkin, weekly, maintenance, ...rhythmPings];
 }
 
 /** 03:00 job (§11): backups, WAL checkpoint, embedding backfill, approval sweep, rotation. */

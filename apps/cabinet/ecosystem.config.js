@@ -30,6 +30,13 @@ module.exports = {
         CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
         ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY, // fallback path; runtime strips the unused one
         CABINET_BACKUP_PASSPHRASE: env.CABINET_BACKUP_PASSPHRASE,
+        // Web push (VAPID). The public key is handed to the browser; the
+        // private key signs the JWT that identifies this server to the push
+        // service. Rotating the pair invalidates every existing subscription,
+        // so it lives in .env and is never regenerated on deploy.
+        CABINET_VAPID_PUBLIC_KEY: env.CABINET_VAPID_PUBLIC_KEY,
+        CABINET_VAPID_PRIVATE_KEY: env.CABINET_VAPID_PRIVATE_KEY,
+        CABINET_VAPID_SUBJECT: env.CABINET_VAPID_SUBJECT,
         // GitHub App (cabinet-benloe) — the raw private key is scrubbed from
         // process.env at startup (server/src/integrations/githubApp.ts); agent
         // shells only ever inherit the short-lived GH_TOKEN it mints.
