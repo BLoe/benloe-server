@@ -224,9 +224,15 @@ describe('wipe (execute)', () => {
   it('clears every CABINET_CLEAR_TABLES row (including FK-linked ones) while keeping schema_migration', () => {
     seed();
     const before = new Database(join(dir, 'cabinet.db'), { readonly: true });
-    const migrationsBefore = (before.prepare('SELECT COUNT(*) AS n FROM schema_migration').get() as { n: number }).n;
+    // Snapshot every KEEP table's own count, not just schema_migration's:
+    // the list grew past one table (push_subscription — Ben's devices, which a
+    // data reset must not silently unsubscribe), so "preserved" has to mean
+    // "unchanged", not "happens to equal the migration count".
+    const keptBefore = Object.fromEntries(
+      CABINET_KEEP_TABLES.map((t) => [t, (before.prepare(`SELECT COUNT(*) AS n FROM "${t}"`).get() as { n: number }).n]),
+    );
     before.close();
-    expect(migrationsBefore).toBeGreaterThan(0);
+    expect(keptBefore.schema_migration).toBeGreaterThan(0);
 
     const result = wipe(dir, 'teststamp');
     expect(result.cabinetCleared.sort()).toEqual([...CABINET_CLEAR_TABLES].sort());
@@ -238,7 +244,7 @@ describe('wipe (execute)', () => {
     }
     for (const t of CABINET_KEEP_TABLES) {
       const n = (after.prepare(`SELECT COUNT(*) AS n FROM "${t}"`).get() as { n: number }).n;
-      expect(n, `${t} should be preserved`).toBe(migrationsBefore);
+      expect(n, `${t} should be preserved`).toBe(keptBefore[t]);
     }
     expect(after.pragma('integrity_check')).toEqual([{ integrity_check: 'ok' }]);
     after.close();

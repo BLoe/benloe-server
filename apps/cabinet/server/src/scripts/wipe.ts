@@ -101,7 +101,14 @@ import { MEMORY_TEMPLATES } from '../memory/templates.js';
 const IS_ENTRY = !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 /** cabinet.db classification — every real (non-internal) table must be in exactly one of these two lists. */
-export const CABINET_KEEP_TABLES = ['schema_migration'];
+export const CABINET_KEEP_TABLES = [
+  'schema_migration',
+  // How Cabinet physically reaches Ben (device push endpoints). Not a record
+  // ABOUT him, and silently unsubscribing his phone during a data reset would
+  // break RHYTHM's whole schedule with no visible cause — the same reasoning
+  // that carves out STANDING_ORDERS.md on the memory side.
+  'push_subscription',
+];
 export const CABINET_CLEAR_TABLES = [
   'account',
   'action_audit',
@@ -128,6 +135,9 @@ export const CABINET_CLEAR_TABLES = [
   'message',
   'mood_log',
   'pantry_item',
+  // Notification delivery log — operational history about turns and pings
+  // that are themselves being cleared.
+  'push_delivery',
   // Turn-latency telemetry (migration 012). Not Ben's data, but it's keyed to
   // chat_id and describes turns whose transcripts are being cleared — leaving
   // it behind would strand spans pointing at conversations that no longer

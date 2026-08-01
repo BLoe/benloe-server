@@ -1,14 +1,27 @@
 {
   "name": "Cabinet",
   "short_name": "Cabinet",
-  "description": "Ben's chief of staff on the benloe.com nexus",
+  "description": "Ben's Cabinet \u2014 chief advisor and operator",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#171009",
   "theme_color": "#171009",
   "icons": [
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }

@@ -19,6 +19,7 @@ import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
 import { markTurnInFlight, clearTurnInFlightIf } from './pendingTurn.js';
 import { registerSurfaceRoutes } from './surfaces.js';
 import { createPerfRecorder, nullPerf, perfEnabled, perfRecentTurns, perfSummary } from '../runtime/perf.js';
+import type { PushService } from '../push/index.js';
 import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, type ImageMime } from './attachments.js';
 
 export interface GatewayDeps {
@@ -70,6 +71,8 @@ export interface GatewayDeps {
   attachmentsDir?: string;
   /** Where pending-turn.json (interrupted-turn resume, gateway/pendingTurn.ts) lives. Injectable for tests. */
   dataDir?: string;
+  /** Web push delivery. Absent in tests that don't exercise notifications. */
+  push?: PushService;
 }
 
 export interface Principal {
@@ -432,6 +435,60 @@ export function buildApp(deps: GatewayDeps) {
       stopRequest();
       perf.flush();
     }
+  });
+
+  // ---------- web push (2026-08-01) ----------
+  // The subscribe handshake: the browser needs the VAPID public key to call
+  // pushManager.subscribe(), then hands back the endpoint + its own encryption
+  // keys. Everything here is owner/agent-walled like the rest of /api.
+  app.get('/api/push/key', (_req, res) => {
+    const push = deps.push;
+    res.json({ configured: !!push?.configured, publicKey: push?.publicKey ?? null });
+  });
+
+  app.get('/api/push/subscriptions', (_req, res) => {
+    res.json({ subscriptions: deps.push?.list() ?? [] });
+  });
+
+  app.post('/api/push/subscribe', (req, res) => {
+    const { endpoint, keys, label } = req.body ?? {};
+    if (typeof endpoint !== 'string' || !/^https:\/\//.test(endpoint)) {
+      return res.status(400).json({ error: 'a https endpoint is required' });
+    }
+    if (typeof keys?.p256dh !== 'string' || typeof keys?.auth !== 'string') {
+      return res.status(400).json({ error: 'keys.p256dh and keys.auth are required' });
+    }
+    if (!deps.push) return res.status(503).json({ error: 'push is not configured on this server' });
+    deps.push.subscribe({
+      endpoint,
+      p256dh: keys.p256dh,
+      auth: keys.auth,
+      email: (req as AuthedRequest).principal?.email ?? null,
+      label: typeof label === 'string' ? label.slice(0, 80) : null,
+    });
+    res.status(201).json({ ok: true });
+  });
+
+  app.post('/api/push/unsubscribe', (req, res) => {
+    const endpoint = req.body?.endpoint;
+    if (typeof endpoint !== 'string') return res.status(400).json({ error: 'endpoint required' });
+    res.json({ ok: deps.push?.unsubscribe(endpoint) ?? false });
+  });
+
+  /**
+   * Send a real notification to every registered device. This is how Ben
+   * confirms the whole chain works — permission, service worker, VAPID,
+   * encryption, delivery — without waiting until 3:30pm to find out it didn't.
+   */
+  app.post('/api/push/test', async (_req, res) => {
+    if (!deps.push) return res.status(503).json({ error: 'push is not configured on this server' });
+    const result = await deps.push.send({
+      kind: 'test',
+      title: 'Cabinet',
+      body: "Push is working. This is what a ping looks like.",
+      tag: 'cabinet-test',
+    });
+    res.json(result);
   });
 
   /**
