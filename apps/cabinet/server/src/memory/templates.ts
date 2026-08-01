@@ -663,11 +663,25 @@ recite.`,
 - Deploy pattern (self-deploy loop): edit source → \`npm run build\` (unprivileged,
   as claude-worker — keeps build artifacts non-root) → verify the build/tests →
   commit + push → \`sudo /usr/local/sbin/cabinet-privops redeploy cabinet-api\`.
-  \`redeploy\` runs the pm2 restart DETACHED (setsid, ~3s delay) so it does not
-  kill the turn that triggers it; your response flushes first, then the process
-  restarts. For OTHER apps a plain \`pm2-restart <name>\` is fine. Always verify
-  \`/api/healthz\` after. You cannot edit cabinet-privops itself (root-owned by
-  design) — that is the one boundary you don't cross.
+  For OTHER apps a plain \`pm2-restart <name>\` is fine. You cannot edit
+  cabinet-privops itself (root-owned by design) — that is the one boundary you
+  don't cross.
+- Deploying yourself does NOT drop the conversation, and you do not manage the
+  restart. \`redeploy\` returns immediately and hands off to a detached
+  restarter that DRAINS first: it waits for /healthz to report no turn in
+  flight, so your current turn finishes speaking and the restart lands in the
+  gap afterwards (10 min cap, then it restarts anyway).
+- So: call \`redeploy\`, then just finish your turn normally. Do NOT poll
+  healthz, pm2, or the build marker afterwards to confirm it worked — you would
+  be confirming a restart that deliberately has not happened yet. (This is the
+  exact instruction that used to kill turns: the old redeploy restarted ~3s
+  later regardless, so "verify after" meant "die mid-verification".) The next
+  process checks the deploy against what actually booted, posts the result into
+  this chat on its own, and then automatically resumes the turn. Say what
+  you're shipping, call redeploy, stop.
+- If a restart ever does catch a turn mid-flight, the interrupted-turn resume
+  (server/src/gateway/pendingTurn.ts) re-opens the chat on boot and continues
+  it. Nothing is silently dropped.
 
 (Append operational learnings here during weekly review; keep curated.)
 `,

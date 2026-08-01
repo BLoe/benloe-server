@@ -17,7 +17,7 @@ import { ingestHealthDay, ingestHealthDays, recentHealth, type HealthDay } from 
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import type { MessagePart } from './fold.js';
 import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
-import { markTurnInFlight, clearTurnInFlightIf } from './pendingTurn.js';
+import { markTurnInFlight, clearTurnInFlightIf, type TurnOutcome } from './pendingTurn.js';
 import { registerSurfaceRoutes } from './surfaces.js';
 import { registerCredentialRoutes } from './credentialRoutes.js';
 import { credKey } from '../domains/credentials.js';
@@ -421,10 +421,15 @@ export function buildApp(deps: GatewayDeps) {
     const hb = setInterval(() => res.write(SSE_HEARTBEAT), 25_000);
     // Durable breadcrumb for the interrupted-turn resume (pendingTurn.ts):
     // written now (even while this turn waits in the queue — a restart there
-    // orphans the message just the same), removed on ANY graceful end in the
-    // finally below. Only a hard process death leaves it for boot to find.
+    // orphans the message just the same), stood down in the finally below
+    // only if this turn actually COMPLETED. A turn that died mid-flight
+    // leaves it for the next boot to find and resume.
     const DATA_DIR = deps.dataDir ?? '/srv/benloe/data/cabinet';
     const turnMarker = markTurnInFlight(DATA_DIR, chatId, text);
+    // Pessimistic by default: any exit from the try that isn't a clean
+    // resolve keeps the breadcrumb. See clearTurnInFlightIf's note on why
+    // this replaced the signal-ordering latch.
+    let outcome: TurnOutcome = 'aborted';
     try {
       await deps.runtime.run({
         chatId, prompt: text, kind: 'user', onEvent: send, perf,
@@ -436,13 +441,14 @@ export function buildApp(deps: GatewayDeps) {
           ...(profileGapText ? { profileGap: profileGapText, ...(showOnboardingDoc ? { domainFiles: ['ONBOARDING.md'] } : {}) } : {}),
         },
       });
+      outcome = 'completed';
     } catch (err) {
       res.write(encodeSse({ event: 'error', data: { message: String((err as Error).message).slice(0, 300), retryable: true } }));
     } finally {
       clearInterval(hb);
       // Compare-before-clear: a turn that queued behind this one has already
       // overwritten the breadcrumb with its own — don't strip its protection.
-      clearTurnInFlightIf(DATA_DIR, turnMarker);
+      clearTurnInFlightIf(DATA_DIR, turnMarker, outcome);
       recorder.persist(deps.db, chatId);
       broadcast('chat-activity', { chatId });
       // Auto-name a still-"untitled" chat from its opening exchange. Best

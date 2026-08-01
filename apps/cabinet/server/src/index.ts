@@ -175,7 +175,9 @@ app.listen(PORT, '127.0.0.1', () => {
 // If a turn died with the previous process (self-redeploy, crash), resume
 // its chat — see gateway/pendingTurn.ts. After listen(): the resume turn
 // broadcasts over /api/events, which should be up before anything fires.
-scheduleInterruptedTurnResume({ db: cabinet.db, runtime, widgetBus, dataDir: DATA_DIR });
+// liveSha is what ACTUALLY booted — the resume path reports a self-deploy's
+// outcome against it rather than against what the deploy intended.
+scheduleInterruptedTurnResume({ db: cabinet.db, runtime, widgetBus, dataDir: DATA_DIR, liveSha: buildInfo.sha });
 
 // Sweep approvals that expired while we were down (§14).
 approvals.expireOverdue();

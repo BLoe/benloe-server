@@ -75,13 +75,24 @@ describe('markTurnInFlight / clearTurnInFlight / takePendingTurn', () => {
     // A newer turn overwrites the breadcrumb (queued-behind race)…
     markTurnInFlight(dir, 't-2', 'second turn');
     // …so the first turn's cleanup must leave it alone.
-    clearTurnInFlightIf(dir, mine);
+    clearTurnInFlightIf(dir, mine, 'completed');
     expect(takePendingTurn(dir)?.chatId).toBe('t-2');
 
     // But it does remove its own marker when unchanged.
     const again = markTurnInFlight(dir, 't-3', 'third turn');
-    clearTurnInFlightIf(dir, again);
+    clearTurnInFlightIf(dir, again, 'completed');
     expect(existsSync(MARKER_PATH())).toBe(false);
+  });
+
+  it('an aborted turn keeps its breadcrumb regardless of the shutdown latch (2026-08-01 regression)', () => {
+    // The production ordering: pm2 tears down the process tree, the CLI
+    // subprocess dies, run() rejects, and /api/chat's finally runs while the
+    // parent's SIGINT handler is still queued — so the latch is still false.
+    // The outcome gate is what has to save the breadcrumb here.
+    const marker = markTurnInFlight(dir, 'chat-1', 'the question');
+    clearTurnInFlightIf(dir, marker, 'aborted');
+    expect(existsSync(MARKER_PATH())).toBe(true);
+    expect(takePendingTurn(dir)?.chatId).toBe('chat-1');
   });
 
   it('drops (and consumes) a corrupt marker instead of crashing', () => {
@@ -262,8 +273,9 @@ describe('resumeInterruptedTurn', () => {
     const marker = markTurnInFlight(dir, 'chat-1', 'the question');
     // pm2 sends the stop signal; index.ts flips the latch...
     markShutdown();
-    // ...and the aborted turn's finally still runs its usual cleanup:
-    clearTurnInFlightIf(dir, marker);
+    // ...and even a turn that reports itself COMPLETED inside the shutdown
+    // window must not erase the breadcrumb (the latch's remaining job).
+    clearTurnInFlightIf(dir, marker, 'completed');
     clearTurnInFlight(dir);
     expect(existsSync(MARKER_PATH())).toBe(true);
     // Next boot (fresh process, latch off) consumes it normally.

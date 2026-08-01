@@ -20,13 +20,14 @@
 //     /api/events channel (via widgetBus's 'push' relay in gateway/app.ts),
 //     so a browser tab sitting on the chat re-fetches and the
 //     conversation visibly resumes without a reload.
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { EventEmitter } from 'node:events';
 import type Database from 'better-sqlite3';
 import type { AgentRuntime } from '../runtime/agent.js';
-import { createTranscriptRecorder } from './transcript.js';
+import { createTranscriptRecorder, persistAssistantMessage, systemChat } from './transcript.js';
+import { formatDeployReport, takeDeployIntent } from '../deploy/deployIntent.js';
 
 const MARKER = 'pending-turn.json';
 /** Markers older than this are logged and dropped, not resumed — answering a
@@ -51,17 +52,24 @@ export interface PendingTurnMarker {
   generation?: number;
 }
 
-/** Shutdown latch (2026-07-15, found live on the Threads→Chat deploy): pm2's
- *  stop signal aborts the in-flight SDK run, which unwinds /api/chat's
- *  try/finally exactly like a graceful end — so the dying process deleted the
- *  very breadcrumb the next boot needed, and nothing resumed (boots at 22:42
- *  and 23:23 had no marker; 22:19/22:32 only survived by losing that race
- *  slower). Once a stop signal arrives, marker clears become no-ops: from
- *  that moment "the turn ended" and "the process is dying" are the same
- *  event, and the breadcrumb must outlive it. A turn that genuinely finished
- *  inside the shutdown window leaves a stale marker behind — acceptable: the
- *  resume prompt tells the agent to review the tail and answer only what's
- *  actually unanswered. */
+/** How a turn reached its `finally`. This — not a signal race — is what
+ *  decides whether the breadcrumb stands down.
+ *
+ *  'completed': runtime.run() RESOLVED. The turn reached its own end, so
+ *    whatever it was going to say, it said. Includes a deliberate
+ *    /api/interrupt (the run resolves with an 'interrupted' stopReason), which
+ *    is why an interrupt still clears: Ben stopping the agent on purpose is
+ *    not something to resume.
+ *  'aborted': runtime.run() THREW. The turn did not finish. The dominant
+ *    cause in production is the process dying underneath it — pm2 tears down
+ *    the whole process tree, the Claude CLI subprocess is killed, and the SDK
+ *    surfaces that as a rejection. */
+export type TurnOutcome = 'completed' | 'aborted';
+
+/** Shutdown latch (2026-07-15). Kept as a second line of defence, but it is
+ *  NO LONGER what protects the breadcrumb — see the 2026-08-01 note below.
+ *  A stop signal still freezes clears, which helps in the one ordering it can
+ *  actually observe: SIGINT arriving before the turn unwinds. */
 let shuttingDown = false;
 export function markShutdown(state = true): void {
   shuttingDown = state;
@@ -95,10 +103,34 @@ export function clearTurnInFlight(dataDir: string): void {
   }
 }
 
-/** Clear the marker only if the file still holds exactly `expected` — the
- *  compare-before-unlink that keeps one turn's cleanup from destroying a
- *  breadcrumb some newer turn has since written. */
-export function clearTurnInFlightIf(dataDir: string, expected: PendingTurnMarker): void {
+/**
+ * Clear the marker only if (a) the turn actually COMPLETED and (b) the file
+ * still holds exactly `expected` — the compare-before-unlink that keeps one
+ * turn's cleanup from destroying a breadcrumb some newer turn has since
+ * written.
+ *
+ * The outcome gate is the 2026-08-01 fix. The shutdown latch alone was never
+ * enough, and the reason is an ordering it cannot see: `pm2 restart` signals
+ * the whole process TREE, so the Claude CLI subprocess dies too. Its death
+ * rejects runtime.run(), which runs /api/chat's `finally` — and that happens
+ * while the parent's own SIGINT handler is still sitting in the event queue,
+ * i.e. while `shuttingDown` is still false. The dying turn then deleted the
+ * exact breadcrumb the next boot needed. Evidence: every boot for weeks
+ * logged "no marker — clean start", including boots that provably killed a
+ * turn mid-flight (2026-08-01 23:04, a 14-minute turn with zero assistant
+ * output persisted). Regression test: test/pending-turn-race.test.ts.
+ *
+ * Gating on the outcome removes the race instead of re-tuning it: an aborted
+ * turn keeps its breadcrumb no matter which signal landed when, or whether
+ * one landed at all.
+ */
+export function clearTurnInFlightIf(dataDir: string, expected: PendingTurnMarker, outcome: TurnOutcome): void {
+  // A turn that never finished must leave its breadcrumb behind, full stop.
+  // The cost of being wrong here is asymmetric: a stale marker costs one
+  // redundant resume turn that the resume prompt itself tells the agent to
+  // no-op ("answer only what's actually unanswered"), while a missing marker
+  // costs Ben a silently dropped conversation — the failure he actually hit.
+  if (outcome === 'aborted') return;
   try {
     const current = JSON.parse(readFileSync(join(dataDir, MARKER), 'utf8')) as PendingTurnMarker;
     if (
@@ -147,15 +179,49 @@ export interface ResumeDeps {
   runtime: Pick<AgentRuntime, 'run'>;
   dataDir: string;
   widgetBus?: EventEmitter;
+  /** buildMarker of THIS process — what actually came up. Lets the boot
+   *  announce a self-deploy's verified outcome (deploy/deployIntent.ts). */
+  liveSha?: string;
 }
 
-function resumePrompt(marker: PendingTurnMarker): string {
+function resumePrompt(marker: PendingTurnMarker, deploy: string | null): string {
   return [
     `SYSTEM RESUME — the cabinet-api process restarted while you were mid-turn in this chat (turn started ${marker.startedAt}; the interrupted message began: ${JSON.stringify(marker.promptHead)}).`,
     'Whatever your previous turn streamed before the restart was preserved in the transcript; anything after it was lost, and the last user message may be effectively unanswered.',
-    'Review the tail of this conversation. If you initiated a deploy or restart yourself, verify it actually landed (healthz buildMarker, service logs) and report the result. Then pick the work back up: finish or re-answer whatever was left hanging.',
+    // When the restart was a self-deploy, the outcome has ALREADY been
+    // verified and posted above by the boot path — so the agent must not
+    // re-run healthz/pm2 checks to rediscover what it can simply read. That
+    // re-verification is what used to eat the first minute of every resume.
+    deploy
+      ? `That restart was your own deploy, and its verified outcome is already posted in this chat: "${deploy}". Do not re-verify it — take it as given and say what it means for the work in one clause at most.`
+      : 'If you initiated a deploy or restart yourself, verify it actually landed (healthz buildMarker, service logs) and report the result.',
+    'Review the tail of this conversation, then pick the work back up: finish or re-answer whatever was left hanging.',
     'Address Ben directly as usual; briefly acknowledge the restart so the seam in the conversation is honest, then get to the point.',
   ].join('\n');
+}
+
+/**
+ * Announce a self-deploy's verified outcome into `chatId`, if this boot was
+ * one. Returns the posted text (for the resume prompt) or null.
+ *
+ * Posted as an assistant message rather than a system note on purpose: from
+ * Ben's side this is Cabinet reporting back on work it chose to do, which is
+ * exactly the "success message fires on its own" beat he asked for.
+ */
+function announceDeploy(deps: ResumeDeps, chatId: string): string | null {
+  const intent = takeDeployIntent(deps.dataDir);
+  if (!intent) return null;
+  const text = formatDeployReport(intent, deps.liveSha ?? 'unknown');
+  try {
+    persistAssistantMessage(deps.db, chatId, [{ type: 'text', text }]);
+    deps.db.prepare("UPDATE chat SET updated_at = datetime('now') WHERE id = ?").run(chatId);
+    console.log(`deployIntent: announced in chat ${chatId} — ${text}`);
+  } catch (err) {
+    // Never let the announcement break the resume it precedes.
+    console.error('deployIntent: failed to post report —', err instanceof Error ? err.message : err);
+    return null;
+  }
+  return text;
 }
 
 /**
@@ -165,6 +231,10 @@ function resumePrompt(marker: PendingTurnMarker): string {
 export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> {
   const marker = takePendingTurn(deps.dataDir);
   if (!marker) {
+    // Still announce a deploy that happened while nothing was in flight —
+    // it just has no conversation to land in, so it goes to the deploy log.
+    const intentChat = () => systemChat(deps.db, 'sys-deploy', 'user', 'Deploys');
+    if (existsSync(join(deps.dataDir, 'deploy-intent.json'))) announceDeploy(deps, intentChat());
     // Deliberately logged, not silent: this is the ONLY line that
     // distinguishes "the boot-resume check ran and found nothing to do"
     // (normal — most restarts aren't mid-turn) from "the check never ran at
@@ -189,12 +259,34 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
 
   const broadcast = (event: string) => deps.widgetBus?.emit('push', { event, data: { chatId: marker.chatId } });
 
+  // Was this restart Cabinet's own deploy? Decided BEFORE the seam note so
+  // the note can say which of the two it was — "I restarted myself to ship
+  // something" reads very differently from "I crashed".
+  const wasDeploy = existsSync(join(deps.dataDir, 'deploy-intent.json'));
+
   // Honest seam in the transcript: the reader should see *why* the reply
   // below arrives out of band. role 'system' renders as "System" in the UI.
   deps.db
     .prepare('INSERT INTO message (id, chat_id, role, parts) VALUES (?,?,?,?)')
-    .run(randomUUID(), marker.chatId, 'system', JSON.stringify([{ type: 'text', text: 'Process restarted mid-turn — Cabinet is resuming this chat.' }]));
+    .run(
+      randomUUID(),
+      marker.chatId,
+      'system',
+      JSON.stringify([
+        {
+          type: 'text',
+          text: wasDeploy
+            ? 'Restarted to deploy — resuming this chat.'
+            : 'Process restarted mid-turn — Cabinet is resuming this chat.',
+        },
+      ]),
+    );
   deps.db.prepare("UPDATE chat SET updated_at = datetime('now') WHERE id = ?").run(marker.chatId);
+
+  // The deploy result, verified against what actually booted, posted before
+  // the agent says anything — so Ben sees the outcome immediately rather than
+  // waiting out a whole model turn to hear whether his deploy worked.
+  const deploy = announceDeploy(deps, marker.chatId);
   // chat-activity drives the open tab's re-fetch; chat-resume-start/end
   // bracket the resume for UI affordances (the conversation's status strip,
   // the chat list's "resuming" badge). Emitted as a start/end PAIR on
@@ -220,13 +312,15 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
   // survives a mid-turn kill — the exact failure that erased resume #2's
   // reply the night this feature shipped.
   const recorder = createTranscriptRecorder({ db: deps.db, chatId: marker.chatId });
+  let outcome: TurnOutcome = 'aborted';
   try {
     await deps.runtime.run({
       chatId: marker.chatId,
       kind: 'user',
-      prompt: resumePrompt(marker),
+      prompt: resumePrompt(marker, deploy),
       onEvent: recorder.onEvent,
     });
+    outcome = 'completed';
   } finally {
     recorder.persist(deps.db, marker.chatId);
     deps.db.prepare("UPDATE chat SET updated_at = datetime('now') WHERE id = ?").run(marker.chatId);
@@ -234,7 +328,7 @@ export async function resumeInterruptedTurn(deps: ResumeDeps): Promise<boolean> 
     // A user turn that queued behind this resume has already overwritten it
     // with its own breadcrumb (app.ts marks before the queue), and blindly
     // unlinking here would strip that turn of its crash protection.
-    if (rearmed) clearTurnInFlightIf(deps.dataDir, rearmed);
+    if (rearmed) clearTurnInFlightIf(deps.dataDir, rearmed, outcome);
     broadcast('chat-activity');
     broadcast('chat-resume-end');
   }
