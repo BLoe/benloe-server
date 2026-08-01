@@ -50,6 +50,7 @@ const ROUTES = [
   // A league before kickoff renders a different set of states entirely, and live
   // production caught a bug here that the completed-season fixture could not.
   { name: 'preseason', path: `/l/${PRESEASON}`, waitFor: 'text=No games yet' },
+  { name: 'chat', path: `/l/${LEAGUE}/chat`, waitFor: 'text=Read only' },
 ];
 
 const args = Object.fromEntries(

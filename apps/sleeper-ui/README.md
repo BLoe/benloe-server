@@ -15,12 +15,36 @@ Two upstreams, both reached from `src/lib/sleeper.ts`:
 |---|---|---|
 | REST v1 (`api.sleeper.app`) | leagues, rosters, users, matchups, transactions, drafts, players | none |
 | GraphQL (`sleeper.app/graphql`) | player news, outlooks, live NFL scores | none for public queries |
+| GraphQL (`sleeper.app/graphql`) | **league chat** | bearer token required |
 
 The REST API is [documented](https://docs.sleeper.com/) and rate limited to 1000
 calls/minute. The GraphQL endpoint is undocumented but has introspection enabled;
-it is what Sleeper's own apps use, and it exposes league chat and write operations
-behind a bearer token. **Nothing here uses those.** Adding chat would mean storing
-a Sleeper token in `/srv/benloe/.env` — a deliberate decision not yet taken.
+it is what Sleeper's own apps use.
+
+## League chat
+
+A Sleeper league is itself the message parent — chat is `messages(parent_id: <league_id>)`,
+with no separate channel to resolve. It is the one endpoint that requires signing in.
+
+```bash
+# /srv/benloe/.env
+SLEEPER_TOKEN=<your token>
+SLEEPER_ALLOW_POSTING=false   # true enables the composer
+```
+
+To get the token: sign in to sleeper.com in Chrome, open DevTools → Application →
+Local Storage, and copy the session token value. Then `pm2 restart sleeper-ui`.
+
+Without a token the rest of the dashboard works normally and the Chat section
+explains what is missing. `GET /api/health` reports `chat.enabled` and `chat.canPost`.
+
+**Posting is the only write in the app** and is off unless `SLEEPER_ALLOW_POSTING=true`.
+It puts a real message in a real league in front of real people, so it does not
+inherit the token's permission — it needs its own.
+
+Chat polls every 15s while the tab is visible. In fixture mode it renders
+`fixtures/chat.sample.json`, a synthetic feed with invented content — real chat
+cannot be captured without a token, and the screenshot harness must not depend on one.
 
 ## Layout
 

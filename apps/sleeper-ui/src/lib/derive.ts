@@ -380,6 +380,154 @@ function unknownPlayer(id: string): Player {
   return { id, name: `Player ${id}`, pos: null, team: null };
 }
 
+/* ------------------------------------------------------------------ *
+ * League chat
+ * ------------------------------------------------------------------ */
+
+export interface RawChatMessage {
+  message_id: string;
+  text: string | null;
+  created: number;
+  author_id: string;
+  author_display_name: string | null;
+  author_avatar: string | null;
+  author_is_bot?: boolean;
+  attachment?: unknown;
+  reactions?: Record<string, unknown> | null;
+  pinned?: boolean;
+  edited?: number | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  created: number;
+  authorId: string;
+  /** The manager's team name when they are in this league, else their handle. */
+  authorName: string;
+  authorAvatar: string | null;
+  isBot: boolean;
+  isMine: boolean;
+  pinned: boolean;
+  edited: boolean;
+  /** True when this continues the previous message from the same author. */
+  continues: boolean;
+  /** Set on the first message of a calendar day. */
+  dayLabel: string | null;
+  reactions: Array<{ emoji: string; count: number }>;
+  hasAttachment: boolean;
+}
+
+/** Messages from the same author inside this window render as one block. */
+const GROUPING_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Turn a raw message page into a render-ready feed: oldest first, grouped by
+ * author, with day separators and league-aware author names.
+ *
+ * Sleeper returns messages newest-first; a chat log reads oldest-first.
+ */
+export function buildChatFeed(
+  raw: RawChatMessage[],
+  opts: {
+    teams?: Map<number, Team>;
+    rosters?: RawRoster[];
+    myUserId?: string | null;
+    now?: number;
+  } = {}
+): ChatMessage[] {
+  // Map author user_id -> their team name in this league.
+  const nameByUser = new Map<string, Team>();
+  if (opts.teams && opts.rosters) {
+    for (const r of opts.rosters) {
+      const team = opts.teams.get(r.roster_id);
+      if (!team) continue;
+      if (r.owner_id) nameByUser.set(r.owner_id, team);
+      for (const co of r.co_owners ?? []) nameByUser.set(co, team);
+    }
+  }
+
+  const ordered = [...raw]
+    .filter((m) => m && m.message_id)
+    .sort((a, b) => a.created - b.created);
+
+  // Sleeper timestamps are milliseconds; guard against seconds just in case.
+  const toMs = (t: number) => (t > 1e12 ? t : t * 1000);
+
+  const out: ChatMessage[] = [];
+  let prev: ChatMessage | null = null;
+  let prevDay: string | null = null;
+
+  for (const m of ordered) {
+    const created = toMs(m.created);
+    const day = new Date(created).toDateString();
+    const sameAuthor = prev?.authorId === m.author_id;
+    const withinWindow = prev ? created - prev.created < GROUPING_WINDOW_MS : false;
+
+    const msg: ChatMessage = {
+      id: m.message_id,
+      text: m.text ?? '',
+      created,
+      authorId: m.author_id,
+      authorName:
+        nameByUser.get(m.author_id)?.teamName ?? m.author_display_name ?? 'Unknown',
+      authorAvatar: m.author_avatar
+        ? m.author_avatar.startsWith('http')
+          ? m.author_avatar
+          : `https://sleepercdn.com/avatars/thumbs/${m.author_avatar}`
+        : (nameByUser.get(m.author_id)?.avatar ?? null),
+      isBot: !!m.author_is_bot,
+      isMine: !!opts.myUserId && m.author_id === opts.myUserId,
+      pinned: !!m.pinned,
+      edited: !!m.edited,
+      continues: sameAuthor && withinWindow && day === prevDay,
+      dayLabel: day === prevDay ? null : dayLabel(created, opts.now ?? Date.now()),
+      reactions: summariseReactions(m.reactions),
+      hasAttachment: m.attachment != null,
+    };
+
+    out.push(msg);
+    prev = msg;
+    prevDay = day;
+  }
+
+  return out;
+}
+
+/**
+ * Sleeper returns reactions as a map. The shape varies (emoji -> count, or
+ * emoji -> list of user ids), so handle both rather than guessing.
+ */
+function summariseReactions(
+  reactions: Record<string, unknown> | null | undefined
+): Array<{ emoji: string; count: number }> {
+  if (!reactions || typeof reactions !== 'object') return [];
+  const out: Array<{ emoji: string; count: number }> = [];
+  for (const [emoji, value] of Object.entries(reactions)) {
+    let count = 0;
+    if (typeof value === 'number') count = value;
+    else if (Array.isArray(value)) count = value.length;
+    else if (value && typeof value === 'object') count = Object.keys(value).length;
+    if (count > 0) out.push({ emoji, count });
+  }
+  return out.sort((a, b) => b.count - a.count);
+}
+
+export function dayLabel(ts: number, now: number): string {
+  const d = new Date(ts);
+  const today = new Date(now);
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOf(today) - startOf(d)) / 86400000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: 'long' });
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+  });
+}
+
 export const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'FLEX', 'SUPER_FLEX'];
 
 export function positionRank(pos: string | null): number {

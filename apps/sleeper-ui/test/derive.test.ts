@@ -15,6 +15,8 @@ import {
   buildAllPlay,
   currentStreak,
   buildRosterView,
+  buildChatFeed,
+  dayLabel,
   type RawRoster,
   type RawUser,
   type PlayerIndex,
@@ -351,6 +353,183 @@ describe('a season that has not started yet', () => {
   it('does not discard played weeks in a finished season', () => {
     // Guard against the fix over-reaching: the real 2025 season still counts.
     expect(buildResultTimeline(matchups, league.settings.playoff_week_start).size).toBe(12);
+  });
+});
+
+describe('buildChatFeed', () => {
+  const teams = buildTeams(rosters, users);
+  const benRoster = rosters.find((r) => r.owner_id === BEN)!;
+  const other = rosters.find((r) => r.owner_id && r.owner_id !== BEN)!;
+
+  const base = (over: Partial<any> = {}) => ({
+    message_id: '1',
+    text: 'hello',
+    created: 1_766_000_000_000,
+    author_id: BEN,
+    author_display_name: 'BenLoe',
+    author_avatar: null,
+    author_is_bot: false,
+    attachment: null,
+    reactions: null,
+    pinned: false,
+    edited: null,
+    ...over,
+  });
+
+  it('orders oldest first regardless of input order', () => {
+    const feed = buildChatFeed([
+      base({ message_id: '3', created: 3000 }),
+      base({ message_id: '1', created: 1000 }),
+      base({ message_id: '2', created: 2000 }),
+    ]);
+    expect(feed.map((m) => m.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('names authors by their team in this league', () => {
+    const feed = buildChatFeed([base({ author_id: BEN })], {
+      teams,
+      rosters,
+      myUserId: BEN,
+    });
+    expect(feed[0].authorName).toBe("Mr. Rodger's Naberhood");
+    expect(feed[0].isMine).toBe(true);
+  });
+
+  it('falls back to the display name for a non-league author', () => {
+    const feed = buildChatFeed(
+      [base({ author_id: 'stranger', author_display_name: 'SomeBot' })],
+      { teams, rosters, myUserId: BEN }
+    );
+    expect(feed[0].authorName).toBe('SomeBot');
+    expect(feed[0].isMine).toBe(false);
+  });
+
+  it('groups consecutive messages from one author inside the window', () => {
+    const t = 1_766_000_000_000;
+    const feed = buildChatFeed([
+      base({ message_id: '1', created: t }),
+      base({ message_id: '2', created: t + 60_000 }),
+      base({ message_id: '3', created: t + 120_000 }),
+    ]);
+    expect(feed.map((m) => m.continues)).toEqual([false, true, true]);
+  });
+
+  it('breaks the group when the author changes', () => {
+    const t = 1_766_000_000_000;
+    const feed = buildChatFeed([
+      base({ message_id: '1', created: t, author_id: BEN }),
+      base({ message_id: '2', created: t + 1000, author_id: other.owner_id }),
+    ]);
+    expect(feed[1].continues).toBe(false);
+  });
+
+  it('breaks the group after a long gap', () => {
+    const t = 1_766_000_000_000;
+    const feed = buildChatFeed([
+      base({ message_id: '1', created: t }),
+      base({ message_id: '2', created: t + 30 * 60_000 }),
+    ]);
+    expect(feed[1].continues).toBe(false);
+  });
+
+  it('marks the first message of each day and no others', () => {
+    const day1 = new Date(2026, 0, 5, 10, 0).getTime();
+    const day2 = new Date(2026, 0, 6, 10, 0).getTime();
+    const feed = buildChatFeed(
+      [
+        base({ message_id: '1', created: day1 }),
+        base({ message_id: '2', created: day1 + 60_000 }),
+        base({ message_id: '3', created: day2 }),
+      ],
+      { now: new Date(2026, 0, 6, 12, 0).getTime() }
+    );
+    expect(feed[0].dayLabel).toBeTruthy();
+    expect(feed[1].dayLabel).toBeNull();
+    expect(feed[2].dayLabel).toBe('Today');
+  });
+
+  it('never groups across a day boundary', () => {
+    const day1 = new Date(2026, 0, 5, 23, 59).getTime();
+    const day2 = new Date(2026, 0, 6, 0, 1).getTime();
+    const feed = buildChatFeed([
+      base({ message_id: '1', created: day1 }),
+      base({ message_id: '2', created: day2 }),
+    ]);
+    expect(feed[1].continues).toBe(false);
+  });
+
+  it('counts reactions given as user id lists', () => {
+    const feed = buildChatFeed([base({ reactions: { '🔥': ['a', 'b', 'c'], '💀': ['d'] } })]);
+    expect(feed[0].reactions).toEqual([
+      { emoji: '🔥', count: 3 },
+      { emoji: '💀', count: 1 },
+    ]);
+  });
+
+  it('counts reactions given as plain numbers', () => {
+    const feed = buildChatFeed([base({ reactions: { '👍': 2 } })]);
+    expect(feed[0].reactions).toEqual([{ emoji: '👍', count: 2 }]);
+  });
+
+  it('ignores empty or malformed reaction maps', () => {
+    expect(buildChatFeed([base({ reactions: null })])[0].reactions).toEqual([]);
+    expect(buildChatFeed([base({ reactions: { '🔥': [] } })])[0].reactions).toEqual([]);
+  });
+
+  it('handles a message with no text but an attachment', () => {
+    const feed = buildChatFeed([base({ text: null, attachment: { kind: 'image' } })]);
+    expect(feed[0].text).toBe('');
+    expect(feed[0].hasAttachment).toBe(true);
+  });
+
+  it('accepts second-precision timestamps', () => {
+    const feed = buildChatFeed([base({ created: 1_766_000_000 })]);
+    expect(feed[0].created).toBe(1_766_000_000_000);
+  });
+
+  it('drops entries with no message id', () => {
+    expect(buildChatFeed([base(), { ...base(), message_id: '' } as any])).toHaveLength(1);
+  });
+
+  it('parses the synthetic chat fixture the harness renders', () => {
+    const feed = buildChatFeed(load('chat.sample'), { teams, rosters, myUserId: BEN });
+    expect(feed.length).toBeGreaterThan(10);
+    expect(feed.every((m) => m.authorName && m.authorName !== 'Unknown')).toBe(true);
+    // Oldest first, strictly increasing.
+    for (let i = 1; i < feed.length; i++) {
+      expect(feed[i].created).toBeGreaterThanOrEqual(feed[i - 1].created);
+    }
+    expect(feed.some((m) => m.reactions.length > 0)).toBe(true);
+    expect(feed.filter((m) => m.dayLabel).length).toBeGreaterThan(1);
+  });
+
+  it('resolves a co-owner to their team', () => {
+    const coOwned = rosters.map((r) =>
+      r.roster_id === benRoster.roster_id ? { ...r, co_owners: ['co-owner-id'] } : r
+    );
+    const feed = buildChatFeed([base({ author_id: 'co-owner-id' })], {
+      teams,
+      rosters: coOwned,
+      myUserId: BEN,
+    });
+    expect(feed[0].authorName).toBe("Mr. Rodger's Naberhood");
+  });
+});
+
+describe('dayLabel', () => {
+  const now = new Date(2026, 5, 15, 12, 0).getTime();
+
+  it('names today and yesterday', () => {
+    expect(dayLabel(new Date(2026, 5, 15, 9, 0).getTime(), now)).toBe('Today');
+    expect(dayLabel(new Date(2026, 5, 14, 9, 0).getTime(), now)).toBe('Yesterday');
+  });
+
+  it('uses the weekday inside the last week', () => {
+    expect(dayLabel(new Date(2026, 5, 11, 9, 0).getTime(), now)).toMatch(/day$/);
+  });
+
+  it('falls back to a date further back', () => {
+    expect(dayLabel(new Date(2026, 2, 3, 9, 0).getTime(), now)).toMatch(/Mar/);
   });
 });
 

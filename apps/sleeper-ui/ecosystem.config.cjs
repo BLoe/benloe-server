@@ -24,6 +24,10 @@ module.exports = {
         SLEEPER_SOURCE: 'live',
         SLEEPER_USERNAME: env.SLEEPER_USERNAME || 'BenLoe',
         SLEEPER_CACHE_DIR: '/srv/benloe/data/sleeper-ui-cache',
+        // League chat. Absent token simply disables the Chat section.
+        SLEEPER_TOKEN: env.SLEEPER_TOKEN || '',
+        // Posting writes to a real league; it stays off unless .env says otherwise.
+        SLEEPER_ALLOW_POSTING: env.SLEEPER_ALLOW_POSTING || 'false',
       },
       error_file: '/srv/benloe/logs/sleeper-ui-err.log',
       out_file: '/srv/benloe/logs/sleeper-ui-out.log',
