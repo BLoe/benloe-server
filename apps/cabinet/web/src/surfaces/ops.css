@@ -340,3 +340,76 @@
     justify-content: space-between;
   }
 }
+
+/* ---- latency panel (2026-08-01) ----
+   Sits under Usage: same "instrument panel" register, but a dense table
+   rather than stat cards, because the interesting question is comparative
+   (which phase dominates) and a row of gauges hides that. Mono for every
+   number, one hairline between rows, no color — nothing here is an alert. */
+.ops-perf {
+  margin-bottom: var(--sp-6);
+}
+.ops-perf-lede {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-cap);
+  color: var(--linen-dim);
+}
+.ops-perf-table + .ops-perf-table {
+  margin-top: var(--sp-4);
+}
+.ops-perf-caption {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-cap);
+  color: var(--linen-faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ops-perf-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-cap);
+}
+.ops-perf-grid thead th {
+  text-align: right;
+  padding: 0 0 var(--sp-2);
+  font-weight: 400;
+  color: var(--linen-faint);
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--rule);
+}
+.ops-perf-grid thead th:first-child {
+  text-align: left;
+}
+.ops-perf-grid tbody th {
+  text-align: left;
+  font-weight: 400;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.ops-perf-grid tbody td {
+  text-align: right;
+  padding: var(--sp-2) 0;
+  color: var(--linen-dim);
+  border-bottom: 1px solid var(--rule-soft);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ops-perf-name {
+  display: block;
+  color: var(--linen);
+}
+.ops-perf-gloss {
+  display: block;
+  color: var(--linen-faint);
+  font-size: calc(var(--fs-cap) * 0.92);
+}
+/* Below ~560px the five numeric columns stop fitting; drop the two that are
+   redundant with p95 and total rather than letting the table scroll. */
+@media (max-width: 560px) {
+  .ops-perf-grid thead th:nth-child(2),
+  .ops-perf-grid tbody td:nth-child(2),
+  .ops-perf-grid thead th:nth-child(5),
+  .ops-perf-grid tbody td:nth-child(5) {
+    display: none;
+  }
+}
