@@ -15,6 +15,8 @@ import { TurnQueue, type TurnKind } from './queue.js';
 import { generateTitle } from './titler.js';
 import { truncateForModel } from './toolTruncate.js';
 import { createPerfRecorder, nullPerf, perfEnabled, type PerfRecorder } from './perf.js';
+import { SessionPool, type ActiveTurn, type SessionSpec } from './session.js';
+import { effortForRegister, nextRegister, type Register } from './register.js';
 
 /**
  * Per-kind agentic-turn budget. User turns can involve multi-file builds,
@@ -127,6 +129,8 @@ export interface RuntimeOptions {
   queryFn?: QueryFn; // injectable for tests
   cwd?: string;
   dataDir?: string;
+  /** Keep a chat's CLI subprocess alive between turns (default: on). */
+  persistSessions?: boolean;
 }
 
 export interface TurnRequest {
@@ -220,13 +224,32 @@ export class AgentRuntime {
   readonly authMode: 'subscription' | 'api';
   private queryFn: QueryFn;
   private gate;
+  readonly sessions: SessionPool;
+  /**
+   * Whether a chat's CLI subprocess is kept alive between turns. On by
+   * default; CABINET_SESSION_POOL=off falls back to spawning per turn, which
+   * is the pre-2026-08-01 behavior and the escape hatch if a pooled session
+   * ever misbehaves in a way a restart doesn't fix.
+   */
+  private readonly poolEnabled: boolean;
   /** Single-flight (guaranteed by the queue): the active turn's sinks. */
   private currentOnEvent: ((e: TurnEvent) => void) | null = null;
   private currentAbort: AbortController | null = null;
   private currentChatId: string | null = null;
+  /** Per-turn state the pooled session's hooks and gate read through. */
+  private turnCtx: { ctx: GateContext; perf: PerfRecorder; chatId: string; kind: TurnKind } | null = null;
+  /** In-flight diagnostic appends, awaited by close(). */
+  private pendingWrites = new Set<Promise<unknown>>();
 
   constructor(private opts: RuntimeOptions) {
     this.queryFn = opts.queryFn ?? sdkQuery;
+    this.poolEnabled = opts.persistSessions ?? process.env.CABINET_SESSION_POOL !== 'off';
+    this.sessions = new SessionPool({
+      queryFn: this.queryFn,
+      maxSessions: Number(process.env.CABINET_MAX_SESSIONS) || 3,
+      onSpawn: (key, reason) =>
+        this.diagLog({ kind: 'session-spawn', chatId: key, reason, live: this.sessions.size }),
+    });
     this.authMode = configureAuth(process.env);
     this.gate = buildGate({
       db: opts.db,
@@ -245,6 +268,34 @@ export class AgentRuntime {
     );
   }
 
+  /**
+   * The turn currently in flight, as seen by a pooled session's hooks and
+   * gate. Non-null for the whole duration of a turn (TurnQueue guarantees
+   * one at a time). A hook firing with no active turn would mean a
+   * subprocess acted outside any turn at all — audit it under a sentinel
+   * rather than crash the hook and let the tool call proceed unrecorded.
+   */
+  private get turn(): { ctx: GateContext; perf: PerfRecorder; chatId: string; kind: TurnKind } {
+    return (
+      this.turnCtx ?? {
+        ctx: { chatId: null, sessionKind: 'cron', standingOrders: '' },
+        perf: nullPerf(),
+        chatId: 'orphan',
+        kind: 'cron',
+      }
+    );
+  }
+
+  /**
+   * Pool key. Per chat, so two conversations never share a subprocess and
+   * therefore never share the CLI's own conversation state. Scheduled kinds
+   * are keyed separately from user chats even when they reuse a chat row, so
+   * a cron turn can't evict the chat Ben is mid-conversation in.
+   */
+  private sessionKey(req: TurnRequest): string {
+    return req.kind === 'user' ? `user:${req.chatId}` : `${req.kind}:${req.chatId}`;
+  }
+
   /** Chat id of the turn executing right now, else null — lets the
    *  gateway tell a (re)loading tab "this chat is live, follow along"
    *  (reattach-on-load, gateway/app.ts's /api/chats/:id/messages). */
@@ -252,11 +303,23 @@ export class AgentRuntime {
     return this.currentChatId;
   }
 
-  /** Abort the in-flight turn (optionally only if it belongs to chatId). */
+  /**
+   * Abort the in-flight turn (optionally only if it belongs to chatId).
+   *
+   * Prefers the SDK's own interrupt over an AbortController: aborting tears
+   * the subprocess down, which on a pooled session throws away a warm CLI
+   * that the next turn would otherwise reuse. The SDK interrupt stops the
+   * turn and leaves the session standing. The abort path remains as the
+   * fallback for one-shot (scheduled) turns and for a session that has
+   * already gone away.
+   */
   interrupt(chatId?: string): boolean {
-    if (!this.currentAbort) return false;
+    if (!this.currentChatId) return false;
     if (chatId && this.currentChatId !== chatId) return false;
-    this.currentAbort.abort();
+    const key = `user:${this.currentChatId}`;
+    void this.sessions.interrupt(key).then((ok) => {
+      if (!ok) this.currentAbort?.abort();
+    });
     return true;
   }
 
@@ -281,12 +344,35 @@ export class AgentRuntime {
     return generateTitle(this.queryFn, { userText, assistantText });
   }
 
-  private chatRow(chatId: string): { sdk_session_id: string | null; model_override: string | null } {
+  private chatRow(chatId: string): {
+    sdk_session_id: string | null;
+    model_override: string | null;
+    register: Register | null;
+    desk_streak: number;
+  } {
     const row = this.opts.db
-      .prepare('SELECT sdk_session_id, model_override FROM chat WHERE id = ?')
-      .get(chatId) as { sdk_session_id: string | null; model_override: string | null } | undefined;
+      .prepare('SELECT sdk_session_id, model_override, register, desk_streak FROM chat WHERE id = ?')
+      .get(chatId) as
+      | { sdk_session_id: string | null; model_override: string | null; register: Register | null; desk_streak: number }
+      | undefined;
     if (!row) throw new Error(`unknown chat ${chatId}`);
     return row;
+  }
+
+  /**
+   * Settle this chat's register (§runtime/register.ts) and persist it when it
+   * moves. Only user turns have a register: scheduled turns have no message
+   * from Ben to read, and their effort is already fixed by their route.
+   */
+  private settleRegister(req: TurnRequest, chat: { register: Register | null; desk_streak: number }): Register | null {
+    if (req.kind !== 'user') return null;
+    const next = nextRegister({ register: chat.register, deskStreak: chat.desk_streak }, req.prompt);
+    if (next.register !== chat.register || next.deskStreak !== chat.desk_streak) {
+      this.opts.db
+        .prepare('UPDATE chat SET register = ?, desk_streak = ? WHERE id = ?')
+        .run(next.register, next.deskStreak, req.chatId);
+    }
+    return next.register;
   }
 
   private async executeTurn(
@@ -304,9 +390,17 @@ export class AgentRuntime {
   ): Promise<{ stopReason: string; sessionId: string | null }> {
     const { modelOverride, continuationDepth = 0, lastNumTurns, noProgressStreak = 0 } = execOpts;
     const chat = this.chatRow(req.chatId);
-    const { model, effort } = modelOverride
-      ? { model: modelOverride, effort: 'xhigh' as const }
+    const routed = modelOverride
+      ? { model: modelOverride, effort: 'xhigh' as string }
       : route({ kind: req.kind, override: chat.model_override, deep: req.deep });
+    const model = routed.model;
+    // Register decides effort, not model: a desk turn is still Opus 5, just
+    // told to spend less. Dropping to a smaller model for logging would save
+    // more, but it would also mean Ben's quick asides get answered by an
+    // entity that hasn't read his charter the same way — the register split
+    // is about depth, not about who's talking.
+    const register = this.settleRegister(req, chat);
+    const effort = modelOverride ? routed.effort : effortForRegister(register ?? 'counsel', routed.effort);
 
     const messageId = randomUUID();
     const perf =
@@ -336,36 +430,26 @@ export class AgentRuntime {
     const wrappedPrompt = `<turn-context>\n${turnContext}\n</turn-context>\n\n${req.prompt}`;
     stopAssemble({ systemPromptChars: systemPrompt.length, turnContextChars: turnContext.length });
 
-    // Vision (§ vision spike, 2026-07-11): query()'s `prompt` accepts a plain
-    // string OR an AsyncIterable<SDKUserMessage> (sdk.d.ts) — the latter is
-    // the only way to attach ImageBlockParam content. A turn with no images
-    // keeps the plain string (byte-for-byte the same as before); a turn with
-    // images becomes a one-shot generator yielding a single user message
-    // whose content array is [text, ...images]. This is the initial-prompt
-    // form, not Query.streamInput() — we open a fresh query() every turn and
-    // resume via sdk_session_id, so there's no already-open Query to stream
-    // into.
+    // Every turn is now an SDKUserMessage, images or not. Before the session
+    // pool, a text-only turn passed a plain string as `prompt` and only a
+    // vision turn built a message object; with a long-lived input stream
+    // there is exactly one shape, and images are just extra content blocks
+    // (§ vision spike, 2026-07-11).
     const images = req.images ?? [];
-    const promptPayload: string | AsyncIterable<SDKUserMessage> =
-      images.length === 0
-        ? wrappedPrompt
-        : (async function* () {
-            const message: SDKUserMessage = {
-              type: 'user',
-              message: {
-                role: 'user',
-                content: [
-                  { type: 'text', text: wrappedPrompt },
-                  ...images.map((img) => ({
-                    type: 'image' as const,
-                    source: { type: 'base64' as const, media_type: img.mediaType, data: img.base64 },
-                  })),
-                ],
-              },
-              parent_tool_use_id: null,
-            };
-            yield message;
-          })();
+    const userMessage: SDKUserMessage = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: wrappedPrompt },
+          ...images.map((img) => ({
+            type: 'image' as const,
+            source: { type: 'base64' as const, media_type: img.mediaType, data: img.base64 },
+          })),
+        ],
+      },
+      parent_tool_use_id: null,
+    };
 
     let sessionId: string | null = chat.sdk_session_id;
     let stopReason = 'end_turn';
@@ -389,11 +473,17 @@ export class AgentRuntime {
     /** tool_use id → the open 'tool' span, closed by its matching tool_result. */
     const openTools = new Map<string, { name: string; stop: (meta?: Record<string, unknown>) => void }>();
     const stopSpawn = perf.start('sdk_spawn');
+    let spawnRecorded = false;
 
-    try {
-      const q = this.queryFn({
-        prompt: promptPayload,
-        options: {
+    // The options object is built ONCE per CLI subprocess, not once per turn:
+    // a pooled session reuses the object it was spawned with. So nothing in
+    // here may close over this turn's mutable state — hooks and the gate read
+    // `this.turn`, the holder the pool swaps at the start of every turn.
+    // Capturing `perf`/`ctx` here instead would silently attribute turn 7's
+    // audit rows and spans to turn 1. (`model`, `effort`, `systemPrompt` and
+    // `kind` ARE captured, deliberately: they're in the SessionSpec, so a turn
+    // that changes any of them gets a fresh subprocess rather than this one.)
+    const buildQueryOptions = (): Record<string, unknown> => ({
           model,
           effort,
           agents: AGENTS,
@@ -444,8 +534,8 @@ export class AgentRuntime {
             // The gate sits in the critical path of EVERY non-pre-approved
             // tool call; if classification or the audit insert ever gets
             // expensive, this is where it shows up.
-            const stop = perf.start('gate', { label: toolName });
-            const r = await this.gate(toolName, input, ctx);
+            const stop = this.turn.perf.start('gate', { label: toolName });
+            const r = await this.gate(toolName, input, this.turn.ctx);
             stop({ behavior: r.behavior });
             return r.behavior === 'allow'
               ? { behavior: 'allow' as const, updatedInput: r.updatedInput }
@@ -456,7 +546,7 @@ export class AgentRuntime {
               {
                 hooks: [
                   async (hookInput: { tool_name?: string; tool_input?: unknown }) => {
-                    const stop = perf.start('hook_pre', { label: hookInput.tool_name ?? 'unknown' });
+                    const stop = this.turn.perf.start('hook_pre', { label: hookInput.tool_name ?? 'unknown' });
                     // Audit-only hook: covers the narrow auto-approved class
                     // that never reaches canUseTool (Appendix B).
                     this.opts.db
@@ -467,8 +557,8 @@ export class AgentRuntime {
                         `pre:${hookInput.tool_name ?? 'unknown'}`,
                         JSON.stringify(hookInput.tool_input ?? {}).slice(0, 2000),
                         'observed',
-                        req.chatId,
-                        req.kind,
+                        this.turn.chatId,
+                        this.turn.kind,
                       );
                     stop();
                     return {};
@@ -490,7 +580,7 @@ export class AgentRuntime {
               {
                 hooks: [
                   async (hookInput: { tool_name?: string; tool_response?: unknown }) => {
-                    const stopHook = perf.start('hook_post', { label: hookInput.tool_name ?? 'unknown' });
+                    const stopHook = this.turn.perf.start('hook_post', { label: hookInput.tool_name ?? 'unknown' });
                     try {
                       const name = hookInput.tool_name;
                       const resp = hookInput.tool_response as Record<string, unknown> | undefined;
@@ -499,7 +589,7 @@ export class AgentRuntime {
                         if (resp.isImage || typeof resp.stdout !== 'string') return {};
                         const { text, wasTruncated, originalChars } = truncateForModel(resp.stdout, 'Bash output');
                         if (!wasTruncated) return {};
-                        this.diagLog({ kind: 'tool-truncate', chatId: req.chatId, tool: name, originalChars });
+                        this.diagLog({ kind: 'tool-truncate', chatId: this.turn.chatId, tool: name, originalChars });
                         return {
                           hookSpecificOutput: {
                             hookEventName: 'PostToolUse' as const,
@@ -513,7 +603,7 @@ export class AgentRuntime {
                         if (!file || typeof file.content !== 'string') return {};
                         const { text, wasTruncated, originalChars } = truncateForModel(file.content, 'file read');
                         if (!wasTruncated) return {};
-                        this.diagLog({ kind: 'tool-truncate', chatId: req.chatId, tool: name, originalChars });
+                        this.diagLog({ kind: 'tool-truncate', chatId: this.turn.chatId, tool: name, originalChars });
                         return {
                           hookSpecificOutput: {
                             hookEventName: 'PostToolUse' as const,
@@ -523,7 +613,7 @@ export class AgentRuntime {
                       }
                       return {};
                     } catch (err) {
-                      this.diagLog({ kind: 'tool-truncate-error', chatId: req.chatId, error: String(err) });
+                      this.diagLog({ kind: 'tool-truncate-error', chatId: this.turn.chatId, error: String(err) });
                       return {};
                     } finally {
                       stopHook();
@@ -545,7 +635,7 @@ export class AgentRuntime {
                   async (hookInput: { trigger?: string; custom_instructions?: string | null }) => {
                     this.diagLog({
                       kind: 'precompact',
-                      chatId: req.chatId,
+                      chatId: this.turn.chatId,
                       trigger: hookInput.trigger,
                       hasCustomInstructions: !!hookInput.custom_instructions,
                     });
@@ -561,7 +651,7 @@ export class AgentRuntime {
                     const summary = hookInput.compact_summary ?? '';
                     this.diagLog({
                       kind: 'postcompact',
-                      chatId: req.chatId,
+                      chatId: this.turn.chatId,
                       trigger: hookInput.trigger,
                       summaryLength: summary.length,
                       summaryPreview: summary.slice(0, 2000),
@@ -572,157 +662,183 @@ export class AgentRuntime {
               },
             ],
           },
-          abortController: abort,
-        },
-      } as Parameters<QueryFn>[0]);
+    });
 
-      for await (const msg of q as AsyncIterable<Record<string, any>>) {
-        if (msg.type === 'system' && msg.subtype === 'thinking_tokens') {
+    const spec: SessionSpec = {
+      model,
+      effort,
+      systemPrompt,
+      cwd: this.opts.cwd ?? '/srv/benloe',
+      maxTurns: MAX_TURNS_BY_KIND[req.kind],
+    };
+    this.turnCtx = { ctx, perf, chatId: req.chatId, kind: req.kind };
+
+    const handleMessage = (msg: Record<string, any>): void => {
+      if (msg.type === 'system' && msg.subtype === 'thinking_tokens') {
+        if (!sawThinking && initAt) {
+          sawThinking = true;
+          perf.mark('ttf_thinking', performance.now() - initAt, { meta: { step: stepCount, redacted: true } });
+        }
+        req.onEvent({ type: 'thinking-tokens', estimated: Number(msg.estimated_tokens) || 0 });
+        return;
+      }
+      if (msg.type === 'system' && msg.subtype === 'init') {
+        sessionId = msg.session_id ?? sessionId;
+        stopSpawn({ resumed: !!chat.sdk_session_id });
+        initAt = performance.now();
+        stepAt = initAt;
+        return;
+      }
+      if (msg.type === 'stream_event') {
+        const ev = msg.event;
+        if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+          if (!sawText && initAt) {
+            sawText = true;
+            perf.mark('ttf_text', performance.now() - initAt, { meta: { step: stepCount } });
+          }
+          req.onEvent({ type: 'text-delta', delta: ev.delta.text });
+        } else if (ev?.type === 'content_block_delta' && ev.delta?.type === 'thinking_delta') {
+          // Summarized-thinking path: real reasoning text. On the
+          // subscription/redacted path these frames carry no `thinking`
+          // string at all (only a token estimate, handled above as
+          // thinking-tokens), so an empty delta is normal — drop it rather
+          // than emitting an event that renders as nothing.
+          const text = typeof ev.delta.thinking === 'string' ? ev.delta.thinking : '';
+          if (!text) return;
           if (!sawThinking && initAt) {
             sawThinking = true;
-            perf.mark('ttf_thinking', performance.now() - initAt, { meta: { step: stepCount, redacted: true } });
+            perf.mark('ttf_thinking', performance.now() - initAt, { meta: { step: stepCount } });
           }
-          req.onEvent({ type: 'thinking-tokens', estimated: Number(msg.estimated_tokens) || 0 });
-          continue;
+          req.onEvent({ type: 'thinking-delta', delta: text });
         }
-        if (msg.type === 'system' && msg.subtype === 'init') {
-          sessionId = msg.session_id ?? sessionId;
-          stopSpawn({ resumed: !!chat.sdk_session_id });
-          initAt = performance.now();
-          stepAt = initAt;
-          continue;
-        }
-        if (msg.type === 'stream_event') {
-          const ev = msg.event;
-          if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
-            if (!sawText && initAt) {
-              sawText = true;
-              perf.mark('ttf_text', performance.now() - initAt, { meta: { step: stepCount } });
-            }
-            req.onEvent({ type: 'text-delta', delta: ev.delta.text });
-          } else if (ev?.type === 'content_block_delta' && ev.delta?.type === 'thinking_delta') {
-            // Summarized-thinking path: real reasoning text. On the
-            // subscription/redacted path these frames carry no `thinking`
-            // string at all (only a token estimate, handled above as
-            // thinking-tokens), so an empty delta is normal — drop it rather
-            // than emitting an event that renders as nothing.
-            const text = typeof ev.delta.thinking === 'string' ? ev.delta.thinking : '';
-            if (!text) continue;
-            if (!sawThinking && initAt) {
-              sawThinking = true;
-              perf.mark('ttf_thinking', performance.now() - initAt, { meta: { step: stepCount } });
-            }
-            req.onEvent({ type: 'thinking-delta', delta: text });
-          }
-          continue;
-        }
-        if (msg.type === 'assistant') {
-          stepCount++;
-          if (stepAt) {
-            perf.mark('step', performance.now() - stepAt, { meta: { step: stepCount } });
-            stepAt = performance.now();
-          }
-          req.onEvent({
-            type: 'step',
-            step: stepCount,
-            tools: toolCount,
-            elapsedMs: initAt ? Math.round(performance.now() - initAt) : 0,
-          });
-          const stepUsage = msg.message?.usage as Record<string, number> | undefined;
-          if (stepUsage) {
-            cumUsage.input_tokens += stepUsage.input_tokens ?? 0;
-            cumUsage.output_tokens += stepUsage.output_tokens ?? 0;
-            cumUsage.cache_creation_input_tokens += stepUsage.cache_creation_input_tokens ?? 0;
-            cumUsage.cache_read_input_tokens += stepUsage.cache_read_input_tokens ?? 0;
-          }
-          // Step 0 diagnostic harness: every 20 internal steps of a user
-          // turn, snapshot the running usage sum plus a full context-usage
-          // breakdown (which tool is actually eating the window, and
-          // whether native auto-compact is even enabled/firing today).
-          if (req.kind === 'user' && stepCount % 20 === 0) {
-            // Snapshot stepCount now — by the time getContextUsage()'s
-            // promise resolves, later assistant messages may have already
-            // ticked it forward (caught 2026-07-16: an earlier version read
-            // the closure-captured live value inside .then(), mislabeling
-            // the reading by however many steps elapsed before it resolved).
-            const stepAtCall = stepCount;
-            this.diagLog({ kind: 'usage-diag', chatId: req.chatId, step: stepAtCall, cumUsage: { ...cumUsage } });
-            q.getContextUsage()
-              .then((ctx) =>
-                this.diagLog({
-                  kind: 'ctx-diag',
-                  chatId: req.chatId,
-                  step: stepAtCall,
-                  totalTokens: ctx.totalTokens,
-                  maxTokens: ctx.maxTokens,
-                  percentage: ctx.percentage,
-                  isAutoCompactEnabled: ctx.isAutoCompactEnabled,
-                  autoCompactThreshold: ctx.autoCompactThreshold,
-                  messageBreakdown: ctx.messageBreakdown,
-                }),
-              )
-              .catch((err) => this.diagLog({ kind: 'ctx-diag-error', chatId: req.chatId, step: stepAtCall, error: String(err) }));
-          }
-          for (const block of msg.message?.content ?? []) {
-            if (block.type === 'tool_use') {
-              if (!sawTool && initAt) {
-                sawTool = true;
-                perf.mark('ttf_tool', performance.now() - initAt, {
-                  label: block.name,
-                  // The narration check, as data: did any visible text reach
-                  // Ben before the first tool call, or did the turn dive
-                  // straight in? Queryable regression test for the voice rule.
-                  meta: { step: stepCount, narratedFirst: sawText },
-                });
-              }
-              toolCount++;
-              openTools.set(block.id, {
-                name: block.name,
-                stop: perf.start('tool', { label: block.name }),
-              });
-              req.onEvent({ type: 'tool-start', toolId: block.id, name: block.name, input: block.input });
-              lastToolName = block.name;
-            }
-          }
-          continue;
-        }
-        if (msg.type === 'user') {
-          for (const block of msg.message?.content ?? []) {
-            if (block.type === 'tool_result') {
-              const text =
-                typeof block.content === 'string'
-                  ? block.content
-                  : (block.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
-              const open = openTools.get(block.tool_use_id);
-              if (open) {
-                open.stop({ isError: !!block.is_error, outputChars: text.length });
-                openTools.delete(block.tool_use_id);
-              }
-              req.onEvent({ type: 'tool-end', toolId: block.tool_use_id, output: text.slice(0, 4000), isError: !!block.is_error });
-            }
-          }
-          continue;
-        }
-        if (msg.type === 'result') {
-          stopReason = msg.subtype ?? 'end_turn';
-          numTurns = typeof msg.num_turns === 'number' ? msg.num_turns : null;
-          sawRefusal = /refusal/i.test(String(msg.result ?? '')) && msg.subtype !== 'success';
-          if (req.kind === 'user') {
-            // Reconciliation: does our per-step sum match the CLI's own
-            // final aggregate? A mismatch means the instrumentation's
-            // assumption (each assistant message's usage is that one API
-            // call's own usage, summable across the turn) is wrong.
-            this.diagLog({ kind: 'usage-diag-final', chatId: req.chatId, steps: stepCount, cumUsage, resultUsage: msg.usage ?? null });
-          }
-          this.recordUsage(model, req, msg);
-          req.onEvent({
-            type: 'turn-end',
-            usage: (msg.usage as Record<string, unknown>) ?? null,
-            sessionId,
-            stopReason,
-          });
-        }
+        return;
       }
+      if (msg.type === 'assistant') {
+        stepCount++;
+        if (stepAt) {
+          perf.mark('step', performance.now() - stepAt, { meta: { step: stepCount } });
+          stepAt = performance.now();
+        }
+        req.onEvent({
+          type: 'step',
+          step: stepCount,
+          tools: toolCount,
+          elapsedMs: initAt ? Math.round(performance.now() - initAt) : 0,
+        });
+        const stepUsage = msg.message?.usage as Record<string, number> | undefined;
+        if (stepUsage) {
+          cumUsage.input_tokens += stepUsage.input_tokens ?? 0;
+          cumUsage.output_tokens += stepUsage.output_tokens ?? 0;
+          cumUsage.cache_creation_input_tokens += stepUsage.cache_creation_input_tokens ?? 0;
+          cumUsage.cache_read_input_tokens += stepUsage.cache_read_input_tokens ?? 0;
+        }
+        // Step 0 diagnostic harness: every 20 internal steps of a user
+        // turn, snapshot the running usage sum plus a full context-usage
+        // breakdown (which tool is actually eating the window, and
+        // whether native auto-compact is even enabled/firing today).
+        if (req.kind === 'user' && stepCount % 20 === 0) {
+          // Snapshot stepCount now — by the time getContextUsage()'s
+          // promise resolves, later assistant messages may have already
+          // ticked it forward (caught 2026-07-16: an earlier version read
+          // the closure-captured live value inside .then(), mislabeling
+          // the reading by however many steps elapsed before it resolved).
+          const stepAtCall = stepCount;
+          this.diagLog({ kind: 'usage-diag', chatId: req.chatId, step: stepAtCall, cumUsage: { ...cumUsage } });
+          this.sessions
+            .contextUsage(req.chatId)
+            ?.then((ctx: Record<string, any>) =>
+              this.diagLog({
+                kind: 'ctx-diag',
+                chatId: req.chatId,
+                step: stepAtCall,
+                totalTokens: ctx.totalTokens,
+                maxTokens: ctx.maxTokens,
+                percentage: ctx.percentage,
+                isAutoCompactEnabled: ctx.isAutoCompactEnabled,
+                autoCompactThreshold: ctx.autoCompactThreshold,
+                messageBreakdown: ctx.messageBreakdown,
+              }),
+            )
+            .catch((err) => this.diagLog({ kind: 'ctx-diag-error', chatId: req.chatId, step: stepAtCall, error: String(err) }));
+        }
+        for (const block of msg.message?.content ?? []) {
+          if (block.type === 'tool_use') {
+            if (!sawTool && initAt) {
+              sawTool = true;
+              perf.mark('ttf_tool', performance.now() - initAt, {
+                label: block.name,
+                // The narration check, as data: did any visible text reach
+                // Ben before the first tool call, or did the turn dive
+                // straight in? Queryable regression test for the voice rule.
+                meta: { step: stepCount, narratedFirst: sawText },
+              });
+            }
+            toolCount++;
+            openTools.set(block.id, {
+              name: block.name,
+              stop: perf.start('tool', { label: block.name }),
+            });
+            req.onEvent({ type: 'tool-start', toolId: block.id, name: block.name, input: block.input });
+            lastToolName = block.name;
+          }
+        }
+        return;
+      }
+      if (msg.type === 'user') {
+        for (const block of msg.message?.content ?? []) {
+          if (block.type === 'tool_result') {
+            const text =
+              typeof block.content === 'string'
+                ? block.content
+                : (block.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
+            const open = openTools.get(block.tool_use_id);
+            if (open) {
+              open.stop({ isError: !!block.is_error, outputChars: text.length });
+              openTools.delete(block.tool_use_id);
+            }
+            req.onEvent({ type: 'tool-end', toolId: block.tool_use_id, output: text.slice(0, 4000), isError: !!block.is_error });
+          }
+        }
+        return;
+      }
+      if (msg.type === 'result') {
+        stopReason = msg.subtype ?? 'end_turn';
+        numTurns = typeof msg.num_turns === 'number' ? msg.num_turns : null;
+        sawRefusal = /refusal/i.test(String(msg.result ?? '')) && msg.subtype !== 'success';
+        if (req.kind === 'user') {
+          // Reconciliation: does our per-step sum match the CLI's own
+          // final aggregate? A mismatch means the instrumentation's
+          // assumption (each assistant message's usage is that one API
+          // call's own usage, summable across the turn) is wrong.
+          this.diagLog({ kind: 'usage-diag-final', chatId: req.chatId, steps: stepCount, cumUsage, resultUsage: msg.usage ?? null });
+        }
+        this.recordUsage(model, req, msg);
+        req.onEvent({
+          type: 'turn-end',
+          usage: (msg.usage as Record<string, unknown>) ?? null,
+          sessionId,
+          stopReason,
+        });
+      }
+    };
+
+    try {
+      const { spawned } = await this.sessions.runTurn({
+        key: this.sessionKey(req),
+        spec,
+        buildOptions: buildQueryOptions,
+        message: userMessage,
+        onMessage: handleMessage,
+        // Scheduled turns fire minutes or hours apart. Holding a subprocess
+        // open between a 10:30am briefing and a 3:30pm ping buys nothing and
+        // costs memory, so they stay one-shot — the pre-pool behavior.
+        ephemeral: !this.poolEnabled || req.kind !== 'user',
+      });
+      // Reused sessions genuinely cost ~0 here; recording the span either way
+      // (rather than skipping it) is what makes "did pooling actually work"
+      // answerable from perf_span instead of from vibes.
+      stopSpawn({ spawned, reused: !spawned });
+      spawnRecorded = true;
     } catch (err) {
       req.onEvent({ type: 'error', message: String((err as Error).message ?? err).slice(0, 500), retryable: true });
       throw err;
@@ -730,10 +846,11 @@ export class AgentRuntime {
       this.currentOnEvent = null;
       this.currentAbort = null;
       this.currentChatId = null;
+      this.turnCtx = null;
       // A tool still open here never got its result — an abort, an error, or
       // a turn that ended mid-flight. Close the span rather than dropping it,
       // so "aborted during a 90s Bash" is visible in the data.
-      stopSpawn();
+      if (!spawnRecorded) stopSpawn({ failed: true });
       for (const [, open] of openTools) open.stop({ orphaned: true });
       openTools.clear();
       turnClock({ steps: stepCount, tools: toolCount, stopReason });
@@ -830,9 +947,24 @@ export class AgentRuntime {
   private diagLog(record: Record<string, unknown>): void {
     const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n';
     const path = join(this.opts.dataDir ?? '/srv/benloe/data/cabinet', 'usage-diag.jsonl');
-    appendFile(path, line).catch(() => {
+    const p = appendFile(path, line).catch(() => {
       // best-effort only — never let diagnostic logging break a real turn
     });
+    // Tracked so close() can wait for it. Untracked fire-and-forget writes
+    // were the source of an intermittent ENOTEMPTY in the test suite: the
+    // append landed after the temp dir had been removed.
+    this.pendingWrites.add(p);
+    void p.finally(() => this.pendingWrites.delete(p));
+  }
+
+  /**
+   * Release everything this runtime holds: live CLI subprocesses and any
+   * in-flight diagnostic writes. Called on shutdown, and by tests between
+   * cases. Idempotent.
+   */
+  async close(): Promise<void> {
+    this.sessions.closeAll();
+    await Promise.allSettled([...this.pendingWrites]);
   }
 
   private recordUsage(model: string, req: TurnRequest, result: Record<string, any>): void {
