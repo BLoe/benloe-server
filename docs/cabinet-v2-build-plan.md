@@ -20,7 +20,7 @@
 4. **Hand-roll per Ben's dependency philosophy;** deps only where we can't/
    shouldn't maintain them. Match the existing codebase idioms.
 5. **Never** read/commit `/srv/benloe/.env`; never commit anything under
-   `/srv/benloe/data/`. Cabinet's voice (SOUL.md/VOICE.md) governs all UI copy.
+   `/srv/benloe/data/`. Cabinet's voice (CHARTER.md/VOICE.md) governs all UI copy.
 
 ## Loop protocol (each iteration)
 1. Read this file + run `TaskList`.
@@ -89,7 +89,7 @@ until A1–A5 all `completed`.
   succeeds; all five routes render with real data.
 - **A13 · Visual + voice critique.** Playwright-screenshot every surface at
   desktop + mobile; adversarially critique against the design system and
-  SOUL/VOICE; fix cross-surface drift; polish spacing, motion, and copy.
+  CHARTER/VOICE; fix cross-surface drift; polish spacing, motion, and copy.
   *Accept:* screenshots of all five surfaces + a short critique-and-fixes note.
 - **A14 · Green + build.** Full `tsc` clean, all `vitest` green (server + web),
   production build of web succeeds. *Accept:* recorded test counts + build ok.

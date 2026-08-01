@@ -4,7 +4,7 @@
  * profile narrative files back to blank seed templates — while leaving
  * Cabinet's own operational "brain" completely untouched: schema/migrations,
  * the lesson bank (episodic.db's lesson/vec_lesson), and the instruction/
- * character/platform memory files (IDENTITY/SOUL/VOICE/PLATFORM/HEARTBEAT/
+ * character/platform memory files (IDENTITY/CHARTER/VOICE/RHYTHM/PLATFORM/HEARTBEAT/
  * ONBOARDING.md + domains/platform.md). Not something exposed to the chat
  * agent as an MCP tool. Run it by hand:
  *
@@ -128,6 +128,12 @@ export const CABINET_CLEAR_TABLES = [
   'message',
   'mood_log',
   'pantry_item',
+  // Turn-latency telemetry (migration 012). Not Ben's data, but it's keyed to
+  // chat_id and describes turns whose transcripts are being cleared — leaving
+  // it behind would strand spans pointing at conversations that no longer
+  // exist, and the measurements are only meaningful against the build that
+  // produced them anyway.
+  'perf_span',
   'price_watch',
   'prior_auth',
   'reading_item',
@@ -169,8 +175,15 @@ const SQLITE_MANAGED_TABLES = new Set(['sqlite_sequence']);
  */
 export const MEMORY_KEEP_FILES = [
   'IDENTITY.md',
-  'SOUL.md',
+  // v2 persona stack (2026-08-01). CHARTER replaced SOUL. CHARTER, VOICE, and
+  // RHYTHM are Cabinet's constitution, register, and default day — the same
+  // "how Cabinet operates" class IDENTITY has always been in, and Ben-authored
+  // besides. PLAYBOOK and TUNING go the other way (see RESET below): they are
+  // Cabinet's learned model OF Ben, which is profile data even though Cabinet
+  // wrote it.
+  'CHARTER.md',
   'VOICE.md',
+  'RHYTHM.md',
   'PLATFORM.md',
   'HEARTBEAT.md',
   'ONBOARDING.md',
@@ -181,6 +194,14 @@ export const MEMORY_RESET_FILES = [
   'USER.md',
   'GOALS.md',
   'PREFERENCES.md',
+  // Cabinet-written, but ABOUT Ben: what works on him (PLAYBOOK), what it has
+  // learned to do differently (TUNING), and the current health plan. A wipe
+  // that kept these would leave Cabinet holding conclusions about a person
+  // whose data it just deleted. The memory dir's git history is the recovery
+  // path if a wipe was a mistake.
+  'PLAYBOOK.md',
+  'TUNING.md',
+  'plans/health.md',
   'domains/health.md',
   'domains/nutrition.md',
   'domains/training.md',

@@ -26,9 +26,13 @@ describe('MemoryStore', () => {
   it('seeds templates once, committing them', () => {
     const created = mem.ensureTemplates();
     expect(created).toContain('IDENTITY.md');
-    expect(created).toContain('SOUL.md');
+    expect(created).toContain('CHARTER.md');
     expect(created).toContain('VOICE.md');
     expect(created).toContain('domains/nutrition.md');
+    // plans/ is the second nested namespace (the reasoning layer) — it has to
+    // seed and be listable just like domains/.
+    expect(created).toContain('plans/health.md');
+    expect(mem.list()).toContain('plans/health.md');
     expect(mem.commitCount()).toBe(1);
     expect(mem.ensureTemplates()).toEqual([]); // idempotent
     expect(mem.list()).toContain('HEARTBEAT.md');
@@ -52,15 +56,23 @@ describe('MemoryStore', () => {
     },
   );
 
-  it('promptCore concatenates the stable layers in order, character first', () => {
+  it('promptCore concatenates the stable layers in order, constitution first', () => {
     const core = mem.promptCore();
-    expect(core.indexOf('IDENTITY.md')).toBeGreaterThanOrEqual(0);
-    // SOUL + VOICE frame everything: after IDENTITY, before the rest.
-    expect(core.indexOf('IDENTITY.md')).toBeLessThan(core.indexOf('SOUL.md'));
-    expect(core.indexOf('SOUL.md')).toBeLessThan(core.indexOf('VOICE.md'));
-    expect(core.indexOf('VOICE.md')).toBeLessThan(core.indexOf('USER.md'));
-    expect(core.indexOf('IDENTITY.md')).toBeLessThan(core.indexOf('PLATFORM.md'));
-    expect(core).toContain("chief of staff"); // the character actually made it in
+    // v2 stack: CHARTER is the constitution and leads; everything below
+    // operates inside it. IDENTITY drops out of interactive prompts entirely
+    // (CHARTER supersedes it) and survives only on the heartbeat path.
+    // Match the <memory file="..."> markers, not bare filenames: the seed
+    // prose cross-references sibling files by name (CHARTER points at
+    // TUNING.md, RHYTHM at plans/health.md), so a bare indexOf finds the
+    // mention rather than the block.
+    const at = (f: string) => core.indexOf(`<memory file="${f}">`);
+    expect(core.startsWith('<memory file="CHARTER.md">')).toBe(true);
+    const expectedOrder = ['CHARTER.md', 'VOICE.md', 'TUNING.md', 'RHYTHM.md', 'USER.md', 'PLAYBOOK.md', 'PLATFORM.md'];
+    expect(expectedOrder.map(at)).toEqual([...expectedOrder.map(at)].sort((a, b) => a - b));
+    expect(expectedOrder.every((f) => at(f) >= 0)).toBe(true);
+    expect(at('IDENTITY.md')).toBe(-1);
+    expect(at('SOUL.md')).toBe(-1);
+    expect(core).toContain("reduce Ben's choice load"); // the character actually made it in
     expect(core).not.toContain('HEARTBEAT.md'); // heartbeat is not in the core prompt
   });
 

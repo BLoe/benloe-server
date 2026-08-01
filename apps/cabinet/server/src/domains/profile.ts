@@ -8,76 +8,65 @@ interface MemoryReadable {
 }
 
 /**
- * Whole-person scope (broadened from the original health/training/nutrition-
- * only check): USER.md itself (background/role/family/work context — the
- * file that used to be hand-seeded with Ben's specifics is now a blank
- * template by design, so it needs the same completeness gate everything else
- * gets) plus every rolling-narrative domain that has a real person behind it.
- * domains/platform.md is deliberately excluded — that file is about Cabinet
- * operating the server, not about Ben, so it has no onboarding interview
- * question and would never stop being "template" from an interview alone.
- */
-const NARRATIVE_FILES = [
-  'USER.md',
-  'domains/health.md',
-  'domains/training.md',
-  'domains/nutrition.md',
-  'domains/mind.md',
-  'domains/money.md',
-  'domains/admin.md',
-  'domains/social.md',
-];
-
-/**
- * Deterministic completeness pre-check (mirrors heartbeatFindings' SQL-only
- * shape, scheduler/jobs.ts) — mentorship Phase B: is there enough of a
- * profile to plan from? Returns a human-readable "still need: ..." string
- * when incomplete, null when complete. Cheap (a few indexed COUNT queries +
- * 8 file reads) — safe to call on every /api/chat turn; self-quieting once
- * genuinely complete, so there's no reason to ever gate this off.
+ * Deterministic completeness pre-check: is there enough on file to plan from?
+ * Returns a short line for the turn context when something real is missing,
+ * null when Cabinet has what it needs.
  *
- * Each dimension mirrors a design decision made explicit during Phase B:
- * - goal / body_metric: at least one row, no specific title/metric required
- *   — presence is the signal, not which ones (Ben's actual goals vary).
- * - NARRATIVE_FILES: isStillTemplate(), the exact check the drift guard
- *   already uses — reused, not re-derived a second way. Broadened from the
- *   original three health/fitness files to whole-person scope (see the
- *   NARRATIVE_FILES comment) so the interview surfaces a gap in, say, money
- *   or life-admin context exactly the same way it does for a missing body
- *   metric — not just fitness.
- * - hard_constraint, BOTH kinds independently: satisfied by a real
- *   constraint row OR the confirmed-none sentinel — either counts. Once any
- *   row exists for a kind, the topic has unambiguously been asked about;
- *   requiring more (e.g. a separate "allergies specifically" sub-check)
- *   would demand a taxonomy the table was deliberately built without.
+ * REWRITTEN 2026-08-01 with the v2 persona stack, for two reasons:
+ *
+ * 1. The v1 version enumerated raw fields ("still need: goals (target weight,
+ *    protein, calories — upsert_goal); dietary constraints — real
+ *    hard_constraint rows, or upsert_constraint({kind:"dietary"...})"). Ben
+ *    then met an agent that read that list back to him as an intake form. The
+ *    agent recites whatever this line says, so the line must name the OUTCOME
+ *    that's missing and nothing else. Naming the tools here guarantees a form.
+ *
+ * 2. The v1 criteria demanded eight rolling-narrative files be non-template,
+ *    which manufactured completeness pressure across money, admin, and social
+ *    before those conversations had any reason to happen. Those files fill in
+ *    when the topic comes up; they are not onboarding gates.
+ *
+ * What actually gates "can Cabinet run the plan": a health plan that Ben has
+ * confirmed (plans/health.md, non-template), at least one live goal projected
+ * from it, both constraint categories genuinely ASKED about (a real row or the
+ * confirmed-none sentinel — an unasked category is not a completed one, the
+ * one v1 rule worth keeping), and the baseline measurements the plan's math
+ * needs: height and at least one body metric.
  */
 export function profileGap(db: Database.Database, memory: MemoryReadable): string | null {
   const missing: string[] = [];
 
+  let planContent: string | null = null;
+  try {
+    planContent = memory.read('plans/health.md');
+  } catch {
+    planContent = null;
+  }
+  if (planContent === null || isStillTemplate('plans/health.md', planContent)) {
+    missing.push('no health plan Ben has actually confirmed');
+  }
+
   const goalCount = (db.prepare('SELECT COUNT(*) AS n FROM goal WHERE active = 1').get() as { n: number }).n;
-  if (goalCount === 0) missing.push('goals (target weight, protein, calories, etc. — upsert_goal)');
+  if (goalCount === 0) missing.push('no live targets projected from the plan');
 
-  const metricCount = (db.prepare('SELECT COUNT(*) AS n FROM body_metric').get() as { n: number }).n;
-  if (metricCount === 0) missing.push('baseline body metrics (weight, etc. — log_body_metric)');
+  // Height is separate from "any body metric": every calorie and TDEE number
+  // in plans/health.md is computed from it, and it is the one measurement that
+  // never arrives on its own from a morning weigh-in.
+  const heightCount = (
+    db.prepare("SELECT COUNT(*) AS n FROM body_metric WHERE metric = 'height'").get() as { n: number }
+  ).n;
+  const otherCount = (
+    db.prepare("SELECT COUNT(*) AS n FROM body_metric WHERE metric <> 'height'").get() as { n: number }
+  ).n;
+  if (heightCount === 0 || otherCount === 0) missing.push('missing baseline measurements');
 
-  for (const file of NARRATIVE_FILES) {
-    let content: string;
-    try {
-      content = memory.read(file);
-    } catch {
-      missing.push(`${file} (missing entirely — update_memory)`);
-      continue;
-    }
-    if (isStillTemplate(file, content)) missing.push(`${file} (still the seed template — update_memory)`);
-  }
-
-  if (listConstraints(db, 'dietary').length === 0) {
-    missing.push('dietary constraints — real hard_constraint rows, or upsert_constraint({kind:"dietary", confirmedNone:true}) if genuinely none');
-  }
-  if (listConstraints(db, 'physical').length === 0) {
-    missing.push('physical constraints — real hard_constraint rows, or upsert_constraint({kind:"physical", confirmedNone:true}) if genuinely none');
-  }
+  const unasked: string[] = [];
+  if (listConstraints(db, 'dietary').length === 0) unasked.push('dietary');
+  if (listConstraints(db, 'physical').length === 0) unasked.push('physical');
+  if (unasked.length > 0) missing.push(`${unasked.join(' and ')} constraints never asked about`);
 
   if (missing.length === 0) return null;
-  return `Ben's profile looks incomplete — still need: ${missing.join('; ')}.`;
+  // One line, outcomes only, with the register named — because whatever this
+  // says is what Ben hears.
+  return `Profile gap — ${missing.join('; ')}. Close these through counsel conversation, not a form; one at a time, when it fits.`;
 }

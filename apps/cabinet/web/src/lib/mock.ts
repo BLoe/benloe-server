@@ -1,6 +1,6 @@
 import type {
   CabinetApi, TodayView, DomainId, DomainView, OpsFeed, MemoryView, RecallResponse, HealthInfo, ChatSummary, ChatMessage, InstrumentSpec,
-  UsageView, UsageRollingView,
+  UsageView, UsageRollingView, PerfView,
 } from './contracts.js';
 
 /* Deterministic mock data in Cabinet's voice — lets Movement 2 surfaces build
@@ -128,10 +128,38 @@ const usageRolling: UsageRollingView = {
   ],
 };
 
+// Shaped like a real slow turn: the SDK subprocess spawn and the model's
+// time-to-first-token dominate, and one Bash call is the tool outlier.
+const perf: PerfView = {
+  enabled: true,
+  window: '168h',
+  turns: 42,
+  byPhase: [
+    { phase: 'tool', label: null, n: 214, totalMs: 486000, avgMs: 2271, p50Ms: 900, p95Ms: 9800, maxMs: 41200 },
+    { phase: 'step', label: null, n: 268, totalMs: 402000, avgMs: 1500, p50Ms: 1100, p95Ms: 4200, maxMs: 18000 },
+    { phase: 'sdk_spawn', label: null, n: 42, totalMs: 63000, avgMs: 1500, p50Ms: 1430, p95Ms: 2600, maxMs: 4100 },
+    { phase: 'ttf_thinking', label: null, n: 42, totalMs: 37800, avgMs: 900, p50Ms: 820, p95Ms: 1900, maxMs: 3000 },
+    { phase: 'recall', label: null, n: 42, totalMs: 12600, avgMs: 300, p50Ms: 280, p95Ms: 600, maxMs: 950 },
+    { phase: 'profile_gap', label: null, n: 42, totalMs: 420, avgMs: 10, p50Ms: 8, p95Ms: 22, maxMs: 40 },
+  ],
+  byTool: [
+    { phase: 'tool', label: 'Bash', n: 61, totalMs: 302000, avgMs: 4951, p50Ms: 2100, p95Ms: 18000, maxMs: 41200 },
+    { phase: 'tool', label: 'mcp__cabinet__query_db', n: 88, totalMs: 61600, avgMs: 700, p50Ms: 540, p95Ms: 1800, maxMs: 3200 },
+    { phase: 'tool', label: 'Read', n: 65, totalMs: 32500, avgMs: 500, p50Ms: 410, p95Ms: 1200, maxMs: 2400 },
+  ],
+  recent: [
+    {
+      turnId: 'mock-turn-1', chatId: 'c1', sessionKind: 'user', model: 'claude-opus-5',
+      startedAt: '2026-08-01T14:02:11-04:00', totalMs: 38400,
+      phases: { request_total: 38400, sdk_spawn: 1480, ttf_thinking: 860, tool: 21400, step: 12900, recall: 310 },
+    },
+  ],
+};
+
 const memory: MemoryView = {
   files: [
     { name: 'IDENTITY.md', content: '# IDENTITY — who Cabinet is\n\nCabinet is Ben’s chief of staff on the benloe.com nexus…', updatedAt: '2026-07-08T05:00:00-04:00', editable: true },
-    { name: 'SOUL.md', content: '# SOUL — Cabinet’s character\n\nUnflappable and dry. Economical. Candid…', updatedAt: '2026-07-08T05:00:00-04:00', editable: true },
+    { name: 'CHARTER.md', content: '# CHARTER — the constitution of Ben’s Cabinet\n\nPrime directive: reduce Ben’s choice load. Present THE plan, not a menu…', updatedAt: '2026-08-01T14:03:00-04:00', editable: true },
     { name: 'USER.md', content: '# USER — Ben\n\nSenior engineer (15+ years), East Village, NYC…', updatedAt: '2026-07-07T12:00:00-04:00', editable: true },
     { name: 'PREFERENCES.md', content: '# PREFERENCES\n\nLead with the outcome; keep it tight…', updatedAt: null, editable: true },
   ],
@@ -176,6 +204,7 @@ export const mockApi: CabinetApi = {
   revertOp: () => delay({ ok: true }),
   usage: () => delay(usage),
   usageRolling: () => delay(usageRolling),
+  perf: () => delay(perf),
   memory: () => delay(memory),
   saveMemoryFile: () => delay({ ok: true }),
   recall: (q) => delay(recallFor(q)),

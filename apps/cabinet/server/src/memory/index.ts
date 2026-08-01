@@ -5,7 +5,19 @@ import { MEMORY_TEMPLATES } from './templates.js';
 
 export class MemoryError extends Error {}
 
-const FILE_PATTERN = /^(?:[A-Z_]+\.md|domains\/[a-z0-9-]+\.md)$/;
+/**
+ * Two nested namespaces, not one:
+ * - domains/*.md are rolling NARRATIVES — what happened, rewritten at weekly
+ *   review, deliberately capped and disposable.
+ * - plans/*.md are the REASONING layer — why the current plan is the plan.
+ *   Goal-table rows are projections of these files; when a plan changes, the
+ *   rows change. Added 2026-08-01 with the v2 persona stack, whose
+ *   plans/health.md is the first of them.
+ */
+const FILE_PATTERN = /^(?:[A-Z_]+\.md|(?:domains|plans)\/[a-z0-9-]+\.md)$/;
+
+/** Nested memory namespaces, in the order list() reports them. */
+const SUBDIRS = ['domains', 'plans'] as const;
 
 export interface MemoryHistoryEntry {
   hash: string;
@@ -71,7 +83,7 @@ function shrinkCheck(before: string, after: string): string | null {
  */
 export class MemoryStore {
   constructor(readonly dir: string) {
-    mkdirSync(join(dir, 'domains'), { recursive: true });
+    for (const sub of SUBDIRS) mkdirSync(join(dir, sub), { recursive: true });
     this.git('init', '--quiet');
     // Local identity so commits work regardless of the host git config.
     try {
@@ -115,12 +127,14 @@ export class MemoryStore {
 
   list(): string[] {
     const top = readdirSync(this.dir).filter((f) => f.endsWith('.md'));
-    const domains = existsSync(join(this.dir, 'domains'))
-      ? readdirSync(join(this.dir, 'domains'))
-          .filter((f) => f.endsWith('.md'))
-          .map((f) => `domains/${f}`)
-      : [];
-    return [...top, ...domains].sort();
+    const nested = SUBDIRS.flatMap((sub) =>
+      existsSync(join(this.dir, sub))
+        ? readdirSync(join(this.dir, sub))
+            .filter((f) => f.endsWith('.md'))
+            .map((f) => `${sub}/${f}`)
+        : [],
+    );
+    return [...top, ...nested].sort();
   }
 
   read(file: string): string {
@@ -179,6 +193,16 @@ export class MemoryStore {
     }
   }
 
+  /**
+   * Commit whatever is currently on disk. The escape hatch for writers that
+   * legitimately bypass update() — today that's the template-release
+   * applier (memory/release.ts), which does its own safety check and would be
+   * wrongly blocked by the catastrophic-shrink guard.
+   */
+  commitAll(message: string): void {
+    this.commit(message);
+  }
+
   commitCount(): number {
     try {
       return parseInt(this.git('rev-list', '--count', 'HEAD').trim(), 10);
@@ -229,9 +253,28 @@ export class MemoryStore {
 
   /** The stable prompt layers, in cache-friendly order (§9.3 layers 1+3). */
   promptCore(): string {
-    // SOUL + VOICE sit right after IDENTITY so the character frames everything
-    // below it, and stays in the cache-stable prefix (§9.3).
-    const order = ['IDENTITY.md', 'SOUL.md', 'VOICE.md', 'USER.md', 'PREFERENCES.md', 'GOALS.md', 'STANDING_ORDERS.md', 'PLATFORM.md'];
+    // v2 persona stack (2026-08-01). CHARTER is the constitution and leads:
+    // everything below operates inside it. Then the register (VOICE), how
+    // Cabinet is currently tuning itself (TUNING), the default shape of a day
+    // (RHYTHM), who Ben is (USER), what works on him (PLAYBOOK), and finally
+    // the operational layers.
+    //
+    // IDENTITY.md deliberately drops out here — CHARTER supersedes it for
+    // interactive turns. It survives for HEARTBEATS, whose minimal prompt is
+    // IDENTITY + HEARTBEAT (runtime/prompt.ts's assemblePrompt), so IDENTITY
+    // has to stand alone on that path. SOUL.md is gone; CHARTER replaced it.
+    const order = [
+      'CHARTER.md',
+      'VOICE.md',
+      'TUNING.md',
+      'RHYTHM.md',
+      'USER.md',
+      'PLAYBOOK.md',
+      'PREFERENCES.md',
+      'GOALS.md',
+      'STANDING_ORDERS.md',
+      'PLATFORM.md',
+    ];
     return order
       .filter((f) => existsSync(join(this.dir, f)))
       .map((f) => `<memory file="${f}">\n${this.read(f)}\n</memory>`)
