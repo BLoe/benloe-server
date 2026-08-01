@@ -14,6 +14,8 @@ import { planMeal, listMealPlan, updatePlanEntry, removePlanEntry, consumePlanEn
 import { generateShoppingList, listGroceryList } from '../domains/shopping.js';
 import { planActivity, listActivityPlan, updateActivityEntry, removeActivityEntry, seedTrainerAnchors } from '../domains/activity.js';
 import { logBodyMetric, logWorkout } from '../domains/training.js';
+import { logSubstance, substanceDay, substanceNights } from '../domains/substances.js';
+import { ingestHealthDay, recentHealth } from '../domains/health.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
 import {
   addJournal, addPriceWatch, importTransactionsCsv, listConstraints, logMood,
@@ -63,6 +65,56 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         source: z.enum(['text', 'photo', 'recipe', 'restaurant']).optional(),
       },
       async (args) => ok(logFood(ctx.db, args)),
+    ),
+    tool(
+      'log_substance',
+      "Log cannabis, alcohol, caffeine, or nicotine. Route matters — smoked/vaped/edible are different interventions and different clinical pictures, so record it whenever Ben says or implies it. Dose+unit as labelled (edibles in mg, flower in g, alcohol in standard drinks, caffeine in mg); don't convert. `context` is the timing relative to the day ('post-dinner', 'wake-up', 'darts') and is what experiment E2 actually reads. `when` backdates an ISO timestamp for something reported after the fact.",
+      {
+        substance: z.enum(['cannabis', 'alcohol', 'caffeine', 'nicotine', 'other']),
+        route: z.enum(['smoked', 'vaped', 'edible', 'drink', 'oral', 'other']).optional(),
+        dose: z.number().optional(),
+        unit: z.string().optional(),
+        product: z.string().optional(),
+        context: z.string().optional(),
+        notes: z.string().optional(),
+        when: z.string().optional(),
+      },
+      async ({ when, ...rest }) =>
+        ok(logSubstance(ctx.db, { ...rest, when: when ? new Date(when) : undefined })),
+    ),
+    tool(
+      'log_health_day',
+      "Write Apple Watch / Health metrics for one day. Normally the iOS Shortcut POSTs these automatically — use this when Ben reports numbers in conversation ('slept 6h42m', 'watch says 4,200 steps'). Omitted fields mean 'no news' and leave existing values intact; never send 0 for unknown. local_day defaults to today, and sleep belongs to the day Ben WOKE UP.",
+      {
+        local_day: z.string().optional(),
+        steps: z.number().optional(),
+        active_kcal: z.number().optional(),
+        resting_hr: z.number().optional(),
+        hrv_ms: z.number().optional(),
+        sleep_minutes: z.number().optional(),
+        sleep_deep_min: z.number().optional(),
+        sleep_rem_min: z.number().optional(),
+        vo2max: z.number().optional(),
+      },
+      async (args) => ok(ingestHealthDay(ctx.db, { ...args, source: 'conversation' })),
+    ),
+    tool(
+      'health_days',
+      'Recent daily health metrics (steps, active kcal, resting HR, sleep). Steps are the ankle-load budget — plans/health.md doses walking against the talus lesion, so read this before planning a walking-heavy day.',
+      { days: z.number().optional() },
+      async ({ days }) => ok(recentHealth(ctx.db, days ?? 14)),
+    ),
+    tool(
+      'substance_day',
+      'Every substance event for one local day (defaults to today), in order.',
+      { localDay: z.string().optional() },
+      async ({ localDay: d }) => ok(substanceDay(ctx.db, d)),
+    ),
+    tool(
+      'substance_nights',
+      "The Phase 0 / TUNING E2 read: one row per day joining cannabis timing and dose, alcohol, caffeine, sleep minutes, and calories logged after 8pm. Use for weekly review. Under ~10 days of rows this is a table, not a correlation — report it as such rather than claiming a relationship.",
+      { days: z.number().optional() },
+      async ({ days }) => ok(substanceNights(ctx.db, days ?? 14)),
     ),
     tool(
       'log_workout',

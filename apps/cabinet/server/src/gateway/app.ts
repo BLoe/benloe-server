@@ -13,6 +13,7 @@ import { pendingBackfillCount } from '../episodic/index.js';
 import { retrievalLogCount } from '../episodic/retrieval-log.js';
 import { recallLessons } from '../memory/lessons.js';
 import { profileGap } from '../domains/profile.js';
+import { ingestHealthDay, ingestHealthDays, recentHealth, type HealthDay } from '../domains/health.js';
 import { encodeSse, SSE_HEARTBEAT } from './sse.js';
 import type { MessagePart } from './fold.js';
 import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
@@ -441,6 +442,41 @@ export function buildApp(deps: GatewayDeps) {
   // The subscribe handshake: the browser needs the VAPID public key to call
   // pushManager.subscribe(), then hands back the endpoint + its own encryption
   // keys. Everything here is owner/agent-walled like the rest of /api.
+  // ---------- Apple Health ingest ----------
+  //
+  // Called by an iOS Shortcut on Ben's phone (Personal Automation → time of
+  // day → Get Health Sample ×N → Get Contents of URL). It authenticates with
+  // the same Artanis bearer key every other agent caller uses, so there is no
+  // new credential path and no new auth surface here — it sits behind the same
+  // `authenticate` middleware as everything else under /api.
+  //
+  // Accepts either a single day object or {days: [...]} for backfill from an
+  // Apple Health export. Unknown fields are ignored rather than rejected: the
+  // Shortcut is edited on a phone, and a payload that fails closed on a typo
+  // would silently stop the only automatic data feed Cabinet has.
+  app.post('/api/ingest/health', (req, res) => {
+    const body = req.body ?? {};
+    const batch: HealthDay[] | null = Array.isArray(body) ? body : Array.isArray(body.days) ? body.days : null;
+    try {
+      if (batch) {
+        if (batch.length > 2000) return res.status(400).json({ error: 'batch too large (max 2000 days)' });
+        return res.json({ ok: true, ...ingestHealthDays(deps.db, batch) });
+      }
+      const result = ingestHealthDay(deps.db, body as HealthDay);
+      // `updated` echoes which fields actually landed — the Shortcut shows it
+      // in a notification, so a misconfigured action is visible on the phone
+      // immediately instead of looking like success.
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'ingest failed' });
+    }
+  });
+
+  app.get('/api/ingest/health', (req, res) => {
+    const days = Number(req.query.days ?? 14);
+    res.json({ days: recentHealth(deps.db, Number.isFinite(days) ? days : 14) });
+  });
+
   app.get('/api/push/key', (_req, res) => {
     const push = deps.push;
     res.json({ configured: !!push?.configured, publicKey: push?.publicKey ?? null });
