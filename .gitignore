@@ -72,3 +72,9 @@ apps/*/prisma/*.db-wal
 
 # Personal / health data — never commit. Backed up outside the repo.
 docs/personal_data/
+
+# sleeper-ui: screenshots and on-disk player cache
+apps/sleeper-ui/.verify/
+apps/sleeper-ui/.cache/
+# Regenerable via `npm run capture`; the trimmed players.slim.json is committed instead
+apps/sleeper-ui/fixtures/players.full.json

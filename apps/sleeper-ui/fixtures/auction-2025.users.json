@@ -1,0 +1,201 @@
+[
+  {
+    "avatar": "a256dfb169abd7d55f07bba32845cd7a",
+    "display_name": "DarthDuffman",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "allow_sms": "on",
+      "avatar": "https://sleepercdn.com/uploads/026e7cdc44f989a2a56d8e0b57734b34.jpg",
+      "mention_pn": "on",
+      "team_name": "The Empire Strikes Dak"
+    },
+    "settings": null,
+    "user_id": "583336168347705344"
+  },
+  {
+    "avatar": "82aec8e811b839b8ec25d7b458afd57b",
+    "display_name": "davisjw2",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "allow_sms": "on",
+      "avatar": "https://sleepercdn.com/uploads/12cb10c25c5a5a9bc8a67eb91acf609f.jpg",
+      "mention_pn": "on",
+      "team_name": "Closed For Repairs"
+    },
+    "settings": null,
+    "user_id": "740235565873709056"
+  },
+  {
+    "avatar": "47fa5ed94b05b6c916b927efb7981b39",
+    "display_name": "JamieM312",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "avatar": "https://sleepercdn.com/uploads/0fb9727b15ad5040baec07db643b890e.jpg",
+      "league_report_pn": "on",
+      "mascot_message": "on",
+      "mention_pn": "on",
+      "player_like_pn": "on",
+      "player_nickname_update": "off",
+      "team_name": "Threat Level Midnight",
+      "team_name_update": "off",
+      "trade_block_pn": "on",
+      "transaction_commissioner": "on",
+      "transaction_free_agent": "on",
+      "transaction_trade": "on",
+      "transaction_waiver": "on",
+      "user_message_pn": "on"
+    },
+    "settings": null,
+    "user_id": "760338062604619776"
+  },
+  {
+    "avatar": "7208404e9332f4ba6bfe5fc9743d614d",
+    "display_name": "Tumbles",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "off",
+      "avatar": "https://sleepercdn.com/uploads/7e918dd21c6e78e3c384dcbdcbe64005.jpg",
+      "league_report_pn": "off",
+      "mascot_message": "off",
+      "mention_pn": "on",
+      "player_like_pn": "off",
+      "player_nickname_update": "off",
+      "team_name": "Super Nintendo Chalmers",
+      "team_name_update": "off",
+      "trade_block_pn": "off",
+      "transaction_commissioner": "off",
+      "transaction_free_agent": "off",
+      "transaction_trade": "on",
+      "transaction_waiver": "off",
+      "user_message_pn": "on"
+    },
+    "settings": null,
+    "user_id": "799030618192220160"
+  },
+  {
+    "avatar": "b319fdf8b7b5b0359d3c78622ba4d70c",
+    "display_name": "anhunter",
+    "is_bot": false,
+    "is_owner": true,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "allow_sms": "on",
+      "avatar": "https://sleepercdn.com/uploads/a80f44f7acbcf0d44acd70e2390894e1.jpg",
+      "mention_pn": "on",
+      "team_name": "The DC Lumber Company"
+    },
+    "settings": null,
+    "user_id": "799032003180740608"
+  },
+  {
+    "avatar": "b3338675f635c2c1f42b469621d38ec6",
+    "display_name": "TylerMcNutt",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "mention_pn": "on"
+    },
+    "settings": null,
+    "user_id": "800784260276551680"
+  },
+  {
+    "avatar": "a07729fe036624bfb567ab90b9753521",
+    "display_name": "BenLoe",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "avatar": "https://sleepercdn.com/uploads/a5c141d7f25e221bb71c069368262bb9",
+      "mention_pn": "on",
+      "team_name": "East Village All-Stars"
+    },
+    "settings": null,
+    "user_id": "810215947997663232"
+  },
+  {
+    "avatar": "82aec8e811b839b8ec25d7b458afd57b",
+    "display_name": "PeteyPabs09",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "avatar": "https://sleepercdn.com/uploads/7656d0325a9dc386a508ca4a73b57cd3.jpg",
+      "mention_pn": "on",
+      "team_name": "Cookies and Rookies "
+    },
+    "settings": null,
+    "user_id": "810226658907906048"
+  },
+  {
+    "avatar": "f0edbf4278f53f9425db175073df6584",
+    "display_name": "sashaivanov",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "mention_pn": "on"
+    },
+    "settings": null,
+    "user_id": "810666182041505792"
+  },
+  {
+    "avatar": "99e8ae339d26e4c1b28229266416c105",
+    "display_name": "pws209",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "mention_pn": "on",
+      "team_name": "Washington Fantasy Team"
+    },
+    "settings": null,
+    "user_id": "819624580372082688"
+  },
+  {
+    "avatar": "82aec8e811b839b8ec25d7b458afd57b",
+    "display_name": "dculi",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "allow_sms": "on",
+      "mention_pn": "on",
+      "team_name": "Pleasantly Pathetic"
+    },
+    "settings": null,
+    "user_id": "1127238689492447232"
+  },
+  {
+    "avatar": "8eb8f8bf999945d523f2c4033f70473e",
+    "display_name": "IslandExclusives",
+    "is_bot": false,
+    "is_owner": false,
+    "league_id": "1254603551611559936",
+    "metadata": {
+      "allow_pn": "on",
+      "allow_sms": "on",
+      "mention_pn": "on"
+    },
+    "settings": null,
+    "user_id": "1136485403894513664"
+  }
+]

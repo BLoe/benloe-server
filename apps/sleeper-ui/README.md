@@ -1,0 +1,79 @@
+# sleeper-ui — League Desk
+
+A desktop dashboard for Sleeper fantasy football, at **https://sleeper.benloe.com**.
+
+Sleeper's own desktop site is their mobile layout stretched wide. This is the
+same data laid out for a laptop: everything on one screen, nothing behind a tap.
+
+Read-only. It never writes to Sleeper.
+
+## Where the data comes from
+
+Two upstreams, both reached from `src/lib/sleeper.ts`:
+
+| Source | What it gives us | Auth |
+|---|---|---|
+| REST v1 (`api.sleeper.app`) | leagues, rosters, users, matchups, transactions, drafts, players | none |
+| GraphQL (`sleeper.app/graphql`) | player news, outlooks, live NFL scores | none for public queries |
+
+The REST API is [documented](https://docs.sleeper.com/) and rate limited to 1000
+calls/minute. The GraphQL endpoint is undocumented but has introspection enabled;
+it is what Sleeper's own apps use, and it exposes league chat and write operations
+behind a bearer token. **Nothing here uses those.** Adding chat would mean storing
+a Sleeper token in `/srv/benloe/.env` — a deliberate decision not yet taken.
+
+## Layout
+
+```
+src/lib/sleeper.ts      API client — the only place that does network I/O
+src/lib/derive.ts       Pure transforms: raw payloads -> view models. No I/O, fully tested.
+src/server/index.ts     Express on :3010. Serves /api, falls back to dist/ for the SPA.
+src/server/cache.ts     TTL cache with stale-while-revalidate + disk layer for the player dump
+src/web/                React + Vite dashboard
+scripts/capture-fixtures.ts   Freezes real league data to fixtures/
+verify/verify.mjs       Screenshots every route at three viewports, fails on any error
+test/derive.test.ts     42 tests, run against the frozen fixtures
+```
+
+## Working on it
+
+```bash
+npm run dev        # api on :3010 + vite on :5310
+npm test           # derivation tests against real fixtures
+npm run verify     # screenshot every route, check for console/network/layout errors
+npm run capture    # re-freeze fixtures from live Sleeper
+npm run build      # browser bundle -> dist/
+```
+
+### The verification loop
+
+`npm run verify` boots the server with `SLEEPER_SOURCE=fixtures`, so the same run
+always renders the same pixels. It walks every route at 1728px, 1440px and 390px,
+writes PNGs to `.verify/`, and exits non-zero on a console error, a failed request,
+or horizontal page overflow. Read the PNGs to review layout.
+
+Fixture mode is not a full substitute for production. A league that has not kicked
+off yet renders states the completed-2025 fixture never hits — that gap shipped a
+real bug once, so `verify` now covers a preseason league too, and
+`verify/prod-check.mjs` hits the deployed site against live data.
+
+## Deployment
+
+PM2 (`sleeper-ui`, port 3010) with Caddy serving `dist/` and proxying `/api`.
+
+```bash
+npm run build && pm2 restart sleeper-ui
+```
+
+Config: `ecosystem.config.cjs`, `infra/caddy/sleeper.benloe.com`. The Caddy log
+file must exist and be owned by `caddy` before a reload will succeed.
+
+## Notes
+
+- The player dump is ~14.6MB. It is cached to disk for 12 hours and trimmed to a
+  ~1.2MB index before anything reaches the browser.
+- `ppts` in a roster's settings is the best score that lineup could have produced.
+  Comparing it to `fpts` gives the lineup-efficiency column, which Sleeper does
+  not surface anywhere.
+- All-play record — what your record would be if you played everyone every week —
+  is derived in `buildAllPlay` and drives the schedule-luck column.

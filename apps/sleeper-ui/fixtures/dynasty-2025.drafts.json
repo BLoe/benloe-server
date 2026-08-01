@@ -1,0 +1,60 @@
+[
+  {
+    "created": 1735736685572,
+    "creators": [
+      "760338062604619776"
+    ],
+    "draft_id": "1180168833027727361",
+    "draft_order": {
+      "760338062604619776": 11,
+      "791722247021785088": 3,
+      "799030618192220160": 12,
+      "799032003180740608": 5,
+      "799037290562322432": 4,
+      "800784260276551680": 8,
+      "801937566168395776": 1,
+      "810215947997663232": 6,
+      "810226658907906048": 2,
+      "810666182041505792": 10,
+      "819621516319776768": 9,
+      "819624580372082688": 7
+    },
+    "last_message_id": "1234725075010203648",
+    "last_message_time": 1748743907267,
+    "last_picked": 1748743906612,
+    "league_id": "1180168833027727360",
+    "metadata": {
+      "description": "",
+      "hovered_player_id": "6927",
+      "name": "The Dynasty League",
+      "scoring_type": "dynasty_std"
+    },
+    "season": "2025",
+    "season_type": "regular",
+    "settings": {
+      "alpha_sort": 0,
+      "autopause_enabled": 0,
+      "autopause_end_time": 900,
+      "autopause_start_time": 180,
+      "autostart": 1,
+      "cpu_autopick": 1,
+      "enforce_position_limits": 1,
+      "nomination_timer": 10,
+      "pick_timer": 300,
+      "player_type": 1,
+      "reversal_round": 0,
+      "rounds": 4,
+      "slots_bn": 16,
+      "slots_flex": 2,
+      "slots_qb": 1,
+      "slots_rb": 2,
+      "slots_te": 1,
+      "slots_wr": 2,
+      "teams": 12
+    },
+    "sport": "nfl",
+    "start_time": 1748739616013,
+    "status": "complete",
+    "type": "linear"
+  }
+]
