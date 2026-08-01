@@ -123,6 +123,31 @@ export function interlocutorLine(who: Interlocutor): string {
  * like the clock does) — now lives in turnContext and gets prepended to the
  * turn's message instead. Heartbeats get a minimal system prompt.
  */
+/**
+ * Ben's wall-clock time, pre-formatted.
+ *
+ * This used to emit `now.toISOString()` (UTC) alongside a note that
+ * America/New_York was the user-facing zone, which left the agent to do the
+ * offset in its head every turn. On 2026-08-01 it did not: it read `21:34Z`
+ * as 9:34pm, told Ben it was "past nine" when it was 5:34pm, and then
+ * confabulated a two-hour lab-reading session to justify the gap. Wrong time
+ * doesn't stay a wrong time — it becomes wrong reasoning about the day.
+ * So the offset is computed here, once, correctly, and DST comes free.
+ */
+const BEN_TZ = 'America/New_York';
+function localStamp(d: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: BEN_TZ,
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(d);
+}
+
 export function assemblePrompt(mem: MemoryStore, input: PromptInput): AssembledPrompt {
   const systemPrompt =
     input.kind === 'heartbeat'
@@ -134,7 +159,8 @@ export function assemblePrompt(mem: MemoryStore, input: PromptInput): AssembledP
 
   const now = input.now ?? new Date();
   const context: string[] = [
-    `Current datetime: ${now.toISOString()} (America/New_York for all user-facing times).`,
+    `Current datetime: ${localStamp(now)}. This IS Ben's wall-clock time — use it directly, never shift it.`,
+    `(UTC reference only, do not quote to Ben: ${now.toISOString()})`,
     `Session kind: ${input.kind}.`,
   ];
   if (input.interlocutor) context.push(interlocutorLine(input.interlocutor));
