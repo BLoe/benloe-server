@@ -1,6 +1,6 @@
 import type {
   CabinetApi, TodayView, DomainId, DomainView, OpsFeed, OpsKind, MemoryView, RecallResponse, HealthInfo, ChatSummary, ChatMessage,
-  UsageView, UsageRollingView,
+  UsageView, UsageRollingView, PerfView,
 } from './contracts.js';
 
 /* The real client: fetches the gateway endpoints the contracts define. The
@@ -41,6 +41,7 @@ export const fetchApi: CabinetApi = {
   revertOp: (id: string) => send<{ ok: boolean }>(`/api/ops/${id}/revert`, 'POST'),
   usage: () => get<UsageView>('/api/usage'),
   usageRolling: () => get<UsageRollingView>('/api/usage/rolling'),
+  perf: (hours?: number) => get<PerfView>(`/api/perf${qs({ hours: hours ? String(hours) : undefined })}`),
   memory: () => get<MemoryView>('/api/memory'),
   saveMemoryFile: (name: string, content: string) => send<{ ok: boolean }>(`/api/memory/${encodeURIComponent(name)}`, 'PUT', { content }),
   recall: (query: string) => get<RecallResponse>(`/api/recall${qs({ q: query })}`),

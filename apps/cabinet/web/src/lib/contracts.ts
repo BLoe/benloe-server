@@ -132,6 +132,39 @@ export interface UsageWindow {
 }
 export interface UsageRollingView { authMode: string; windows: UsageWindow[]; }
 
+/* ---------- latency (Ops surface: "where does the wall clock actually go") ----------
+   Mirrors runtime/perf.ts. `byPhase` is the breakdown: queue wait vs. lesson
+   recall vs. SDK subprocess spawn vs. model time-to-first-token vs. the tool
+   calls themselves. `byTool` ranks individual tools within the 'tool' phase.
+   All times are milliseconds. */
+export interface PerfPhaseSummary {
+  phase: string;
+  label: string | null;
+  n: number;
+  totalMs: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+}
+export interface PerfTurnSummary {
+  turnId: string;
+  chatId: string | null;
+  sessionKind: string | null;
+  model: string | null;
+  startedAt: string;
+  totalMs: number;
+  phases: Record<string, number>;
+}
+export interface PerfView {
+  enabled: boolean;
+  window: string;
+  turns: number;
+  byPhase: PerfPhaseSummary[];
+  byTool: PerfPhaseSummary[];
+  recent: PerfTurnSummary[];
+}
+
 /* ============================================================================
    The single interface both the mock and the real (fetch) client implement.
    Surfaces depend ONLY on this.
@@ -144,6 +177,7 @@ export interface CabinetApi {
   revertOp(id: string): Promise<{ ok: boolean }>;
   usage(): Promise<UsageView>;
   usageRolling(): Promise<UsageRollingView>;
+  perf(hours?: number): Promise<PerfView>;
   memory(): Promise<MemoryView>;
   saveMemoryFile(name: string, content: string): Promise<{ ok: boolean }>;
   recall(query: string): Promise<RecallResponse>;

@@ -18,6 +18,7 @@ import type { MessagePart } from './fold.js';
 import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
 import { markTurnInFlight, clearTurnInFlightIf } from './pendingTurn.js';
 import { registerSurfaceRoutes } from './surfaces.js';
+import { createPerfRecorder, nullPerf, perfEnabled, perfRecentTurns, perfSummary } from '../runtime/perf.js';
 import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, type ImageMime } from './attachments.js';
 
 export interface GatewayDeps {
@@ -284,6 +285,15 @@ export function buildApp(deps: GatewayDeps) {
       imageParts.push({ type: 'image', id, mediaType });
     }
 
+    // One recorder per request, created before any work so every span of this
+    // turn — including the pre-flight work below, which the runtime never sees
+    // — shares a turn_id. The runtime overwrites model/kind once routing has
+    // decided them.
+    const perf = perfEnabled()
+      ? createPerfRecorder({ db: deps.db, turnId: randomUUID(), chatId, sessionKind: 'user' })
+      : nullPerf();
+    const stopRequest = perf.start('request_total');
+
     const principal = (req as AuthedRequest).principal;
     const userParts: MessagePart[] = [...imageParts, ...(text.trim() ? [{ type: 'text' as const, text }] : [])];
     persistUserMessage(deps.db, chatId, userParts, principal?.email ?? null);
@@ -322,9 +332,15 @@ export function buildApp(deps: GatewayDeps) {
     // must not break the turn — log and proceed lesson-less.
     let lessons: Awaited<ReturnType<typeof recallLessons>> = [];
     if (deps.episodic && deps.embedder) {
+      // This runs an embedding model in-process before the turn can even
+      // start, so it is pure added time-to-first-token — worth measuring
+      // separately from anything the model does.
+      const stopRecall = perf.start('recall');
       try {
         lessons = await recallLessons(deps.episodic, deps.embedder, text, 4, deps.db);
+        stopRecall({ hits: lessons.length });
       } catch (err) {
+        stopRecall({ error: true });
         console.warn(`chat: lesson recall failed for chat ${chatId}: ${(err as Error).message}`);
       }
     }
@@ -351,9 +367,12 @@ export function buildApp(deps: GatewayDeps) {
     let showOnboardingDoc = false;
     const isOwnerTurn = !principal || principal.isOwner;
     if (deps.memory && isOwnerTurn) {
+      const stopGap = perf.start('profile_gap');
       try {
         profileGapText = profileGap(deps.db, deps.memory);
+        stopGap({ gap: !!profileGapText });
       } catch (err) {
+        stopGap({ error: true });
         console.warn(`chat: profile completeness check failed for chat ${chatId}: ${(err as Error).message}`);
       }
       if (profileGapText && !chat.onboarding_shown_at) {
@@ -371,7 +390,7 @@ export function buildApp(deps: GatewayDeps) {
     const turnMarker = markTurnInFlight(DATA_DIR, chatId, text);
     try {
       await deps.runtime.run({
-        chatId, prompt: text, kind: 'user', onEvent: send,
+        chatId, prompt: text, kind: 'user', onEvent: send, perf,
         images: images.length ? images : undefined,
         promptInput: {
           // Tell Cabinet who it's talking to (Ben vs an agent like Benji).
@@ -408,7 +427,26 @@ export function buildApp(deps: GatewayDeps) {
         } catch { /* leave it untitled; never break the turn */ }
       }
       res.end();
+      // Last thing, after res.end(): request_total is the number Ben actually
+      // feels, so it has to include everything down to the closed stream.
+      stopRequest();
+      perf.flush();
     }
+  });
+
+  /**
+   * Latency breakdown (2026-08-01). `?hours=` widens the window, `?kind=`
+   * filters to user/cron/heartbeat traffic. Owner/agent-authed like the rest
+   * of /api — span labels carry tool names, which are not public.
+   */
+  app.get('/api/perf', (req, res) => {
+    const hours = Math.min(24 * 30, Math.max(1, Number(req.query.hours) || 24 * 7));
+    const kind = typeof req.query.kind === 'string' ? req.query.kind : null;
+    res.json({
+      enabled: perfEnabled(),
+      ...perfSummary(deps.db, { sinceHours: hours, sessionKind: kind }),
+      recent: perfRecentTurns(deps.db, Math.min(100, Number(req.query.limit) || 25)),
+    });
   });
 
   app.post('/api/interrupt', (req, res) => {

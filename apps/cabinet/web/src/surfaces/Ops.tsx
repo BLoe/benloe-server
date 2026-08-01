@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/cabinet.js';
-import type { OpsEntry, OpsKind, UsageDay, UsageWindow, InstrumentSpec } from '../lib/cabinet.js';
+import type { OpsEntry, OpsKind, UsageDay, UsageWindow, InstrumentSpec, PerfView, PerfPhaseSummary } from '../lib/cabinet.js';
 import { Instrument, SectionLabel } from '../components/instruments/index.js';
 import './ops.css';
 
@@ -113,12 +113,94 @@ function buildUsageSpecs(byDay: UsageDay[], windows: UsageWindow[]): { specs: In
   return { specs, costLine };
 }
 
+/**
+ * What each phase means in plain language. The raw keys are the queryable
+ * vocabulary (runtime/perf.ts); this is what a human reads at 11pm trying to
+ * work out why a turn felt slow.
+ */
+const PHASE_COPY: Record<string, string> = {
+  request_total: 'whole request, end to end',
+  queue_wait: 'waiting behind another turn',
+  recall: 'lesson recall (embedding + search)',
+  profile_gap: 'profile completeness check',
+  prompt_assemble: 'reading memory, building the prompt',
+  sdk_spawn: 'SDK subprocess start — paid every turn',
+  ttf_thinking: 'model, first thought',
+  ttf_text: 'model, first word out loud',
+  ttf_tool: 'model, first tool call',
+  step: 'one model round trip',
+  tool: 'tool calls',
+  gate: 'permission gate',
+  hook_pre: 'pre-tool hook',
+  hook_post: 'post-tool hook (truncation)',
+  turn_total: 'agent turn, spawn to result',
+};
+
+function ms(n: number): string {
+  return n >= 10_000 ? `${(n / 1000).toFixed(1)}s` : n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${Math.round(n)}ms`;
+}
+
+function PhaseTable({
+  rows,
+  caption,
+  nameOf,
+}: {
+  rows: PerfPhaseSummary[];
+  caption: string;
+  nameOf?: (r: PerfPhaseSummary) => string;
+}) {
+  return (
+    <div className="ops-perf-table" role="group" aria-label={caption}>
+      <p className="ops-perf-caption data">{caption}</p>
+      <table className="ops-perf-grid">
+        <thead>
+          <tr>
+            <th scope="col">phase</th>
+            <th scope="col">n</th>
+            <th scope="col">p50</th>
+            <th scope="col">p95</th>
+            <th scope="col">max</th>
+            <th scope="col">total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={`${r.phase}:${r.label ?? ''}`}>
+              <th scope="row">
+                <span className="ops-perf-name data">{nameOf ? nameOf(r) : r.phase}</span>
+                {!nameOf && PHASE_COPY[r.phase] && <span className="ops-perf-gloss">{PHASE_COPY[r.phase]}</span>}
+              </th>
+              <td className="data">{r.n}</td>
+              <td className="data">{ms(r.p50Ms)}</td>
+              <td className="data">{ms(r.p95Ms)}</td>
+              <td className="data">{ms(r.maxMs)}</td>
+              <td className="data">{ms(r.totalMs)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function Ops() {
   const [filter, setFilter] = useState<Filter>('all');
   const [entries, setEntries] = useState<OpsEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [reverting, setReverting] = useState<Record<string, boolean>>({});
   const [usage, setUsage] = useState<{ specs: InstrumentSpec[]; costLine: string } | null>(null);
+  const [perf, setPerf] = useState<PerfView | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .perf(24 * 7)
+      .then((v) => live && setPerf(v))
+      .catch(() => live && setPerf(null));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -207,6 +289,17 @@ export function Ops() {
             ))}
           </div>
           <p className="ops-usage-cost data">{usage.costLine}</p>
+        </section>
+      )}
+
+      {perf && perf.turns > 0 && (
+        <section className="ops-perf" aria-label="Latency">
+          <SectionLabel>Latency</SectionLabel>
+          <p className="ops-perf-lede data">
+            {perf.turns} turn{perf.turns === 1 ? '' : 's'} over {perf.window} — where the wall clock went.
+          </p>
+          <PhaseTable rows={perf.byPhase} caption="By phase" />
+          {perf.byTool.length > 0 && <PhaseTable rows={perf.byTool} caption="By tool" nameOf={(r) => r.label ?? '—'} />}
         </section>
       )}
 
