@@ -214,10 +214,16 @@ describe('AgentRuntime.run (fake SDK)', () => {
     cabinet.db.prepare("INSERT INTO chat (id, kind) VALUES ('t1','user')").run();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Close every runtime this case built before the temp dir goes away:
+    // a live session or an in-flight diagnostic append would otherwise race
+    // the rmSync below (intermittent ENOTEMPTY).
+    await Promise.all(runtimes.splice(0).map((r) => r.close()));
     cabinet.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  const runtimes: AgentRuntime[] = [];
 
   function scriptedQuery(script: (opts: any) => Record<string, any>[]): QueryFn {
     return ((args: any) => {
@@ -226,6 +232,11 @@ describe('AgentRuntime.run (fake SDK)', () => {
         for (const m of messages) yield m;
       })();
     }) as unknown as QueryFn;
+  }
+
+  /** Pull the wrapped user text out of an SDKUserMessage's content array. */
+  function userText(m: any): string {
+    return (m.message.content as any[]).filter((b) => b.type === 'text').map((b) => b.text).join('');
   }
 
   const happyScript = (model: string) => [
@@ -242,7 +253,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
   ];
 
   function mkRuntime(queryFn: QueryFn) {
-    return new AgentRuntime({
+    const rt = new AgentRuntime({
       db: cabinet.db,
       memory: mem,
       approvals: new ApprovalQueue(cabinet.db),
@@ -250,6 +261,8 @@ describe('AgentRuntime.run (fake SDK)', () => {
       cwd: dir,
       dataDir: dir,
     });
+    runtimes.push(rt);
+    return rt;
   }
 
   it('translates the stream, persists the session id, and records usage', async () => {
@@ -292,12 +305,17 @@ describe('AgentRuntime.run (fake SDK)', () => {
   });
 
   it('systemPrompt is byte-stable across turns; per-turn context is wrapped into the message, not the system prompt', async () => {
+    // `prompt` is now always an AsyncIterable of SDKUserMessages (the session
+    // pool keeps one input stream open per subprocess), so the assertions
+    // read the text out of the yielded message rather than off a bare string.
     const seen: { systemPrompt: string; prompt: string }[] = [];
     const queryFn = ((args: any) => {
-      seen.push({ systemPrompt: args.options.systemPrompt, prompt: args.prompt });
       const messages = happyScript(args.options.model);
       return (async function* () {
-        for (const m of messages) yield m;
+        for await (const user of args.prompt as AsyncIterable<any>) {
+          seen.push({ systemPrompt: args.options.systemPrompt, prompt: userText(user) });
+          for (const m of messages) yield m;
+        }
       })();
     }) as unknown as QueryFn;
     const rt = mkRuntime(queryFn);
@@ -323,24 +341,27 @@ describe('AgentRuntime.run (fake SDK)', () => {
     expect(seen[0].prompt).not.toBe(seen[1].prompt);
   });
 
-  it('§ vision spike: attaches images as an SDKUserMessage content array instead of a plain string prompt; a plain turn keeps the string', async () => {
-    const seenPrompts: unknown[] = [];
+  it('§ vision spike: attaches images as extra content blocks on the turn\'s SDKUserMessage', async () => {
+    // Since the session pool, EVERY turn is an SDKUserMessage on a long-lived
+    // input stream — there is no longer a plain-string form to fall back to.
+    // Images are simply extra content blocks after the text.
+    const seen: any[] = [];
     const queryFn = ((args: any) => {
-      seenPrompts.push(args.prompt);
       const messages = happyScript(args.options.model);
       return (async function* () {
-        for (const m of messages) yield m;
+        for await (const user of args.prompt as AsyncIterable<any>) {
+          seen.push(user);
+          for (const m of messages) yield m;
+        }
       })();
     }) as unknown as QueryFn;
     const rt = mkRuntime(queryFn);
 
-    // No images — prompt stays the plain wrapped string, byte-for-byte the
-    // same shape as before this feature existed.
     await rt.run({ chatId: 't1', prompt: 'plain turn', kind: 'user', onEvent: () => {} });
-    expect(typeof seenPrompts[0]).toBe('string');
+    expect(seen[0]).toMatchObject({ type: 'user', parent_tool_use_id: null });
+    expect(seen[0].message.content).toHaveLength(1);
+    expect(userText(seen[0])).toContain('plain turn');
 
-    // With images — prompt becomes a one-shot async iterable yielding a
-    // single SDKUserMessage whose content is [text, ...images].
     await rt.run({
       chatId: 't1',
       prompt: 'what is this?',
@@ -348,10 +369,7 @@ describe('AgentRuntime.run (fake SDK)', () => {
       onEvent: () => {},
       images: [{ mediaType: 'image/png', base64: 'QUJD' }],
     });
-    const second = seenPrompts[1] as AsyncIterable<any>;
-    expect(typeof second[Symbol.asyncIterator]).toBe('function');
-    const collected: any[] = [];
-    for await (const m of second) collected.push(m);
+    const collected = [seen[1]];
     expect(collected).toHaveLength(1);
     expect(collected[0]).toMatchObject({ type: 'user', parent_tool_use_id: null });
     expect(collected[0].message.role).toBe('user');
