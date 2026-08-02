@@ -6,9 +6,12 @@ import { AuthRequiredError } from './lib/client.js';
 import { AppShell, type SurfaceId } from './components/shell/index.js';
 import { Today } from './surfaces/Today.js';
 import { Domains } from './surfaces/Domains.js';
+import { Money } from './surfaces/Money.js';
 import { Ops } from './surfaces/Ops.js';
 import { Brain } from './surfaces/Brain.js';
 import { Chat } from './surfaces/Chat.js';
+import { Credentials } from './surfaces/Credentials.js';
+import { PlaidOAuth } from './surfaces/PlaidOAuth.js';
 import './App.css';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -175,6 +178,13 @@ export default function App() {
     );
   }
 
+  // The Plaid OAuth landing page is a doorway, not a surface: an OAuth bank
+  // navigates the whole tab here with an oauth_state_id, Link resumes, and we
+  // leave for /money. It renders OUTSIDE the shell — no rail, no topbar — so
+  // it's short-circuited here rather than added to the <Routes> below (where
+  // AppShell would frame it and the rail would show a bogus active surface).
+  if (location.pathname === '/plaid/oauth') return <PlaidOAuth />;
+
   // A just-created chat won't be in the fetched list yet — synthesize a stub.
   const selectedChat: ChatSummary | null =
     chats?.find((c) => c.id === chatId) ??
@@ -207,8 +217,10 @@ export default function App() {
         <Route path="/" element={<Navigate to="/today" replace />} />
         <Route path="/today" element={<Today onNavigate={(s) => navigate('/' + s)} />} />
         <Route path="/domains" element={<Domains />} />
+        <Route path="/money" element={<Money />} />
         <Route path="/ops" element={<Ops />} />
         <Route path="/brain" element={<Brain />} />
+        <Route path="/credentials" element={<Credentials />} />
         <Route
           path="/chat"
           element={

@@ -20,6 +20,8 @@ import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
 import { markTurnInFlight, clearTurnInFlightIf, type TurnOutcome } from './pendingTurn.js';
 import { registerSurfaceRoutes } from './surfaces.js';
 import { registerCredentialRoutes } from './credentialRoutes.js';
+import { registerPlaidRoutes, registerPlaidWebhook } from './plaidRoutes.js';
+import type { PlaidClient } from '../integrations/plaid.js';
 import { credKey } from '../domains/credentials.js';
 import { createPerfRecorder, nullPerf, perfEnabled, perfRecentTurns, perfSummary } from '../runtime/perf.js';
 import type { PushService } from '../push/index.js';
@@ -44,7 +46,7 @@ import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, 
  * material) and the store runs in the metadata-only mode it already supports.
  */
 let credKeyCache: Buffer | null | undefined;
-function safeCredKey(): Buffer | null {
+export function safeCredKey(): Buffer | null {
   if (credKeyCache !== undefined) return credKeyCache;
   try {
     credKeyCache = credKey();
@@ -67,6 +69,13 @@ export interface GatewayDeps {
   approvals: ApprovalQueue;
   widgetBus: EventEmitter;
   ownerEmail: string;
+  /**
+   * The Plaid integration, when configured. Optional because the gateway must
+   * build without it — every existing gateway test constructs GatewayDeps by
+   * hand, and a money integration is not a prerequisite for serving chat.
+   * index.ts always supplies it in production.
+   */
+  plaid?: PlaidClient;
   /** Injectable for tests; production uses global fetch → artanis. */
   authFetch?: typeof fetch;
   authServiceUrl?: string;
@@ -122,6 +131,19 @@ interface AuthedRequest extends Request {
 
 export function buildApp(deps: GatewayDeps) {
   const app = express();
+
+  // The Plaid webhook is registered FIRST, ahead of both the JSON parser and
+  // the auth wall, and both of those are load-bearing:
+  //
+  //  - ahead of express.json() so the route keeps the RAW request bytes. Plaid
+  //    signs a SHA-256 of the exact body; a parsed-and-reserialized body has
+  //    different whitespace and the signature check can never pass.
+  //  - ahead of `app.use('/api', authenticate)` because Plaid's servers cannot
+  //    present an Artanis session. The signature verification in
+  //    PlaidClient.verifyWebhook is what stands in for the session — an
+  //    unsigned or forged POST is rejected before it can touch the database.
+  if (deps.plaid) registerPlaidWebhook(app, { db: deps.db, plaid: deps.plaid });
+
   // 10mb, not 2mb: a base64-encoded composer image attachment (up to
   // MAX_IMAGE_BYTES = 6mb decoded, ~8mb once base64-inflated) has to clear
   // this global parser before Express ever reaches a route — a route-local
@@ -523,6 +545,10 @@ export function buildApp(deps: GatewayDeps) {
   // environment, and no route in this file can return a decrypted secret
   // because credentialRoutes.ts never imports the function that decrypts.
   registerCredentialRoutes(app, { db: deps.db, key: safeCredKey() });
+
+  // Plaid + the money read surface. Same wall, same reasoning: the routes hold
+  // a PlaidClient, never a token, so no response from them can carry one.
+  if (deps.plaid) registerPlaidRoutes(app, { db: deps.db, plaid: deps.plaid });
 
   app.get('/api/push/key', (_req, res) => {
     const push = deps.push;

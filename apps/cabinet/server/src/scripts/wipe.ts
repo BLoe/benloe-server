@@ -117,9 +117,19 @@ export const CABINET_KEEP_TABLES = [
   // Revoking a credential is a deliberate, per-name act (DELETE
   // /api/credentials/:name), never a side effect of clearing QS records.
   'credential',
+  // Linked-institution rows (migration 018). These are NOT Ben's financial
+  // data — the accounts, transactions and holdings all clear below. A
+  // plaid_item row is the pointer from a bank to the credential row holding
+  // its access token, so it belongs with 'credential' for exactly the same
+  // reason, plus a sharper one: clearing these while keeping the credentials
+  // would leave live bearer tokens for Ben's bank sealed in the database with
+  // nothing referencing them — unlistable in the UI and therefore
+  // unrevokable, which is the precise failure integrations/plaid.ts orders its
+  // writes to prevent. Unlinking a bank is a deliberate act (DELETE
+  // /api/plaid/items/:id, which revokes at Plaid first), never a side effect.
+  'plaid_item',
 ];
 export const CABINET_CLEAR_TABLES = [
-  'account',
   'action_audit',
   'activity_plan_entry',
   'approval',
@@ -128,6 +138,12 @@ export const CABINET_CLEAR_TABLES = [
   'claim',
   'contact',
   'document',
+  // Money (migration 018). Records about Ben's actual spending and net worth —
+  // among the most sensitive rows in the database and unambiguously clear.
+  // The connection to the bank survives (plaid_item, above); what it fetched
+  // does not.
+  'financial_account',
+  'financial_transaction',
   'food_log',
   'goal',
   'grocery_list_item',
@@ -143,6 +159,7 @@ export const CABINET_CLEAR_TABLES = [
   'medication',
   'message',
   'mood_log',
+  'net_worth_snapshot',
   'pantry_item',
   // Notification delivery log — operational history about turns and pings
   // that are themselves being cleared.
@@ -159,11 +176,15 @@ export const CABINET_CLEAR_TABLES = [
   'recipe',
   'recipe_ingredient',
   'retrieval_log',
+  // Securities reference data (tickers, names, close prices). Not personal —
+  // but it only exists because Ben held those positions, and the holdings it
+  // describes are being cleared, so leaving it would strand a list of exactly
+  // what he owned.
+  'security',
   'subscription',
   'task',
   'chat',
   'token_usage',
-  'transaction_row',
   'workout',
   'workout_set',
 ];
@@ -477,6 +498,14 @@ function clearCabinetRecords(dbPath: string): string[] {
     db.pragma('foreign_keys = OFF');
     const tx = db.transaction(() => {
       for (const t of CABINET_CLEAR_TABLES) db.exec(`DELETE FROM "${t}"`);
+      // plaid_item is a KEEP table (see CABINET_KEEP_TABLES for why), but its
+      // sync cursor is a pointer INTO the transaction history we just deleted.
+      // Left alone, the next sync would resume from that cursor and fetch only
+      // what changed since — so the cleared months would never come back, and
+      // Cabinet would go on reporting 30-day spend totals against a history
+      // with a silent hole in it. Resetting to NULL makes the next sync a full
+      // re-pull. The bank connection survives a wipe; its bookmark must not.
+      db.exec(`UPDATE plaid_item SET transactions_cursor = NULL, last_synced_at = NULL`);
     });
     tx();
     db.pragma('wal_checkpoint(TRUNCATE)');

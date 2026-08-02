@@ -34,9 +34,18 @@ describe('migrations', () => {
     for (const t of [
       'chat', 'message', 'food_log', 'workout', 'workout_set', 'body_metric', 'health_daily',
       'mood_log', 'journal_entry', 'insurance_plan', 'claim', 'medication', 'lab_result',
-      'hsa_contribution', 'transaction_row', 'task', 'contact', 'approval', 'action_audit', 'token_usage',
+      'hsa_contribution', 'task', 'contact', 'approval', 'action_audit', 'token_usage',
+      // money (migration 018) — supersedes 001's account/transaction_row/holding
+      'plaid_item', 'financial_account', 'financial_transaction', 'security', 'holding',
+      'net_worth_snapshot',
     ]) {
       expect(tables, `missing table ${t}`).toContain(t);
+    }
+    // 018 drops the speculative 001 money tables; assert they are actually gone
+    // rather than trusting the migration ran, because a leftover transaction_row
+    // would mean two sets of money tables under opposite sign conventions.
+    for (const t of ['transaction_row', 'account']) {
+      expect(tables, `stale table ${t} should have been dropped by 018`).not.toContain(t);
     }
     // accumulator columns used by healthcare math
     const cols = (cabinet.db.prepare('PRAGMA table_info(claim)').all() as { name: string }[]).map((c) => c.name);

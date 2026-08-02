@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3';
-import { createHash } from 'node:crypto';
 import { localDay } from '../db/index.js';
 
 // ---------- mind ----------
@@ -22,57 +21,12 @@ export function addJournal(db: Database.Database, body: string, when: Date = new
 }
 
 // ---------- money ----------
-/**
- * Hand-rolled CSV import (date,amount,merchant[,category]). Idempotent via a
- * content hash per row; re-importing the same file inserts nothing new.
- */
-export function importTransactionsCsv(
-  db: Database.Database,
-  csv: string,
-  accountId: number | null = null,
-): { inserted: number; skipped: number } {
-  let inserted = 0;
-  let skipped = 0;
-  const stmt = db.prepare(
-    `INSERT OR IGNORE INTO transaction_row (account_id, posted_on, amount, merchant, category, source, import_hash)
-     VALUES (?,?,?,?,?, 'csv', ?)`,
-  );
-  const lines = csv.split('\n').map((l) => l.trim()).filter(Boolean);
-  const tx = db.transaction(() => {
-    for (const line of lines) {
-      if (/^date\s*,/i.test(line)) continue; // header
-      const cols = splitCsvLine(line);
-      if (cols.length < 3) { skipped++; continue; }
-      const [date, amountRaw, merchant, category] = cols;
-      const amount = Number(amountRaw!.replace(/[$,]/g, ''));
-      if (!date || Number.isNaN(amount)) { skipped++; continue; }
-      const hash = createHash('sha256').update(`${accountId}|${date}|${amount}|${merchant ?? ''}`).digest('hex');
-      const r = stmt.run(accountId, date, amount, merchant ?? null, category ?? null, hash);
-      if (r.changes > 0) inserted++;
-      else skipped++;
-    }
-  });
-  tx();
-  return { inserted, skipped };
-}
-
-function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = '';
-  let quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
-    if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (ch === '"') quoted = false;
-      else cur += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ',') { out.push(cur.trim()); cur = ''; }
-    else cur += ch;
-  }
-  out.push(cur.trim());
-  return out;
-}
+// importTransactionsCsv used to live here and wrote to 001's `transaction_row`.
+// It moved to domains/money.ts (migration 018), which owns the real financial
+// tables and — the actual reason for the move — is the single place the
+// amount-sign convention is applied. A CSV importer that doesn't agree with
+// the rest of the money domain about which direction is "spending" reports
+// income as spending without ever failing.
 
 // ---------- life admin / social ----------
 export function upsertTask(

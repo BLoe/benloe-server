@@ -43,6 +43,28 @@ module.exports = {
         GITHUB_APP_ID: env.GITHUB_APP_ID,
         GITHUB_APP_INSTALLATION_ID: env.GITHUB_APP_INSTALLATION_ID,
         GITHUB_APP_PRIVATE_KEY_B64: env.GITHUB_APP_PRIVATE_KEY_B64,
+        // Master key for the encrypted credential store (migration 016). This
+        // is the ONLY secret the money integration needs in .env — Plaid's
+        // client_id, API secret and per-bank access tokens are all AES-256-GCM
+        // rows in cabinet.db sealed under this key, so they can be added and
+        // rotated from the UI without a root shell.
+        //
+        // Its absence is a supported (degraded) state, not a crash: the store
+        // still answers "what is configured?" and refuses every decrypt. That
+        // is exactly the state this deployment was silently in until
+        // 2026-08-02, because this line did not exist — every credential write
+        // would have 503'd and every Plaid call would have found no keys.
+        // Generate with: openssl rand -base64 32
+        CABINET_CRED_KEY: env.CABINET_CRED_KEY,
+        // 'sandbox' (default) or 'production'. Not a secret — it only selects
+        // which Plaid hostname to call, and the credentials themselves are
+        // environment-specific, so a mismatch fails closed with an auth error
+        // rather than reaching the wrong data.
+        PLAID_ENV: env.PLAID_ENV,
+        // Public origin, used to build the Plaid OAuth redirect_uri and the
+        // webhook URL. Must match the "Allowed redirect URIs" entry in the
+        // Plaid dashboard exactly.
+        CABINET_PUBLIC_ORIGIN: env.CABINET_PUBLIC_ORIGIN || 'https://cabinet.benloe.com',
         // claude-worker's own nvm-managed node (v24.12.0) is the only place a
         // working, correctly-permissioned npm/npx/corepack actually lives on
         // this box — /usr/local/bin/node is a bare interpreter with no npm

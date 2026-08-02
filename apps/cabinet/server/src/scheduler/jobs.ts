@@ -35,6 +35,14 @@ export interface JobDeps {
    * RHYTHM's schedule existing and RHYTHM's schedule happening.
    */
   pushService?: { send(msg: { kind: string; title: string; body: string; tag?: string; url?: string; silent?: boolean }): Promise<unknown> };
+  /**
+   * Plaid. Optional for the same reason pushService is — tests compose JobDeps
+   * by hand — and its absence simply means the money-sync job isn't armed.
+   */
+  plaid?: {
+    configured(): boolean;
+    syncAll(): Promise<{ reports: unknown[]; net_worth: unknown }>;
+  };
 }
 
 const push = (deps: JobDeps, event: string, data: unknown) => deps.widgetBus.emit('push', { event, data });
@@ -418,7 +426,30 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     },
   }));
 
-  return [heartbeat, briefing, morningNudge, checkin, weekly, maintenance, ...rhythmPings];
+  /**
+   * Nightly money sync, 04:30.
+   *
+   * Timing is deliberate: after maintenance's 03:00 backup (so a bad sync
+   * can't land in a snapshot before there's a clean copy of the night before)
+   * and well before the 06:30 morning brief, so the brief reads fresh
+   * balances. Banks also post overnight, which is why this isn't at midnight.
+   *
+   * Costs zero model tokens — plain HTTP and SQL, no agent turn. The webhook
+   * already keeps transactions near-live; this job exists to catch what
+   * webhooks miss (an institution that doesn't send them, a webhook dropped
+   * while the server was down) and to write the daily net-worth row, which is
+   * what turns a balance into a trend.
+   */
+  const moneySync: JobSpec = {
+    name: 'money-sync',
+    next: (from) => nextDaily(4, 30, from),
+    run: async () => {
+      if (!deps.plaid?.configured()) return { skipped: 'plaid not configured' };
+      return deps.plaid.syncAll();
+    },
+  };
+
+  return [heartbeat, briefing, morningNudge, checkin, weekly, maintenance, moneySync, ...rhythmPings];
 }
 
 /** 03:00 job (§11): backups, WAL checkpoint, embedding backfill, approval sweep, rotation. */

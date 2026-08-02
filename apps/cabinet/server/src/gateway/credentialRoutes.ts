@@ -28,6 +28,7 @@ import {
   listCredentials,
   putCredential,
 } from '../domains/credentials.js';
+import { CREDENTIAL_CATALOG, envReport, isManagedCredential } from '../domains/credentialCatalog.js';
 
 export interface CredentialRouteDeps {
   db: Database.Database;
@@ -49,7 +50,40 @@ export function registerCredentialRoutes(app: Express, deps: CredentialRouteDeps
    * the credentials are usable.
    */
   app.get('/api/credentials', (_req: Request, res: Response) => {
-    res.json({ configured: deps.key !== null, credentials: listCredentials(db) });
+    const stored = listCredentials(db);
+    const byName = new Map(stored.map((c) => [c.name, c]));
+
+    // Catalog slots joined to what's actually stored. The UI renders the slot
+    // whether or not it's filled, so an empty store shows "Plaid Client ID —
+    // not set" rather than a blank page plus a naming puzzle.
+    const slots = CREDENTIAL_CATALOG.map((slot) => ({
+      ...slot,
+      stored: byName.has(slot.name),
+      meta: byName.get(slot.name) ?? null,
+    }));
+
+    // Anything stored that no slot claims. Split so machine-managed per-bank
+    // tokens are visibly not hand-editable, and a genuinely unrecognised
+    // credential is visible rather than silently hidden by the catalog.
+    const catalogued = new Set(CREDENTIAL_CATALOG.map((s) => s.name));
+    const extra = stored.filter((c) => !catalogued.has(c.name));
+
+    res.json({
+      configured: deps.key !== null,
+      // Unchanged shape, still the full stored list — existing clients and the
+      // contract tests depend on it; slots/env are additive.
+      credentials: stored,
+      slots,
+      managed: extra.filter((c) => isManagedCredential(c.name)),
+      unrecognised: extra.filter((c) => !isManagedCredential(c.name)),
+      // `deps.key !== null` is the honest presence probe for CABINET_CRED_KEY:
+      // the variable itself is scrubbed from process.env at boot, so the loaded
+      // key buffer is the only remaining evidence it was ever set.
+      env: envReport(process.env, {
+        CABINET_CRED_KEY: deps.key !== null,
+        GITHUB_APP_PRIVATE_KEY_B64: !!process.env.GITHUB_TOKEN,
+      }),
+    });
   });
 
   /**
@@ -66,6 +100,17 @@ export function registerCredentialRoutes(app: Express, deps: CredentialRouteDeps
     }
     if (typeof body.secret !== 'string' || body.secret.length === 0) {
       return res.status(400).json({ error: 'secret is required' });
+    }
+    // Machine-managed names are off-limits to hand editing. A per-bank access
+    // token is issued by Plaid and bound to an item row; pasting anything else
+    // over it doesn't fail here — it fails at the next sync, as an
+    // authentication error against a bank, which is a genuinely awful place to
+    // start debugging. The integration writes these through the domain, not
+    // this route, so nothing legitimate is blocked.
+    if (isManagedCredential(name)) {
+      return res.status(409).json({
+        error: `'${name}' is managed automatically by an integration and cannot be set by hand. Re-link the account instead.`,
+      });
     }
     if (typeof body.provider !== 'undefined' && body.provider !== null && typeof body.provider !== 'string') {
       return res.status(400).json({ error: 'provider must be a string' });
@@ -102,6 +147,27 @@ export function registerCredentialRoutes(app: Express, deps: CredentialRouteDeps
    */
   app.delete('/api/credentials/:name', (req: Request, res: Response) => {
     const name = req.params.name ?? '';
+    // A machine-managed name that a LIVE item still points at must not be
+    // deletable here. Dropping it doesn't fail now — it fails at the next sync,
+    // as an authentication error against Ben's bank, with the token that would
+    // explain it already gone. Unlinking goes through DELETE /api/plaid/items/
+    // :id, which revokes at Plaid first and then cascades; that path is
+    // unaffected.
+    //
+    // Orphans are still deletable on purpose: a credential no item references
+    // is debris, and refusing to clean up debris would make this rule a leak
+    // rather than a guard.
+    if (isManagedCredential(name)) {
+      const owner = db.prepare('SELECT id FROM plaid_item WHERE token_credential = ?').get(name) as
+        | { id: number }
+        | undefined;
+      if (owner) {
+        return res.status(409).json({
+          error: `'${name}' is the live access token for a linked account. Unlink the account instead — that revokes it at the provider first.`,
+          item_id: owner.id,
+        });
+      }
+    }
     if (!deleteCredential(db, name)) return res.status(404).json({ error: 'no such credential' });
     res.json({ ok: true, deleted: name });
   });
