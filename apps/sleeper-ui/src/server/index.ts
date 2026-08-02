@@ -8,7 +8,7 @@
  * Fixture mode is what makes the visual verification loop reliable: the same
  * request always renders the same pixels.
  */
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
 import express from 'express';
 import compression from 'compression';
 import { readFile } from 'node:fs/promises';
@@ -16,6 +16,17 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as S from '../lib/sleeper.js';
 import { cached, diskCached, TTL, stats, invalidate } from './cache.js';
+import { chatAccess } from './chatAccess.js';
+import {
+  COOKIE_NAME,
+  cookieHeader,
+  clearCookieHeader,
+  isValidUsername,
+  readCookie,
+  signSession,
+  verifySession,
+  type Session,
+} from './session.js';
 import {
   buildTeams,
   buildStandings,
@@ -28,18 +39,35 @@ import {
   type PlayerIndex,
 } from '../lib/derive.js';
 
+// Secrets live in the monorepo root, not this app's directory.
+loadEnv({ path: '/srv/benloe/.env' });
+loadEnv();
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FIXTURES = join(ROOT, 'fixtures');
 const CACHE_DIR = process.env.SLEEPER_CACHE_DIR || join(ROOT, '.cache');
 
 const PORT = Number(process.env.PORT || 3010);
 const SOURCE = (process.env.SLEEPER_SOURCE || 'live') as 'live' | 'fixtures';
-const USERNAME = process.env.SLEEPER_USERNAME || 'BenLoe';
 
-/** Bearer token for league chat. Absent means chat is simply unavailable. */
+/**
+ * Optional. Only used to pre-fill the sign-in box — it is NOT an identity.
+ * Whose leagues you see comes from your own session, never from this.
+ */
+const SUGGESTED_USERNAME = process.env.SLEEPER_USERNAME || '';
+
+/**
+ * Bearer token for league chat. This is one specific person's Sleeper session,
+ * so chat is only ever served to the visitor whose session matches the token's
+ * owner — see requireChatOwner. Absent token means chat is unavailable to all.
+ */
 const SLEEPER_TOKEN = process.env.SLEEPER_TOKEN || '';
 /** Posting writes to a real league, so it stays off unless explicitly enabled. */
 const ALLOW_POSTING = process.env.SLEEPER_ALLOW_POSTING === 'true';
+
+/** Signs session cookies. Shared with the other apps on this box. */
+const SESSION_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || '';
+const SECURE_COOKIES = process.env.NODE_ENV === 'production';
 
 /** Fixture label -> league id, so fixture mode can answer by real league id. */
 const FIXTURE_LEAGUES: Record<string, string> = {
@@ -65,9 +93,14 @@ async function loadState() {
   return cached('state', TTL.state, () => S.getState());
 }
 
-async function loadUser() {
+/**
+ * Resolve a Sleeper username to its account. In fixture mode any name resolves
+ * to the fixture user so the screenshot harness can drive the real sign-in flow
+ * without network access.
+ */
+async function resolveUser(username: string) {
   if (useFixtures()) return readFixture('user');
-  return cached(`user:${USERNAME}`, TTL.league, () => S.getUser(USERNAME));
+  return cached(`user:${username.toLowerCase()}`, TTL.league, () => S.getUser(username));
 }
 
 async function loadUserLeagues(userId: string, season: string) {
@@ -173,6 +206,97 @@ const wrap =
   (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
 
+/* ------------------------------------------------------------------ *
+ * Session — whose leagues are we looking at
+ * ------------------------------------------------------------------ */
+
+const sessionOf = (req: express.Request): Session | null =>
+  verifySession(readCookie(req.headers.cookie, COOKIE_NAME), SESSION_SECRET);
+
+/** Every league route needs to know who is asking. */
+const requireSession: express.RequestHandler = (req, res, next) => {
+  const session = sessionOf(req);
+  if (!session) {
+    return res.status(401).json({
+      error: 'Enter your Sleeper username to continue.',
+      needsIdentity: true,
+    });
+  }
+  (req as any).session = session;
+  next();
+};
+
+/**
+ * The chat token belongs to exactly one Sleeper account. Serving chat to anyone
+ * else would hand a stranger that account's private league conversations, so
+ * chat is restricted to the visitor whose session matches the token's owner.
+ */
+let tokenOwnerMemo: string | null | undefined;
+async function chatTokenOwnerId(): Promise<string | null> {
+  if (tokenOwnerMemo !== undefined) return tokenOwnerMemo;
+  if (!SLEEPER_TOKEN) return (tokenOwnerMemo = null);
+  try {
+    const me = await S.getTokenOwner({ token: SLEEPER_TOKEN });
+    tokenOwnerMemo = me?.user_id ?? null;
+  } catch (err) {
+    console.warn(`[chat] could not identify token owner: ${(err as Error).message}`);
+    tokenOwnerMemo = null;
+  }
+  return tokenOwnerMemo;
+}
+
+app.get('/api/session', (req, res) => {
+  const session = sessionOf(req);
+  res.json({
+    session: session ? { userId: session.userId, username: session.username } : null,
+    suggestedUsername: SUGGESTED_USERNAME || null,
+  });
+});
+
+app.post(
+  '/api/session',
+  express.json({ limit: '4kb' }),
+  wrap(async (req, res) => {
+    if (!SESSION_SECRET) {
+      return res.status(500).json({ error: 'Server is missing a session signing secret.' });
+    }
+
+    const raw = req.body?.username;
+    if (!isValidUsername(raw)) {
+      return res.status(400).json({ error: 'That is not a valid Sleeper username.' });
+    }
+    const username = raw.trim();
+
+    let user: any;
+    try {
+      user = await resolveUser(username);
+    } catch {
+      return res.status(404).json({ error: `No Sleeper account found for "${username}".` });
+    }
+    if (!user?.user_id) {
+      return res.status(404).json({ error: `No Sleeper account found for "${username}".` });
+    }
+
+    const session: Session = {
+      userId: user.user_id,
+      username: user.username ?? username,
+      iat: Math.floor(Date.now() / 1000),
+    };
+    res.setHeader('set-cookie', cookieHeader(signSession(session, SESSION_SECRET), {
+      secure: SECURE_COOKIES,
+    }));
+    res.json({
+      session: { userId: session.userId, username: session.username },
+      displayName: user.display_name,
+    });
+  })
+);
+
+app.delete('/api/session', (_req, res) => {
+  res.setHeader('set-cookie', clearCookieHeader(SECURE_COOKIES));
+  res.json({ ok: true });
+});
+
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -191,8 +315,10 @@ app.post('/api/cache/flush', (_req, res) => {
 /** Bootstrap: who am I, what leagues, what week is it. */
 app.get(
   '/api/me',
-  wrap(async (_req, res) => {
-    const [state, user] = await Promise.all([loadState(), loadUser()]);
+  requireSession,
+  wrap(async (req, res) => {
+    const session: Session = (req as any).session;
+    const [state, user] = await Promise.all([loadState(), resolveUser(session.username)]);
     const season: string = state.league_season ?? state.season;
 
     // Show the current season alongside last season's. In the preseason the new
@@ -234,6 +360,7 @@ app.get(
 /** Everything the league dashboard needs, in one round trip. */
 app.get(
   '/api/league/:leagueId',
+  requireSession,
   wrap(async (req, res) => {
     const { leagueId } = req.params;
     const [league, rosters, users, state, players] = await Promise.all([
@@ -256,9 +383,9 @@ app.get(
     const allPlay = buildAllPlay(allMatchups, playoffStart);
     const standings = buildStandings(rosters, users);
 
-    const user = await loadUser();
+    const { userId } = (req as any).session as Session;
     const myRoster = rosters.find(
-      (r: any) => r.owner_id === user.user_id || r.co_owners?.includes(user.user_id)
+      (r: any) => r.owner_id === userId || r.co_owners?.includes(userId)
     );
 
     res.json({
@@ -294,6 +421,7 @@ app.get(
 /** One week's matchups, fully resolved with player names and points. */
 app.get(
   '/api/league/:leagueId/matchups/:week',
+  requireSession,
   wrap(async (req, res) => {
     const { leagueId } = req.params;
     const week = Number(req.params.week);
@@ -342,6 +470,7 @@ app.get(
 /** A single team: full roster laid out into lineup slots. */
 app.get(
   '/api/league/:leagueId/roster/:rosterId',
+  requireSession,
   wrap(async (req, res) => {
     const { leagueId } = req.params;
     const rosterId = Number(req.params.rosterId);
@@ -367,6 +496,7 @@ app.get(
 /** Recent league activity, newest first. */
 app.get(
   '/api/league/:leagueId/transactions',
+  requireSession,
   wrap(async (req, res) => {
     const { leagueId } = req.params;
     const through = Number(req.query.through ?? 17);
@@ -426,8 +556,30 @@ app.get(
 
 const chatOpts = () => ({ token: SLEEPER_TOKEN });
 
+/**
+ * Returns a refusal when this visitor must not see chat, or null when they may.
+ * Fixture mode is exempt so the screenshot harness has something to render.
+ */
+async function chatDenial(
+  req: express.Request
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  const session = sessionOf(req);
+  const decision = chatAccess({
+    fixtures: useFixtures(),
+    hasToken: !!SLEEPER_TOKEN,
+    tokenOwnerId: await chatTokenOwnerId(),
+    visitorId: session?.userId ?? null,
+  });
+  if (decision.allowed) return null;
+  return {
+    status: decision.status,
+    body: { error: decision.error, [decision.code]: true },
+  };
+}
+
 app.get(
   '/api/league/:leagueId/chat',
+  requireSession,
   wrap(async (req, res) => {
     const { leagueId } = req.params;
     const before = typeof req.query.before === 'string' ? req.query.before : undefined;
@@ -439,10 +591,12 @@ app.get(
       });
     }
 
-    const [rosters, users, user] = await Promise.all([
+    const denial = await chatDenial(req);
+    if (denial) return res.status(denial.status).json(denial.body);
+
+    const [rosters, users] = await Promise.all([
       loadRosters(leagueId),
       loadLeagueUsers(leagueId),
-      loadUser(),
     ]);
 
     // Fixture mode has no token, so the screenshot harness reads a synthetic
@@ -457,7 +611,7 @@ app.get(
       messages: buildChatFeed(raw, {
         teams: buildTeams(rosters, users),
         rosters,
-        myUserId: user.user_id,
+        myUserId: ((req as any).session as Session).userId,
       }),
       // The oldest id in this page is the cursor for loading older messages.
       nextCursor: raw.length ? raw[raw.length - 1].message_id : null,
@@ -468,11 +622,11 @@ app.get(
 
 app.post(
   '/api/league/:leagueId/chat',
+  requireSession,
   express.json({ limit: '16kb' }),
   wrap(async (req, res) => {
-    if (!SLEEPER_TOKEN) {
-      return res.status(503).json({ error: 'Chat needs a Sleeper token.', needsToken: true });
-    }
+    const denial = await chatDenial(req);
+    if (denial) return res.status(denial.status).json(denial.body);
     if (!ALLOW_POSTING) {
       return res.status(403).json({
         error: 'Posting is off. Set SLEEPER_ALLOW_POSTING=true to enable it.',
@@ -484,17 +638,16 @@ app.post(
     if (text.length > 2000) return res.status(400).json({ error: 'Message is too long.' });
 
     const sent = await S.postLeagueMessage(req.params.leagueId, text, chatOpts());
-    const [rosters, users, user] = await Promise.all([
+    const [rosters, users] = await Promise.all([
       loadRosters(req.params.leagueId),
       loadLeagueUsers(req.params.leagueId),
-      loadUser(),
     ]);
 
     res.json({
       message: buildChatFeed([sent], {
         teams: buildTeams(rosters, users),
         rosters,
-        myUserId: user.user_id,
+        myUserId: ((req as any).session as Session).userId,
       })[0],
     });
   })

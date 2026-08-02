@@ -20,7 +20,15 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
     loading: boolean;
     error: string | null;
     needsToken: boolean;
-  }>({ messages: [], canPost: false, loading: true, error: null, needsToken: false });
+    notChatOwner: boolean;
+  }>({
+    messages: [],
+    canPost: false,
+    loading: true,
+    error: null,
+    needsToken: false,
+    notChatOwner: false,
+  });
 
   const scroller = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
@@ -37,6 +45,7 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
             loading: false,
             error: body.error ?? `Request failed: ${res.status}`,
             needsToken: !!body.needsToken,
+            notChatOwner: !!body.notChatOwner,
           }));
           return;
         }
@@ -47,6 +56,7 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
           loading: false,
           error: null,
           needsToken: false,
+          notChatOwner: false,
         });
       } catch (err) {
         setState((s) => ({ ...s, loading: false, error: (err as Error).message }));
@@ -86,6 +96,7 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
     pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
+  if (state.notChatOwner) return <ChatUnavailable />;
   if (state.needsToken) return <TokenSetup />;
 
   return (
@@ -333,7 +344,30 @@ function Composer({
   );
 }
 
-/** Shown when the server has no Sleeper token — the one thing only Ben can supply. */
+/**
+ * Chat is the one section that cannot be per-visitor: it rides a single Sleeper
+ * token, so it belongs to exactly one account. Everyone else gets this.
+ */
+function ChatUnavailable() {
+  return (
+    <div className="pt-4">
+      <Panel title="Chat is not available for this account">
+        <div className="p-6 max-w-2xl space-y-3 text-[13.5px] leading-relaxed">
+          <p className="text-muted">
+            League chat requires being signed in to Sleeper, and this server holds a
+            session for one account only. Chat is shown to that account and nobody else.
+          </p>
+          <p className="text-dim text-[12px]">
+            Everything else in the dashboard works normally for your leagues — standings,
+            matchups, rosters and activity are all public data.
+          </p>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+/** Shown to the token's owner when no token is configured at all. */
 function TokenSetup() {
   return (
     <div className="pt-4">
