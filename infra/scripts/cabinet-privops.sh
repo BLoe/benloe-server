@@ -27,14 +27,47 @@ case "$cmd" in
     exec "$PM2" restart "$name" --update-env
     ;;
   pm2-start)
-    path="${1:-}"
-    [[ "$path" =~ ^/srv/benloe/apps/[a-z0-9][a-z0-9-]{0,40}/ecosystem\.config\.js$ ]] \
-      || { echo "path must be /srv/benloe/apps/<name>/ecosystem.config.js" >&2; exit 1; }
-    real="$(realpath "$path")"
-    [[ "$real" == "$path" ]] || { echo "symlinked paths refused" >&2; exit 1; }
-    [[ -f "$real" ]] || { echo "no such file" >&2; exit 1; }
+    # 2026-08-02: this used to accept /srv/benloe/apps/<name>/ecosystem.config.js
+    # — a JavaScript file inside a directory the agent owns, which root PM2
+    # then EVALUATES. That was arbitrary root code execution via the documented
+    # workflow, and chown'ing the file was not a fix: the agent owns the parent
+    # directory, so it can unlink a root-owned file and write its own in place
+    # (verified, 2026-08-02).
+    #
+    # Configs now load only from /etc/benloe/ecosystem/, which is root:root all
+    # the way up. The repo copy under apps/<name>/ecosystem.config.js stays the
+    # reviewable, git-tracked source of truth; root installs it here with
+    # `cabinet-privops install-ecosystem` after reading the diff. Same
+    # repo-is-source / root-installs pattern as this script and the systemd
+    # units in infra/systemd.
+    name="${1:-}"
+    [[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || { echo "usage: pm2-start <app-name>" >&2; exit 1; }
+    real="/etc/benloe/ecosystem/$name.config.js"
+    [[ -f "$real" ]] || { echo "no installed ecosystem config for '$name' (expected $real)" >&2; exit 1; }
+    # Belt and braces: refuse anything that is not root-owned, in case the
+    # directory protections are ever loosened by hand.
+    owner="$(stat -c '%U:%G' "$real")"
+    [[ "$owner" == "root:root" ]] || { echo "refusing: $real is owned by $owner, expected root:root" >&2; exit 1; }
     log "pm2-start $real"
     exec "$PM2" start "$real"
+    ;;
+  install-ecosystem)
+    # Root-only promotion step: copy the repo's reviewable config into the
+    # root-owned location PM2 actually reads. Deliberately NOT reachable by the
+    # agent — sudoers grants claude-worker this script, so the guard below is
+    # what keeps "install" out of the agent's hands. Ben runs it as real root.
+    [[ "${SUDO_UID:-$UID}" == "0" && "$UID" == "0" && -z "${SUDO_USER:-}" ]] \
+      || { echo "install-ecosystem must be run as real root, not via sudo from a service account" >&2; exit 1; }
+    name="${1:-}"
+    [[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || { echo "usage: install-ecosystem <app-name>" >&2; exit 1; }
+    src="/srv/benloe/apps/$name/ecosystem.config.js"
+    [[ -f "$src" ]] || { echo "no such repo config: $src" >&2; exit 1; }
+    dst="/etc/benloe/ecosystem/$name.config.js"
+    if [[ -f "$dst" ]] && diff -q "$src" "$dst" >/dev/null; then echo "unchanged: $dst"; exit 0; fi
+    diff -u "$dst" "$src" 2>/dev/null || true
+    install -o root -g root -m 644 "$src" "$dst"
+    log "install-ecosystem $name"
+    echo "installed: $dst"
     ;;
   pm2-save)
     log "pm2-save"
@@ -132,7 +165,9 @@ PY
     ;;
   *)
     echo "cabinet-privops: unknown or missing subcommand: '$cmd'" >&2
-    echo "usage: cabinet-privops {pm2-list|pm2-restart <name>|pm2-start <path>|pm2-save|caddy-reload|redeploy <name>}" >&2
+    echo "usage: cabinet-privops {pm2-list|pm2-restart <name>|pm2-start <name>|pm2-save|caddy-reload|redeploy <name>}" >&2
+    echo "  pm2-start reads /etc/benloe/ecosystem/<name>.config.js (root-owned)" >&2
+    echo "  install-ecosystem <name> promotes the repo config there — real root only" >&2
     echo "  (__drain-restart is internal — use redeploy)" >&2
     exit 1
     ;;
