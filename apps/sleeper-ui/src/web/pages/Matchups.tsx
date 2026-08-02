@@ -137,7 +137,36 @@ function MatchupCard({
 
   return (
     <section className="panel">
-      <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 p-4 border-b border-line">
+      {/* Phones get the two teams stacked with their scores beside them; the
+          side-by-side header squeezed both names to three characters. */}
+      <header className="sm:hidden p-3.5 border-b border-line space-y-2">
+        {[home, away].map((side, i) => {
+          const won = side.points >= (i === 0 ? away.points : home.points);
+          return (
+            <div key={side.rosterId} className="flex items-center gap-2.5">
+              <span
+                className="w-[3px] h-7 shrink-0 rounded-full"
+                style={{ background: won ? 'var(--win)' : 'transparent' }}
+                aria-hidden="true"
+              />
+              <span className="flex-1 min-w-0">
+                <TeamBadge team={side.team} size={28} showManager highlight={side.rosterId === myRosterId} />
+              </span>
+              <span
+                className="font-display font-bold tabular-nums shrink-0"
+                style={{ fontSize: 'var(--t-h1)', color: won ? '#E8EDF2' : '#93A2B2' }}
+              >
+                {fmt1(side.points)}
+              </span>
+            </div>
+          );
+        })}
+        <div className="stat-label pl-[13px]">
+          {matchup.margin === 0 ? 'Tied' : `Won by ${fmt1(matchup.margin)}`}
+        </div>
+      </header>
+
+      <header className="hidden sm:grid grid-cols-[1fr_auto_1fr] items-center gap-3 p-4 border-b border-line">
         <div className="min-w-0">
           <TeamBadge team={home.team} size={34} showManager highlight={home.rosterId === myRosterId} />
         </div>
@@ -183,20 +212,26 @@ function MatchupCard({
           const hp = h?.points ?? 0;
           const ap = a?.points ?? 0;
           return (
-            <div
-              key={i}
-              className="grid grid-cols-[1fr_58px_1fr] items-center gap-2 px-4 py-2 border-b border-line/50 last:border-b-0"
-            >
-              <PlayerRow slot={h} points={hp} better={hp > ap} align="left" />
-              <div className="text-center">
-                <span
-                  className="chip text-muted"
-                  style={{ background: '#161F29', minWidth: 44 }}
-                >
-                  {slot === 'SUPER_FLEX' ? 'SFLX' : slot}
-                </span>
+            <div key={i} className="border-b border-line/50 last:border-b-0">
+              {/* Phone: slot label, then one player per line. Three columns at
+                  390px truncated every name to three characters. */}
+              <div className="sm:hidden px-3.5 py-2">
+                <div className="stat-label mb-1">{slot === 'SUPER_FLEX' ? 'SFLX' : slot}</div>
+                <div className="space-y-1">
+                  <PlayerRow slot={h} points={hp} better={hp > ap} align="left" />
+                  <PlayerRow slot={a} points={ap} better={ap > hp} align="left" />
+                </div>
               </div>
-              <PlayerRow slot={a} points={ap} better={ap > hp} align="right" />
+
+              <div className="hidden sm:grid grid-cols-[1fr_58px_1fr] items-center gap-2 px-4 py-2">
+                <PlayerRow slot={h} points={hp} better={hp > ap} align="left" />
+                <div className="text-center">
+                  <span className="chip text-muted" style={{ background: '#161F29', minWidth: 44 }}>
+                    {slot === 'SUPER_FLEX' ? 'SFLX' : slot}
+                  </span>
+                </div>
+                <PlayerRow slot={a} points={ap} better={ap > hp} align="right" />
+              </div>
             </div>
           );
         })}
@@ -229,17 +264,20 @@ function BenchRows({ home, away }: { home: MatchupSide; away: MatchupSide }) {
     <div className="border-t border-line">
       <div className="px-4 py-2 stat-label border-b border-line/60">Bench</div>
       {Array.from({ length: rows }, (_, i) => (
-        <div
-          key={i}
-          className="grid grid-cols-[1fr_58px_1fr] items-center gap-2 px-4 py-1.5 border-b border-line/40 last:border-b-0"
-        >
-          <PlayerRow slot={h[i]} points={h[i]?.points ?? 0} better={false} align="left" dim />
-          <div className="text-center">
-            <span className="chip text-dim" style={{ background: '#161F29', minWidth: 44 }}>
-              {h[i]?.player?.pos ?? a[i]?.player?.pos ?? 'BN'}
-            </span>
+        <div key={i} className="border-b border-line/40 last:border-b-0">
+          <div className="sm:hidden px-3.5 py-1.5 space-y-1">
+            <PlayerRow slot={h[i]} points={h[i]?.points ?? 0} better={false} align="left" dim />
+            <PlayerRow slot={a[i]} points={a[i]?.points ?? 0} better={false} align="left" dim />
           </div>
-          <PlayerRow slot={a[i]} points={a[i]?.points ?? 0} better={false} align="right" dim />
+          <div className="hidden sm:grid grid-cols-[1fr_58px_1fr] items-center gap-2 px-4 py-1.5">
+            <PlayerRow slot={h[i]} points={h[i]?.points ?? 0} better={false} align="left" dim />
+            <div className="text-center">
+              <span className="chip text-dim" style={{ background: '#161F29', minWidth: 44 }}>
+                {h[i]?.player?.pos ?? a[i]?.player?.pos ?? 'BN'}
+              </span>
+            </div>
+            <PlayerRow slot={a[i]} points={a[i]?.points ?? 0} better={false} align="right" dim />
+          </div>
         </div>
       ))}
     </div>

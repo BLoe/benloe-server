@@ -34,9 +34,29 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
   const row = standings.find((s) => s.rosterId === selected);
 
   return (
-    <div className="pt-5 grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-5 items-start">
-      {/* The picker stays put so comparing two rosters is one click, not a back button. */}
-      <Panel title="Teams" className="lg:sticky lg:top-[72px]">
+    <div className="pt-5 grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-4 lg:gap-5 items-start">
+      {/* On a phone the twelve-team list pushed the roster you came to see below
+          the fold, so it collapses to a switcher and the roster leads. */}
+      <label className="lg:hidden panel flex items-center gap-2 px-3 py-2.5 relative">
+        <span className="stat-label shrink-0">Team</span>
+        <select
+          aria-label="Choose a team"
+          value={selected ?? ''}
+          onChange={(e) => navigate(teamHref(league.leagueId, Number(e.target.value)))}
+          className="flex-1 min-w-0 appearance-none bg-transparent text-ink font-display font-semibold uppercase truncate pr-5 outline-none"
+          style={{ fontSize: 'var(--t-h2)', letterSpacing: '.02em' }}
+        >
+          {standings.map((s) => (
+            <option key={s.rosterId} value={s.rosterId} style={{ background: '#111820' }}>
+              {s.rank}. {s.teamName} ({record(s.wins, s.losses, s.ties)})
+              {s.rosterId === myRosterId ? ' — you' : ''}
+            </option>
+          ))}
+        </select>
+        <span className="pointer-events-none absolute right-3 text-dim" aria-hidden="true">▾</span>
+      </label>
+
+      <Panel title="Teams" className="hidden lg:block lg:sticky lg:top-[72px]">
         <ul className="max-h-[70vh] overflow-y-auto">
           {standings.map((s) => {
             const active = s.rosterId === selected;
@@ -83,7 +103,7 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
                   <TeamBadge team={data.team} size={48} showManager link={false} nameSize="var(--t-h1)" />
                 </div>
                 {row && (
-                  <div className="flex flex-wrap divide-x divide-line flex-1">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 xl:flex xl:flex-wrap divide-x divide-y xl:divide-y-0 divide-line flex-1">
                     <Stat label="Record" value={record(row.wins, row.losses, row.ties)} size="lg" sub={`${ordinal(row.rank)} in league`} />
                     <Stat label="Points for" value={fmt1(row.pointsFor)} sub={`${fmt1(row.pointsAgainst)} against`} />
                     <Stat label="Efficiency" value={`${(row.efficiency * 100).toFixed(0)}%`} sub={`${fmt1(row.maxPoints - row.pointsFor)} left on bench`} />

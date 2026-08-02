@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useApi, type LeagueBundle, type Me } from './api';
 import SignIn from './pages/SignIn';
 import { Avatar, ErrorState, Loading } from './components';
@@ -91,7 +91,10 @@ function LeagueShell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar bundle={bundle.data} me={me} />
 
-        <main className="flex-1 min-w-0 px-4 lg:px-6 pb-10">
+        <main
+          className="flex-1 min-w-0 px-4 lg:px-6 pb-10"
+          style={{ paddingBottom: 'calc(84px + env(safe-area-inset-bottom))' }}
+        >
           {bundle.loading && <Loading label="Loading league" />}
           {bundle.error && <ErrorState message={bundle.error} />}
           {bundle.data && (
@@ -109,6 +112,8 @@ function LeagueShell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           )}
         </main>
       </div>
+
+      <BottomNav leagueId={leagueId!} />
     </div>
   );
 }
@@ -214,6 +219,7 @@ function Rail({
 
 function TopBar({ bundle, me }: { bundle: LeagueBundle | null; me: Me }) {
   const { leagueId } = useParams();
+  const navigate = useNavigate();
   // Follow the week in the URL when there is one, so the header never disagrees
   // with the matchups the reader is actually looking at.
   const routeWeek = Number(useLocation().pathname.match(/\/matchups\/(\d+)/)?.[1]);
@@ -221,36 +227,102 @@ function TopBar({ bundle, me }: { bundle: LeagueBundle | null; me: Me }) {
   const isLive = bundle?.league.status === 'in_season' && me.state.season_type === 'regular';
 
   return (
-    <header className="sticky top-0 z-20 h-[52px] shrink-0 border-b border-line bg-ground/95 backdrop-blur flex items-center gap-4 px-4 lg:px-6">
-      <div className="min-w-0 flex items-baseline gap-3">
-        <h1 className="headline text-[15px] sm:text-[19px] truncate">{bundle?.league.name ?? 'Loading'}</h1>
-        <span className="eyebrow shrink-0">
-          {bundle?.league.season} · Week {week}
-        </span>
-      </div>
-
-      {isLive && (
-        <span className="chip shrink-0" style={{ color: '#F5C518', background: 'rgba(245,197,24,.12)' }}>
-          Live
-        </span>
-      )}
-
-      {/* Section tabs double as the mobile navigation, since the rail is hidden there. */}
-      <nav className="md:hidden ml-auto flex overflow-x-auto" aria-label="Sections">
-        {NAV.map((n) => (
-          <NavLink
-            key={n.label}
-            to={`/l/${leagueId}/${n.to}`}
-            end={n.end}
-            className="tab shrink-0"
-            style={({ isActive }) =>
-              isActive ? { color: '#E8EDF2', boxShadow: 'inset 0 -2px 0 #3FBF7F' } : undefined
-            }
+    <header className="sticky top-0 z-20 shrink-0 border-b border-line bg-ground/95 backdrop-blur px-4 lg:px-6">
+      <div className="flex items-center gap-3 h-[52px]">
+        {/* On a phone the rail is hidden, so the switcher lives here. A native
+            select is the right control: it is the affordance people already
+            know, and it needs no JavaScript. */}
+        <label className="md:hidden relative flex-1 min-w-0">
+          <span className="sr-only">Choose a league</span>
+          <select
+            aria-label="Choose a league"
+            value={leagueId}
+            onChange={(e) => navigate(`/l/${e.target.value}`)}
+            className="w-full appearance-none bg-transparent text-ink font-display font-bold uppercase truncate pr-5 outline-none"
+            style={{ fontSize: 'var(--t-h1)', letterSpacing: '.01em' }}
           >
-            {n.label}
-          </NavLink>
-        ))}
-      </nav>
+            {me.leagues.map((l) => (
+              <option key={l.leagueId} value={l.leagueId} style={{ background: '#111820' }}>
+                {l.name} · {l.season}
+              </option>
+            ))}
+          </select>
+          <span
+            className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-dim"
+            aria-hidden="true"
+          >
+            ▾
+          </span>
+        </label>
+
+        <h1 className="hidden md:block headline truncate" style={{ fontSize: 'var(--t-h1)' }}>
+          {bundle?.league.name ?? 'Loading'}
+        </h1>
+
+        {/* The mobile switcher already names the season, so it is not repeated. */}
+        <span className="eyebrow shrink-0">
+          <span className="hidden md:inline">{bundle?.league.season} · </span>
+          Week {week}
+        </span>
+
+        {isLive && (
+          <span
+            className="chip shrink-0"
+            style={{ color: 'var(--live)', background: 'rgba(245,197,24,.14)' }}
+          >
+            Live
+          </span>
+        )}
+      </div>
     </header>
+  );
+}
+
+/**
+ * Bottom tab bar, phones only.
+ *
+ * Five sections do not fit across the top of a 390px screen without either
+ * shrinking below the type floor or hiding two of them behind a scroll nobody
+ * discovers. A bottom bar keeps all five visible and in thumb reach.
+ */
+function BottomNav({ leagueId }: { leagueId: string }) {
+  return (
+    <nav
+      className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-ground/95 backdrop-blur"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      aria-label="Sections"
+    >
+      <ul className="flex">
+        {NAV.map((n) => (
+          <li key={n.label} className="flex-1">
+            <NavLink
+              to={`/l/${leagueId}/${n.to}`}
+              end={n.end}
+              className="flex flex-col items-center justify-center gap-1 py-2.5 font-display font-semibold uppercase transition-colors"
+              style={({ isActive }) => ({
+                fontSize: 'var(--t-label)',
+                letterSpacing: '.06em',
+                color: isActive ? '#E8EDF2' : '#93A2B2',
+              })}
+            >
+              {({ isActive }) => (
+                <>
+                  <span
+                    className="block rounded-full"
+                    style={{
+                      width: 16,
+                      height: 3,
+                      background: isActive ? 'var(--win)' : 'transparent',
+                    }}
+                    aria-hidden="true"
+                  />
+                  {n.label}
+                </>
+              )}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }

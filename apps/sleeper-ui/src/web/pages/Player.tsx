@@ -64,7 +64,7 @@ export default function PlayerPage({ bundle }: { bundle: LeagueBundle }) {
             </div>
           </div>
 
-          <div className="flex flex-wrap divide-x divide-line flex-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-wrap divide-x divide-y lg:divide-y-0 divide-line flex-1">
             <Stat label="Season points" value={fmt1(data.totals.points)} size="lg" />
             <Stat label="Per game" value={fmt1(data.totals.average)} sub={`${data.totals.games} games`} />
             <Stat label="Best week" value={fmt1(data.totals.best)} />

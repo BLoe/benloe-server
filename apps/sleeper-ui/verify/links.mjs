@@ -51,13 +51,13 @@ await check('standings team name → team page', async () => {
 
 await check('roster player name → player page', async () => {
   // Name-agnostic: whichever player is first on whichever roster we landed on.
-  await page.click('a[href*="/players/"] >> nth=0');
+  await page.click('a[href*="/players/"]:visible >> nth=0');
   await page.waitForURL(/\/players\/\w+/, { timeout: 10000 });
   await page.waitForSelector('text=Points by week');
 });
 
 await check('player page breadcrumb → owning team', async () => {
-  await page.click('a[href*="/teams/"] >> nth=0');
+  await page.click('a[href*="/teams/"]:visible >> nth=0');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
   await page.waitForSelector('text=Starting lineup');
 });
@@ -70,7 +70,7 @@ await check('scoreboard game → matchup detail', async () => {
 });
 
 await check('matchup lineup player → player page', async () => {
-  await page.click('a[href*="/players/"] >> nth=0');
+  await page.click('a[href*="/players/"]:visible >> nth=0');
   await page.waitForURL(/\/players\/\w+/, { timeout: 10000 });
   await page.waitForSelector('text=Points by week');
 });
@@ -78,20 +78,20 @@ await check('matchup lineup player → player page', async () => {
 await check('activity player → player page', async () => {
   await page.goto(`${BASE}/l/${LG}/activity`, { waitUntil: 'networkidle' });
   await page.waitForSelector('text=League activity');
-  await page.click('table a[href*="/players/"] >> nth=0');
+  await page.click('table a[href*="/players/"]:visible >> nth=0');
   await page.waitForURL(/\/players\/\w+/, { timeout: 10000 });
 });
 
 await check('activity team → team page', async () => {
   await page.goto(`${BASE}/l/${LG}/activity`, { waitUntil: 'networkidle' });
-  await page.click('table a[href*="/teams/"] >> nth=0');
+  await page.click('table a[href*="/teams/"]:visible >> nth=0');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
 });
 
 await check('chat author → team page', async () => {
   await page.goto(`${BASE}/l/${LG}/chat`, { waitUntil: 'networkidle' });
   await page.waitForSelector('text=Read only');
-  await page.click('a[href*="/teams/"] >> nth=0');
+  await page.click('a[href*="/teams/"]:visible >> nth=0');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
 });
 

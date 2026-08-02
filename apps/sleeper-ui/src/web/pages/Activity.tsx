@@ -73,8 +73,78 @@ export default function Activity({ bundle }: { bundle: LeagueBundle }) {
           <Empty title="Nothing here yet" hint="Adds, drops and trades appear as they happen." />
         )}
 
+        {/* Cards on a phone. In a scrolling table the Added and Dropped columns
+            sit off-screen, which is the one thing this page exists to show. */}
         {!!rows.length && (
-          <div className="overflow-x-auto">
+          <ul className="lg:hidden divide-y divide-line">
+            {rows.map((r) => (
+              <li key={r.key} className="p-3.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <TeamLink rosterId={r.rosterId} className="entity block truncate">
+                      {r.teamName}
+                    </TeamLink>
+                    <div className="text-dim mt-0.5" style={{ fontSize: 'var(--t-meta)' }}>
+                      Week {r.week} ·{' '}
+                      {new Date(r.created).toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                      })}{' '}
+                      · {r.method}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <ActionChip action={r.action} />
+                    {r.faab != null && (
+                      <div
+                        className="font-display font-bold mt-1"
+                        style={{ color: 'var(--live)', fontSize: 'var(--t-h2)' }}
+                      >
+                        ${r.faab}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {r.counterparties.length > 0 && (
+                  <div className="text-dim mt-1.5" style={{ fontSize: 'var(--t-meta)' }}>
+                    with{' '}
+                    {r.counterparties.map((c, i) => (
+                      <span key={c.rosterId}>
+                        {i > 0 && ', '}
+                        <TeamLink rosterId={c.rosterId} className="text-muted">
+                          {c.teamName}
+                        </TeamLink>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-3">
+                  <div className="min-w-0">
+                    <div className="stat-label" style={{ color: 'var(--win)' }}>
+                      Added
+                    </div>
+                    <div className="mt-1">
+                      <AssetList assets={r.added} tone="add" />
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="stat-label" style={{ color: 'var(--loss)' }}>
+                      Dropped
+                    </div>
+                    <div className="mt-1">
+                      <AssetList assets={r.dropped} tone="drop" />
+                    </div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {!!rows.length && (
+          <div className="hidden lg:block overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse">
               <thead>
                 <tr className="border-b border-line2">

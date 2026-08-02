@@ -97,6 +97,17 @@ tape (result and margin per week, sqrt-scaled so ordinary weeks still read), the
 points-for magnitude bar, the diverging schedule-luck gauge, weekly scoring bars
 with the opponent as a tick on the same axis, and the matchup's edge-by-slot chart.
 
+**Mobile is a separate layout, not a squeezed one.** Three surfaces render a
+phone layout and a desktop layout rather than scaling one: standings and activity
+become cards (their tables put the columns that matter — the season tape, Added
+and Dropped — off-screen), and matchup lineups stack under a slot label instead of
+truncating every name to three characters. Navigation is a fixed bottom bar,
+because five sections do not fit across 390px without dropping below the type
+floor. League and team pickers become native selects.
+
+Note for the harness: responsive duplication means a bare `text=` or `nth=0`
+selector can latch onto the hidden copy. Scope to `:visible` or to unique text.
+
 **Everything named is a link.** Teams, managers, players, matchups and weeks all
 navigate. `PlayerLink` / `TeamLink` in `components.tsx` make that the default
 rather than something each page remembers. `verify/links.mjs` clicks through every
@@ -114,6 +125,7 @@ scripts/capture-fixtures.ts   Freezes real league data to fixtures/
 src/web/charts.tsx      Charts — plain SVG/HTML, no chart library
 verify/verify.mjs       Screenshots every route at three viewports, fails on any error
 verify/links.mjs        Clicks every entity link and asserts it navigates somewhere real
+verify/mobile.mjs       Phone-profile screenshots plus bottom-nav, switcher and overlap checks
 verify/browse.mjs       Screenshots the live deployment for eyeballing at 1:1
 test/derive.test.ts     42 tests, run against the frozen fixtures
 ```
@@ -125,6 +137,7 @@ npm run dev        # api on :3010 + vite on :5310
 npm test           # derivation tests against real fixtures
 npm run verify     # screenshot every route, check for console/network/layout errors
 npm run links      # click through every entity link and assert it navigates
+npm run mobile     # phone-profile screenshots + navigation and tap-target checks
 npm run capture    # re-freeze fixtures from live Sleeper
 npm run build      # browser bundle -> dist/
 ```

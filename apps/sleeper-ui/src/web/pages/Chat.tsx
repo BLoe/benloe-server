@@ -22,8 +22,26 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
     needsLogin: boolean;
   }>({ messages: [], canPost: false, loading: true, error: null, needsLogin: false });
 
+  // Whether this visitor has their own Sleeper account connected, which decides
+  // if there is anything to disconnect from.
+  const [connected, setConnected] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
+
+  const refreshConnection = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sleeper-login');
+      if (!res.ok) return setConnected(false);
+      const body = await res.json();
+      setConnected(!!body.connected);
+    } catch {
+      setConnected(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshConnection();
+  }, [refreshConnection]);
 
   const load = useCallback(
     async (opts: { quiet?: boolean } = {}) => {
@@ -86,7 +104,16 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
     pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
-  if (state.needsLogin) return <ConnectSleeper onConnected={() => load()} />;
+  if (state.needsLogin) {
+    return (
+      <ConnectSleeper
+        onConnected={() => {
+          refreshConnection();
+          load();
+        }}
+      />
+    );
+  }
 
   return (
     // Chat beside live league context. A full-width message list is unreadable
@@ -104,8 +131,7 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
         <div
           ref={scroller}
           onScroll={onScroll}
-          className="overflow-y-auto px-4 py-3"
-          style={{ height: 'calc(100vh - 190px)' }}
+          className="overflow-y-auto px-4 py-3 h-[calc(100vh-300px)] sm:h-[calc(100vh-210px)]"
         >
           {state.loading && !state.messages.length && <Loading label="Loading chat" />}
           {state.error && <ErrorState message={state.error} onRetry={() => load()} />}

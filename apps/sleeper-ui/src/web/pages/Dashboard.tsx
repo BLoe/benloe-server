@@ -83,7 +83,7 @@ function MyTeamStrip({
           <TeamBadge team={row} size={48} showManager nameSize="var(--t-h1)" />
         </div>
 
-        <div className="flex flex-wrap divide-x divide-line flex-1">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-wrap divide-x divide-y lg:divide-y-0 divide-line flex-1">
           <Stat
             label="Record"
             size="lg"
@@ -237,7 +237,89 @@ function Standings({ bundle }: { bundle: LeagueBundle }) {
         </div>
       }
     >
-      <div className="overflow-x-auto">
+      {/* Cards on a phone. The table's nine columns cannot survive 390px — the
+          season tape and the underlying numbers simply scroll out of sight,
+          which loses the whole reason the table exists. */}
+      <ul className="lg:hidden divide-y divide-line">
+        {standings.map((row) => {
+          const isMe = row.rosterId === myRosterId;
+          const played = row.wins + row.losses + row.ties > 0;
+          return (
+            <li
+              key={row.rosterId}
+              className="p-3.5"
+              style={{
+                background: isMe ? 'rgba(63,191,127,.07)' : undefined,
+                borderBottom:
+                  row.rank === playoffCut && anyPlayed ? '2px solid var(--win)' : undefined,
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  className="font-display font-bold shrink-0 text-center"
+                  style={{
+                    fontSize: 'var(--t-h1)',
+                    width: 24,
+                    color: row.rank <= playoffCut ? 'var(--win)' : '#6E7E8D',
+                  }}
+                >
+                  {row.rank}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <TeamBadge team={row} size={30} showManager highlight={isMe} />
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-display font-bold leading-none" style={{ fontSize: 'var(--t-h1)' }}>
+                    {record(row.wins, row.losses, row.ties)}
+                  </div>
+                  <div
+                    className="font-display font-semibold leading-tight mt-0.5"
+                    style={{
+                      fontSize: 'var(--t-meta)',
+                      color: !played
+                        ? '#6E7E8D'
+                        : row.streak.startsWith('W')
+                          ? 'var(--win)'
+                          : 'var(--loss)',
+                    }}
+                  >
+                    {row.streak}
+                  </div>
+                </div>
+              </div>
+
+              {!played && (
+                <div className="text-dim mt-2" style={{ fontSize: 'var(--t-meta)' }}>
+                  No games yet
+                </div>
+              )}
+
+              {played && (
+                <>
+                  <div className="mt-3">
+                    <SeasonTape results={row.results} height={30} barWidth={9} />
+                  </div>
+
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3">
+                    <MobileStat label="Points for" value={fmt1(row.pointsFor)} />
+                    <MobileStat label="Against" value={fmt1(row.pointsAgainst)} muted />
+                    <MobileStat
+                      label="Schedule luck"
+                      value={<LuckGauge actual={row.winPct} allPlay={row.allPlay.pct} width={56} />}
+                    />
+                    <MobileStat
+                      label="Efficiency"
+                      value={<EfficiencyMeter value={row.efficiency} width={48} />}
+                    />
+                  </dl>
+                </>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="hidden lg:block overflow-x-auto">
         <table className="w-full min-w-[1040px] border-collapse">
           <thead>
             {/* Band row: turns nine columns into three groups the eye can hold. */}
@@ -348,6 +430,29 @@ function Standings({ bundle }: { bundle: LeagueBundle }) {
         </table>
       </div>
     </Panel>
+  );
+}
+
+/** Label/value pair for the phone standings card. */
+function MobileStat({
+  label,
+  value,
+  muted = false,
+}: {
+  label: string;
+  value: React.ReactNode;
+  muted?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="stat-label">{label}</dt>
+      <dd
+        className="font-display font-semibold tabular-nums mt-0.5"
+        style={{ fontSize: 'var(--t-h2)', color: muted ? '#93A2B2' : undefined }}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
 
