@@ -50,6 +50,31 @@ function fail(res: Response, err: unknown): Response {
     // 503, not 500: the server is healthy, this deployment just has no keys.
     return res.status(503).json({ error: err.message, configured: false });
   }
+  if (err instanceof PlaidApiError && err.errorType === 'BROKER') {
+    // Our own dependency is down or refusing — not Plaid's fault and not Ben's.
+    //
+    // 503 rather than the 502 below because from the browser's side this server
+    // genuinely cannot serve the feature right now, and grouping it with
+    // "no keys stored" lets the UI show one setup surface. `error_code` keeps
+    // them apart, and `configured: false` keeps the Money page's existing
+    // branch honest.
+    //
+    // The message is REPLACED, not forwarded. err.message here is a transport
+    // diagnostic ("no socket at /run/... — the cabinet-secrets service is not
+    // running"), which is the right text for a log and the wrong text for a
+    // banner in Ben's face while he is trying to link a bank. Not a secrecy
+    // argument — this route is owner-only and GET /api/plaid/status returns the
+    // same detail on purpose, for diagnosis. It is a register argument: this
+    // response tells him what he can do, the status route tells him what broke.
+    return res.status(503).json({
+      error:
+        err.errorCode === 'BROKER_REFUSED'
+          ? 'The secrets service refused this Plaid call — its allowlist needs to be widened before this will work.'
+          : 'The secrets service is unavailable, so Plaid calls cannot be made right now.',
+      error_code: err.errorCode,
+      configured: false,
+    });
+  }
   if (err instanceof PlaidApiError) {
     // Plaid's display_message is written for end users and is safe to surface;
     // error_code is what makes a failure actionable in the UI.
@@ -72,8 +97,18 @@ export function registerPlaidRoutes(app: Express, deps: PlaidRouteDeps): void {
    * normal states that the UI must be able to show, not errors.
    */
   app.get('/api/plaid/status', (_req: Request, res: Response) => {
+    const broker = plaid.plaidStatus();
     res.json({
       configured: plaid.configured(),
+      // `configured: false` has two completely different causes and two
+      // completely different fixes: Ben hasn't stored the keys yet, or the
+      // secrets service is down. Collapsing them into one boolean is what would
+      // make the setup panel tell him to re-paste credentials during an outage
+      // that had nothing to do with them. `state` is what the UI branches on;
+      // `detail` names the socket for a diagnosis, and is owner-only like every
+      // other route here.
+      state: broker.state,
+      detail: broker.detail,
       environment: plaid.environment,
       redirect_uri: plaid.redirectUri,
       webhook_url: plaid.webhookUrl,

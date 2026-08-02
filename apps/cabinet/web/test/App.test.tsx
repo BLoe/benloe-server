@@ -49,7 +49,7 @@ vi.mock('../src/lib/cabinet.js', async (importOriginal) => {
     revertSetting: async (key: string) => ({ setting: { key } }),
     // Money: enough for the surface to mount if a test ever routes to it.
     plaidStatus: async () => ({
-      configured: false, environment: 'sandbox', redirect_uri: '/plaid/oauth', webhook_url: '/api/plaid/webhook',
+      configured: false, state: 'unconfigured', detail: null, environment: 'sandbox', redirect_uri: '/plaid/oauth', webhook_url: '/api/plaid/webhook',
       items: [], accounts: [],
       net_worth: { cash: 0, credit: 0, investments: 0, loans: 0, net_worth: 0, accounts_counted: 0, accounts_total: 0, stalest_balance_at: null },
     }),
@@ -141,8 +141,8 @@ describe('Cabinet v2 console — integration', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Credentials/ }).getAttribute('aria-current')).toBe('page'),
     );
-    // configured: false in the mock above — the "no encryption key" banner.
-    expect((await screen.findByRole('alert')).textContent).toContain('No encryption key on the server');
+    // configured: false in the mock above — the retired-store banner.
+    expect((await screen.findByRole('status')).textContent).toContain('This store is retired and has no key');
   });
 
   it('renders /plaid/oauth bare — outside the rail and topbar', async () => {

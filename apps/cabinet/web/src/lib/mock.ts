@@ -251,6 +251,8 @@ const transactions: MoneyTransaction[] = [
 
 const plaidStatus: PlaidStatus = {
   configured: true,
+  state: 'ready',
+  detail: null,
   environment: 'sandbox',
   redirect_uri: 'https://cabinet.benloe.com/plaid/oauth',
   webhook_url: 'https://cabinet.benloe.com/api/plaid/webhook',

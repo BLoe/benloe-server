@@ -297,9 +297,27 @@ export interface NetWorth {
   stalest_balance_at: string | null;
 }
 
+/**
+ * Why Plaid isn't working, when it isn't. `configured: false` has two causes
+ * with two completely different fixes — Ben hasn't pasted the keys, or the
+ * secrets service is down — and collapsing them into one boolean is what would
+ * make the setup panel tell him to re-paste credentials during an outage that
+ * had nothing to do with them.
+ *
+ *   'ready'        — credentials are in the vault; calls will go through
+ *   'unconfigured' — secrets service healthy, no keys stored yet (Ben's move)
+ *   'unreachable'  — socket gone or unreadable; an ops fault, not a setup step
+ *   'unknown'      — never successfully polled (cold start, clears in seconds)
+ */
+export type PlaidBrokerState = 'ready' | 'unconfigured' | 'unreachable' | 'unknown';
+
 export interface PlaidStatus {
-  /** False when the API keys aren't in the credential store — a normal state, not an error. */
+  /** False when Plaid cannot be called at all — a normal state, not an error. */
   configured: boolean;
+  /** What the UI branches on. `configured` is `state === 'ready'`. */
+  state: PlaidBrokerState;
+  /** Populated for 'unreachable'. Names a system, never a secret. */
+  detail: string | null;
   environment: PlaidEnvironment;
   /** Must be allow-listed in the Plaid dashboard for OAuth banks to come back. */
   redirect_uri: string;

@@ -16,8 +16,8 @@
    must never be one). Environment values are reported only when the catalog
    entry is explicitly marked `publicValue: true`, and that flag exists only on
    variables that are configuration rather than secrets — PLAID_ENV is
-   'sandbox' or 'production' and knowing which is the point; CABINET_CRED_KEY is
-   the master key and reports presence only, forever.
+   'sandbox' or 'production' and knowing which is the point; anything key-shaped
+   reports presence only, forever.
 
    Default is closed: an env var absent from the catalog reports presence only,
    and a catalog entry that forgets `publicValue` reports presence only. A
@@ -44,24 +44,19 @@ export interface CredentialSlot {
  * the credential from drifting apart.
  */
 export const CREDENTIAL_CATALOG: CredentialSlot[] = [
-  {
-    name: 'plaid-client-id',
-    group: 'Plaid',
-    label: 'Client ID',
-    description: 'Identifies this Cabinet install to Plaid. Needed before any bank can be linked.',
-    where: 'Plaid Dashboard → Developers → Keys → client_id',
-    required: true,
-  },
-  {
-    name: 'plaid-secret',
-    group: 'Plaid',
-    label: 'Secret',
-    description:
-      'The API secret for the environment set in PLAID_ENV. Sandbox and Production have different secrets — ' +
-      'storing the wrong one fails at the first API call, not at save time.',
-    where: 'Plaid Dashboard → Developers → Keys → the row matching your environment',
-    required: true,
-  },
+  // EMPTY as of 2026-08-02, and that is the finished state rather than a gap.
+  //
+  // The Plaid slots that lived here would now be actively harmful: this store
+  // has no encryption key, so pasting a client_id into it produces a 503 — but
+  // only AFTER Ben has fetched the value from Plaid's dashboard and put it on
+  // his clipboard. A form that invites a secret and then refuses it is worse
+  // than no form, and it would be inviting it into the wrong place besides.
+  //
+  // Plaid credentials belong to cabinet-secrets and are managed at
+  // https://secrets.benloe.com. The page renders that pointer instead of these
+  // slots, which is the same job this catalog always did — telling Ben exactly
+  // where a value goes so he pastes rather than guesses — pointed at the right
+  // destination.
 ];
 
 /**
@@ -134,23 +129,37 @@ export interface EnvVarSpec {
 export const ENV_CATALOG: EnvVarSpec[] = [
   {
     name: 'CABINET_CRED_KEY',
-    label: 'Credential encryption key',
+    label: 'Credential encryption key (retired)',
     description:
-      'The AES-256 key that encrypts everything on this page. Without it the store still lists names but ' +
-      'cannot encrypt or decrypt anything.',
-    required: true,
+      'Not set, and no longer used. This local store was superseded on 2026-08-02 by cabinet-secrets, which ' +
+      'holds its own key outside this process. The store below cannot encrypt and will refuse writes — that is ' +
+      'the intended state, not a misconfiguration.',
+    required: false,
     scrubbedAtBoot: true,
+    // The previous text claimed Cabinet "can neither read nor write" /srv/benloe/.env "by design", and half of
+    // that was wrong. Reading is genuinely blocked (root:root 0600, kernel-enforced). Writing is NOT: the agent
+    // owns /srv/benloe, and unlink permission comes from the directory rather than the file, so it can replace
+    // the file wholesale without ever reading it. Stating the enforced half and the unenforced half separately
+    // is the point — an overstated boundary is worse than a documented gap, because nobody goes to fix it.
     reason:
-      'This is the bootstrap secret — the one value that cannot be stored in the store it unlocks. It lives in ' +
-      '/srv/benloe/.env, which is root-owned and which Cabinet can neither read nor write by design.',
+      'Retired. Secrets now live in cabinet-secrets, reached over a unix socket, with no endpoint that returns ' +
+      'a value. Cabinet cannot read /srv/benloe/.env (root:root 0600, kernel-enforced); it CAN replace that ' +
+      'file, because it owns the parent directory, so treat it as a read barrier and not an integrity one.',
   },
   {
     name: 'PLAID_ENV',
-    label: 'Plaid environment',
-    description: "'sandbox' for fake test banks, 'production' for real ones. Defaults to sandbox when unset.",
+    label: 'Plaid environment (read by the broker, not by Cabinet)',
+    description:
+      "'sandbox' for fake test banks, 'production' for real ones. Cabinet no longer reads this — cabinet-secrets " +
+      'does, because the environment and the API keys that only work in it have to change together.',
     publicValue: true,
-    supersededBy: 'plaid.env',
-    reason: 'Superseded by the Plaid environment setting below, which takes precedence over this variable.',
+    // Briefly superseded by a Cabinet setting on 2026-08-02, and then not: the
+    // credentials moved to the broker the same day, and an environment selector
+    // that cannot also swap the keys is a control that lies. See the removal
+    // note above SETTING_CATALOG in domains/settings.ts.
+    reason:
+      'Owned by cabinet-secrets. Cabinet reflects it from /v1/plaid/status and cannot change it; switching ' +
+      'environments means pasting the matching keys at the secrets dashboard and updating the broker config.',
   },
   {
     name: 'CABINET_PUBLIC_ORIGIN',

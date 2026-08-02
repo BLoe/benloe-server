@@ -297,9 +297,16 @@ describe('Credentials surface', () => {
     credentialsMock.mockResolvedValue(view({ configured: false }));
     render(<Credentials />);
 
-    const banner = await screen.findByRole('alert');
-    expect(banner.textContent).toContain('No encryption key on the server');
-    expect(banner.textContent).toMatch(/CABINET_CRED_KEY/);
+    // role=status, not role=alert: this is a deliberate end-state, not a fault.
+    // The banner used to say "restore CABINET_CRED_KEY and restart", which is
+    // now the exact opposite of the right move — the key is gone on purpose.
+    const banner = await screen.findByRole('status');
+    expect(banner.textContent).toContain('This store is retired and has no key');
+    expect(banner.textContent).not.toMatch(/CABINET_CRED_KEY/);
+    // And it says where secrets actually went, as a link he can follow.
+    expect(within(banner).getByRole('link', { name: 'secrets.benloe.com' }).getAttribute('href')).toBe(
+      'https://secrets.benloe.com',
+    );
 
     // Nothing can be saved: the only route to the input is closed.
     for (const name of ['Rotate', 'Set']) {

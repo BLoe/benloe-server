@@ -793,33 +793,43 @@ export function Credentials() {
         <div>
           <SectionLabel n="00">Keys and secrets</SectionLabel>
           <p className="creds-lede voice">
-            Every key Cabinet knows how to use, and whether it has one. Values go in encrypted and never come
-            back out — not to an API, not to this page, not to me. What you can see here is that a key exists
-            and when it was last touched.
+            What this server holds, what it reads from its environment, and what it deliberately cannot see.
+            Live secrets moved out on 2 August — they live in cabinet-secrets now, which holds its own key
+            outside this process. What is left here is the retired local store and the environment report.
           </p>
         </div>
-        <div className="creds-head-side">
-          <span
-            className={`cred-tally ${missingRequired > 0 ? 'warn' : 'ok'}`}
-            title={missingRequired > 0 ? 'A required key is missing — its integration is dark' : 'Every required key is stored'}
-          >
-            {view.slots.filter((s) => s.stored).length}/{view.slots.length} slots filled
-          </span>
-        </div>
+        {view.slots.length > 0 && (
+          <div className="creds-head-side">
+            <span
+              className={`cred-tally ${missingRequired > 0 ? 'warn' : 'ok'}`}
+              title={missingRequired > 0 ? 'A required key is missing — its integration is dark' : 'Every required key is stored'}
+            >
+              {view.slots.filter((s) => s.stored).length}/{view.slots.length} slots filled
+            </span>
+          </div>
+        )}
       </header>
 
-      {/* The one state where nothing on this page can work. Loud, and before
-          anything that would otherwise look actionable. */}
+      {/* Retired, not broken — and the difference is the whole message.
+          This banner used to say "restore CABINET_CRED_KEY and restart", which
+          is now precisely the wrong instruction: that key is gone on purpose and
+          must not come back. A page that reports a deliberate end-state as an
+          outage sends Ben to fix something that isn't broken, and teaches him to
+          distrust the alerts that do matter. */}
       {!view.configured && (
-        <p className="cred-banner" role="alert">
+        <p className="cred-banner is-retired" role="status">
           <span className="cred-banner-mark" aria-hidden="true">
             △
           </span>
           <span>
-            <strong>No encryption key on the server.</strong> This process booted without CABINET_CRED_KEY, so
-            nothing can be saved and nothing already stored can be decrypted. Names and dates below are still
-            accurate; the values behind them are unreadable until the key is restored and Cabinet restarted.
-            Deleting still works — dropping ciphertext no one can read is a complete delete.
+            <strong>This store is retired and has no key.</strong> Nothing can be saved here and nothing already
+            stored can be read — intended, not a misconfiguration. Secrets now live in{' '}
+            <a className="data" href="https://secrets.benloe.com" target="_blank" rel="noreferrer">
+              secrets.benloe.com
+            </a>
+            , where the encryption key never enters this process and no endpoint hands a value back. Names and
+            dates below are still accurate, and deleting still works — dropping ciphertext no one can read is a
+            complete delete.
           </span>
         </p>
       )}
@@ -829,6 +839,15 @@ export function Credentials() {
 
       <section className="cred-slots" aria-label="Integrations">
         <SectionLabel n="01">Integrations</SectionLabel>
+        {/* An empty catalog is the finished state, so it gets a sentence rather
+            than a blank heading. A section that renders nothing reads as a page
+            that failed to load. */}
+        {groups.length === 0 && (
+          <p className="cred-empty voice">
+            No integration keys live in this process any more. Plaid&rsquo;s moved to the secrets service above;
+            add a slot here only for something this server must decrypt itself, which so far is nothing.
+          </p>
+        )}
         {groups.map((group) => (
           <article className="cred-group" key={group.name} aria-label={group.name}>
             <h3 className="cred-group-name">{group.name}</h3>

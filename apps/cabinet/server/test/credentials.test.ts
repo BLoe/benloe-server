@@ -512,14 +512,23 @@ describe('credential catalog', () => {
     }
   });
 
-  it('the catalog names match the constants the Plaid client actually reads', () => {
-    // The failure this prevents: renaming CLIENT_ID_CRED in the integration and
-    // leaving the catalog pointing at the old slug. Ben fills in the form, it
-    // saves successfully, and Plaid stays "not configured" with no error
-    // anywhere. Cheap assertion, silent and baffling failure.
+  it('offers no local slot for a credential the broker owns', () => {
+    // Inverted on 2026-08-02, and the inversion is the point.
+    //
+    // This test used to assert the OPPOSITE — that the catalog contained the
+    // Plaid slugs — because Cabinet held those keys. It no longer does, and
+    // this store no longer has an encryption key at all, so re-adding a slot
+    // would render a form that invites Ben to fetch a secret from Plaid's
+    // dashboard, paste it, and receive a 503. A form that asks for a secret and
+    // then refuses it is worse than no form, and it would be pointing at the
+    // wrong destination besides.
+    //
+    // The name agreement that used to be checked here still matters — it just
+    // spans two processes now, so it is pinned where it can be observed
+    // end-to-end: plaid.test.ts, "the two halves agree on names".
     const names = CREDENTIAL_CATALOG.map((s) => s.name);
-    expect(names).toContain(CLIENT_ID_CRED);
-    expect(names).toContain(SECRET_CRED);
+    expect(names).not.toContain(CLIENT_ID_CRED);
+    expect(names).not.toContain(SECRET_CRED);
   });
 });
 
@@ -608,12 +617,20 @@ describe('credential routes — catalog payload', () => {
     expect(body.slots.every((s) => s.meta === null)).toBe(true);
   });
 
-  it('joins stored metadata onto its slot', async () => {
-    putCredential(cabinet.db, KEY, { name: CLIENT_ID_CRED, secret: 'client-id-value' });
+  it('an emptied catalog hides nothing that is actually stored', async () => {
+    // The replacement for "joins stored metadata onto its slot", which had no
+    // slot left to join onto. The risk the catalog emptying introduced is the
+    // opposite one: a credential stored back when the slots existed — a real
+    // Plaid client id, on a real disk, right now — must not become invisible
+    // just because nothing claims it any more. Invisible is unmanageable, and
+    // an orphaned secret nobody can see is one nobody deletes.
+    putCredential(cabinet.db, KEY, { name: CLIENT_ID_CRED, secret: 'legacy-value' });
     await start(KEY);
-    const slot = (await get()).slots.find((s) => s.name === CLIENT_ID_CRED)!;
-    expect(slot.stored).toBe(true);
-    expect(slot.meta?.name).toBe(CLIENT_ID_CRED);
+    const body = await get();
+    expect(body.slots).toHaveLength(0);
+    expect(body.unrecognised.map((c) => c.name)).toContain(CLIENT_ID_CRED);
+    // ...and it is still in the flat list the delete button drives off.
+    expect(body.credentials.map((c) => c.name)).toContain(CLIENT_ID_CRED);
   });
 
   it('never serves a secret or ciphertext in the payload, in any section', async () => {
@@ -700,15 +717,25 @@ describe('credential routes — catalog payload', () => {
     expect(getCredentialMeta(cabinet.db, 'plaid-item-orphan')).toBeNull();
   });
 
-  it('marks the encryption key required and optional integrations not', async () => {
+  it('warns about nothing, now that nothing in the environment is required', async () => {
     // A page that warns about every unset variable trains Ben to ignore the
     // section, including the one line that would have explained a real outage.
+    //
+    // CABINET_CRED_KEY was the one `required` entry, and it flipped to optional
+    // when the local store was retired: it must never be set again, so flagging
+    // its absence would paint a permanent red warning over the correct state.
+    // The entry stays listed — with the reason text explaining the retirement —
+    // because deleting it would leave anyone reading an old .env with no way to
+    // learn the variable is dead.
     await start(KEY);
     const env = (await get()).env;
     const req = (n: string) => env.find((e) => e.name === n)!.required;
-    expect(req('CABINET_CRED_KEY')).toBe(true);
+    expect(req('CABINET_CRED_KEY')).toBe(false);
     expect(req('PLAID_ENV')).toBe(false);
     expect(req('CABINET_VAPID_PRIVATE_KEY')).toBe(false);
+    // The general form, so a future required entry is a deliberate diff rather
+    // than something that quietly reintroduces the warning noise.
+    expect(env.filter((e) => e.required).map((e) => e.name)).toEqual([]);
   });
 
   it('reports the encryption key as missing when the store is genuinely unkeyed', async () => {
@@ -766,15 +793,24 @@ describe('decrypt containment', () => {
     expect(offenders, 'a decrypt path reached the HTTP/MCP layer').toEqual([]);
   });
 
-  it('integrations/plaid.ts is still the only user outside the domain itself', () => {
+  it('nothing outside the domain decrypts any more — the inventory is now empty', () => {
     // Not a ban — an inventory. If this list grows, that is a real design
     // decision someone should have to make on purpose, in a diff, with a
     // reviewer. It should never grow by accident.
+    //
+    // It shrank on 2026-08-02: integrations/plaid.ts was the last entry, and it
+    // stopped decrypting when it moved onto the broker. It now names a
+    // credential and the broker makes the call, so the Plaid access token is
+    // not merely un-logged in this process — it is never in it.
+    //
+    // getCredentialSecret survives with no production caller, deliberately. The
+    // store still holds legacy rows from before the split, and deleting the only
+    // way to read them would strand them permanently.
     const users = walk(SRC)
       .filter(usesDecrypt)
       .map((f) => f.slice(SRC.length))
       .sort();
-    expect(users).toEqual(['domains/credentials.ts', 'integrations/plaid.ts']);
+    expect(users).toEqual(['domains/credentials.ts']);
   });
 
   it('the scan actually detects a violation — it is not vacuously passing', () => {
