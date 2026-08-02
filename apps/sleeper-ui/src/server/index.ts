@@ -39,6 +39,8 @@ import {
   buildRosterView,
   buildChatFeed,
   buildActivityRows,
+  buildDepthChart,
+  describePeriod,
   type PlayerIndex,
 } from '../lib/derive.js';
 
@@ -390,11 +392,13 @@ app.get(
     ]);
 
     const playoffStart: number = league.settings?.playoff_week_start ?? 15;
-    // A completed season has all its weeks; a live one only through the current.
-    const lastWeek =
-      league.status === 'complete'
-        ? playoffStart + 2
-        : Math.max(1, Number(state.week) || 1);
+    const period = describePeriod(state, {
+      season: league.season,
+      status: league.status,
+      playoffWeekStart: playoffStart,
+    });
+    // Nothing is scheduled in the preseason, so there is no week to load.
+    const lastWeek = period.week ?? 0;
 
     const allMatchups = await loadAllMatchups(leagueId, lastWeek);
     const timeline = buildResultTimeline(allMatchups, playoffStart);
@@ -424,6 +428,7 @@ app.get(
         scoringSettings: league.scoring_settings,
       },
       currentWeek: lastWeek,
+      period,
       myRosterId: myRoster?.roster_id ?? null,
       standings: standings.map((row) => ({
         ...row,
@@ -507,6 +512,7 @@ app.get(
       team: teams.get(rosterId),
       settings: roster.settings,
       slots: buildRosterView(roster, league.roster_positions, players),
+      depth: buildDepthChart(roster, league.roster_positions, players),
     });
   })
 );

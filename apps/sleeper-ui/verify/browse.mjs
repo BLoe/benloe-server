@@ -13,7 +13,7 @@ if (await p.$('#username')) {
 const shots = [
   ['b-overview', `${B}/l/${LG}`, 'text=Standings'],
   ['b-matchups', `${B}/l/${LG}/matchups/12`, 'text=Full breakdown'],
-  ['b-teams', `${B}/l/${LG}/teams/8`, 'text=Starting lineup'],
+  ['b-teams', `${B}/l/${LG}/teams/8`, 'text=FAAB left'],
   ['b-activity', `${B}/l/${LG}/activity`, 'text=League activity'],
 ];
 for (const [name, url, wait] of shots) {

@@ -42,8 +42,8 @@ const shots = [
   ['m-overview-scrolled', `${BASE}/l/${LG}`, 'text=Standings', 900],
   ['m-matchups', `${BASE}/l/${LG}/matchups/12`, 'text=Full breakdown', 0],
   ['m-matchup-detail', `${BASE}/l/${LG}/matchups/12/1`, 'text=Edge by slot', 300],
-  ['m-teams', `${BASE}/l/${LG}/teams/8`, 'text=Starting lineup', 0],
-  ['m-teams-roster', `${BASE}/l/${LG}/teams/8`, 'text=Starting lineup', 700],
+  ['m-teams', `${BASE}/l/${LG}/teams/8`, 'text=FAAB left', 0],
+  ['m-teams-roster', `${BASE}/l/${LG}/teams/8`, 'text=FAAB left', 700],
   ['m-activity', `${BASE}/l/${LG}/activity`, 'text=One row per manager', 0],
   ['m-player', `${BASE}/l/${LG}/players/4984`, 'text=Points by week', 0],
   ['m-chat', `${BASE}/l/${LG}/chat`, 'text=Read only', 0],
@@ -69,7 +69,7 @@ const check = async (label, fn) => {
 for (const [label, path, wait] of [
   ['Overview', '', 'text=Standings'],
   ['Matchups', 'matchups', 'text=Week'],
-  ['Teams', 'teams', 'text=Starting lineup'],
+  ['Teams', 'teams', 'text=FAAB left'],
   ['Activity', 'activity', 'text=One row per manager'],
   ['Chat', 'chat', 'text=Read only'],
 ]) {
@@ -90,7 +90,7 @@ await check('league switcher changes league', async () => {
 
 await check('team switcher changes roster', async () => {
   await page.goto(`${BASE}/l/${LG}/teams/8`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('text=Starting lineup');
+  await page.waitForSelector('text=FAAB left');
   await page.selectOption('select[aria-label="Choose a team"]', '3');
   await page.waitForURL(/\/teams\/3/, { timeout: 15000 });
 });

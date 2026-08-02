@@ -12,11 +12,12 @@ import {
 import { EfficiencyMeter, LuckGauge, MagnitudeBar, SeasonTape } from '../charts';
 
 export default function Dashboard({ bundle }: { bundle: LeagueBundle }) {
-  const { league, standings, myRosterId, currentWeek } = bundle;
+  const { league, standings, myRosterId, currentWeek, period } = bundle;
   const me = standings.find((s) => s.rosterId === myRosterId) ?? null;
 
+  // Nothing is scheduled in the preseason, so do not ask for a week's matchups.
   const week = useApi<{ week: number; matchups: Matchup[] }>(
-    `/api/league/${league.leagueId}/matchups/${currentWeek}`
+    period.week ? `/api/league/${league.leagueId}/matchups/${period.week}` : null
   );
 
   return (
@@ -25,7 +26,13 @@ export default function Dashboard({ bundle }: { bundle: LeagueBundle }) {
 
       <Scoreboard
         matchups={week.data?.matchups ?? []}
-        week={currentWeek}
+        week={period.week ?? currentWeek}
+        title={period.week ? `${period.label} scoreboard` : period.label}
+        emptyHint={
+          period.isGameWeek
+            ? 'Matchups appear once the week is scheduled.'
+            : 'The season has not started. Matchups appear in week 1.'
+        }
         leagueId={league.leagueId}
         myRosterId={myRosterId}
         loading={week.loading}
@@ -134,28 +141,34 @@ function luckLabel(row: StandingsRow): string {
 function Scoreboard({
   matchups,
   week,
+  title,
+  emptyHint,
   leagueId,
   myRosterId,
   loading,
 }: {
   matchups: Matchup[];
   week: number;
+  title: string;
+  emptyHint: string;
   leagueId: string;
   myRosterId: number | null;
   loading: boolean;
 }) {
   return (
     <Panel
-      title={`Week ${week} scoreboard`}
+      title={title}
       action={
-        <Link to={weekHref(leagueId, week)} className="eyebrow link hover:text-ink">
-          All matchups →
-        </Link>
+        week > 0 ? (
+          <Link to={weekHref(leagueId, week)} className="eyebrow link hover:text-ink">
+            All matchups →
+          </Link>
+        ) : undefined
       }
     >
       {loading && <Empty title="Loading scores" />}
       {!loading && !matchups.length && (
-        <Empty title="No games scheduled" hint="Matchups appear once the season starts." />
+        <Empty title="No games scheduled" hint={emptyHint} />
       )}
       {!!matchups.length && (
         <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3">

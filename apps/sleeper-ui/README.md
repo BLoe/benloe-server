@@ -76,6 +76,16 @@ Chat polls every 15s while the tab is visible. In fixture mode it renders
 `fixtures/chat.sample.json`, a synthetic feed with invented content — real chat
 cannot be captured without a token, and the screenshot harness must not need one.
 
+## Where the season is
+
+"Week 1" is wrong for most of the year. Sleeper's state carries a `season_type`,
+and in August it reads `pre` with week 0 — a dynasty league is very much alive
+then. `describePeriod` turns state plus league status into a label the header can
+show: Preseason, Offseason, Week 9, Playoffs · Week 15, Final, or `2025 final`
+when looking back at a past season. It also returns the week to load matchups
+for, or null when nothing is scheduled, so the dashboard stops asking for week 1
+in the preseason.
+
 ## League activity
 
 Sleeper's transaction feed is shaped for machines: a `type` that says *how* a move
@@ -88,6 +98,27 @@ per manager**, with the action derived from what actually moved (Added, Dropped,
 Added & dropped, Trade) and the method kept separate (Waivers, Free agency,
 Trade). A two-team trade becomes two rows, one from each side, so every row
 answers a single question: what did this manager gain, and what did it cost.
+
+**Waiver bid history.** Sleeper shows only the winning bid. The feed also carries
+every *failed* claim, with its amount and a note explaining why it lost — so each
+contested claim gets a collapsible list of all bids. It is often the most
+interesting thing on the page: Kyle Monangai drew nine bids in week 1, and the
+two highest ($13 and $12) failed on roster limits, so $11 won.
+
+One caveat handled explicitly: `leg` is 1 for the entire preseason, so a player
+can genuinely be won twice, weeks apart, and `created` is submission time rather
+than processing time — so the runs cannot be separated. Those targets (2 of 175 in
+a real season) are omitted rather than shown with two winners.
+
+## Rosters
+
+`buildDepthChart` groups a roster by position rather than by lineup status. A
+dynasty manager asks "how deep am I at running back", and the answer is spread
+across the starting lineup, the flex, the bench and the taxi squad. Each position
+gets one panel showing all of them, with a badge for where each player sits: a
+green rail and slot badge for a starter, amber for a flex starter (starting, but
+filling in elsewhere), grey for bench, taxi and IR. A flex RB stays with the other
+RBs, because that is what the question is about.
 
 ## Design notes
 

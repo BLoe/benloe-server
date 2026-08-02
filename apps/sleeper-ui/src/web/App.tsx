@@ -223,8 +223,11 @@ function TopBar({ bundle, me }: { bundle: LeagueBundle | null; me: Me }) {
   // Follow the week in the URL when there is one, so the header never disagrees
   // with the matchups the reader is actually looking at.
   const routeWeek = Number(useLocation().pathname.match(/\/matchups\/(\d+)/)?.[1]);
-  const week = routeWeek || bundle?.currentWeek || me.state.display_week;
-  const isLive = bundle?.league.status === 'in_season' && me.state.season_type === 'regular';
+  // The season label comes from the server, which knows the difference between
+  // the preseason and week 1. A week in the URL still wins, since the reader is
+  // explicitly looking at that week.
+  const label = routeWeek ? `Week ${routeWeek}` : (bundle?.period.label ?? '');
+  const isLive = bundle?.league.status === 'in_season' && bundle?.period.isGameWeek;
 
   return (
     <header className="sticky top-0 z-20 shrink-0 border-b border-line bg-ground/95 backdrop-blur px-4 lg:px-6">
@@ -261,8 +264,11 @@ function TopBar({ bundle, me }: { bundle: LeagueBundle | null; me: Me }) {
 
         {/* The mobile switcher already names the season, so it is not repeated. */}
         <span className="eyebrow shrink-0">
-          <span className="hidden md:inline">{bundle?.league.season} · </span>
-          Week {week}
+          {/* A past season's label already names the year; do not say it twice. */}
+          {bundle && !label.startsWith(bundle.league.season) && (
+            <span className="hidden md:inline">{bundle.league.season} · </span>
+          )}
+          {label}
         </span>
 
         {isLive && (

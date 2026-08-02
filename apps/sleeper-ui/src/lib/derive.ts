@@ -381,6 +381,78 @@ function unknownPlayer(id: string): Player {
 }
 
 /* ------------------------------------------------------------------ *
+ * Where the season is
+ *
+ * "Week 1" is wrong for most of the year. Sleeper's state carries a
+ * season_type, and in August it reads `pre` with week 0 — a dynasty league is
+ * very much alive then, so the header needs to say what is actually going on
+ * rather than counting a week that has not happened.
+ * ------------------------------------------------------------------ */
+
+export interface NflState {
+  week: number;
+  display_week?: number;
+  season: string;
+  season_type: string;
+  league_season?: string;
+  previous_season?: string;
+  season_start_date?: string;
+}
+
+export interface Period {
+  /** Full label for the header, e.g. "Preseason" or "Week 5". */
+  label: string;
+  /** Whether an actual game week is being counted. */
+  isGameWeek: boolean;
+  /** The week to load matchups for; null when nothing is scheduled. */
+  week: number | null;
+}
+
+/**
+ * Describe the point in the season for a given league.
+ *
+ * A league from a finished season is always "Final" regardless of what the NFL
+ * is doing now — you are looking at history, not this week.
+ */
+export function describePeriod(
+  state: NflState,
+  league: { season?: string; status?: string; playoffWeekStart?: number } = {}
+): Period {
+  const playoffStart = league.playoffWeekStart ?? 15;
+  const stateSeason = state.league_season ?? state.season;
+
+  // Viewing a past season, or a league that has finished.
+  if (league.season && stateSeason && league.season !== stateSeason) {
+    return { label: `${league.season} final`, isGameWeek: false, week: playoffStart + 2 };
+  }
+  if (league.status === 'complete') {
+    return { label: 'Final', isGameWeek: false, week: playoffStart + 2 };
+  }
+
+  const week = Number(state.display_week ?? state.week) || 0;
+
+  switch (state.season_type) {
+    case 'pre':
+      return { label: 'Preseason', isGameWeek: false, week: null };
+    case 'off':
+      return { label: 'Offseason', isGameWeek: false, week: null };
+    case 'post':
+      return { label: week > 0 ? `Playoffs · Week ${week}` : 'Playoffs', isGameWeek: week > 0, week: week || null };
+    case 'regular':
+      if (week <= 0) return { label: 'Preseason', isGameWeek: false, week: null };
+      return {
+        label: week >= playoffStart ? `Playoffs · Week ${week}` : `Week ${week}`,
+        isGameWeek: true,
+        week,
+      };
+    default:
+      return week > 0
+        ? { label: `Week ${week}`, isGameWeek: true, week }
+        : { label: 'Offseason', isGameWeek: false, week: null };
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * League activity
  *
  * Sleeper's transaction feed is shaped for machines: a `type` that says how a
@@ -416,6 +488,16 @@ export interface ActivityAsset {
 
 export type ActivityAction = 'Added' | 'Dropped' | 'Added & dropped' | 'Trade' | 'Commissioner';
 
+/** One manager's bid in a waiver contest. */
+export interface WaiverBid {
+  rosterId: number;
+  teamName: string;
+  amount: number;
+  won: boolean;
+  /** Why it did not win, in Sleeper's own words, normalised. */
+  outcome: 'Won' | 'Outbid' | 'Roster full' | 'Not enough budget' | 'Failed';
+}
+
 export interface ActivityRow {
   /** Unique per row — a trade yields one row per team from one transaction. */
   key: string;
@@ -435,6 +517,84 @@ export interface ActivityRow {
   faab: number | null;
   /** The other side of a trade. */
   counterparties: Array<{ rosterId: number; teamName: string }>;
+  /**
+   * Contested waiver targets on this row, one entry per player. A single claim
+   * can add more than one player, and each is its own separate contest, so this
+   * cannot be a flat list of bids.
+   */
+  contests: WaiverContest[];
+}
+
+export interface WaiverContest {
+  playerId: string;
+  playerName: string;
+  bids: WaiverBid[];
+}
+
+/**
+ * Turn Sleeper's failure note into a short outcome.
+ *
+ * The notes are full sentences written for a phone notification; a table column
+ * needs two words. Anything unrecognised falls back to a generic label rather
+ * than being dropped, so a new note never silently disappears.
+ */
+function bidOutcome(status: string, note: string | undefined): WaiverBid['outcome'] {
+  if (status === 'complete') return 'Won';
+  const n = (note ?? '').toLowerCase();
+  if (n.includes('claimed by another')) return 'Outbid';
+  if (n.includes('too many players')) return 'Roster full';
+  if (n.includes('budget') || n.includes('enough money')) return 'Not enough budget';
+  return 'Failed';
+}
+
+/**
+ * Index every waiver claim by the week and player it targeted, so a winning
+ * claim can show what it beat.
+ *
+ * Failed claims are the interesting half: they carry the losing bids, and often
+ * a bigger bid than the winner that failed for an unrelated reason like a full
+ * roster. Sleeper shows none of this.
+ */
+function indexWaiverBids(
+  transactions: RawTransaction[],
+  teams: Map<number, Team>
+): Map<string, WaiverBid[]> {
+  const byTarget = new Map<string, WaiverBid[]>();
+
+  for (const t of transactions) {
+    if (t.type !== 'waiver') continue;
+    const amount = t.settings?.waiver_bid ?? 0;
+    const note = (t as any).metadata?.notes as string | undefined;
+
+    for (const [playerId, rosterId] of Object.entries(t.adds ?? {})) {
+      const key = `${t.leg}:${playerId}`;
+      const list = byTarget.get(key) ?? [];
+      list.push({
+        rosterId,
+        teamName: teams.get(rosterId)?.teamName ?? `Roster ${rosterId}`,
+        amount,
+        won: t.status === 'complete',
+        outcome: bidOutcome(t.status, note),
+      });
+      byTarget.set(key, list);
+    }
+  }
+
+  for (const [key, list] of byTarget) {
+    // A week can contain more than one waiver run — Sleeper's `leg` is 1 for the
+    // whole preseason, so the same player can be won twice weeks apart. `created`
+    // is when a claim was submitted, not when it was processed, so the runs
+    // cannot be separated by time either. Rather than guess which losing bids
+    // belonged to which run, drop the ambiguous cases: 2 of 175 targets in a
+    // real season, against 45 that are unambiguous.
+    if (list.filter((b) => b.won).length !== 1) {
+      byTarget.delete(key);
+      continue;
+    }
+    // Highest first; a winning bid sorts above an equal losing one.
+    list.sort((a, b) => b.amount - a.amount || Number(b.won) - Number(a.won));
+  }
+  return byTarget;
 }
 
 function assetForPlayer(id: string, players: PlayerIndex): ActivityAsset {
@@ -460,6 +620,9 @@ export function buildActivityRows(
   players: PlayerIndex
 ): ActivityRow[] {
   const rows: ActivityRow[] = [];
+  // Built from the full feed, failed claims included — they are where the
+  // losing bids live.
+  const bidsByTarget = indexWaiverBids(transactions, teams);
 
   for (const t of transactions) {
     if (t.status !== 'complete') continue;
@@ -536,6 +699,18 @@ export function buildActivityRows(
               .filter((id) => id !== rosterId)
               .map((id) => ({ rosterId: id, teamName: teams.get(id)?.teamName ?? `Roster ${id}` }))
           : [],
+        // One contest per added player, and only when somebody else bid too.
+        contests:
+          method === 'Waivers'
+            ? Object.entries(t.adds ?? {})
+                .filter(([, rid]) => rid === rosterId)
+                .map(([pid]) => ({
+                  playerId: pid,
+                  playerName: assetForPlayer(pid, players).name,
+                  bids: bidsByTarget.get(`${t.leg}:${pid}`) ?? [],
+                }))
+                .filter((c) => c.bids.length > 1)
+            : [],
       });
     }
   }
@@ -691,6 +866,122 @@ export function dayLabel(ts: number, now: number): string {
     month: 'short',
     day: 'numeric',
     year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * Roster by position
+ *
+ * A dynasty manager thinks in positions, not in lineup slots: "how deep am I at
+ * running back" is the question, and the answer is spread across the starting
+ * lineup, the flex, the bench and the taxi squad. Grouping by position puts the
+ * whole depth chart for each position in one place, with each player carrying
+ * where they currently sit.
+ * ------------------------------------------------------------------ */
+
+/** Slots that any of several positions can fill. */
+const FLEX_SLOTS = new Set(['FLEX', 'SUPER_FLEX', 'REC_FLEX', 'WRRB_FLEX', 'IDP_FLEX']);
+
+export interface DepthEntry {
+  player: Player;
+  /** Where they sit: a real lineup slot, or BN / TAXI / IR. */
+  slot: string;
+  kind: SlotKind;
+  /** Starting, but in a flex slot rather than their own position's. */
+  isFlex: boolean;
+  points?: number;
+}
+
+export interface PositionGroup {
+  pos: string;
+  entries: DepthEntry[];
+  counts: { starting: number; flex: number; bench: number; taxi: number; ir: number };
+  /** Lineup slots for this position that nobody is filling. */
+  emptySlots: string[];
+}
+
+/**
+ * Build a depth chart: one group per position, starters first, then bench, then
+ * taxi, then injured reserve.
+ *
+ * Position order follows the league's own lineup so the positions it actually
+ * starts lead, and anything else trails in a stable order.
+ */
+export function buildDepthChart(
+  roster: RawRoster,
+  rosterPositions: string[],
+  players: PlayerIndex,
+  pointsByPlayer: Record<string, number> = {}
+): PositionGroup[] {
+  const slots = buildRosterView(roster, rosterPositions, players, pointsByPlayer);
+  const groups = new Map<string, PositionGroup>();
+
+  const groupFor = (pos: string): PositionGroup => {
+    let g = groups.get(pos);
+    if (!g) {
+      g = {
+        pos,
+        entries: [],
+        counts: { starting: 0, flex: 0, bench: 0, taxi: 0, ir: 0 },
+        emptySlots: [],
+      };
+      groups.set(pos, g);
+    }
+    return g;
+  };
+
+  for (const slot of slots) {
+    if (!slot.player) {
+      // An unfilled starting slot still belongs somewhere — a flex nobody is in
+      // is a hole in the lineup, so surface it against its own heading.
+      if (slot.kind === 'starter') groupFor(FLEX_SLOTS.has(slot.slot) ? 'FLEX' : slot.slot).emptySlots.push(slot.slot);
+      continue;
+    }
+
+    const isFlex = slot.kind === 'starter' && FLEX_SLOTS.has(slot.slot);
+    // A flex starter belongs with their own position: the point of the group is
+    // "here are all my running backs", and a flex RB is still a running back.
+    const pos = slot.player.pos ?? (isFlex ? 'FLEX' : slot.slot);
+    const g = groupFor(pos);
+
+    g.entries.push({
+      player: slot.player,
+      slot: slot.slot,
+      kind: slot.kind,
+      isFlex,
+      points: slot.points,
+    });
+
+    if (slot.kind === 'starter') {
+      g.counts.starting++;
+      if (isFlex) g.counts.flex++;
+    } else if (slot.kind === 'bench') g.counts.bench++;
+    else if (slot.kind === 'taxi') g.counts.taxi++;
+    else if (slot.kind === 'ir') g.counts.ir++;
+  }
+
+  const rank: Record<SlotKind, number> = { starter: 0, bench: 1, taxi: 2, ir: 3 };
+  for (const g of groups.values()) {
+    g.entries.sort(
+      (a, b) =>
+        rank[a.kind] - rank[b.kind] ||
+        // Within the starters, a dedicated slot outranks a flex.
+        Number(a.isFlex) - Number(b.isFlex) ||
+        (b.points ?? 0) - (a.points ?? 0) ||
+        a.player.name.localeCompare(b.player.name)
+    );
+  }
+
+  // Positions the league starts, in lineup order, then everything else.
+  const leagueOrder = rosterPositions
+    .filter((p) => p !== 'BN' && !FLEX_SLOTS.has(p))
+    .filter((p, i, arr) => arr.indexOf(p) === i);
+  const order = [...leagueOrder, ...POSITION_ORDER];
+
+  return [...groups.values()].sort((a, b) => {
+    const ai = order.indexOf(a.pos);
+    const bi = order.indexOf(b.pos);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || a.pos.localeCompare(b.pos);
   });
 }
 

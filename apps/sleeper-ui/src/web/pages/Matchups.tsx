@@ -23,8 +23,8 @@ import { PositionalCompare } from '../charts';
 
 export default function Matchups({ bundle }: { bundle: LeagueBundle }) {
   const { week: weekParam, matchupId } = useParams();
-  const { league, currentWeek, myRosterId } = bundle;
-  const week = Number(weekParam) || currentWeek;
+  const { league, currentWeek, myRosterId, period } = bundle;
+  const week = Number(weekParam) || period.week || currentWeek;
 
   const { data, loading, error } = useApi<{ week: number; matchups: Matchup[] }>(
     `/api/league/${league.leagueId}/matchups/${week}`
