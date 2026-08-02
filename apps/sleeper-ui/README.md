@@ -50,13 +50,24 @@ a visitor's own token always wins; the optional server-wide `SLEEPER_TOKEN` is
 honoured only for the account it actually belongs to. On a public page, lending
 one person's token to another visitor would expose their private conversations.
 
-**This is a public page that asks for a Sleeper password.** That is worth being
-deliberate about. Two switches:
+**This is a public page that asks for a Sleeper password.** Production restricts
+who may use that form to the managers in the dynasty league:
 
 ```bash
-SLEEPER_LOGIN_ENABLED=false          # close sign-in entirely
-SLEEPER_LOGIN_ALLOW=benloe,someone   # or restrict it to named accounts
+SLEEPER_LOGIN_ENABLED=true
+SLEEPER_LOGIN_ALLOW=anhunter,benloe,bluehozer,...   # Sleeper usernames, not display names
 ```
+
+`src/server/loginPolicy.ts` holds that decision, pure and tested — an empty
+allowlist means *anyone* may enter credentials, so it is the one setting worth
+getting wrong-proof. Sleeper usernames are the lowercase handle (`benloe`), which
+is not always the display name (`BenLoe`); resolve them via
+`GET /v1/user/<user_id>` for each league member, since the league payload only
+carries display names.
+
+Someone outside the list sees an explanation on the Chat page rather than a
+sign-in form that would always fail. The rest of the dashboard works normally for
+their own leagues.
 
 Posting is still the only write in the app and needs `SLEEPER_ALLOW_POSTING=true`
 on top of a connected account.
