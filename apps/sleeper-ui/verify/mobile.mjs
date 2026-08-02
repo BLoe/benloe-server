@@ -70,6 +70,9 @@ for (const [label, path, wait] of [
   ['Overview', '', 'text=Standings'],
   ['Matchups', 'matchups', 'text=Week'],
   ['Teams', 'teams', 'text=FAAB left'],
+  // The 2025 league has no published projections, so this tab correctly lands
+  // on the empty state — what matters here is that the tap navigates.
+  ['Projected', 'projected', 'text=Projected season'],
   ['Activity', 'activity', 'text=One row per manager'],
   ['Chat', 'chat', 'text=Read only'],
 ]) {

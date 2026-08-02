@@ -21,6 +21,9 @@ import {
   buildPlayerHistory,
   describePeriod,
   indexProjections,
+  projectLineup,
+  projectSeason,
+  winProbability,
   scoringKey,
   dayLabel,
   type RawRoster,
@@ -1184,5 +1187,202 @@ describe('buildPlayerHistory FAAB attribution', () => {
         if (e.kind === 'dropped') expect(e.faab).toBeNull();
       }
     }
+  });
+});
+
+describe('projectLineup', () => {
+  const benRoster = rosters.find((r) => r.owner_id === BEN)!;
+  const slots = league.roster_positions;
+
+  // Season-long projections span many games; per-week divides them back down.
+  const proj = (points: number, games = 17) => ({ points, games });
+  const build = (over: Record<string, { points: number; games?: number }> = {}) => {
+    const out: Record<string, { points: number; games?: number }> = {};
+    for (const id of benRoster.players ?? []) out[id] = proj(0);
+    return { ...out, ...over };
+  };
+
+  it('fills every startable slot when the roster is deep enough', () => {
+    const { lineup, unfilled } = projectLineup(benRoster, slots, players, build());
+    expect(unfilled).toBe(0);
+    expect(lineup).toHaveLength(slots.filter((s: string) => s !== 'BN').length);
+  });
+
+  it('never starts a taxi or injured-reserve player', () => {
+    const banned = new Set([...(benRoster.taxi ?? []), ...(benRoster.reserve ?? [])]);
+    expect(banned.size).toBeGreaterThan(0);
+    // Make a taxi player the highest projection in the league.
+    const taxiId = [...banned][0];
+    const { lineup } = projectLineup(benRoster, slots, players, build({ [taxiId]: proj(9999) }));
+    expect(lineup.some((s) => s.player.id === taxiId)).toBe(false);
+  });
+
+  it('puts each player in a slot their position can fill', () => {
+    const { lineup } = projectLineup(benRoster, slots, players, build());
+    for (const s of lineup) {
+      if (s.slot === 'FLEX') expect(['RB', 'WR', 'TE']).toContain(s.player.pos);
+      else if (s.slot !== 'SUPER_FLEX') expect(s.player.pos).toBe(s.slot);
+    }
+  });
+
+  it('does not let a flex steal the only player at a dedicated position', () => {
+    // One tight end on the roster; FLEX must not take them from the TE slot.
+    const tes = (benRoster.players ?? []).filter((id) => players[id]?.pos === 'TE');
+    expect(tes.length).toBeGreaterThan(0);
+    const { lineup } = projectLineup(benRoster, slots, players, build({ [tes[0]]: proj(9999) }));
+    const te = lineup.find((s) => s.player.id === tes[0]);
+    expect(te?.slot).toBe('TE');
+  });
+
+  it('starts the highest projection available at a position', () => {
+    const rbs = (benRoster.players ?? []).filter(
+      (id) => players[id]?.pos === 'RB' && !benRoster.taxi?.includes(id) && !benRoster.reserve?.includes(id)
+    );
+    const { lineup } = projectLineup(benRoster, slots, players, build({ [rbs[0]]: proj(1700) }));
+    expect(lineup.some((s) => s.player.id === rbs[0])).toBe(true);
+  });
+
+  it('converts a season projection into a per-week figure', () => {
+    const rbs = (benRoster.players ?? []).filter(
+      (id) =>
+        players[id]?.pos === 'RB' &&
+        !benRoster.taxi?.includes(id) &&
+        !benRoster.reserve?.includes(id)
+    );
+    const { perWeek, total } = projectLineup(
+      benRoster,
+      slots,
+      players,
+      build({ [rbs[0]]: proj(170, 17) })
+    );
+    expect(total).toBeCloseTo(170, 1);
+    expect(perWeek).toBeCloseTo(10, 1);
+  });
+
+  it('counts unfilled slots when the roster is too thin', () => {
+    const thin = { ...benRoster, players: [], taxi: [], reserve: [] } as any;
+    const { lineup, unfilled } = projectLineup(thin, slots, players, {});
+    expect(lineup).toHaveLength(0);
+    expect(unfilled).toBe(slots.filter((s: string) => s !== 'BN').length);
+  });
+});
+
+describe('winProbability', () => {
+  it('is even when two lineups project the same', () => {
+    expect(winProbability(110, 110)).toBeCloseTo(0.5, 6);
+  });
+
+  it('favours the higher projection without ever being certain', () => {
+    const p = winProbability(130, 100);
+    expect(p).toBeGreaterThan(0.5);
+    expect(p).toBeLessThan(1);
+  });
+
+  it('is symmetric', () => {
+    expect(winProbability(120, 95) + winProbability(95, 120)).toBeCloseTo(1, 6);
+  });
+
+  it('treats a small edge as close to a coin flip', () => {
+    // Three points on a ~110 lineup is noise, not an advantage.
+    expect(winProbability(113, 110)).toBeLessThan(0.56);
+  });
+
+  it('grows with the size of the edge', () => {
+    expect(winProbability(140, 100)).toBeGreaterThan(winProbability(120, 100));
+  });
+});
+
+describe('projectSeason', () => {
+  const schedule = load('dynasty-2025.matchups');
+  const projections: Record<string, { points: number; games: number }> = {};
+  for (const [id, p] of Object.entries(players)) {
+    // Deterministic pseudo-projection so the test does not need live data.
+    projections[id] = { points: (Number(id.replace(/\D/g, '')) % 200) + 20, games: 17 };
+  }
+
+  const { teams, matchups } = projectSeason(
+    rosters,
+    users,
+    league.roster_positions,
+    players,
+    projections,
+    schedule,
+    league.settings.playoff_week_start
+  );
+
+  it('projects every team', () => {
+    expect(teams).toHaveLength(rosters.length);
+    expect(teams.map((t) => t.rank)).toEqual([...Array(teams.length)].map((_, i) => i + 1));
+  });
+
+  it('only projects regular season weeks', () => {
+    for (const m of matchups) expect(m.week).toBeLessThan(league.settings.playoff_week_start);
+  });
+
+  it('gives every team a full schedule of expected results', () => {
+    const games = league.settings.playoff_week_start - 1;
+    for (const t of teams) {
+      expect(t.wins + t.losses).toBeCloseTo(games, 1);
+    }
+  });
+
+  it('conserves wins and losses across the league', () => {
+    const wins = teams.reduce((s, t) => s + t.wins, 0);
+    const losses = teams.reduce((s, t) => s + t.losses, 0);
+    expect(wins).toBeCloseTo(losses, 0);
+  });
+
+  it('ranks the highest-projecting roster first', () => {
+    const best = [...teams].sort((a, b) => b.weeklyPoints - a.weeklyPoints)[0];
+    expect(teams[0].weeklyPoints).toBe(best.weeklyPoints);
+  });
+
+  it('never claims certainty about a matchup', () => {
+    for (const m of matchups) {
+      expect(m.favouriteWinChance).toBeGreaterThanOrEqual(0.5);
+      expect(m.favouriteWinChance).toBeLessThan(1);
+    }
+  });
+
+  it('lists the higher-projecting side first in each matchup', () => {
+    for (const m of matchups) {
+      expect(m.home.points).toBeGreaterThanOrEqual(m.away.points);
+      expect(m.margin).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('returns nothing when there are no projections', () => {
+    const empty = projectSeason(rosters, users, league.roster_positions, players, {}, schedule, 15);
+    // Every lineup scores zero, so every matchup is a coin flip.
+    for (const t of empty.teams) expect(t.weeklyPoints).toBe(0);
+    for (const m of empty.matchups) expect(m.favouriteWinChance).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe('per-week projections', () => {
+  const benRoster = rosters.find((r) => r.owner_id === BEN)!;
+  const slots = league.roster_positions;
+  const startable = (benRoster.players ?? []).filter(
+    (id) => !benRoster.taxi?.includes(id) && !benRoster.reserve?.includes(id)
+  );
+
+  it("ignores Sleeper's 18-week gp, which counts a bye as a game", () => {
+    // Every player carries gp: 18 in the real feed. Spreading a season over 18
+    // would price in a week the player is not on the field.
+    const proj = Object.fromEntries(startable.map((id) => [id, { points: 170, games: 18 }]));
+    const { lineup } = projectLineup(benRoster, slots, players, proj);
+    expect(lineup[0].perWeek).toBeCloseTo(10, 6);
+  });
+
+  it('honours a genuine per-player games figure below the season length', () => {
+    const proj = Object.fromEntries(startable.map((id) => [id, { points: 100, games: 10 }]));
+    const { lineup } = projectLineup(benRoster, slots, players, proj);
+    expect(lineup[0].perWeek).toBeCloseTo(10, 6);
+  });
+
+  it('falls back to a full season when games is missing', () => {
+    const proj = Object.fromEntries(startable.map((id) => [id, { points: 170 }]));
+    const { lineup } = projectLineup(benRoster, slots, players, proj);
+    expect(lineup[0].perWeek).toBeCloseTo(10, 6);
   });
 });

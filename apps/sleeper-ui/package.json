@@ -17,6 +17,7 @@
     "mobile": "node verify/mobile.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "compression": "^1.7.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

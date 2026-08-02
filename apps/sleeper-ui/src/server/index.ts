@@ -19,6 +19,8 @@ import { cached, diskCached, TTL, stats, invalidate } from './cache.js';
 import { chatAccess } from './chatAccess.js';
 import { TokenStore, defaultTokenPath } from './tokenStore.js';
 import { mayConnectSleeper, parseAllowList } from './loginPolicy.js';
+import { BriefService } from './brief.js';
+import { espnNewsFor, mapOutlook, mapSleeperNews, mergeNews, prettySource } from '../lib/news.js';
 import {
   COOKIE_NAME,
   cookieHeader,
@@ -43,6 +45,7 @@ import {
   buildPlayerHistory,
   describePeriod,
   indexProjections,
+  projectSeason,
   scoringKey,
   type PlayerIndex,
 } from '../lib/derive.js';
@@ -90,6 +93,15 @@ const LOGIN_ENABLED = LOGIN_POLICY.enabled;
 
 const tokens = SESSION_SECRET
   ? new TokenStore(defaultTokenPath(CACHE_DIR), SESSION_SECRET)
+  : null;
+
+/**
+ * AI player briefs. Absent key simply means the Player page shows no brief —
+ * every other part of the app is unaffected.
+ */
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const briefs = ANTHROPIC_API_KEY
+  ? new BriefService(ANTHROPIC_API_KEY, join(CACHE_DIR, 'briefs'))
   : null;
 
 /** Fixture label -> league id, so fixture mode can answer by real league id. */
@@ -234,7 +246,13 @@ async function loadProjections(
   week: number | null,
   scoring: Record<string, number> | undefined
 ) {
-  if (useFixtures()) return {};
+  if (useFixtures()) {
+    // Only the season-long fixture was captured — it is what the preseason
+    // views actually use, and a weekly one would be 9,400 rows of zeroes.
+    if (week) return {};
+    const raw = await readFixture(`projections-${season}`).catch(() => []);
+    return indexProjections(raw, scoringKey(scoring));
+  }
   const key = week ? `projections-${season}-w${week}` : `projections-${season}-season`;
   const scored = `${key}:${scoringKey(scoring)}`;
 
@@ -509,6 +527,11 @@ app.get(
       rosters.map((r: any) => [r.roster_id as number, r])
     );
     const matchups = buildMatchups(raw, teams, week);
+    // Projected points for this specific week, so the lineup can show expected
+    // beside actual.
+    const projections = await loadProjections(league.season, week, league.scoring_settings).catch(
+      () => ({})
+    );
 
     // Attach the resolved starting lineup for each side so the UI can render a
     // side-by-side comparison without a second request.
@@ -529,6 +552,7 @@ app.get(
 
     res.json({
       week,
+      projections,
       matchups: matchups.map((m) => ({
         ...m,
         home: hydrate(raw, m.home),
@@ -555,12 +579,27 @@ app.get(
     const roster = rosters.find((r: any) => r.roster_id === rosterId);
     if (!roster) return res.status(404).json({ error: 'roster not found' });
 
+    const state = await loadState();
+    const period = describePeriod(state, {
+      season: league.season,
+      status: league.status,
+      playoffWeekStart: league.settings?.playoff_week_start ?? 15,
+    });
+    // Weekly projections once games are scheduled; season totals before that.
+    const projections = await loadProjections(
+      league.season,
+      period.week,
+      league.scoring_settings
+    ).catch(() => ({}));
+
     const teams = buildTeams(rosters, users);
     res.json({
       team: teams.get(rosterId),
       settings: roster.settings,
       slots: buildRosterView(roster, league.roster_positions, players),
       depth: buildDepthChart(roster, league.roster_positions, players),
+      projections,
+      projectionScope: period.week ? `Week ${period.week}` : `${league.season} season`,
     });
   })
 );
@@ -906,6 +945,214 @@ app.post(
         myUserId: ((req as any).session as Session).userId,
       })[0],
     });
+  })
+);
+
+
+/**
+ * Projected season: every roster's best lineup, and the schedule resolved from
+ * those numbers. This is the preseason's headline view.
+ */
+app.get(
+  '/api/league/:leagueId/projections',
+  requireSession,
+  wrap(async (req, res) => {
+    const { leagueId } = req.params;
+    const [league, rosters, users, players, state] = await Promise.all([
+      loadLeague(leagueId),
+      loadRosters(leagueId),
+      loadLeagueUsers(leagueId),
+      loadPlayers(),
+      loadState(),
+    ]);
+
+    const playoffStart: number = league.settings?.playoff_week_start ?? 15;
+    const projections = await loadProjections(league.season, null, league.scoring_settings).catch(
+      () => ({})
+    );
+    if (!Object.keys(projections).length) {
+      return res.json({ available: false, teams: [], matchups: [] });
+    }
+
+    // The full published schedule, which exists before any game is played.
+    const schedule = await loadAllMatchups(leagueId, playoffStart - 1);
+
+    const { teams, matchups } = projectSeason(
+      rosters,
+      users,
+      league.roster_positions,
+      players,
+      projections as any,
+      schedule,
+      playoffStart
+    );
+
+    const { userId } = (req as any).session as Session;
+    const myRoster = rosters.find(
+      (r: any) => r.owner_id === userId || r.co_owners?.includes(userId)
+    );
+
+    res.json({
+      available: true,
+      season: league.season,
+      playoffTeams: league.settings?.playoff_teams ?? 6,
+      weeksProjected: new Set(matchups.map((m) => m.week)).size,
+      myRosterId: myRoster?.roster_id ?? null,
+      teams,
+      matchups,
+    });
+  })
+);
+
+/**
+ * Everything written about a player lately, from every source that will answer.
+ *
+ * Sources are fetched in parallel and each is best-effort — a slow or broken
+ * upstream degrades the feed rather than failing the page.
+ */
+app.get(
+  '/api/league/:leagueId/player/:playerId/news',
+  requireSession,
+  wrap(async (req, res) => {
+    const { leagueId, playerId } = req.params;
+    const [league, players] = await Promise.all([loadLeague(leagueId), loadPlayers()]);
+    const player = players[playerId];
+    if (!player) return res.status(404).json({ error: 'Player not found.' });
+
+    if (useFixtures()) return res.json({ items: [], sources: [] });
+
+    const settle = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+      try {
+        return await fn();
+      } catch {
+        return fallback;
+      }
+    };
+
+    const [sleeperRaw, outlookRaw, espn] = await Promise.all([
+      settle(() => S.getPlayerNews(playerId, 12), [] as any[]),
+      settle(() => S.getPlayerOutlook(playerId, league.season), null as any),
+      settle(() => espnNewsFor(player.name), []),
+    ]);
+
+    const outlook = mapOutlook(outlookRaw, league.season);
+    const items = mergeNews(
+      [...mapSleeperNews(sleeperRaw ?? []), ...espn, ...(outlook ? [outlook] : [])],
+      24
+    );
+
+    res.json({
+      items,
+      // Which upstreams actually returned something, for the panel's subtitle.
+      sources: [...new Set(items.map((i) => i.source))].sort(),
+    });
+  })
+);
+
+/**
+ * A short analyst read on a player, written by Claude from the gathered news
+ * plus its own web search.
+ *
+ * Cached for twelve hours because each generation is a paid API call.
+ */
+app.get(
+  '/api/league/:leagueId/player/:playerId/brief',
+  requireSession,
+  wrap(async (req, res) => {
+    if (!briefs) {
+      return res.status(503).json({
+        error: 'AI briefs need ANTHROPIC_API_KEY in /srv/benloe/.env.',
+        unavailable: true,
+      });
+    }
+
+    const { leagueId, playerId } = req.params;
+    const force = req.query.refresh === '1';
+
+    // Fixture runs must never bill the Anthropic API. The verification harness
+    // opens player pages on every pass, and a live call there would be both a
+    // real charge and a non-deterministic screenshot.
+    if (useFixtures()) {
+      return res.json({
+        cached: true,
+        brief: {
+          summary:
+            'Fixture brief. In fixture mode the app does not call the Anthropic API, so this stands in for the generated text.',
+          points: ['Deterministic stand-in so screenshots do not change between runs.'],
+          watch: [],
+          sources: ['Fixtures'],
+          generatedAt: 1_700_000_000_000,
+          model: 'fixture',
+        },
+      });
+    }
+
+    const [league, rosters, users, players] = await Promise.all([
+      loadLeague(leagueId),
+      loadRosters(leagueId),
+      loadLeagueUsers(leagueId),
+      loadPlayers(),
+    ]);
+    const player = players[playerId];
+    if (!player) return res.status(404).json({ error: 'Player not found.' });
+
+    const key = `${league.season}-${playerId}`;
+    if (!force) {
+      const hit = await briefs.cached(key);
+      if (hit) return res.json({ brief: hit, cached: true });
+    }
+
+    // Assemble the same picture the page shows, then let Claude check it.
+    const settle = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+      try {
+        return await fn();
+      } catch {
+        return fallback;
+      }
+    };
+
+    const [sleeperRaw, outlookRaw, espn, seasonProj] = await Promise.all([
+      settle(() => S.getPlayerNews(playerId, 12), [] as any[]),
+      settle(() => S.getPlayerOutlook(playerId, league.season), null as any),
+      settle(() => espnNewsFor(player.name), []),
+      settle(() => loadProjections(league.season, null, league.scoring_settings), {} as any),
+    ]);
+
+    const outlook = mapOutlook(outlookRaw, league.season);
+    const news = mergeNews(
+      [...mapSleeperNews(sleeperRaw ?? []), ...espn, ...(outlook ? [outlook] : [])],
+      14
+    );
+
+    const teams = buildTeams(rosters, users);
+    const owner = rosters.find((r: any) => (r.players ?? []).includes(playerId));
+
+    try {
+      const brief = await briefs.get(
+        key,
+        {
+          playerName: player.name,
+          position: player.pos,
+          nflTeam: player.team,
+          season: league.season,
+          leagueName: league.name,
+          scoring: scoringKey(league.scoring_settings).replace('pts_', '').replace('_', ' '),
+          injuryStatus: player.status ?? null,
+          projection: (seasonProj as any)[playerId]
+            ? {
+                points: (seasonProj as any)[playerId].points,
+                games: (seasonProj as any)[playerId].games,
+              }
+            : null,
+          ownedBy: owner ? (teams.get(owner.roster_id)?.teamName ?? null) : null,
+          news,
+        },
+        force
+      );
+      res.json({ brief, cached: false });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
   })
 );
 

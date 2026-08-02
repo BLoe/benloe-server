@@ -14,6 +14,7 @@ const freePort = () => new Promise((res) => {
 const PORT = await freePort();
 const BASE = `http://127.0.0.1:${PORT}`;
 const LG = '1180168833027727360';
+const PRESEASON = '1312065694577209344'; // the league with projections published
 
 const server = spawn('npx', ['tsx', 'src/server/index.ts'], {
   cwd: ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
@@ -37,13 +38,13 @@ const check = async (label, fn) => {
   catch (e) { fails.push(`${label}: ${e.message}`); console.log(`  ✗ ${label} — ${e.message}`); }
 };
 
-await page.goto(BASE, { waitUntil: 'networkidle' });
+await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.fill('#username', 'BenLoe');
 await page.click('button[type=submit]');
 await page.waitForSelector('text=Standings');
 
 await check('standings team name → team page', async () => {
-  await page.goto(`${BASE}/l/${LG}`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE}/l/${LG}`, { waitUntil: 'domcontentloaded' });
   await page.click('table a:has-text("Scooty Puff Sr")');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
   await page.waitForSelector('text=FAAB left');
@@ -63,7 +64,7 @@ await check('player page breadcrumb → owning team', async () => {
 });
 
 await check('scoreboard game → matchup detail', async () => {
-  await page.goto(`${BASE}/l/${LG}`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE}/l/${LG}`, { waitUntil: 'domcontentloaded' });
   await page.click('a[href*="/matchups/"][href*="/"]>> nth=1');
   await page.waitForURL(/\/matchups\/\d+\/\d+/, { timeout: 10000 });
   await page.waitForSelector('text=Edge by slot');
@@ -76,20 +77,20 @@ await check('matchup lineup player → player page', async () => {
 });
 
 await check('activity player → player page', async () => {
-  await page.goto(`${BASE}/l/${LG}/activity`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE}/l/${LG}/activity`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('text=League activity');
   await page.click('table a[href*="/players/"]:visible >> nth=0');
   await page.waitForURL(/\/players\/\w+/, { timeout: 10000 });
 });
 
 await check('activity team → team page', async () => {
-  await page.goto(`${BASE}/l/${LG}/activity`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE}/l/${LG}/activity`, { waitUntil: 'domcontentloaded' });
   await page.click('table a[href*="/teams/"]:visible >> nth=0');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
 });
 
 await check('chat author → team page', async () => {
-  await page.goto(`${BASE}/l/${LG}/chat`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE}/l/${LG}/chat`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('text=Read only');
   await page.click('a[href*="/teams/"]:visible >> nth=0');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
@@ -97,14 +98,37 @@ await check('chat author → team page', async () => {
 
 // No link should dead-end on a 404 or an error state.
 await check('no broken player links on a roster', async () => {
-  await page.goto(`${BASE}/l/${LG}/teams/8`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE}/l/${LG}/teams/8`, { waitUntil: 'domcontentloaded' });
+  // The roster renders client-side, so wait for it before harvesting links.
+  await page.waitForSelector('a[href*="/players/"]');
   const hrefs = await page.$$eval('a[href*="/players/"]', els => [...new Set(els.map(e => e.getAttribute('href')))]);
   if (hrefs.length < 10) throw new Error(`only ${hrefs.length} player links found`);
   for (const href of hrefs.slice(0, 6)) {
-    const res = await page.goto(BASE + href, { waitUntil: 'networkidle' });
+    const res = await page.goto(BASE + href, { waitUntil: 'domcontentloaded' });
     if (!res.ok()) throw new Error(`${href} returned ${res.status()}`);
+    await page.waitForSelector('text=Points by week', { timeout: 20000 });
     if (await page.$('text=Could not load')) throw new Error(`${href} rendered an error state`);
   }
+});
+
+// The projected season is reachable and every team on it links onward.
+await check('projected standings → team page', async () => {
+  await page.goto(`${BASE}/l/${PRESEASON}/projected`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('text=Projected standings');
+  await page.click('a[href*="/teams/"]:visible >> nth=0');
+  await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
+  await page.waitForSelector('text=FAAB left');
+});
+
+// Expanding a projected team reveals its lineup, and those players link too.
+await check('projected lineup player → player page', async () => {
+  await page.goto(`${BASE}/l/${PRESEASON}/projected`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('text=Projected standings');
+  await page.click('button[aria-expanded="false"] >> nth=0');
+  await page.waitForSelector('text=Best available lineup');
+  await page.click('a[href*="/players/"]:visible >> nth=0');
+  await page.waitForURL(/\/players\/\w+/, { timeout: 10000 });
+  await page.waitForSelector('text=Points by week');
 });
 
 await browser.close();

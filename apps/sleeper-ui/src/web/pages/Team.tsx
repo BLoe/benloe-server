@@ -7,6 +7,7 @@ import {
   type DepthEntry,
   type LeagueBundle,
   type PositionGroup,
+  type ProjectionMap,
   type RosterSlot,
   type Team,
 } from '../api';
@@ -29,6 +30,10 @@ interface RosterResponse {
   settings: Record<string, number>;
   slots: RosterSlot[];
   depth: PositionGroup[];
+  /** Rotowire projections keyed by player id — weekly in season, season totals before it. */
+  projections: ProjectionMap;
+  /** "Week 3" or "2026 season" — what the projection numbers actually cover. */
+  projectionScope: string;
 }
 
 export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
@@ -42,6 +47,16 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
   );
 
   const row = standings.find((s) => s.rosterId === selected);
+
+  // What the current starting lineup is projected to score. Summed here rather
+  // than on the server so it always matches the numbers shown on the rows.
+  const projectedStarters = data
+    ? data.slots.reduce(
+        (sum, s) =>
+          s.kind === 'starter' && s.player ? sum + (data.projections[s.player.id]?.points ?? 0) : sum,
+        0
+      ) || null
+    : null;
 
   return (
     <div className="pt-5 grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-4 lg:gap-5 items-start">
@@ -119,6 +134,13 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
                     <Stat label="Efficiency" value={`${(row.efficiency * 100).toFixed(0)}%`} sub={`${fmt1(row.maxPoints - row.pointsFor)} left on bench`} />
                     <Stat label="All-play" value={record(row.allPlay.wins, row.allPlay.losses, row.allPlay.ties)} />
                     <Stat label="FAAB left" value={`$${league.waiverBudget - row.waiverBudgetUsed}`} sub={`of $${league.waiverBudget}`} />
+                    {projectedStarters != null && (
+                      <Stat
+                        label="Projected"
+                        value={fmt1(projectedStarters)}
+                        sub={`starters · ${data.projectionScope.toLowerCase()}`}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -146,7 +168,12 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
             )}
 
             {data.depth.map((group) => (
-              <DepthGroup key={group.pos} group={group} />
+              <DepthGroup
+                key={group.pos}
+                group={group}
+                projections={data.projections}
+                scope={data.projectionScope}
+              />
             ))}
           </>
         )}
@@ -164,8 +191,17 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
  * where they currently sit — so a flex RB stays with the other RBs rather than
  * disappearing into a separate lineup panel.
  */
-function DepthGroup({ group }: { group: PositionGroup }) {
+function DepthGroup({
+  group,
+  projections,
+  scope,
+}: {
+  group: PositionGroup;
+  projections: ProjectionMap;
+  scope: string;
+}) {
   const c = group.counts;
+  const hasProjections = group.entries.some((e) => projections[e.player.id]);
   const summary = [
     c.starting ? `${c.starting} starting` : null,
     c.flex ? `${c.flex} in flex` : null,
@@ -186,11 +222,15 @@ function DepthGroup({ group }: { group: PositionGroup }) {
           </span>
         </span>
       }
-      action={<span className="eyebrow">{group.entries.length}</span>}
+      action={
+        <span className="eyebrow">
+          {hasProjections ? `proj · ${scope.toLowerCase()}` : group.entries.length}
+        </span>
+      }
     >
       <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3">
         {group.entries.map((e) => (
-          <DepthRow key={e.player.id} entry={e} />
+          <DepthRow key={e.player.id} entry={e} projection={projections[e.player.id] ?? null} />
         ))}
         {group.emptySlots.map((slot, i) => (
           <div
@@ -208,7 +248,13 @@ function DepthGroup({ group }: { group: PositionGroup }) {
   );
 }
 
-function DepthRow({ entry }: { entry: DepthEntry }) {
+function DepthRow({
+  entry,
+  projection,
+}: {
+  entry: DepthEntry;
+  projection: { points: number; games: number | null } | null;
+}) {
   const p = entry.player;
   const starting = entry.kind === 'starter';
   return (
@@ -246,6 +292,20 @@ function DepthRow({ entry }: { entry: DepthEntry }) {
           {p.status.slice(0, 3)}
         </span>
       )}
+      {/* Projected points sit at the end of the row so a column of numbers
+          reads down the depth chart — the whole point of grouping by position
+          is comparing the players you could start against each other. */}
+      <span
+        className="font-display font-bold tabular-nums shrink-0 text-right"
+        style={{
+          fontSize: 'var(--t-h2)',
+          width: 48,
+          color: projection ? (starting ? '#E8EDF2' : '#93A2B2') : '#4B5A68',
+        }}
+        title={projection ? `Projected ${fmt1(projection.points)} points` : 'No projection'}
+      >
+        {projection ? fmt1(projection.points) : '—'}
+      </span>
     </div>
   );
 }

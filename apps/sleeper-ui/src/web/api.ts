@@ -226,6 +226,12 @@ export const pct = (n: number) => `${Math.round(n * 1000) / 10}%`;
 
 export const record = (w: number, l: number, t: number) => (t ? `${w}-${l}-${t}` : `${w}-${l}`);
 
+/**
+ * A projected record is fractional — 9.8-4.2 says more than a rounded 10-4,
+ * because the tenth is the part the model is unsure about.
+ */
+export const projectedRecord = (w: number, l: number) => `${fmt1(w)}-${fmt1(l)}`;
+
 export function relativeTime(ms: number): string {
   const diff = Date.now() - ms;
   const min = Math.round(diff / 60000);
@@ -296,4 +302,61 @@ export interface PlayerEvent {
   faab: number | null;
   method: 'Draft' | 'Waivers' | 'Free agency' | 'Trade' | 'Commissioner';
   detail: string | null;
+}
+
+/* --- projections ---------------------------------------------------- */
+
+export interface ProjectedTeam {
+  rosterId: number;
+  teamName: string;
+  managerName: string;
+  avatar: string | null;
+  weeklyPoints: number;
+  lineup: Array<{ slot: string; player: Player; points: number; perWeek: number }>;
+  unfilled: number;
+  wins: number;
+  losses: number;
+  rank: number;
+}
+
+export interface ProjectedMatchup {
+  week: number;
+  home: { rosterId: number; teamName: string; points: number };
+  away: { rosterId: number; teamName: string; points: number };
+  margin: number;
+  favouriteWinChance: number;
+}
+
+export interface SeasonProjection {
+  available: boolean;
+  season?: string;
+  playoffTeams?: number;
+  weeksProjected?: number;
+  myRosterId?: number | null;
+  teams: ProjectedTeam[];
+  matchups: ProjectedMatchup[];
+}
+
+/** Projection map keyed by player id, as attached to roster and matchup responses. */
+export type ProjectionMap = Record<string, Projection>;
+
+/* --- news desk ------------------------------------------------------ */
+
+export interface NewsItem {
+  source: string;
+  provider: 'sleeper' | 'espn' | 'outlook';
+  title: string;
+  body: string | null;
+  url: string | null;
+  published: number | null;
+  kind: 'news' | 'outlook';
+}
+
+export interface Brief {
+  summary: string;
+  points: string[];
+  watch: string[];
+  sources: string[];
+  generatedAt: number;
+  model: string;
 }

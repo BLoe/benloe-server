@@ -1,5 +1,14 @@
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { fmt1, useApi, type LeagueBundle, type PlayerDetail } from '../api';
+import {
+  fmt1,
+  relativeTime,
+  useApi,
+  type Brief,
+  type LeagueBundle,
+  type NewsItem,
+  type PlayerDetail,
+} from '../api';
 import {
   Avatar,
   Crumb,
@@ -198,56 +207,209 @@ export default function PlayerPage({ bundle }: { bundle: LeagueBundle }) {
         </Panel>
       )}
 
-      {data.outlook && (
+      <NewsDesk leagueId={league.leagueId} playerId={p.id} fallback={data} />
+    </div>
+  );
+}
+
+/**
+ * Everything written about this player lately, plus an analyst read on top.
+ *
+ * The feed is merged from every source that will answer without a key, so it
+ * loads separately from the player record — a slow wire service must not hold
+ * up the stats. The brief is a paid API call, cached for twelve hours, and is
+ * labelled as generated because it is a summary of other people's reporting.
+ */
+function NewsDesk({
+  leagueId,
+  playerId,
+  fallback,
+}: {
+  leagueId: string;
+  playerId: string;
+  fallback: PlayerDetail;
+}) {
+  const [nonce, setNonce] = useState(0);
+  const feed = useApi<{ items: NewsItem[]; sources: string[] }>(
+    `/api/league/${leagueId}/player/${playerId}/news`
+  );
+  const brief = useApi<{ brief: Brief; cached?: boolean }>(
+    `/api/league/${leagueId}/player/${playerId}/brief${nonce ? `?refresh=1&n=${nonce}` : ''}`
+  );
+
+  // Before the aggregated feed arrives, the record already carries Sleeper's
+  // own items — showing those beats showing an empty panel.
+  const items: NewsItem[] = feed.data?.items.length
+    ? feed.data.items
+    : [
+        ...(fallback.outlook
+          ? [
+              {
+                source: fallback.outlook.source ?? 'Sleeper',
+                provider: 'outlook' as const,
+                title: `${fallback.outlook.season} season outlook`,
+                body: fallback.outlook.text,
+                url: null,
+                published: null,
+                kind: 'outlook' as const,
+              },
+            ]
+          : []),
+        ...fallback.news.map((n) => ({
+          source: n.source ?? 'Sleeper',
+          provider: 'sleeper' as const,
+          title: n.title ?? '',
+          body: n.body,
+          url: n.url,
+          published: n.published,
+          kind: 'news' as const,
+        })),
+      ];
+
+  const news = items.filter((i) => i.kind === 'news');
+  const outlooks = items.filter((i) => i.kind === 'outlook');
+
+  return (
+    <div className="space-y-5">
+      <Panel
+        title="What Claude makes of it"
+        action={
+          brief.data && (
+            <button
+              type="button"
+              onClick={() => setNonce((n) => n + 1)}
+              className="link eyebrow hover:text-ink"
+              disabled={brief.loading}
+            >
+              {brief.loading ? 'Rewriting…' : 'Rewrite'}
+            </button>
+          )
+        }
+        note="Written by Claude from the coverage below plus its own web search. It summarises other people's reporting — check the sources before acting on it."
+      >
+        {brief.loading && <Loading label="Reading the coverage" />}
+        {brief.error && !brief.loading && (
+          <div className="px-4 py-4 text-dim" style={{ fontSize: 'var(--t-body)' }}>
+            {brief.error}
+          </div>
+        )}
+        {brief.data && !brief.loading && <BriefBody brief={brief.data.brief} />}
+      </Panel>
+
+      <Panel
+        title="News desk"
+        action={
+          <span className="eyebrow">
+            {feed.loading
+              ? 'gathering…'
+              : feed.data?.sources.length
+                ? feed.data.sources.slice(0, 4).join(' · ')
+                : 'Sleeper'}
+          </span>
+        }
+      >
+        {feed.loading && !items.length && <Loading label="Gathering coverage" />}
+        {!feed.loading && !news.length && (
+          <Empty title="Nothing written lately" hint="No source has published on this player recently." />
+        )}
+        <ul>
+          {news.map((n, i) => (
+            <NewsCard key={i} item={n} />
+          ))}
+        </ul>
+      </Panel>
+
+      {outlooks.map((o, i) => (
         <Panel
-          title={`${data.outlook.season} outlook`}
-          action={
-            data.outlook.source && <span className="eyebrow">{data.outlook.source}</span>
-          }
+          key={i}
+          title={o.title}
+          action={<span className="eyebrow">{o.source}</span>}
         >
-          <p className="px-4 py-4 text-muted" style={{ fontSize: 'var(--t-body)', lineHeight: 1.65, maxWidth: '72ch' }}>
-            {data.outlook.text}
+          <p
+            className="px-4 py-4 text-muted"
+            style={{ fontSize: 'var(--t-body)', lineHeight: 1.65, maxWidth: '72ch' }}
+          >
+            {o.body}
           </p>
         </Panel>
+      ))}
+    </div>
+  );
+}
+
+function BriefBody({ brief }: { brief: Brief }) {
+  return (
+    <div className="px-4 py-4 space-y-4">
+      <p className="text-ink" style={{ fontSize: 'var(--t-h2)', lineHeight: 1.55, maxWidth: '68ch' }}>
+        {brief.summary}
+      </p>
+
+      {!!brief.points.length && (
+        <ul className="space-y-2">
+          {brief.points.map((pt, i) => (
+            <li key={i} className="flex gap-2.5" style={{ fontSize: 'var(--t-body)', lineHeight: 1.55 }}>
+              <span className="shrink-0" style={{ color: 'var(--win)' }} aria-hidden="true">
+                —
+              </span>
+              <span className="text-muted" style={{ maxWidth: '68ch' }}>{pt}</span>
+            </li>
+          ))}
+        </ul>
       )}
 
-      {!!data.news.length && (
-        <Panel title="News">
-          <ul>
-            {data.news.map((n, i) => (
-              <li key={i} className="px-4 py-4 border-b border-line/60 last:border-b-0">
-                <h3 className="entity" style={{ fontSize: 'var(--t-h2)' }}>
-                  {n.title}
-                </h3>
-                <div className="text-dim mt-1" style={{ fontSize: 'var(--t-meta)' }}>
-                  {n.source ?? 'Sleeper'}
-                  {n.published ? ` · ${new Date(n.published).toLocaleDateString()}` : ''}
-                </div>
-                {/* The write-up is the point; the headline alone said almost nothing. */}
-                {n.body && (
-                  <p
-                    className="text-muted mt-2"
-                    style={{ fontSize: 'var(--t-body)', lineHeight: 1.6, maxWidth: '72ch' }}
-                  >
-                    {n.body}
-                  </p>
-                )}
-                {n.url && (
-                  <a
-                    href={n.url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="link eyebrow inline-block mt-2 hover:text-ink"
-                  >
-                    Read at {n.source ?? 'source'} →
-                  </a>
-                )}
+      {!!brief.watch.length && (
+        <div className="pt-1">
+          <div className="stat-label mb-1.5">Watch</div>
+          <ul className="space-y-2">
+            {brief.watch.map((w, i) => (
+              <li key={i} className="flex gap-2.5" style={{ fontSize: 'var(--t-body)', lineHeight: 1.55 }}>
+                <span className="shrink-0" style={{ color: 'var(--live)' }} aria-hidden="true">
+                  !
+                </span>
+                <span className="text-muted" style={{ maxWidth: '68ch' }}>{w}</span>
               </li>
             ))}
           </ul>
-        </Panel>
+        </div>
       )}
+
+      <div className="text-dim pt-1" style={{ fontSize: 'var(--t-meta)' }}>
+        {brief.sources.length ? `Sources: ${brief.sources.join(', ')} · ` : ''}
+        {brief.model} · {relativeTime(brief.generatedAt)}
+      </div>
     </div>
+  );
+}
+
+function NewsCard({ item }: { item: NewsItem }) {
+  return (
+    <li className="px-4 py-4 border-b border-line/60 last:border-b-0">
+      <h3 className="entity" style={{ fontSize: 'var(--t-h2)' }}>
+        {item.title}
+      </h3>
+      <div className="text-dim mt-1" style={{ fontSize: 'var(--t-meta)' }}>
+        {item.source}
+        {item.published ? ` · ${relativeTime(item.published)}` : ''}
+      </div>
+      {item.body && (
+        <p
+          className="text-muted mt-2"
+          style={{ fontSize: 'var(--t-body)', lineHeight: 1.6, maxWidth: '72ch' }}
+        >
+          {item.body}
+        </p>
+      )}
+      {item.url && (
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="link eyebrow inline-block mt-2 hover:text-ink"
+        >
+          Read at {item.source.split(' · ')[0]} →
+        </a>
+      )}
+    </li>
   );
 }
 

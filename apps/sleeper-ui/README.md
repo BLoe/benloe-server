@@ -123,6 +123,37 @@ They are disk-cached for six hours *and* the trimmed index is memoised in
 memory — re-parsing and re-walking the array per request was most of the player
 page's response time (0.4s → 0.09s).
 
+One trap: Sleeper publishes `gp` as a flat **18** for every player. That is the
+length of the NFL calendar, not a projection of who stays healthy — a player
+appears in at most 17 of those weeks. Dividing a season total by 18 prices in a
+bye, so `projectLineup` divides by 17 instead and the per-week figure means
+"in a week he actually plays".
+
+The projections also come pre-scored by Sleeper, so league-specific bonuses
+(this one has `bonus_rec_te`, 100-yard bonuses, and so on) are not reflected.
+The numbers are comparable across players in this league; they are not exactly
+what the league would award.
+
+### Projected season
+
+`/projected` puts every roster into its best lineup by projection, turns that
+into an expected weekly score, and resolves the real published schedule against
+it. Two decisions matter:
+
+- **Results are probabilities, not outcomes.** A lineup projected for 120
+  routinely puts up 90 or 150. Treating the projection as certainty produced a
+  14-0 top team, which is nonsense. `winProbability` compares two expected
+  scores through a normal CDF with a spread of roughly a quarter of the expected
+  score (floored at 12), so records come out fractional — 9.8-4.2, not 10-4.
+  The spread is a heuristic, not fitted to this league; it exists so the model
+  expresses uncertainty rather than pretending there is none.
+- **Standings order by expected wins, not points.** A team can project fewer
+  points per week and still rank higher on a soft schedule. The panel says so,
+  because the two columns otherwise look mis-sorted.
+
+Taxi and IR players are never selected, and a flex never steals the only player
+at a dedicated position.
+
 **Player history** (`buildPlayerHistory`) reconstructs a player's whole journey
 through a league from the draft picks plus every transaction: drafted round 1
 pick 7, claimed for $17, dropped, traded here. One subtlety worth keeping: a
@@ -135,6 +166,39 @@ multi-paragraph write-up and `metadata.url` links the source article; the first
 version rendered only the title, which said almost nothing. `get_player_outlook`
 is a separate, longer season write-up and returns the same `PlayerNews` shape —
 the prose is in `metadata.description`, not a `text` field.
+
+### The news desk
+
+`src/lib/news.ts` merges every source that will answer without a key. Sleeper's
+own feed is the spine; ESPN's public news endpoint tags each article with the
+athletes it mentions, which is the only way to filter it by player — the
+documented per-athlete endpoint returns nothing. Every source is fetched in
+parallel with its own timeout and degrades to nothing rather than failing the
+page.
+
+Outlets syndicate each other constantly, so `mergeNews` folds near-identical
+headlines into one card and lists the sources together. The dedupe key is the
+first six significant words with punctuation, case, and digits stripped —
+digits go because "Week 3 outlook" and "Week 4 outlook" from the same wire are
+the same story to a reader.
+
+### The AI brief
+
+The player page asks Claude (`claude-opus-5`, adaptive thinking, web search
+enabled) to read the gathered coverage and write a short analyst brief. The
+system prompt forbids inventing statistics, injuries, depth-chart positions, or
+transactions, and the response carries the sources it used — the panel labels
+it as generated, because it is a summary of other people's reporting.
+
+It costs real money: roughly **$0.09 per cold brief**, about 20 seconds. Results
+are cached on disk for twelve hours and concurrent requests for the same player
+share one call, so opening a page in two tabs pays once. **Fixture mode returns
+a canned brief and never calls the API** — the verification harness opens player
+pages on every pass, and live calls there would be both a charge and a
+non-deterministic screenshot.
+
+Set `ANTHROPIC_API_KEY` in `/srv/benloe/.env`. Without it the news desk still
+works and the brief panel says it is unavailable.
 
 ## Rosters
 
@@ -221,6 +285,14 @@ Fixture mode is not a full substitute for production. A league that has not kick
 off yet renders states the completed-2025 fixture never hits — that gap shipped a
 real bug once, so `verify` now covers a preseason league too, and
 `verify/prod-check.mjs` hits the deployed site against live data.
+`verify/live.mjs` screenshots the pages whose whole point is live data — the
+news desk, the AI brief, and weekly projections, none of which fixtures carry.
+
+Two selector traps, both of which have cost time here: the mobile and desktop
+layouts are *both* in the DOM, so a bare `text=` can latch onto a hidden copy
+and wait forever — use `:visible` or text only one layout carries. And the
+player page holds a request open for ~20s while the brief generates, so
+`waitUntil: 'networkidle'` never settles there; wait on a selector instead.
 
 ## Deployment
 

@@ -9,11 +9,13 @@ import TeamPage from './pages/Team';
 import Activity from './pages/Activity';
 import Chat from './pages/Chat';
 import PlayerPage from './pages/Player';
+import Projections from './pages/Projections';
 
 const NAV = [
   { to: '', label: 'Overview', end: true },
   { to: 'matchups', label: 'Matchups' },
   { to: 'teams', label: 'Teams' },
+  { to: 'projected', label: 'Projected' },
   { to: 'activity', label: 'Activity' },
   { to: 'chat', label: 'Chat' },
 ];
@@ -106,6 +108,7 @@ function LeagueShell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
               <Route path="teams" element={<TeamPage bundle={bundle.data} />} />
               <Route path="teams/:rosterId" element={<TeamPage bundle={bundle.data} />} />
               <Route path="players/:playerId" element={<PlayerPage bundle={bundle.data} />} />
+              <Route path="projected" element={<Projections bundle={bundle.data} />} />
               <Route path="activity" element={<Activity bundle={bundle.data} />} />
               <Route path="chat" element={<Chat bundle={bundle.data} />} />
             </Routes>
