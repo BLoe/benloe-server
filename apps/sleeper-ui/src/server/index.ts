@@ -46,6 +46,9 @@ import {
   describePeriod,
   indexProjections,
   projectSeason,
+  compareLineup,
+  positionalStrength,
+  ageProfile,
   scoringKey,
   type PlayerIndex,
 } from '../lib/derive.js';
@@ -593,6 +596,8 @@ app.get(
     ).catch(() => ({}));
 
     const teams = buildTeams(rosters, users);
+    const hasProjections = Object.keys(projections).length > 0;
+
     res.json({
       team: teams.get(rosterId),
       settings: roster.settings,
@@ -600,6 +605,20 @@ app.get(
       depth: buildDepthChart(roster, league.roster_positions, players),
       projections,
       projectionScope: period.week ? `Week ${period.week}` : `${league.season} season`,
+      // The three reads the roster page is actually opened for. All of them
+      // need projections, so they are simply absent without them rather than
+      // rendering as a page full of zeroes.
+      compare: hasProjections
+        ? compareLineup(roster, league.roster_positions, players, projections as any)
+        : null,
+      positions: hasProjections
+        ? (positionalStrength(rosters, league.roster_positions, players, projections as any).get(
+            rosterId
+          ) ?? [])
+        : [],
+      ages: hasProjections
+        ? ageProfile(roster, rosters, players, projections as any)
+        : null,
     });
   })
 );

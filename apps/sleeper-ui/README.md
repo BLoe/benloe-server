@@ -202,13 +202,43 @@ works and the brief panel says it is unavailable.
 
 ## Rosters
 
-`buildDepthChart` groups a roster by position rather than by lineup status. A
-dynasty manager asks "how deep am I at running back", and the answer is spread
-across the starting lineup, the flex, the bench and the taxi squad. Each position
-gets one panel showing all of them, with a badge for where each player sits: a
-green rail and slot badge for a starter, amber for a flex starter (starting, but
-filling in elsewhere), grey for bench, taxi and IR. A flex RB stays with the other
-RBs, because that is what the question is about.
+The page answers four questions, in the order they get asked.
+
+**What am I starting?** One column, lineup order, projected points down the
+right. An earlier version grouped everything by position into six stacked
+panels; it answered "how deep am I at RB" but never let you see the lineup as a
+unit, and the `BN` badge repeated a dozen times. The lineup card and the depth
+list now sit side by side, which is how a start/sit decision is actually made.
+
+**Should I change it?** `compareLineup` runs `projectLineup` against the lineup
+as set and reports the difference. Two subtleties:
+
+- It reports two lists — who to start, who to sit — not a set of swaps. Moving
+  one player reshuffles which slot everyone else fills, so "X replaces Y in the
+  FLEX" would be inventing a pairing that is not there.
+- Where two players project identically the best lineup picks one arbitrarily,
+  which surfaced as swaps worth zero points. When there is no gain there are no
+  moves. A test caught this, not the UI, which was hiding it behind `gain > 0`.
+
+**Where am I strong?** `positionalStrength` ranks each position against the
+other rosters — by what that position contributes to the *best* lineup, not by
+everything rostered there. Thirteen mediocre receivers are depth, and only
+three of them can play at once. Flex slots count toward whichever position
+fills them: if your third receiver is in your flex, receiver is doing that work.
+
+**Am I scoring now or later?** `ageProfile` splits projected points into three
+age bands. Weighted by points rather than counted by head, because a roster is
+not young for stashing four 22-year-olds who will not score. Injured reserve is
+excluded — those players are not part of the picture either way. The bands use
+a sequential ramp (one hue, light to dark) validated against the dark surface;
+age is ordered, so three unrelated categorical hues would have been wrong.
+
+All four need projections and are simply absent without them, rather than
+rendering a page of zeroes.
+
+`buildDepthChart` still groups by position, and the depth list keeps that
+grouping — the question "how deep am I at running back" is still worth
+answering, it just is not the only one.
 
 ## Design notes
 

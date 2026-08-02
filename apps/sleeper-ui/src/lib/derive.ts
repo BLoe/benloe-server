@@ -1406,3 +1406,243 @@ export function positionRank(pos: string | null): number {
   const i = POSITION_ORDER.indexOf(pos ?? '');
   return i === -1 ? 99 : i;
 }
+
+/* ------------------------------------------------------------------ *
+ * Roster analysis
+ *
+ * A roster page that only lists players answers "who do I have". These
+ * answer the questions a manager actually opens the page with: is my
+ * lineup right, where am I strong, and how old is all of this.
+ * ------------------------------------------------------------------ */
+
+export interface LineupMove {
+  player: Player;
+  /** Projection over whatever period the caller passed in. */
+  points: number;
+  perWeek: number;
+}
+
+export interface LineupCompare {
+  /** What the lineup as currently set is projected to score. */
+  currentPoints: number;
+  /** What the best available lineup is projected to score. */
+  bestPoints: number;
+  /** Points being left on the bench. Zero when the lineup is already optimal. */
+  gain: number;
+  /** Bench players the best lineup would start. */
+  bringIn: LineupMove[];
+  /** Current starters the best lineup would sit. */
+  sitDown: LineupMove[];
+}
+
+/**
+ * The current lineup against the best one available.
+ *
+ * Deliberately a set difference rather than a slot-by-slot mapping: swapping
+ * one player usually reshuffles which slot everyone else occupies, so
+ * "this player replaces that one in the FLEX" would be an invented pairing.
+ * "These come in, these sit" is what is actually true.
+ */
+export function compareLineup(
+  roster: RawRoster,
+  rosterPositions: string[],
+  players: PlayerIndex,
+  projections: Record<string, { points: number; games?: number | null }>
+): LineupCompare {
+  const best = projectLineup(roster, rosterPositions, players, projections);
+  const bestIds = new Set(best.lineup.map((s) => s.player.id));
+
+  const starters = (roster.starters ?? []).filter((id) => id && id !== '0');
+  const startingIds = new Set(starters);
+
+  const move = (id: string): LineupMove | null => {
+    const player = players[id];
+    if (!player) return null;
+    const proj = projections[id];
+    const points = proj?.points ?? 0;
+    const games = Math.min(NFL_GAMES, Math.max(1, proj?.games ?? NFL_GAMES));
+    return { player, points, perWeek: points / games };
+  };
+
+  const currentPoints = starters.reduce((sum, id) => sum + (projections[id]?.points ?? 0), 0);
+
+  const bringIn = best.lineup
+    .filter((s) => !startingIds.has(s.player.id))
+    .map((s) => ({ player: s.player, points: s.points, perWeek: s.perWeek }))
+    .sort((a, b) => b.points - a.points);
+
+  const sitDown = starters
+    .filter((id) => !bestIds.has(id))
+    .map(move)
+    .filter((m): m is LineupMove => !!m)
+    .sort((a, b) => a.points - b.points);
+
+  // A lineup can only ever be improved on, but floating-point noise can leave a
+  // few thousandths behind — treat that as optimal.
+  const gain = Math.max(0, best.total - currentPoints) < 0.05 ? 0 : best.total - currentPoints;
+
+  // Where two players project identically the "best" lineup picks one of them
+  // arbitrarily, which surfaces as a swap worth nothing. If there is no gain,
+  // there is no move worth naming.
+  if (gain === 0) {
+    return { currentPoints, bestPoints: best.total, gain: 0, bringIn: [], sitDown: [] };
+  }
+
+  return { currentPoints, bestPoints: best.total, gain, bringIn, sitDown };
+}
+
+export interface PositionStrength {
+  pos: string;
+  /** What this position contributes to the best lineup, per week. */
+  startingPoints: number;
+  /** 1 = the league's best at this position. */
+  rank: number;
+  /** The best any roster in the league gets from this position. */
+  leagueBest: number;
+  /** Everyone rostered here, lineup or not. */
+  rostered: number;
+}
+
+/**
+ * How each roster's positions stack up against the rest of the league.
+ *
+ * Strength is measured by what a position contributes to that roster's *best
+ * lineup*, not by everything rostered there — thirteen mediocre receivers are
+ * depth, not strength, and only three of them can play at once. Flex slots
+ * count toward whichever position fills them, which is the honest reading:
+ * if your third receiver is in your flex, receiver is doing that work.
+ */
+export function positionalStrength(
+  rosters: RawRoster[],
+  rosterPositions: string[],
+  players: PlayerIndex,
+  projections: Record<string, { points: number; games?: number | null }>
+): Map<number, PositionStrength[]> {
+  const byRoster = new Map<number, Map<string, { starting: number; rostered: number }>>();
+
+  for (const roster of rosters) {
+    const { lineup } = projectLineup(roster, rosterPositions, players, projections);
+    const table = new Map<string, { starting: number; rostered: number }>();
+
+    for (const s of lineup) {
+      const pos = s.player.pos ?? '?';
+      const row = table.get(pos) ?? { starting: 0, rostered: 0 };
+      row.starting += s.perWeek;
+      table.set(pos, row);
+    }
+    for (const id of roster.players ?? []) {
+      const pos = players[id]?.pos ?? '?';
+      const row = table.get(pos) ?? { starting: 0, rostered: 0 };
+      row.rostered += 1;
+      table.set(pos, row);
+    }
+    byRoster.set(roster.roster_id, table);
+  }
+
+  const allPositions = [...new Set([...byRoster.values()].flatMap((t) => [...t.keys()]))];
+  const out = new Map<number, PositionStrength[]>();
+
+  for (const [rosterId, table] of byRoster) {
+    const rows: PositionStrength[] = [];
+    for (const pos of allPositions) {
+      const mine = table.get(pos);
+      if (!mine || (!mine.starting && !mine.rostered)) continue;
+
+      const everyone = [...byRoster.values()].map((t) => t.get(pos)?.starting ?? 0);
+      const better = everyone.filter((v) => v > mine.starting).length;
+
+      rows.push({
+        pos,
+        startingPoints: mine.starting,
+        rank: better + 1,
+        leagueBest: Math.max(...everyone),
+        rostered: mine.rostered,
+      });
+    }
+    rows.sort((a, b) => POSITION_ORDER.indexOf(a.pos) - POSITION_ORDER.indexOf(b.pos));
+    out.set(rosterId, rows);
+  }
+
+  return out;
+}
+
+export interface AgeBand {
+  label: string;
+  /** Projected points per week from players in this band. */
+  points: number;
+  /** This band's share of the roster's projected points, 0–1. */
+  share: number;
+  players: number;
+}
+
+export interface AgeProfile {
+  bands: AgeBand[];
+  /** Average age across the roster, weighted by projected points. */
+  weightedAge: number | null;
+  /** The same figure for the league, so a roster has something to sit against. */
+  leagueWeightedAge: number | null;
+  /** League-wide share per band, in the same order as `bands`. */
+  leagueShares: number[];
+}
+
+const AGE_BANDS: Array<{ label: string; max: number }> = [
+  { label: '24 and under', max: 24 },
+  { label: '25 to 28', max: 28 },
+  { label: '29 and over', max: Infinity },
+];
+
+/**
+ * Where a dynasty roster's production sits on the age curve.
+ *
+ * Weighted by projected points rather than counted by head: a roster is not
+ * young because it stashed four 22-year-olds who will not score. Injured
+ * reserve is excluded — those players are not part of the picture this season
+ * either way.
+ */
+export function ageProfile(
+  roster: RawRoster,
+  allRosters: RawRoster[],
+  players: PlayerIndex,
+  projections: Record<string, { points: number; games?: number | null }>
+): AgeProfile {
+  const tally = (r: RawRoster) => {
+    const reserve = new Set(r.reserve ?? []);
+    const bands = AGE_BANDS.map((b) => ({ label: b.label, points: 0, share: 0, players: 0 }));
+    let weighted = 0;
+    let total = 0;
+
+    for (const id of r.players ?? []) {
+      if (reserve.has(id)) continue;
+      const player = players[id];
+      if (!player || player.age == null) continue;
+
+      const proj = projections[id];
+      const games = Math.min(NFL_GAMES, Math.max(1, proj?.games ?? NFL_GAMES));
+      const perWeek = (proj?.points ?? 0) / games;
+
+      const idx = AGE_BANDS.findIndex((b) => player.age! <= b.max);
+      bands[idx].points += perWeek;
+      bands[idx].players += 1;
+      weighted += player.age * perWeek;
+      total += perWeek;
+    }
+
+    for (const b of bands) b.share = total ? b.points / total : 0;
+    return { bands, weightedAge: total ? weighted / total : null, total };
+  };
+
+  const mine = tally(roster);
+  const league = allRosters.map(tally);
+  const leagueTotal = league.reduce((s, l) => s + l.total, 0);
+
+  return {
+    bands: mine.bands,
+    weightedAge: mine.weightedAge,
+    leagueWeightedAge: leagueTotal
+      ? league.reduce((s, l) => s + (l.weightedAge ?? 0) * l.total, 0) / leagueTotal
+      : null,
+    leagueShares: AGE_BANDS.map((_, i) =>
+      leagueTotal ? league.reduce((s, l) => s + l.bands[i].points, 0) / leagueTotal : 0
+    ),
+  };
+}

@@ -360,3 +360,48 @@ export interface Brief {
   generatedAt: number;
   model: string;
 }
+
+/* --- roster analysis ------------------------------------------------ */
+
+export interface LineupMove {
+  player: Player;
+  points: number;
+  perWeek: number;
+}
+
+export interface LineupCompare {
+  currentPoints: number;
+  bestPoints: number;
+  gain: number;
+  bringIn: LineupMove[];
+  sitDown: LineupMove[];
+}
+
+export interface PositionStrength {
+  pos: string;
+  startingPoints: number;
+  rank: number;
+  leagueBest: number;
+  rostered: number;
+}
+
+export interface AgeBand {
+  label: string;
+  points: number;
+  share: number;
+  players: number;
+}
+
+export interface AgeProfile {
+  bands: AgeBand[];
+  weightedAge: number | null;
+  leagueWeightedAge: number | null;
+  leagueShares: number[];
+}
+
+/** 1st, 2nd, 3rd… — used wherever a league rank is shown. */
+export function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
+}

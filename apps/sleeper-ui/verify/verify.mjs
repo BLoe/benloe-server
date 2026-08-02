@@ -60,6 +60,8 @@ const ROUTES = [
   // The preseason league is the one with season-long projections captured, so
   // it is where the depth chart's projection column is actually visible.
   { name: 'preseason-team', path: `/l/${PRESEASON}/teams`, waitFor: 'text=starters ·' },
+  // A roster whose lineup is not optimal, so the lineup check renders.
+  { name: 'team-lineup-check', path: `/l/${PRESEASON}/teams/4`, waitFor: 'text=Lineup check' },
 ];
 
 /** The signed-out entry screen, captured before any session exists. */
