@@ -47,11 +47,47 @@ export interface LeagueInfo {
   divisions: number;
 }
 
+export interface Period {
+  label: string;
+  isGameWeek: boolean;
+  week: number | null;
+}
+
 export interface LeagueBundle {
   league: LeagueInfo;
   currentWeek: number;
+  period: Period;
   myRosterId: number | null;
   standings: StandingsRow[];
+}
+
+export interface DepthEntry {
+  player: Player;
+  slot: string;
+  kind: 'starter' | 'bench' | 'ir' | 'taxi';
+  isFlex: boolean;
+  points?: number;
+}
+
+export interface PositionGroup {
+  pos: string;
+  entries: DepthEntry[];
+  counts: { starting: number; flex: number; bench: number; taxi: number; ir: number };
+  emptySlots: string[];
+}
+
+export interface WaiverBid {
+  rosterId: number;
+  teamName: string;
+  amount: number;
+  won: boolean;
+  outcome: 'Won' | 'Outbid' | 'Roster full' | 'Not enough budget' | 'Failed';
+}
+
+export interface WaiverContest {
+  playerId: string;
+  playerName: string;
+  bids: WaiverBid[];
 }
 
 export interface Me {
@@ -142,6 +178,7 @@ export interface ActivityRow {
   dropped: ActivityAsset[];
   faab: number | null;
   counterparties: Array<{ rosterId: number; teamName: string }>;
+  contests: WaiverContest[];
 }
 
 async function get<T>(path: string): Promise<T> {

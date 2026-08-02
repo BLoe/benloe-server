@@ -46,7 +46,7 @@ await check('standings team name → team page', async () => {
   await page.goto(`${BASE}/l/${LG}`, { waitUntil: 'networkidle' });
   await page.click('table a:has-text("Scooty Puff Sr")');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
-  await page.waitForSelector('text=Starting lineup');
+  await page.waitForSelector('text=FAAB left');
 });
 
 await check('roster player name → player page', async () => {
@@ -59,7 +59,7 @@ await check('roster player name → player page', async () => {
 await check('player page breadcrumb → owning team', async () => {
   await page.click('a[href*="/teams/"]:visible >> nth=0');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
-  await page.waitForSelector('text=Starting lineup');
+  await page.waitForSelector('text=FAAB left');
 });
 
 await check('scoreboard game → matchup detail', async () => {

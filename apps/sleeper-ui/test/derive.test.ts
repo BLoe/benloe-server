@@ -17,6 +17,8 @@ import {
   buildRosterView,
   buildChatFeed,
   buildActivityRows,
+  buildDepthChart,
+  describePeriod,
   dayLabel,
   type RawRoster,
   type RawUser,
@@ -751,5 +753,226 @@ describe('buildActivityRows', () => {
     const actions = new Set(rows.map((r) => r.action));
     expect(actions.has('Added')).toBe(true);
     expect(actions.has('Dropped')).toBe(true);
+  });
+});
+
+describe('describePeriod', () => {
+  const preseason = { week: 0, display_week: 0, season: '2026', season_type: 'pre', league_season: '2026' };
+  const regular = (w: number) => ({ week: w, display_week: w, season: '2026', season_type: 'regular', league_season: '2026' });
+  const current = { season: '2026', status: 'in_season', playoffWeekStart: 15 };
+
+  it('calls the offseason preseason rather than week 1', () => {
+    const p = describePeriod(preseason, current);
+    expect(p.label).toBe('Preseason');
+    expect(p.isGameWeek).toBe(false);
+    expect(p.week).toBeNull();
+  });
+
+  it('labels the true offseason', () => {
+    expect(describePeriod({ ...preseason, season_type: 'off' }, current).label).toBe('Offseason');
+  });
+
+  it('counts regular season weeks', () => {
+    expect(describePeriod(regular(1), current).label).toBe('Week 1');
+    expect(describePeriod(regular(9), current).label).toBe('Week 9');
+    expect(describePeriod(regular(9), current).week).toBe(9);
+  });
+
+  it('names the playoffs once the league reaches them', () => {
+    expect(describePeriod(regular(15), current).label).toBe('Playoffs · Week 15');
+    expect(describePeriod(regular(16), current).label).toBe('Playoffs · Week 16');
+    // The cut-off is the league's own setting, not a fixed week.
+    expect(describePeriod(regular(15), { ...current, playoffWeekStart: 16 }).label).toBe('Week 15');
+  });
+
+  it('treats a finished league as final regardless of the NFL calendar', () => {
+    expect(describePeriod(regular(5), { season: '2026', status: 'complete', playoffWeekStart: 15 }).label).toBe('Final');
+  });
+
+  it('marks a past season as final and still points at its last week', () => {
+    const p = describePeriod(preseason, { season: '2025', status: 'complete', playoffWeekStart: 15 });
+    expect(p.label).toBe('2025 final');
+    expect(p.isGameWeek).toBe(false);
+    expect(p.week).toBe(17);
+  });
+
+  it('does not count week 0 as a game week even when the type says regular', () => {
+    expect(describePeriod(regular(0), current).label).toBe('Preseason');
+  });
+
+  it('falls back sensibly on an unknown season type', () => {
+    expect(describePeriod({ ...regular(4), season_type: 'weird' }, current).label).toBe('Week 4');
+    expect(describePeriod({ ...regular(0), season_type: 'weird' }, current).label).toBe('Offseason');
+  });
+
+  it('reads the real preseason state fixture as preseason', () => {
+    expect(describePeriod(load('state'), { season: '2026', status: 'in_season' }).label).toBe('Preseason');
+  });
+});
+
+describe('waiver bid history', () => {
+  const teams = buildTeams(rosters, users);
+  const raw = Object.values(load('dynasty-2025.transactions') as Record<string, any[]>).flat();
+  const rows = buildActivityRows(raw, teams, players);
+
+  const allContests = rows.flatMap((r) => r.contests);
+  const allBids = allContests.flatMap((c) => c.bids);
+
+  it('attaches competing bids to a contested claim', () => {
+    expect(rows.filter((r) => r.contests.length).length).toBeGreaterThan(10);
+  });
+
+  it('only records a contest when somebody else actually bid', () => {
+    for (const c of allContests) expect(c.bids.length).toBeGreaterThan(1);
+  });
+
+  it('never attaches bids to a trade or a free agency move', () => {
+    for (const r of rows) {
+      if (r.method !== 'Waivers') expect(r.contests).toEqual([]);
+    }
+  });
+
+  it('names the player each contest was for', () => {
+    for (const c of allContests) {
+      expect(c.playerName).toBeTruthy();
+      expect(c.playerName).not.toMatch(/^Player \d/);
+    }
+  });
+
+  it('orders bids highest first', () => {
+    for (const c of allContests) {
+      for (let i = 1; i < c.bids.length; i++) {
+        expect(c.bids[i - 1].amount).toBeGreaterThanOrEqual(c.bids[i].amount);
+      }
+    }
+  });
+
+  it('marks exactly one winner per contest', () => {
+    for (const c of allContests) {
+      expect(c.bids.filter((b) => b.won)).toHaveLength(1);
+    }
+  });
+
+  it('the winning bid belongs to the team on the row', () => {
+    for (const r of rows) {
+      for (const c of r.contests) {
+        expect(c.bids.find((b) => b.won)!.rosterId).toBe(r.rosterId);
+      }
+    }
+  });
+
+  it('drops a target that was won more than once in the same week', () => {
+    // `leg` is 1 for the entire preseason, so a player can genuinely be claimed
+    // twice weeks apart. Those cannot be split into runs, so they are omitted
+    // rather than shown with two winners.
+    for (const c of allContests) expect(c.bids.filter((b) => b.won)).toHaveLength(1);
+  });
+
+  it('keeps two players claimed together as separate contests', () => {
+    // A single waiver transaction can add more than one player; flattening them
+    // into one list produced two winners for one "contest".
+    const multi = rows.find((r) => r.contests.length > 1);
+    if (multi) {
+      const ids = multi.contests.map((c) => c.playerId);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+    for (const c of allContests) expect(c.bids.filter((b) => b.won)).toHaveLength(1);
+  });
+
+  it('translates Sleeper failure notes into short outcomes', () => {
+    const outcomes = new Set(allBids.map((b) => b.outcome));
+    expect(outcomes.has('Won')).toBe(true);
+    expect(outcomes.has('Outbid')).toBe(true);
+    for (const b of allBids) expect(b.won).toBe(b.outcome === 'Won');
+  });
+
+  it('surfaces a bid that beat the winner but failed for another reason', () => {
+    // Kyle Monangai in week 1: two higher bids failed on roster limits.
+    const beaten = allContests.find((c) =>
+      c.bids.some((b) => !b.won && b.amount > c.bids.find((x) => x.won)!.amount)
+    );
+    expect(beaten).toBeDefined();
+    expect(beaten!.bids.some((b) => b.outcome === 'Roster full')).toBe(true);
+  });
+
+  it('resolves every bidder to a team name', () => {
+    for (const b of allBids) expect(b.teamName).not.toMatch(/^Roster /);
+  });
+});
+
+describe('buildDepthChart', () => {
+  const benRoster = rosters.find((r) => r.owner_id === BEN)!;
+  const groups = buildDepthChart(benRoster, league.roster_positions, players);
+  const byPos = Object.fromEntries(groups.map((g) => [g.pos, g]));
+
+  it('leads with the positions the league actually starts', () => {
+    expect(groups.map((g) => g.pos).slice(0, 4)).toEqual(['QB', 'RB', 'WR', 'TE']);
+  });
+
+  it('accounts for every rostered player exactly once', () => {
+    const ids = groups.flatMap((g) => g.entries.map((e) => e.player.id));
+    expect(new Set(ids).size).toBe(new Set(benRoster.players!).size);
+    expect(ids).toHaveLength(new Set(ids).size);
+  });
+
+  it('keeps a flex starter with their own position, flagged as flex', () => {
+    const rb = byPos.RB;
+    const flex = rb.entries.filter((e) => e.isFlex);
+    expect(flex.length).toBeGreaterThan(0);
+    for (const e of flex) {
+      expect(e.player.pos).toBe('RB');
+      expect(e.kind).toBe('starter');
+      expect(e.slot).toMatch(/FLEX/);
+    }
+    expect(rb.counts.flex).toBe(flex.length);
+  });
+
+  it('puts starters first, then bench, then taxi, then injured reserve', () => {
+    const order = { starter: 0, bench: 1, taxi: 2, ir: 3 } as const;
+    for (const g of groups) {
+      for (let i = 1; i < g.entries.length; i++) {
+        expect(order[g.entries[i].kind]).toBeGreaterThanOrEqual(order[g.entries[i - 1].kind]);
+      }
+    }
+  });
+
+  it('ranks a dedicated starter above a flex starter', () => {
+    const starters = byPos.RB.entries.filter((e) => e.kind === 'starter');
+    const firstFlex = starters.findIndex((e) => e.isFlex);
+    const lastDedicated = starters.map((e) => e.isFlex).lastIndexOf(false);
+    expect(firstFlex).toBeGreaterThan(lastDedicated);
+  });
+
+  it('counts agree with the entries in every group', () => {
+    for (const g of groups) {
+      const c = g.counts;
+      expect(c.starting).toBe(g.entries.filter((e) => e.kind === 'starter').length);
+      expect(c.bench).toBe(g.entries.filter((e) => e.kind === 'bench').length);
+      expect(c.taxi).toBe(g.entries.filter((e) => e.kind === 'taxi').length);
+      expect(c.ir).toBe(g.entries.filter((e) => e.kind === 'ir').length);
+    }
+  });
+
+  it('keeps taxi and injured reserve in their position group', () => {
+    expect(byPos.RB.counts.taxi).toBeGreaterThan(0);
+    expect(byPos.RB.counts.ir).toBeGreaterThan(0);
+    for (const e of byPos.RB.entries) expect(e.player.pos).toBe('RB');
+  });
+
+  it('reports an unfilled starting slot as a hole', () => {
+    const empty = buildDepthChart(
+      { ...benRoster, starters: ['0', '0'], players: [], reserve: [], taxi: [] } as any,
+      ['QB', 'FLEX'],
+      players
+    );
+    expect(empty.find((g) => g.pos === 'QB')!.emptySlots).toEqual(['QB']);
+    expect(empty.find((g) => g.pos === 'FLEX')!.emptySlots).toEqual(['FLEX']);
+  });
+
+  it('handles a league with a DEF slot', () => {
+    const aRosters = load('auction-2025.rosters');
+    const aLeague = load('auction-2025.league');
+    const g = buildDepthChart(aRosters[0], aLeague.roster_positions, players);
+    expect(g.some((x) => x.pos === 'DEF')).toBe(true);
   });
 });

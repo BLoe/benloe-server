@@ -1,8 +1,17 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { fmt1, record, useApi, type LeagueBundle, type RosterSlot, type Team } from '../api';
+import {
+  fmt1,
+  posInk,
+  record,
+  useApi,
+  type DepthEntry,
+  type LeagueBundle,
+  type PositionGroup,
+  type RosterSlot,
+  type Team,
+} from '../api';
 import {
   Avatar,
-  Empty,
   ErrorState,
   Loading,
   Panel,
@@ -19,6 +28,7 @@ interface RosterResponse {
   team: Team;
   settings: Record<string, number>;
   slots: RosterSlot[];
+  depth: PositionGroup[];
 }
 
 export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
@@ -135,10 +145,9 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
               </Panel>
             )}
 
-            <RosterGroup title="Starting lineup" slots={data.slots.filter((s) => s.kind === 'starter')} />
-            <RosterGroup title="Bench" slots={data.slots.filter((s) => s.kind === 'bench')} sortByPos />
-            <RosterGroup title="Taxi squad" slots={data.slots.filter((s) => s.kind === 'taxi')} sortByPos />
-            <RosterGroup title="Injured reserve" slots={data.slots.filter((s) => s.kind === 'ir')} sortByPos />
+            {data.depth.map((group) => (
+              <DepthGroup key={group.pos} group={group} />
+            ))}
           </>
         )}
       </div>
@@ -146,89 +155,127 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
   );
 }
 
-const POS_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
-
-function RosterGroup({
-  title,
-  slots,
-  sortByPos = false,
-}: {
-  title: string;
-  slots: RosterSlot[];
-  sortByPos?: boolean;
-}) {
-  if (!slots.length) {
-    if (title === 'Taxi squad' || title === 'Injured reserve') return null;
-    return (
-      <Panel title={title}>
-        <Empty title="Nobody here" />
-      </Panel>
-    );
-  }
-
-  const rows = sortByPos
-    ? [...slots].sort((a, b) => {
-        const ai = POS_ORDER.indexOf(a.player?.pos ?? '');
-        const bi = POS_ORDER.indexOf(b.player?.pos ?? '');
-        return (
-          (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) ||
-          (a.player?.name ?? '').localeCompare(b.player?.name ?? '')
-        );
-      })
-    : slots;
+/**
+ * One position, whole depth chart.
+ *
+ * A dynasty manager asks "how deep am I at running back", and the answer is
+ * spread across the starting lineup, the flex, the bench and the taxi squad.
+ * Grouping by position puts all of it in one place, with each player carrying
+ * where they currently sit — so a flex RB stays with the other RBs rather than
+ * disappearing into a separate lineup panel.
+ */
+function DepthGroup({ group }: { group: PositionGroup }) {
+  const c = group.counts;
+  const summary = [
+    c.starting ? `${c.starting} starting` : null,
+    c.flex ? `${c.flex} in flex` : null,
+    c.bench ? `${c.bench} on bench` : null,
+    c.taxi ? `${c.taxi} taxi` : null,
+    c.ir ? `${c.ir} IR` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
-    <Panel title={title} action={<span className="eyebrow">{slots.length}</span>}>
+    <Panel
+      title={
+        <span className="flex items-baseline gap-2.5">
+          <span style={{ color: posInk(group.pos), fontSize: 'var(--t-h2)' }}>{group.pos}</span>
+          <span className="text-dim normal-case tracking-normal" style={{ fontSize: 'var(--t-meta)' }}>
+            {summary || 'nobody'}
+          </span>
+        </span>
+      }
+      action={<span className="eyebrow">{group.entries.length}</span>}
+    >
       <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3">
-        {rows.map((slot, i) => (
-          <PlayerCard key={`${slot.slot}-${slot.player?.id ?? i}`} slot={slot} />
+        {group.entries.map((e) => (
+          <DepthRow key={e.player.id} entry={e} />
+        ))}
+        {group.emptySlots.map((slot, i) => (
+          <div
+            key={`empty-${i}`}
+            className="flex items-center gap-3 px-3.5 py-2.5 border-b border-r border-line/50"
+          >
+            <StatusBadge slot={slot} kind="starter" isFlex={false} />
+            <span className="text-dim" style={{ fontSize: 'var(--t-body)' }}>
+              Nobody in this slot
+            </span>
+          </div>
         ))}
       </div>
     </Panel>
   );
 }
 
-function PlayerCard({ slot }: { slot: RosterSlot }) {
-  const p = slot.player;
+function DepthRow({ entry }: { entry: DepthEntry }) {
+  const p = entry.player;
+  const starting = entry.kind === 'starter';
   return (
-    <div className="flex items-center gap-3 px-3.5 py-2.5 border-b border-r border-line/50">
+    <div
+      className="flex items-center gap-3 px-3.5 py-2.5 border-b border-r border-line/50"
+      style={{ background: starting ? 'rgba(63,191,127,.05)' : undefined }}
+    >
+      {/* A green rail is the fastest read of "is this player in my lineup". */}
       <span
-        className="chip shrink-0"
-        style={{ background: '#161F29', color: '#93A2B2', minWidth: 44 }}
-      >
-        {slot.slot === 'SUPER_FLEX' ? 'SFLX' : slot.slot}
+        className="w-[3px] self-stretch shrink-0 rounded-full"
+        style={{ background: starting ? 'var(--win)' : 'transparent' }}
+        aria-hidden="true"
+      />
+      <StatusBadge slot={entry.slot} kind={entry.kind} isFlex={entry.isFlex} />
+      <span className="min-w-0 flex-1">
+        <PlayerLink
+          id={p.id}
+          name={p.name}
+          className="block truncate leading-tight"
+          style={{ fontSize: 'var(--t-body)', color: starting ? undefined : '#93A2B2' }}
+        />
+        <span className="block text-dim leading-tight" style={{ fontSize: 'var(--t-meta)' }}>
+          {p.team ?? 'Free agent'}
+          {p.no ? ` · #${p.no}` : ''}
+          {p.age ? ` · ${p.age}y` : ''}
+          {p.bye ? ` · bye ${p.bye}` : ''}
+        </span>
       </span>
-      {p ? (
-        <>
-          <span className="min-w-0 flex-1">
-            <PlayerLink
-              id={p.id}
-              name={p.name}
-              className="block truncate leading-tight"
-              style={{ fontSize: 'var(--t-body)' }}
-            />
-            <span className="block text-dim leading-tight" style={{ fontSize: 'var(--t-meta)' }}>
-              {p.team ?? 'Free agent'}
-              {p.no ? ` · #${p.no}` : ''}
-              {p.age ? ` · ${p.age}y` : ''}
-              {p.bye ? ` · bye ${p.bye}` : ''}
-            </span>
-          </span>
-          {p.status && (
-            <span
-              className="chip shrink-0"
-              style={{ color: 'var(--loss)', background: 'rgba(229,72,77,.14)' }}
-              title={`Injury status: ${p.status}`}
-            >
-              {p.status.slice(0, 3)}
-            </span>
-          )}
-          <Pos pos={p.pos} />
-        </>
-      ) : (
-        <span className="text-dim" style={{ fontSize: 'var(--t-meta)' }}>Empty slot</span>
+      {p.status && (
+        <span
+          className="chip shrink-0"
+          style={{ color: 'var(--loss)', background: 'rgba(229,72,77,.14)' }}
+          title={`Injury status: ${p.status}`}
+        >
+          {p.status.slice(0, 3)}
+        </span>
       )}
     </div>
+  );
+}
+
+/**
+ * Where this player sits. Colour separates the three ideas: green for a lineup
+ * slot, amber for a flex slot (starting, but filling in elsewhere), grey for
+ * everything not playing this week.
+ */
+function StatusBadge({
+  slot,
+  kind,
+  isFlex,
+}: {
+  slot: string;
+  kind: DepthEntry['kind'];
+  isFlex: boolean;
+}) {
+  const label = slot === 'SUPER_FLEX' ? 'SFLX' : slot;
+  const style =
+    kind !== 'starter'
+      ? { color: '#93A2B2', background: '#161F29' }
+      : isFlex
+        ? { color: 'var(--pos-flex-ink)', background: 'color-mix(in srgb, var(--pos-flex) 22%, transparent)' }
+        : { color: 'var(--win)', background: 'rgba(63,191,127,.16)' };
+
+  return (
+    <span className="chip shrink-0" style={{ ...style, minWidth: 48 }}>
+      {label}
+    </span>
   );
 }
 

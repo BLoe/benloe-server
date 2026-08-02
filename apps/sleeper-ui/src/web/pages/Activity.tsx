@@ -1,5 +1,11 @@
-import { useState } from 'react';
-import { useApi, type ActivityAsset, type ActivityRow, type LeagueBundle } from '../api';
+import { Fragment, useState } from 'react';
+import {
+  useApi,
+  type ActivityAsset,
+  type ActivityRow,
+  type LeagueBundle,
+  type WaiverContest,
+} from '../api';
 import { Empty, ErrorState, Loading, Panel, Pos, PlayerLink, TeamLink } from '../components';
 
 const FILTERS = [
@@ -138,6 +144,12 @@ export default function Activity({ bundle }: { bundle: LeagueBundle }) {
                     </div>
                   </div>
                 </div>
+
+                {r.contests.map((c) => (
+                  <div className="mt-3" key={c.playerId}>
+                    <BidHistory contest={c} />
+                  </div>
+                ))}
               </li>
             ))}
           </ul>
@@ -158,7 +170,8 @@ export default function Activity({ bundle }: { bundle: LeagueBundle }) {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.key} className="border-b border-line/70 hover:bg-raised transition-colors align-top">
+                  <Fragment key={r.key}>
+                  <tr className="border-b border-line/70 hover:bg-raised transition-colors align-top">
                     <td className="td">
                       <div className="font-display font-semibold" style={{ fontSize: 'var(--t-body)' }}>
                         Week {r.week}
@@ -218,6 +231,14 @@ export default function Activity({ bundle }: { bundle: LeagueBundle }) {
                       )}
                     </td>
                   </tr>
+                  {r.contests.map((c) => (
+                    <tr key={c.playerId} className="border-b border-line/70">
+                      <td className="td pt-0" colSpan={6}>
+                        <BidHistory contest={c} />
+                      </td>
+                    </tr>
+                  ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -237,6 +258,77 @@ export default function Activity({ bundle }: { bundle: LeagueBundle }) {
         )}
       </Panel>
     </div>
+  );
+}
+
+/**
+ * Who else wanted this player, and what it took.
+ *
+ * Sleeper shows only the winning bid, which hides the most interesting part: how
+ * close it was, and the bids that were higher but failed for an unrelated reason
+ * like a full roster. A details element keeps that out of the way until asked
+ * for, and needs no JavaScript to open.
+ */
+function BidHistory({ contest }: { contest: WaiverContest }) {
+  const winner = contest.bids.find((b) => b.won);
+  const runnerUp = contest.bids.find((b) => !b.won);
+  const margin =
+    winner && runnerUp ? winner.amount - runnerUp.amount : null;
+
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none inline-flex items-center gap-2 text-muted hover:text-ink transition-colors">
+        <span className="stat-label">
+          {contest.bids.length} bids for {contest.playerName}
+        </span>
+        {margin != null && (
+          <span className="text-dim" style={{ fontSize: 'var(--t-meta)' }}>
+            {margin > 0 ? `won by $${margin}` : 'won on tiebreak'}
+          </span>
+        )}
+        <span className="text-dim transition-transform group-open:rotate-90" aria-hidden="true">
+          ›
+        </span>
+      </summary>
+
+      <ul className="mt-2 mb-1 border border-line rounded-[3px] overflow-hidden max-w-[560px]">
+        {contest.bids.map((b, i) => (
+          <li
+            key={`${b.rosterId}-${i}`}
+            className="flex items-center gap-3 px-3 py-1.5 border-b border-line/60 last:border-b-0"
+            style={{ background: b.won ? 'rgba(63,191,127,.08)' : undefined }}
+          >
+            <span
+              className="font-display font-bold tabular-nums shrink-0 text-right"
+              style={{
+                fontSize: 'var(--t-h2)',
+                width: 54,
+                color: b.won ? 'var(--live)' : '#93A2B2',
+              }}
+            >
+              ${b.amount}
+            </span>
+            <TeamLink
+              rosterId={b.rosterId}
+              className="flex-1 min-w-0 truncate"
+              style={{ fontSize: 'var(--t-body)', color: b.won ? undefined : '#93A2B2' }}
+            >
+              {b.teamName}
+            </TeamLink>
+            <span
+              className="chip shrink-0"
+              style={
+                b.won
+                  ? { color: 'var(--win)', background: 'rgba(63,191,127,.16)' }
+                  : { color: '#93A2B2', background: '#161F29' }
+              }
+            >
+              {b.outcome}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

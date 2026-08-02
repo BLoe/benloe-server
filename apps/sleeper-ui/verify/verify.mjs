@@ -45,7 +45,7 @@ const VIEWS = {
 const ROUTES = [
   { name: 'overview', path: `/l/${LEAGUE}`, waitFor: 'text=Standings' },
   { name: 'matchups', path: `/l/${LEAGUE}/matchups/12`, waitFor: 'text=Full breakdown' },
-  { name: 'teams', path: `/l/${LEAGUE}/teams`, waitFor: 'text=Starting lineup' },
+  { name: 'teams', path: `/l/${LEAGUE}/teams`, waitFor: 'text=FAAB left' },
   { name: 'activity', path: `/l/${LEAGUE}/activity`, waitFor: 'text=League activity' },
   // A league before kickoff renders a different set of states entirely, and live
   // production caught a bug here that the completed-season fixture could not.
