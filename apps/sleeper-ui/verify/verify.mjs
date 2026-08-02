@@ -54,6 +54,12 @@ const ROUTES = [
   { name: 'activity-trades', path: `/l/${LEAGUE}/activity`, waitFor: 'text=One row per manager' },
   { name: 'matchup-detail', path: `/l/${LEAGUE}/matchups/12/1`, waitFor: 'text=Edge by slot' },
   { name: 'player', path: `/l/${LEAGUE}/players/4984`, waitFor: 'text=Points by week' },
+  // The projected season only makes sense on the league that has not played
+  // yet, which is also the one with published projections.
+  { name: 'projected', path: `/l/${PRESEASON}/projected`, waitFor: 'text=Projected standings' },
+  // The preseason league is the one with season-long projections captured, so
+  // it is where the depth chart's projection column is actually visible.
+  { name: 'preseason-team', path: `/l/${PRESEASON}/teams`, waitFor: 'text=starters ·' },
 ];
 
 /** The signed-out entry screen, captured before any session exists. */

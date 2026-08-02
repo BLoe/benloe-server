@@ -5,6 +5,7 @@ import {
   type LeagueBundle,
   type Matchup,
   type MatchupSide,
+  type ProjectionMap,
   type RosterSlot,
 } from '../api';
 import {
@@ -26,9 +27,11 @@ export default function Matchups({ bundle }: { bundle: LeagueBundle }) {
   const { league, currentWeek, myRosterId, period } = bundle;
   const week = Number(weekParam) || period.week || currentWeek;
 
-  const { data, loading, error } = useApi<{ week: number; matchups: Matchup[] }>(
-    `/api/league/${league.leagueId}/matchups/${week}`
-  );
+  const { data, loading, error } = useApi<{
+    week: number;
+    matchups: Matchup[];
+    projections: ProjectionMap;
+  }>(`/api/league/${league.leagueId}/matchups/${week}`);
 
   const lastWeek = league.status === 'complete' ? league.playoffWeekStart + 2 : currentWeek;
   const weeks = Array.from({ length: Math.max(1, lastWeek) }, (_, i) => i + 1);
@@ -81,7 +84,13 @@ export default function Matchups({ bundle }: { bundle: LeagueBundle }) {
       )}
 
       {focused ? (
-        <MatchupCard matchup={focused} myRosterId={myRosterId} leagueId={league.leagueId} detail />
+        <MatchupCard
+          matchup={focused}
+          myRosterId={myRosterId}
+          leagueId={league.leagueId}
+          projections={data?.projections ?? {}}
+          detail
+        />
       ) : (
         <div className="grid grid-cols-1 2xl:grid-cols-2 gap-5">
           {data?.matchups.map((m) => (
@@ -90,6 +99,7 @@ export default function Matchups({ bundle }: { bundle: LeagueBundle }) {
               matchup={m}
               myRosterId={myRosterId}
               leagueId={league.leagueId}
+              projections={data.projections ?? {}}
             />
           ))}
         </div>
@@ -102,14 +112,18 @@ function MatchupCard({
   matchup,
   myRosterId,
   leagueId,
+  projections,
   detail = false,
 }: {
   matchup: Matchup;
   myRosterId: number | null;
   leagueId: string;
+  projections: ProjectionMap;
   detail?: boolean;
 }) {
   const { home, away, week } = matchup;
+  const proj = (slot: RosterSlot | undefined) =>
+    slot?.player ? (projections[slot.player.id]?.points ?? null) : null;
 
   if (!away) {
     return (
@@ -129,6 +143,15 @@ function MatchupCard({
   const awayStarters = starters(away);
   const slotCount = Math.max(homeStarters.length, awayStarters.length);
 
+  const projTotal = (slots: RosterSlot[]) =>
+    slots.reduce((sum, s) => sum + (proj(s) ?? 0), 0);
+  const homeProj = projTotal(homeStarters);
+  const awayProj = projTotal(awayStarters);
+  // Before kickoff every score is zero, and a 0.0–0.0 scoreboard is useless.
+  // The projection stands in until there is something real to show.
+  const notPlayed = home.points === 0 && away.points === 0;
+  const showProjectedScore = notPlayed && homeProj + awayProj > 0;
+
   const compareRows = Array.from({ length: slotCount }, (_, i) => ({
     slot: homeStarters[i]?.slot ?? awayStarters[i]?.slot ?? '',
     home: homeStarters[i]?.points ?? 0,
@@ -141,7 +164,11 @@ function MatchupCard({
           side-by-side header squeezed both names to three characters. */}
       <header className="sm:hidden p-3.5 border-b border-line space-y-2">
         {[home, away].map((side, i) => {
-          const won = side.points >= (i === 0 ? away.points : home.points);
+          const mine = i === 0 ? homeProj : awayProj;
+          const theirs = i === 0 ? awayProj : homeProj;
+          const won = showProjectedScore
+            ? mine >= theirs
+            : side.points >= (i === 0 ? away.points : home.points);
           return (
             <div key={side.rosterId} className="flex items-center gap-2.5">
               <span
@@ -156,13 +183,17 @@ function MatchupCard({
                 className="font-display font-bold tabular-nums shrink-0"
                 style={{ fontSize: 'var(--t-h1)', color: won ? '#E8EDF2' : '#93A2B2' }}
               >
-                {fmt1(side.points)}
+                {fmt1(showProjectedScore ? mine : side.points)}
               </span>
             </div>
           );
         })}
         <div className="stat-label pl-[13px]">
-          {matchup.margin === 0 ? 'Tied' : `Won by ${fmt1(matchup.margin)}`}
+          {showProjectedScore
+            ? `Projected · ${fmt1(Math.abs(homeProj - awayProj))} apart`
+            : matchup.margin === 0
+              ? 'Tied'
+              : `Won by ${fmt1(matchup.margin)}`}
         </div>
       </header>
 
@@ -173,19 +204,32 @@ function MatchupCard({
 
         <div className="text-center px-2">
           <div className="flex items-baseline gap-2.5">
-            <span className="font-display font-bold tabular-nums leading-none" style={{ fontSize: 'var(--t-hero)' }}>
-              {fmt1(home.points)}
+            <span
+              className="font-display font-bold tabular-nums leading-none"
+              style={{
+                fontSize: 'var(--t-hero)',
+                color: showProjectedScore && homeProj < awayProj ? '#93A2B2' : undefined,
+              }}
+            >
+              {fmt1(showProjectedScore ? homeProj : home.points)}
             </span>
             <span className="text-dim">–</span>
             <span
               className="font-display font-bold tabular-nums leading-none"
-              style={{ fontSize: 'var(--t-hero)', color: '#93A2B2' }}
+              style={{
+                fontSize: 'var(--t-hero)',
+                color: showProjectedScore && awayProj < homeProj ? undefined : '#93A2B2',
+              }}
             >
-              {fmt1(away.points)}
+              {fmt1(showProjectedScore ? awayProj : away.points)}
             </span>
           </div>
           <div className="stat-label mt-1.5">
-            {matchup.margin === 0 ? 'Tied' : `Won by ${fmt1(matchup.margin)}`}
+            {showProjectedScore
+              ? `Projected · ${fmt1(Math.abs(homeProj - awayProj))} apart`
+              : matchup.margin === 0
+                ? 'Tied'
+                : `Won by ${fmt1(matchup.margin)}`}
           </div>
         </div>
 
@@ -218,19 +262,19 @@ function MatchupCard({
               <div className="sm:hidden px-3.5 py-2">
                 <div className="stat-label mb-1">{slot === 'SUPER_FLEX' ? 'SFLX' : slot}</div>
                 <div className="space-y-1">
-                  <PlayerRow slot={h} points={hp} better={hp > ap} align="left" />
-                  <PlayerRow slot={a} points={ap} better={ap > hp} align="left" />
+                  <PlayerRow slot={h} points={hp} projected={proj(h)} preGame={notPlayed} better={hp > ap} align="left" />
+                  <PlayerRow slot={a} points={ap} projected={proj(a)} preGame={notPlayed} better={ap > hp} align="left" />
                 </div>
               </div>
 
               <div className="hidden sm:grid grid-cols-[1fr_58px_1fr] items-center gap-2 px-4 py-2">
-                <PlayerRow slot={h} points={hp} better={hp > ap} align="left" />
+                <PlayerRow slot={h} points={hp} projected={proj(h)} preGame={notPlayed} better={hp > ap} align="left" />
                 <div className="text-center">
                   <span className="chip text-muted" style={{ background: '#161F29', minWidth: 44 }}>
                     {slot === 'SUPER_FLEX' ? 'SFLX' : slot}
                   </span>
                 </div>
-                <PlayerRow slot={a} points={ap} better={ap > hp} align="right" />
+                <PlayerRow slot={a} points={ap} projected={proj(a)} preGame={notPlayed} better={ap > hp} align="right" />
               </div>
             </div>
           );
@@ -240,7 +284,11 @@ function MatchupCard({
       {detail && <BenchRows home={home} away={away} />}
 
       <footer className="px-4 py-2.5 border-t border-line flex justify-between text-dim" style={{ fontSize: 'var(--t-meta)' }}>
-        <span>{detail ? `${fmt1(matchup.total)} combined` : 'Starters only'}</span>
+        <span>
+          {detail ? `${fmt1(matchup.total)} combined` : 'Starters only'}
+          {homeProj + awayProj > 0 &&
+            (notPlayed ? ' · numbers are projections' : ' · faint number is the projection')}
+        </span>
         {!detail && (
           <Link to={matchupHref(leagueId, week, matchup.matchupId)} className="link hover:text-ink">
             Full breakdown →
@@ -287,12 +335,17 @@ function BenchRows({ home, away }: { home: MatchupSide; away: MatchupSide }) {
 function PlayerRow({
   slot,
   points,
+  projected = null,
+  preGame = false,
   better,
   align,
   dim = false,
 }: {
   slot: RosterSlot | undefined;
   points: number;
+  projected?: number | null;
+  /** Nothing has kicked off yet, so there is no actual score to lead with. */
+  preGame?: boolean;
   better: boolean;
   align: 'left' | 'right';
   dim?: boolean;
@@ -306,16 +359,33 @@ function PlayerRow({
 
   return (
     <div className={`flex items-center gap-2.5 min-w-0 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
+      {/* Actual over projected: the two numbers answer different questions, and
+          stacking them keeps the row on one line. Before kickoff there is no
+          actual, so the projection takes the top line rather than sitting under
+          a column of dashes. */}
       <span
-        className="font-display font-bold tabular-nums shrink-0"
-        style={{
-          color: dim ? '#6E7E8D' : better ? '#E8EDF2' : '#93A2B2',
-          fontSize: dim ? 'var(--t-body)' : 'var(--t-h2)',
-          width: 46,
-          textAlign: align === 'right' ? 'left' : 'right',
-        }}
+        className="shrink-0"
+        style={{ width: 46, textAlign: align === 'right' ? 'left' : 'right' }}
       >
-        {points ? fmt1(points) : '—'}
+        <span
+          className="block font-display font-bold tabular-nums leading-tight"
+          style={{
+            color: dim ? '#6E7E8D' : better ? '#E8EDF2' : '#93A2B2',
+            fontSize: dim ? 'var(--t-body)' : 'var(--t-h2)',
+          }}
+          title={preGame && projected != null ? `Projected ${fmt1(projected)}` : undefined}
+        >
+          {preGame ? (projected != null ? fmt1(projected) : '—') : points ? fmt1(points) : '—'}
+        </span>
+        {projected != null && !dim && !preGame && (
+          <span
+            className="block tabular-nums leading-tight text-dim"
+            style={{ fontSize: 'var(--t-meta)' }}
+            title={`Projected ${fmt1(projected)}`}
+          >
+            {fmt1(projected)}
+          </span>
+        )}
       </span>
       <span className={`flex items-center gap-2 min-w-0 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
         <PlayerLink

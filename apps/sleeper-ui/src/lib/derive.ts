@@ -1048,6 +1048,255 @@ export function buildPlayerHistory(
 /** Slots that any of several positions can fill. */
 const FLEX_SLOTS = new Set(['FLEX', 'SUPER_FLEX', 'REC_FLEX', 'WRRB_FLEX', 'IDP_FLEX']);
 
+/* ------------------------------------------------------------------ *
+ * Projected season
+ *
+ * With season-long projections and the published schedule, every matchup has an
+ * expected result before a game is played. That is the whole preseason story a
+ * dynasty manager wants: am I projected to make the playoffs, and who do I have
+ * to beat.
+ * ------------------------------------------------------------------ */
+
+export interface ProjectedTeam {
+  rosterId: number;
+  teamName: string;
+  managerName: string;
+  avatar: string | null;
+  /** Expected points in a single week from the best lineup available. */
+  weeklyPoints: number;
+  /** Starters chosen by projection, in lineup-slot order. */
+  lineup: Array<{ slot: string; player: Player; points: number; perWeek: number }>;
+  /** Lineup slots with nobody available to fill them. */
+  unfilled: number;
+  /** Expected wins across the projected schedule — fractional by design. */
+  wins: number;
+  losses: number;
+  rank: number;
+}
+
+export interface ProjectedMatchup {
+  week: number;
+  home: { rosterId: number; teamName: string; points: number };
+  away: { rosterId: number; teamName: string; points: number };
+  margin: number;
+  /** Probability the favourite wins, given weekly scoring variance. */
+  favouriteWinChance: number;
+}
+
+/**
+ * Weekly scoring is noisy — a lineup projected for 120 routinely puts up 90 or
+ * 150. Treating the projection as certainty produces silly 14-0 seasons, so
+ * matchups are resolved as probabilities instead.
+ *
+ * The spread is a heuristic: roughly a quarter of a lineup's expected score,
+ * floored so a low-scoring lineup is not treated as predictable. It is not
+ * fitted to this league — it exists so the model expresses uncertainty rather
+ * than pretending there is none.
+ */
+/** Games one player can appear in. Sleeper's `gp` counts weeks, including byes. */
+const NFL_GAMES = 17;
+
+const WEEKLY_SIGMA = (expected: number) => Math.max(12, expected * 0.25);
+
+/** Normal CDF via a standard error-function approximation. */
+function normalCdf(z: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989422804014327 * Math.exp(-(z * z) / 2);
+  const p =
+    d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return z > 0 ? 1 - p : p;
+}
+
+/** Chance team A outscores team B in one week. */
+export function winProbability(expectedA: number, expectedB: number): number {
+  const sd = Math.sqrt(WEEKLY_SIGMA(expectedA) ** 2 + WEEKLY_SIGMA(expectedB) ** 2);
+  if (sd === 0) return expectedA === expectedB ? 0.5 : expectedA > expectedB ? 1 : 0;
+  return normalCdf((expectedA - expectedB) / sd);
+}
+
+/** Which positions may fill a given lineup slot. */
+function eligibleForSlot(slot: string, pos: string | null): boolean {
+  if (!pos) return false;
+  if (slot === pos) return true;
+  if (slot === 'FLEX' || slot === 'WRRB_FLEX') return ['RB', 'WR', 'TE'].includes(pos);
+  if (slot === 'REC_FLEX') return ['WR', 'TE'].includes(pos);
+  if (slot === 'SUPER_FLEX') return ['QB', 'RB', 'WR', 'TE'].includes(pos);
+  return false;
+}
+
+/**
+ * Choose the highest-projecting legal lineup for a roster.
+ *
+ * Dedicated slots are filled before flex slots, so a flex never steals the only
+ * tight end — which is both what a manager would do and what keeps a roster
+ * stacked at one position from skewing the total.
+ */
+export function projectLineup(
+  roster: RawRoster,
+  rosterPositions: string[],
+  players: PlayerIndex,
+  projections: Record<string, { points: number; games?: number | null }>
+): {
+  total: number;
+  perWeek: number;
+  lineup: Array<{ slot: string; player: Player; points: number; perWeek: number }>;
+  unfilled: number;
+} {
+  const pool = (roster.players ?? [])
+    // Taxi and injured-reserve players cannot be started.
+    .filter((id) => !roster.taxi?.includes(id) && !roster.reserve?.includes(id))
+    .map((id) => {
+      const proj = projections[id];
+      const points = proj?.points ?? 0;
+      // Season projections cover a whole year; a weekly one covers one game.
+      // Dividing by the games it spans gives a comparable per-week figure.
+      //
+      // Rotowire publishes `gp` as a flat 18 for every player — the length of
+      // the NFL calendar, not a projection of who stays healthy. A player
+      // appears in at most 17 of those weeks, so 17 is the honest divisor: the
+      // result is what he is worth in a week he actually plays, which is the
+      // week a manager is deciding about.
+      const games = Math.min(NFL_GAMES, Math.max(1, proj?.games ?? NFL_GAMES));
+      return { id, player: players[id], points, perWeek: points / games };
+    })
+    .filter((p) => p.player)
+    .sort((a, b) => b.perWeek - a.perWeek);
+
+  const used = new Set<string>();
+  const lineup: Array<{ slot: string; player: Player; points: number; perWeek: number }> = [];
+  let unfilled = 0;
+
+  const slots = rosterPositions.filter((p) => p !== 'BN');
+  const ordered = [
+    ...slots.filter((s) => !FLEX_SLOTS.has(s)),
+    ...slots.filter((s) => FLEX_SLOTS.has(s)),
+  ];
+
+  for (const slot of ordered) {
+    const pick = pool.find((p) => !used.has(p.id) && eligibleForSlot(slot, p.player.pos));
+    if (!pick) {
+      unfilled++;
+      continue;
+    }
+    used.add(pick.id);
+    lineup.push({
+      slot,
+      player: pick.player,
+      points: Math.round(pick.points * 100) / 100,
+      perWeek: Math.round(pick.perWeek * 100) / 100,
+    });
+  }
+
+  const total = lineup.reduce((sum, s) => sum + s.points, 0);
+  const perWeek = lineup.reduce((sum, s) => sum + s.perWeek, 0);
+  // Re-sort into the league's own lineup order so it reads like a lineup card.
+  lineup.sort((a, b) => slots.indexOf(a.slot) - slots.indexOf(b.slot));
+  return {
+    total: Math.round(total * 100) / 100,
+    perWeek: Math.round(perWeek * 100) / 100,
+    lineup,
+    unfilled,
+  };
+}
+
+/**
+ * Project the season: each roster's weekly points, then every scheduled matchup
+ * resolved by comparing those two numbers.
+ *
+ * Deliberately simple — one expected score per team, no variance. It answers
+ * "who is better on paper", not "what are my playoff odds"; presenting it as
+ * more than that would overstate what a single projection source supports.
+ */
+export function projectSeason(
+  rosters: RawRoster[],
+  users: RawUser[],
+  rosterPositions: string[],
+  players: PlayerIndex,
+  projections: Record<string, { points: number; games?: number | null }>,
+  schedule: Record<string | number, RawMatchup[]>,
+  playoffWeekStart: number
+): { teams: ProjectedTeam[]; matchups: ProjectedMatchup[] } {
+  const teamsById = buildTeams(rosters, users);
+  const byRoster = new Map<number, ProjectedTeam>();
+
+  for (const roster of rosters) {
+    const { perWeek, lineup, unfilled } = projectLineup(
+      roster,
+      rosterPositions,
+      players,
+      projections
+    );
+    const team = teamsById.get(roster.roster_id)!;
+    byRoster.set(roster.roster_id, {
+      rosterId: roster.roster_id,
+      teamName: team.teamName,
+      managerName: team.managerName,
+      avatar: team.avatar,
+      weeklyPoints: perWeek,
+      lineup,
+      unfilled,
+      wins: 0,
+      losses: 0,
+      rank: 0,
+    });
+  }
+
+  const matchups: ProjectedMatchup[] = [];
+  const weeks = Object.keys(schedule)
+    .map(Number)
+    .filter((w) => !Number.isNaN(w) && w < playoffWeekStart)
+    .sort((a, b) => a - b);
+
+  for (const week of weeks) {
+    const groups = new Map<number, RawMatchup[]>();
+    for (const m of schedule[week] ?? []) {
+      if (m.matchup_id == null) continue;
+      const g = groups.get(m.matchup_id) ?? [];
+      g.push(m);
+      groups.set(m.matchup_id, g);
+    }
+
+    for (const pair of groups.values()) {
+      if (pair.length !== 2) continue;
+      const a = byRoster.get(pair[0].roster_id);
+      const b = byRoster.get(pair[1].roster_id);
+      if (!a || !b) continue;
+
+      // Expected wins, not a coin flip on the higher number — a 3-point edge
+      // is nearly even, and the record should say so.
+      const pA = winProbability(a.weeklyPoints, b.weeklyPoints);
+      a.wins += pA;
+      a.losses += 1 - pA;
+      b.wins += 1 - pA;
+      b.losses += pA;
+
+      const [home, away] = a.weeklyPoints >= b.weeklyPoints ? [a, b] : [b, a];
+      matchups.push({
+        week,
+        home: { rosterId: home.rosterId, teamName: home.teamName, points: home.weeklyPoints },
+        away: { rosterId: away.rosterId, teamName: away.teamName, points: away.weeklyPoints },
+        margin: Math.round((home.weeklyPoints - away.weeklyPoints) * 100) / 100,
+        favouriteWinChance:
+          Math.round(winProbability(home.weeklyPoints, away.weeklyPoints) * 1000) / 1000,
+      });
+    }
+  }
+
+  for (const t of byRoster.values()) {
+    t.wins = Math.round(t.wins * 10) / 10;
+    t.losses = Math.round(t.losses * 10) / 10;
+  }
+
+  const teams = [...byRoster.values()].sort(
+    (a, b) => b.wins - a.wins || b.weeklyPoints - a.weeklyPoints
+  );
+  teams.forEach((t, i) => (t.rank = i + 1));
+
+  return { teams, matchups };
+}
+
+
+
 export interface DepthEntry {
   player: Player;
   /** Where they sit: a real lineup slot, or BN / TAXI / IR. */
