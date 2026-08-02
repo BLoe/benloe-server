@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { record, useApi, type ChatMessage, type LeagueBundle, type Transaction } from '../api';
-import { Avatar, Empty, ErrorState, Loading, Panel } from '../components';
+import { Avatar, Empty, ErrorState, Loading, Panel, PlayerLink, TeamLink } from '../components';
 
 interface ChatResponse {
   messages: ChatMessage[];
@@ -168,9 +168,9 @@ function ContextRail({ bundle }: { bundle: LeagueBundle }) {
             >
               <span className="font-display font-semibold text-[11px] text-dim w-4">{s.rank}</span>
               <Avatar url={s.avatar} name={s.teamName} size={18} />
-              <span className="font-display font-semibold uppercase text-[12px] truncate flex-1">
+              <TeamLink rosterId={s.rosterId} className="entity truncate flex-1" style={{ fontSize: 'var(--t-body)' }}>
                 {s.teamName}
-              </span>
+              </TeamLink>
               <span className="text-muted text-[12px] tabular-nums">
                 {record(s.wins, s.losses, s.ties)}
               </span>
@@ -192,12 +192,15 @@ function ContextRail({ bundle }: { bundle: LeagueBundle }) {
               <div className="text-dim text-[10px] uppercase tracking-wide">
                 {t.type === 'free_agent' ? 'Add' : t.type} · wk {t.week}
               </div>
-              <div className="text-[12.5px] leading-snug">
-                {t.adds.map((a) => a.player).join(', ') ||
-                  t.drops.map((d) => d.player).join(', ') ||
-                  '—'}
+              <div className="leading-snug flex flex-wrap gap-x-2" style={{ fontSize: 'var(--t-body)' }}>
+                {(t.adds.length ? t.adds : t.drops).map((x: any, i: number) => (
+                  <PlayerLink key={i} id={x.playerId} name={x.player} />
+                ))}
+                {!t.adds.length && !t.drops.length && '—'}
               </div>
-              <div className="text-dim text-[10px] truncate">{t.teams.join(', ')}</div>
+              <div className="text-dim truncate" style={{ fontSize: 'var(--t-meta)' }}>
+                {t.teams.map((x) => x.teamName).join(', ')}
+              </div>
             </li>
           ))}
         </ul>
@@ -226,12 +229,13 @@ function MessageRow({ message: m }: { message: ChatMessage }) {
         <div className="min-w-0 flex-1">
           {!m.continues && (
             <div className="flex items-baseline gap-2">
-              <span
-                className="font-display font-semibold uppercase text-[13px] tracking-wide"
-                style={{ color: m.isMine ? '#3FBF7F' : '#E8EDF2' }}
+              <TeamLink
+                rosterId={m.rosterId ?? null}
+                className="entity"
+                style={{ color: m.isMine ? 'var(--win)' : undefined, fontSize: 'var(--t-h2)' }}
               >
                 {m.authorName}
-              </span>
+              </TeamLink>
               <span className="text-dim text-[10px]">{clock(m.created)}</span>
               {m.edited && <span className="text-dim text-[10px]">edited</span>}
             </div>

@@ -44,13 +44,15 @@ const VIEWS = {
 
 const ROUTES = [
   { name: 'overview', path: `/l/${LEAGUE}`, waitFor: 'text=Standings' },
-  { name: 'matchups', path: `/l/${LEAGUE}/matchups/12`, waitFor: 'text=combined' },
+  { name: 'matchups', path: `/l/${LEAGUE}/matchups/12`, waitFor: 'text=Full breakdown' },
   { name: 'teams', path: `/l/${LEAGUE}/teams`, waitFor: 'text=Starting lineup' },
   { name: 'activity', path: `/l/${LEAGUE}/activity`, waitFor: 'text=League activity' },
   // A league before kickoff renders a different set of states entirely, and live
   // production caught a bug here that the completed-season fixture could not.
   { name: 'preseason', path: `/l/${PRESEASON}`, waitFor: 'text=No games yet' },
   { name: 'chat', path: `/l/${LEAGUE}/chat`, waitFor: 'text=Read only' },
+  { name: 'matchup-detail', path: `/l/${LEAGUE}/matchups/12/1`, waitFor: 'text=Edge by slot' },
+  { name: 'player', path: `/l/${LEAGUE}/players/4984`, waitFor: 'text=Points by week' },
 ];
 
 /** The signed-out entry screen, captured before any session exists. */

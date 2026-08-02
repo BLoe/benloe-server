@@ -8,6 +8,7 @@ import Matchups from './pages/Matchups';
 import TeamPage from './pages/Team';
 import Activity from './pages/Activity';
 import Chat from './pages/Chat';
+import PlayerPage from './pages/Player';
 
 const NAV = [
   { to: '', label: 'Overview', end: true },
@@ -98,8 +99,10 @@ function LeagueShell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
               <Route index element={<Dashboard bundle={bundle.data} />} />
               <Route path="matchups" element={<Matchups bundle={bundle.data} />} />
               <Route path="matchups/:week" element={<Matchups bundle={bundle.data} />} />
+              <Route path="matchups/:week/:matchupId" element={<Matchups bundle={bundle.data} />} />
               <Route path="teams" element={<TeamPage bundle={bundle.data} />} />
               <Route path="teams/:rosterId" element={<TeamPage bundle={bundle.data} />} />
+              <Route path="players/:playerId" element={<PlayerPage bundle={bundle.data} />} />
               <Route path="activity" element={<Activity bundle={bundle.data} />} />
               <Route path="chat" element={<Chat bundle={bundle.data} />} />
             </Routes>

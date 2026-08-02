@@ -110,6 +110,7 @@ export interface ChatMessage {
   authorId: string;
   authorName: string;
   authorAvatar: string | null;
+  rosterId: number | null;
   isBot: boolean;
   isMine: boolean;
   pinned: boolean;
@@ -125,11 +126,11 @@ export interface Transaction {
   type: string;
   week: number;
   created: number;
-  teams: string[];
-  adds: Array<{ player: string; pos: string | null; to: string | null }>;
-  drops: Array<{ player: string; pos: string | null; from: string | null }>;
+  teams: Array<{ rosterId: number; teamName: string }>;
+  adds: Array<{ playerId: string; player: string; pos: string | null; toRosterId: number | null; to: string | null }>;
+  drops: Array<{ playerId: string; player: string; pos: string | null; fromRosterId: number | null; from: string | null }>;
   bid: number | null;
-  picks: Array<{ season: string; round: number; from: string | null; to: string | null }>;
+  picks: Array<{ season: string; round: number; from: string | null; toRosterId: number | null; to: string | null }>;
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -188,16 +189,29 @@ export function relativeTime(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export const POS_COLOR: Record<string, string> = {
-  QB: 'var(--pos-qb)',
-  RB: 'var(--pos-rb)',
-  WR: 'var(--pos-wr)',
-  TE: 'var(--pos-te)',
-  K: 'var(--pos-k)',
-  DEF: 'var(--pos-def)',
-  FLEX: 'var(--pos-flex)',
-  SUPER_FLEX: 'var(--pos-flex)',
+/**
+ * Two tokens per position: a validated chart-mark colour and a lighter ink for
+ * text. A mark sits on the surface as a fill; text has to clear 4.5:1.
+ */
+const POS_SLOTS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'FLEX', 'SUPER_FLEX'] as const;
+
+const slug = (pos: string | null | undefined) => {
+  const p = (pos ?? '').toUpperCase();
+  if (p === 'SUPER_FLEX') return 'flex';
+  return (POS_SLOTS as readonly string[]).includes(p) ? p.toLowerCase() : 'def';
 };
 
-export const posColor = (pos: string | null | undefined) =>
-  POS_COLOR[pos ?? ''] ?? 'var(--pos-def)';
+export const posColor = (pos: string | null | undefined) => `var(--pos-${slug(pos)})`;
+export const posInk = (pos: string | null | undefined) => `var(--pos-${slug(pos)}-ink)`;
+
+/** Player detail, as returned by /api/league/:id/player/:playerId. */
+export interface PlayerDetail {
+  player: Player & { exp?: number | null; height?: string | null; weight?: string | null };
+  owner: { rosterId: number; teamName: string; managerName: string; avatar: string | null } | null;
+  onTaxi: boolean;
+  onIr: boolean;
+  isStarter: boolean;
+  weeks: Array<{ week: number; points: number; started: boolean }>;
+  totals: { points: number; games: number; average: number; best: number };
+  news: Array<{ title: string; source: string | null; published: number | null; url: string | null }>;
+}

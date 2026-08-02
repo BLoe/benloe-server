@@ -3,89 +3,74 @@
 @tailwind utilities;
 
 /* ------------------------------------------------------------------ *
- * Self-hosted Barlow. Condensed carries every label and numeral —
- * the broadcast-scoreboard voice of the whole interface.
+ * Self-hosted Barlow. Condensed carries labels and numerals — the
+ * broadcast-scoreboard voice of the interface.
  * ------------------------------------------------------------------ */
-@font-face {
-  font-family: 'Barlow';
-  src: url('/fonts/Barlow-400.woff2') format('woff2');
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Barlow';
-  src: url('/fonts/Barlow-500.woff2') format('woff2');
-  font-weight: 500;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Barlow';
-  src: url('/fonts/Barlow-600.woff2') format('woff2');
-  font-weight: 600;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Barlow';
-  src: url('/fonts/Barlow-700.woff2') format('woff2');
-  font-weight: 700;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Barlow Condensed';
-  src: url('/fonts/BarlowCondensed-500.woff2') format('woff2');
-  font-weight: 500;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Barlow Condensed';
-  src: url('/fonts/BarlowCondensed-600.woff2') format('woff2');
-  font-weight: 600;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Barlow Condensed';
-  src: url('/fonts/BarlowCondensed-700.woff2') format('woff2');
-  font-weight: 700;
-  font-display: swap;
-}
+@font-face { font-family: 'Barlow'; src: url('/fonts/Barlow-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Barlow'; src: url('/fonts/Barlow-500.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Barlow'; src: url('/fonts/Barlow-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Barlow'; src: url('/fonts/Barlow-700.woff2') format('woff2'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Barlow Condensed'; src: url('/fonts/BarlowCondensed-500.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Barlow Condensed'; src: url('/fonts/BarlowCondensed-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Barlow Condensed'; src: url('/fonts/BarlowCondensed-700.woff2') format('woff2'); font-weight: 700; font-display: swap; }
 
 :root {
-  /* Position hues. Fantasy players read these instantly — this is data
-     encoding borrowed from the sport's own vernacular, not decoration. */
-  --pos-qb: #E5484D;
-  --pos-rb: #3FBF7F;
-  --pos-wr: #4A9EFF;
-  --pos-te: #F5883C;
-  --pos-k: #B77FE0;
-  --pos-def: #7B8794;
-  --pos-flex: #C9A227;
+  /* --- type scale -------------------------------------------------- *
+   * Six steps with real distance between them. The previous scale ran
+   * 10–14px, which is five jobs inside four pixels — nothing could lead.
+   * Nothing in the interface is smaller than --t-label. */
+  --t-display: 28px;
+  --t-hero: 30px;
+  --t-h1: 21px;
+  --t-h2: 17px;
+  --t-body: 15px;
+  --t-meta: 13px;
+  --t-label: 12px;
+
+  /* --- position colours -------------------------------------------- *
+   * Two tokens per position, because a chart mark and a text label have
+   * different jobs. Marks are validated as a categorical palette against
+   * the panel surface (OKLCH L 0.50–0.665, chroma >= 0.10, all-pairs CVD
+   * clear); inks are lightened to clear 4.5:1 as text on that surface.
+   * Position chips always carry their text, which is the secondary
+   * encoding the CVD floor requires. */
+  --pos-qb: #e96161;
+  --pos-rb: #009951;
+  --pos-wr: #328bee;
+  --pos-te: #a93a00;
+  --pos-k: #8e4cb8;
+  --pos-def: #7b8794;
+  --pos-flex: #b08900;
+
+  --pos-qb-ink: #f47a78;
+  --pos-rb-ink: #49bf76;
+  --pos-wr-ink: #5da7ff;
+  --pos-te-ink: #f28057;
+  --pos-k-ink: #c188ea;
+  --pos-def-ink: #a3b0bd;
+  --pos-flex-ink: #d8b23a;
+
+  /* --- status ------------------------------------------------------- */
+  --win: #3fbf7f;
+  --loss: #e5484d;
+  --live: #f5c518;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  height: 100%;
-}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
 
 body {
   margin: 0;
   background: theme('colors.ground');
   color: theme('colors.ink');
   font-family: theme('fontFamily.body');
-  font-size: 14px;
+  font-size: var(--t-body);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
-  /* Every number in this app is compared against a number above or below it.
-     Tabular figures are non-negotiable. */
+  /* Every number here is compared against one above or below it. */
   font-variant-numeric: tabular-nums;
 }
 
-/* A faint horizon glow at the top of the ground, like a lit studio wall.
-   The one purely atmospheric touch in the design. */
 body::before {
   content: '';
   position: fixed;
@@ -100,93 +85,125 @@ body::before {
   /* --- typographic roles --------------------------------------------- */
 
   .eyebrow {
-    @apply font-display font-semibold uppercase text-dim;
-    font-size: 11px;
-    letter-spacing: 0.14em;
+    @apply font-display font-semibold uppercase text-muted;
+    font-size: var(--t-label);
+    letter-spacing: 0.12em;
   }
 
   .stat-label {
-    @apply font-display font-semibold uppercase text-dim;
-    font-size: 10px;
-    letter-spacing: 0.12em;
+    @apply font-display font-semibold uppercase text-muted;
+    font-size: var(--t-label);
+    letter-spacing: 0.1em;
   }
 
   .stat-value {
     @apply font-display font-semibold text-ink;
-    font-size: 22px;
-    line-height: 1;
-    letter-spacing: -0.01em;
+    font-size: var(--t-h1);
+    line-height: 1.05;
+  }
+
+  .stat-sub {
+    @apply text-dim;
+    font-size: var(--t-meta);
+    line-height: 1.25;
   }
 
   .headline {
     @apply font-display font-bold uppercase text-ink;
     letter-spacing: 0.01em;
-    line-height: 0.95;
+    line-height: 0.98;
+  }
+
+  /* Entity names: teams, players. The thing you click. */
+  .entity {
+    @apply font-display font-semibold uppercase text-ink;
+    font-size: var(--t-h2);
+    letter-spacing: 0.02em;
+    line-height: 1.15;
   }
 
   /* --- surfaces ------------------------------------------------------- */
 
-  .panel {
-    @apply bg-panel border border-line;
-    position: relative;
-  }
+  .panel { @apply bg-panel border border-line; position: relative; }
 
   .panel-head {
-    @apply flex items-center justify-between border-b border-line px-4;
-    height: 38px;
+    @apply flex items-center justify-between gap-3 border-b border-line px-4;
+    min-height: 44px;
   }
 
   /* --- controls ------------------------------------------------------- */
 
   .tab {
-    @apply font-display font-semibold uppercase text-dim transition-colors;
-    font-size: 12px;
-    letter-spacing: 0.1em;
-    padding: 6px 10px;
+    @apply font-display font-semibold uppercase text-muted transition-colors;
+    font-size: var(--t-label);
+    letter-spacing: 0.09em;
+    padding: 7px 11px;
   }
-  .tab:hover {
-    @apply text-ink;
-  }
+  .tab:hover { @apply text-ink; }
   .tab[data-active='true'] {
     @apply text-ink;
-    box-shadow: inset 0 -2px 0 theme('colors.win');
+    box-shadow: inset 0 -2px 0 var(--win);
   }
 
   .chip {
     @apply font-display font-semibold uppercase inline-flex items-center justify-center;
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    padding: 1px 5px;
-    border-radius: 2px;
+    font-size: var(--t-label);
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    line-height: 1.3;
   }
+
+  /* A name that navigates. Underline appears on hover so dense tables stay
+     calm, but the pointer and focus ring make the affordance unambiguous. */
+  .link {
+    @apply transition-colors;
+    text-decoration-color: transparent;
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+
+  /* --- table ---------------------------------------------------------- */
+
+  .th {
+    @apply font-display font-semibold uppercase text-muted text-left align-bottom;
+    font-size: var(--t-label);
+    letter-spacing: 0.09em;
+    padding: 8px 12px;
+  }
+
+  /* Band header naming a group of columns, so nine columns read as three ideas. */
+  .th-band {
+    @apply font-display font-semibold uppercase text-dim text-left;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    padding: 7px 12px 2px;
+  }
+
+  .td { padding: 10px 12px; vertical-align: middle; }
 }
 
-/* Keyboard focus stays visible everywhere. */
 :focus-visible {
-  outline: 2px solid theme('colors.win');
+  outline: 2px solid var(--win);
   outline-offset: 2px;
+  border-radius: 2px;
 }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: theme('colors.ground');
-}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: theme('colors.ground'); }
 ::-webkit-scrollbar-thumb {
   background: theme('colors.line2');
   border: 2px solid theme('colors.ground');
   border-radius: 5px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: theme('colors.dim');
-}
+::-webkit-scrollbar-thumb:hover { background: theme('colors.dim'); }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

@@ -406,6 +406,8 @@ export interface ChatMessage {
   /** The manager's team name when they are in this league, else their handle. */
   authorName: string;
   authorAvatar: string | null;
+  /** Roster this author manages in the league, when they are in it. */
+  rosterId: number | null;
   isBot: boolean;
   isMine: boolean;
   pinned: boolean;
@@ -476,6 +478,7 @@ export function buildChatFeed(
           ? m.author_avatar
           : `https://sleepercdn.com/avatars/thumbs/${m.author_avatar}`
         : (nameByUser.get(m.author_id)?.avatar ?? null),
+      rosterId: nameByUser.get(m.author_id)?.rosterId ?? null,
       isBot: !!m.author_is_bot,
       isMine: !!opts.myUserId && m.author_id === opts.myUserId,
       pinned: !!m.pinned,
