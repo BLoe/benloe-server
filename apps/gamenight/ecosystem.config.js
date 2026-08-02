@@ -22,7 +22,6 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3001,
-        JWT_SECRET: env.JWT_SECRET,
         AUTH_SERVICE_URL: 'http://localhost:3002',
         AUTH_DATABASE_URL: 'file:/srv/benloe/data/artanis.db',
         DATABASE_URL: 'file:/srv/benloe/data/gamenight.db',

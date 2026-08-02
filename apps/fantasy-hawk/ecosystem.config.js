@@ -26,7 +26,6 @@ module.exports = {
         YAHOO_CLIENT_SECRET: env.YAHOO_CLIENT_SECRET,
         YAHOO_CALLBACK_URL: 'https://fantasyhawk.benloe.com/api/oauth/callback',
         AUTH_SERVICE_URL: 'http://localhost:3002',
-        JWT_SECRET: env.JWT_SECRET,
         DATABASE_PATH: '/srv/benloe/data/fantasy-hawk.db',
         FRONTEND_URL: 'https://fantasyhawk.benloe.com',
       },

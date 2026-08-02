@@ -28,7 +28,6 @@ module.exports = {
         KICKBALL_DB: '/srv/benloe/data/kickball.db',
         AUTH_SERVICE_URL: 'http://localhost:3002',
         CABINET_OWNER_EMAIL: env.CABINET_OWNER_EMAIL,
-        JWT_SECRET: env.JWT_SECRET,
       },
       error_file: '/srv/benloe/logs/kickball-api-err.log',
       out_file: '/srv/benloe/logs/kickball-api-out.log',
