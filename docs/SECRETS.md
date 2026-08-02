@@ -144,9 +144,15 @@ about.
   today (no `CABINET_CRED_KEY`, so its local store cannot encrypt, and there
   are no stored credentials or items), so nothing is broken — but Plaid will
   not function until that client is pointed at the broker.
-- **`JWT_SECRET` is shared across six apps.** Code execution in any one forges
-  sessions everywhere, including the session this dashboard trusts. Those apps
-  should verify via artanis's API instead of holding the secret.
+- ~~`JWT_SECRET` is shared across six apps.~~ **Closed 2026-08-02**, and the
+  original framing was wrong twice over. artanis does not validate statelessly:
+  `verifyJWT` checks the signature *and* requires a matching row in its
+  sessions table, which Phase A put out of the agent's reach — so a forged
+  token was never enough, and this dashboard was never undermined. And all five
+  consumer apps already delegated to `/api/auth/me`; the secret was injected
+  into them and referenced by none. It now lives only in artanis, the issuer.
+  Worth keeping as a lesson: the scary-sounding version of a finding is not
+  automatically the true one, and reading the validation path took ten minutes.
 - **Two services still run as root** (`gamenight-frontend`, `sleeper-ui`).
   Neither has agent-writable code, so neither is an escalation path — hygiene,
   not a hole.
