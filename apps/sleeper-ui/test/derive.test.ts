@@ -18,7 +18,10 @@ import {
   buildChatFeed,
   buildActivityRows,
   buildDepthChart,
+  buildPlayerHistory,
   describePeriod,
+  indexProjections,
+  scoringKey,
   dayLabel,
   type RawRoster,
   type RawUser,
@@ -974,5 +977,212 @@ describe('buildDepthChart', () => {
     const aLeague = load('auction-2025.league');
     const g = buildDepthChart(aRosters[0], aLeague.roster_positions, players);
     expect(g.some((x) => x.pos === 'DEF')).toBe(true);
+  });
+});
+
+describe('scoringKey', () => {
+  it('maps a league\'s reception value to the matching projection field', () => {
+    expect(scoringKey({ rec: 1 })).toBe('pts_ppr');
+    expect(scoringKey({ rec: 0.5 })).toBe('pts_half_ppr');
+    expect(scoringKey({ rec: 0 })).toBe('pts_std');
+  });
+
+  it('treats a missing scoring block as standard', () => {
+    expect(scoringKey(undefined)).toBe('pts_std');
+    expect(scoringKey({})).toBe('pts_std');
+  });
+
+  it("matches Ben's non-PPR dynasty league", () => {
+    expect(scoringKey(league.scoring_settings)).toBe('pts_std');
+  });
+});
+
+describe('indexProjections', () => {
+  const raw = [
+    { player_id: '1', opponent: 'BUF', stats: { pts_std: 20.5, pts_ppr: 24.5, gp: 1, pass_yd: 280.4, pass_td: 2.1, rush_yd: 30.2, rec: 0 } },
+    { player_id: '2', opponent: null, stats: { adp_dd_ppr: 1000 } },
+    { player_id: '3', stats: { pts_std: 0, gp: 18 } },
+    { stats: { pts_std: 9 } },
+  ];
+
+  it('keeps only entries with a points projection', () => {
+    const idx = indexProjections(raw, 'pts_std');
+    expect(Object.keys(idx).sort()).toEqual(['1', '3']);
+  });
+
+  it('reads the field matching the league scoring', () => {
+    expect(indexProjections(raw, 'pts_std')['1'].points).toBe(20.5);
+    expect(indexProjections(raw, 'pts_ppr')['1'].points).toBe(24.5);
+  });
+
+  it('keeps a zero projection, which is information', () => {
+    expect(indexProjections(raw, 'pts_std')['3'].points).toBe(0);
+  });
+
+  it('carries games and opponent', () => {
+    const p = indexProjections(raw, 'pts_std')['1'];
+    expect(p.games).toBe(1);
+    expect(p.opponent).toBe('BUF');
+  });
+
+  it('lists only the stat lines this player actually produces', () => {
+    const labels = indexProjections(raw, 'pts_std')['1'].lines.map((l) => l.label);
+    expect(labels).toContain('Pass yds');
+    expect(labels).toContain('Rush yds');
+    // Zero receptions should not appear for a quarterback.
+    expect(labels).not.toContain('Rec');
+  });
+
+  it('survives an empty or malformed payload', () => {
+    expect(indexProjections([], 'pts_std')).toEqual({});
+    expect(indexProjections(undefined as any, 'pts_std')).toEqual({});
+  });
+});
+
+describe('buildPlayerHistory', () => {
+  const teams = buildTeams(rosters, users);
+  const benRoster = rosters.find((r) => r.owner_id === BEN)!;
+  const other = rosters.find((r) => r.roster_id !== benRoster.roster_id)!;
+  const raw = Object.values(load('dynasty-2025.transactions') as Record<string, any[]>).flat();
+
+  const picks = [
+    { player_id: '12527', round: 1, pick_no: 7, draft_slot: 7, roster_id: benRoster.roster_id, picked_by: BEN, is_keeper: null },
+  ];
+
+  it('records a draft pick with its position', () => {
+    const h = buildPlayerHistory('12527', [], picks as any, teams, '2025');
+    expect(h).toHaveLength(1);
+    expect(h[0].kind).toBe('drafted');
+    expect(h[0].method).toBe('Draft');
+    expect(h[0].detail).toContain('Round 1, pick 7');
+    expect(h[0].detail).toContain('2025');
+    expect(h[0].toTeam).toBe("Mr. Rodger's Naberhood");
+  });
+
+  it('sorts the draft before any in-season move', () => {
+    const player = raw.find((t: any) => t.status === 'complete' && Object.keys(t.adds ?? {}).length)!;
+    const pid = Object.keys(player.adds)[0];
+    const h = buildPlayerHistory(pid, raw, [{ ...picks[0], player_id: pid }] as any, teams, '2025');
+    expect(h[0].kind).toBe('drafted');
+    for (let i = 1; i < h.length; i++) {
+      expect(h[i].created).toBeGreaterThanOrEqual(h[i - 1].created);
+    }
+  });
+
+  it('records a waiver add with the amount paid', () => {
+    const waiver = raw.find(
+      (t: any) => t.type === 'waiver' && t.status === 'complete' && (t.settings?.waiver_bid ?? 0) > 0
+    )!;
+    const pid = Object.keys(waiver.adds)[0];
+    const h = buildPlayerHistory(pid, [waiver], [], teams);
+    const added = h.find((e) => e.kind === 'added')!;
+    expect(added.method).toBe('Waivers');
+    expect(added.faab).toBe(waiver.settings.waiver_bid);
+    expect(added.toTeam).toBeTruthy();
+  });
+
+  it('does not attribute FAAB to a free agency pickup', () => {
+    const fa = { transaction_id: 'x', type: 'free_agent', status: 'complete', leg: 3, created: 5,
+      roster_ids: [benRoster.roster_id], adds: { '99': benRoster.roster_id }, drops: null,
+      draft_picks: null, settings: { waiver_bid: 20 } };
+    const [e] = buildPlayerHistory('99', [fa] as any, [], teams);
+    expect(e.method).toBe('Free agency');
+    expect(e.faab).toBeNull();
+  });
+
+  it('reads a trade as one move between two teams', () => {
+    const trade = { transaction_id: 't', type: 'trade', status: 'complete', leg: 6, created: 9,
+      roster_ids: [benRoster.roster_id, other.roster_id],
+      adds: { '55': benRoster.roster_id }, drops: { '55': other.roster_id },
+      draft_picks: null, settings: null };
+    const [e] = buildPlayerHistory('55', [trade] as any, [], teams);
+    expect(e.kind).toBe('traded');
+    expect(e.fromRosterId).toBe(other.roster_id);
+    expect(e.toRosterId).toBe(benRoster.roster_id);
+  });
+
+  it('records a drop with the team that lost them', () => {
+    const drop = { transaction_id: 'd', type: 'free_agent', status: 'complete', leg: 4, created: 7,
+      roster_ids: [benRoster.roster_id], adds: null, drops: { '77': benRoster.roster_id },
+      draft_picks: null, settings: null };
+    const [e] = buildPlayerHistory('77', [drop] as any, [], teams);
+    expect(e.kind).toBe('dropped');
+    expect(e.fromTeam).toBe("Mr. Rodger's Naberhood");
+    expect(e.toTeam).toBeNull();
+  });
+
+  it('ignores transactions that do not involve this player', () => {
+    expect(buildPlayerHistory('does-not-exist', raw, picks as any, teams)).toEqual([]);
+  });
+
+  it('ignores failed transactions', () => {
+    const failed = raw.filter((t: any) => t.status !== 'complete' && Object.keys(t.adds ?? {}).length);
+    const pid = Object.keys(failed[0].adds)[0];
+    const h = buildPlayerHistory(pid, failed, [], teams);
+    expect(h).toEqual([]);
+  });
+
+  it('builds a coherent history from the real season for a well-travelled player', () => {
+    const counts = new Map<string, number>();
+    for (const t of raw as any[]) {
+      if (t.status !== 'complete') continue;
+      for (const pid of [...Object.keys(t.adds ?? {}), ...Object.keys(t.drops ?? {})]) {
+        counts.set(pid, (counts.get(pid) ?? 0) + 1);
+      }
+    }
+    const [busiest] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const h = buildPlayerHistory(busiest, raw, [], teams);
+    expect(h.length).toBeGreaterThan(2);
+    for (const e of h) {
+      expect(['drafted', 'added', 'dropped', 'traded']).toContain(e.kind);
+      const named = e.toTeam ?? e.fromTeam;
+      expect(named).toBeTruthy();
+      expect(named).not.toMatch(/^Roster /);
+    }
+  });
+});
+
+describe('buildPlayerHistory FAAB attribution', () => {
+  const teams = buildTeams(rosters, users);
+  const benRoster = rosters.find((r) => r.owner_id === BEN)!;
+
+  // One waiver claim adds one player and drops another to make room. The bid
+  // bought the player who arrived; the one cut did not cost anything.
+  const claim = {
+    transaction_id: 'w1',
+    type: 'waiver',
+    status: 'complete',
+    leg: 2,
+    created: 100,
+    roster_ids: [benRoster.roster_id],
+    adds: { arrived: benRoster.roster_id },
+    drops: { cut: benRoster.roster_id },
+    draft_picks: null,
+    settings: { waiver_bid: 17 },
+  };
+
+  it('charges the bid to the player who was added', () => {
+    const [e] = buildPlayerHistory('arrived', [claim] as any, [], teams);
+    expect(e.kind).toBe('added');
+    expect(e.faab).toBe(17);
+  });
+
+  it('does not charge the bid to the player who was dropped', () => {
+    const [e] = buildPlayerHistory('cut', [claim] as any, [], teams);
+    expect(e.kind).toBe('dropped');
+    expect(e.faab).toBeNull();
+  });
+
+  it('holds across the real season: no drop ever carries a fee', () => {
+    const raw = Object.values(load('dynasty-2025.transactions') as Record<string, any[]>).flat();
+    const ids = new Set<string>();
+    for (const t of raw as any[]) {
+      for (const pid of [...Object.keys(t.adds ?? {}), ...Object.keys(t.drops ?? {})]) ids.add(pid);
+    }
+    for (const pid of [...ids].slice(0, 120)) {
+      for (const e of buildPlayerHistory(pid, raw, [], teams)) {
+        if (e.kind === 'dropped') expect(e.faab).toBeNull();
+      }
+    }
   });
 });

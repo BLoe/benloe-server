@@ -110,6 +110,32 @@ can genuinely be won twice, weeks apart, and `created` is submission time rather
 than processing time — so the runs cannot be separated. Those targets (2 of 175 in
 a real season) are omitted rather than shown with two winners.
 
+## Projections, player history and news
+
+**Projections** come from `api.sleeper.app/projections/nfl/<season>[/<week>]` —
+undocumented, Rotowire-sourced, and the only predicted points Sleeper exposes.
+Omitting the week gives season-long totals, which is what matters in the
+preseason. `scoringKey` picks `pts_std` / `pts_half_ppr` / `pts_ppr` from the
+league's own `rec` value, so a non-PPR league is not shown PPR numbers.
+
+The payloads are 5–9MB of ~9,400 entries, most carrying nothing but an ADP.
+They are disk-cached for six hours *and* the trimmed index is memoised in
+memory — re-parsing and re-walking the array per request was most of the player
+page's response time (0.4s → 0.09s).
+
+**Player history** (`buildPlayerHistory`) reconstructs a player's whole journey
+through a league from the draft picks plus every transaction: drafted round 1
+pick 7, claimed for $17, dropped, traded here. One subtlety worth keeping: a
+waiver claim usually drops somebody to make room, and the bid belongs to the
+player who *arrived* — attributing it to the drop reads as though cutting a
+player cost money.
+
+**News** carries far more than a headline. `metadata.description` is a full
+multi-paragraph write-up and `metadata.url` links the source article; the first
+version rendered only the title, which said almost nothing. `get_player_outlook`
+is a separate, longer season write-up and returns the same `PlayerNews` shape —
+the prose is in `metadata.description`, not a `text` field.
+
 ## Rosters
 
 `buildDepthChart` groups a roster by position rather than by lineup status. A

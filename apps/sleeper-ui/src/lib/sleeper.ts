@@ -112,6 +112,30 @@ export const getTrending = (type: 'add' | 'drop', o?: FetchOpts) =>
 export const getWeekStats = (season: string, week: number, o?: FetchOpts) =>
   rest(`/stats/nfl/regular/${season}/${week}`, o);
 
+/**
+ * Rotowire projections. Undocumented but stable, and the only source of
+ * predicted points Sleeper exposes.
+ *
+ * Omit `week` for season-long totals, which is what matters in the preseason.
+ * Payloads are 5–9MB, so these are always disk-cached.
+ */
+export async function getProjections(
+  season: string,
+  week: number | null,
+  o?: FetchOpts
+): Promise<any[]> {
+  const path = week
+    ? `/projections/nfl/${season}/${week}?season_type=regular&order_by=ppr`
+    : `/projections/nfl/${season}?season_type=regular&order_by=ppr`;
+  const res = await fetch(`https://api.sleeper.app${path}`, {
+    headers: { 'user-agent': 'sleeper-ui/1.0 (personal dashboard)' },
+    signal: o?.signal,
+  });
+  if (!res.ok) throw new SleeperError(`${res.status} ${res.statusText}`, res.status, path);
+  const body = await res.json();
+  return Array.isArray(body) ? body : [];
+}
+
 /* ------------------------------------------------------------------ *
  * GraphQL — public queries (no token required)
  * ------------------------------------------------------------------ */
@@ -138,11 +162,14 @@ export async function getPlayerNews(playerId: string, limit = 5, o?: FetchOpts) 
   return d.get_player_news;
 }
 
-/** Season outlook blurb for a player. Not available via REST. */
+/**
+ * Season outlook: a long analyst write-up, distinct from the news feed.
+ * Returns the same PlayerNews shape, with the prose in metadata.description.
+ */
 export async function getPlayerOutlook(playerId: string, season: string, o?: FetchOpts) {
   const d = await graphql(
     `query { get_player_outlook(sport:"nfl", player_id:"${playerId}", season:"${season}") {
-      player_id season text
+      metadata player_id published source
     } }`,
     o
   );
