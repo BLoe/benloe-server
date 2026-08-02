@@ -12,5 +12,12 @@
     "types": ["vite/client"],
     "paths": { "@server/*": ["../server/src/*"] }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "../server/src/gateway/sse.ts", "../server/src/gateway/fold.ts"]
+  // test/**/*.tsx was missing until 2026-08-02, which meant every component
+  // test in this app — the entire credentials and settings suite among them —
+  // was invisible to the typechecker. They ran, so they looked covered; a
+  // fixture that had drifted out of shape with its contract would have sailed
+  // through `tsc` and only surfaced as a confusing runtime failure, or not at
+  // all. An include list that silently omits a file extension is the same
+  // species of bug as a rule that lives only in a comment.
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "../server/src/gateway/sse.ts", "../server/src/gateway/fold.ts"]
 }

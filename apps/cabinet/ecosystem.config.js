@@ -56,15 +56,20 @@ module.exports = {
         // would have 503'd and every Plaid call would have found no keys.
         // Generate with: openssl rand -base64 32
         CABINET_CRED_KEY: env.CABINET_CRED_KEY,
-        // 'sandbox' (default) or 'production'. Not a secret — it only selects
-        // which Plaid hostname to call, and the credentials themselves are
-        // environment-specific, so a mismatch fails closed with an auth error
-        // rather than reaching the wrong data.
+        // The next two are LEGACY FALLBACKS as of migration 019. Both are now
+        // settings in the app_setting table, editable from /credentials, and a
+        // DB row outranks the variable. They stay wired for continuity — a
+        // value already in .env keeps working — but neither should be the place
+        // these get changed any more.
+        //
+        // Deliberately NO `|| 'default'` on either one. A hardcoded fallback
+        // here would make the settings page report source: 'env' when nothing
+        // is actually configured, which is precisely the failure the source
+        // field exists to prevent: an unconfigured value wearing the costume of
+        // a deliberate one. Undefined is the honest signal, and the settings
+        // catalog owns the default.
         PLAID_ENV: env.PLAID_ENV,
-        // Public origin, used to build the Plaid OAuth redirect_uri and the
-        // webhook URL. Must match the "Allowed redirect URIs" entry in the
-        // Plaid dashboard exactly.
-        CABINET_PUBLIC_ORIGIN: env.CABINET_PUBLIC_ORIGIN || 'https://cabinet.benloe.com',
+        CABINET_PUBLIC_ORIGIN: env.CABINET_PUBLIC_ORIGIN,
         // claude-worker's own nvm-managed node (v24.12.0) is the only place a
         // working, correctly-permissioned npm/npx/corepack actually lives on
         // this box — /usr/local/bin/node is a bare interpreter with no npm

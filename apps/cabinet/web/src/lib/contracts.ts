@@ -173,6 +173,14 @@ export interface EnvVarReport {
   scrubbed: boolean;
   /** Non-null ONLY for vars the server marks as configuration rather than secret (e.g. PLAID_ENV). */
   value: string | null;
+  /**
+   * The `app_setting` key that now owns this value, or null. Non-null means the
+   * variable is a LEGACY FALLBACK: a stored setting outranks it, so the line
+   * still sitting in .env may not be the value actually in force. The row stays
+   * listed precisely so that fact is discoverable from the .env side too — it
+   * just must not be rendered as if it were authoritative.
+   */
+  supersededBy: string | null;
 }
 
 export interface CredentialsView {
@@ -190,6 +198,46 @@ export interface CredentialsView {
 
 /** `created` distinguishes a first store from a rotation, so the UI can say which happened truthfully. */
 export interface CredentialSaveResult { ok: boolean; created: boolean; credential: CredentialMeta }
+
+/* ---------- settings (the editable, NON-secret half of the same page) ----------
+   Mirrors server/src/domains/settings.ts + gateway/settingsRoutes.ts.
+
+   The exact inverse of the credential shapes above: every field here is a
+   plaintext value that is safe to print, echo and screenshot. That is the
+   membership rule for the table, not an accident of the current contents — if a
+   value ever needs hiding it is a credential, not a setting.
+
+   Resolution order is DB row → environment variable → built-in default, and
+   `source` reports which of the three won. Rendering that is the whole job: a
+   settings page whose edit silently loses to an invisible env var is the worst
+   bug this surface can have. */
+export type SettingType = 'enum' | 'origin' | 'text';
+export type SettingSource = 'db' | 'env' | 'default';
+
+export interface SettingView {
+  key: string;
+  /** Group heading — shares the integration's name with the credential slots above it. */
+  group: string;
+  label: string;
+  /** What it does, in outcome terms. Rendered under the control. */
+  description: string;
+  type: SettingType;
+  /** Allowed values, for `enum` only. */
+  options?: string[];
+  /** Used when neither a stored row nor the environment supplies a value. */
+  default: string;
+  /** The legacy environment variable this setting outranks, when there is one. */
+  envVar?: string;
+  /** True when the process reads this once at boot, so a save isn't live yet. */
+  restartRequired?: boolean;
+  /** The value actually in force. */
+  value: string;
+  source: SettingSource;
+  /** SQLite `datetime('now')` — naive UTC. Non-null only when `source` is 'db'. */
+  updated_at: string | null;
+  /** The environment's value, when the variable is set — whether or not it won. */
+  env_value: string | null;
+}
 
 /* ---------- money (Plaid + the ledger it fills) ----------
    Mirrors server/src/domains/money.ts and server/src/gateway/plaidRoutes.ts.
@@ -406,6 +454,18 @@ export interface CabinetApi {
   saveCredential(input: { name: string; secret: string; provider?: string | null; description?: string | null }): Promise<CredentialSaveResult>;
   /** Works even with no encryption key loaded — dropping ciphertext you can't read is still a complete delete. */
   deleteCredential(name: string): Promise<{ ok: boolean; deleted: string }>;
+
+  /* ---- settings: plaintext both ways, and echoed back normalised ---- */
+  settings(): Promise<{ settings: SettingView[] }>;
+  /** Returns the RESOLVED view, not the submitted string — the server normalises. Render what comes back. */
+  saveSetting(key: string, value: string): Promise<{ setting: SettingView }>;
+  /**
+   * Stop overriding: drops the stored row so the value falls back to the
+   * environment variable or the built-in default. Deliberately not the same
+   * operation as saving the old value back, which would leave a row that keeps
+   * outranking a future .env change forever.
+   */
+  revertSetting(key: string): Promise<{ setting: SettingView }>;
 
   /* ---- money: the Plaid connection itself ---- */
   plaidStatus(): Promise<PlaidStatus>;

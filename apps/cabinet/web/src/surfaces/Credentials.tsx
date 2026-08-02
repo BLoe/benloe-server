@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/cabinet.js';
-import type { CredentialMeta, CredentialSlot, CredentialsView, EnvVarReport } from '../lib/cabinet.js';
+import type { CredentialMeta, CredentialSlot, CredentialsView, EnvVarReport, SettingView } from '../lib/cabinet.js';
 import { SectionLabel } from '../components/instruments/index.js';
 import { ConfirmDialog } from '../components/shell/index.js';
 import { ApiError } from '../lib/client.js';
@@ -23,6 +23,20 @@ import './credentials.css';
  *     answering "which integrations are configured?" at a glance, so a slot
  *     with no value renders as loudly as one with, and a required empty slot
  *     carries the warning tone.
+ *
+ * The Settings section is the deliberate inverse of rule 1 and shares the page
+ * anyway, because "configure this integration" is one job in Ben's head and
+ * splitting it across two pages would mean holding half a Plaid setup in each.
+ * Everything there is plaintext, readable, and echoed back. What it adds is a
+ * fourth rule, which governs that section alone:
+ *
+ *  4. PRECEDENCE IS THE PRODUCT. A stored setting outranks its environment
+ *     variable, so every control states which of DB / env / default supplied
+ *     the value in force and what it is beating. The failure this prevents is
+ *     the worst one a settings page has: an edit that reports success and
+ *     changes nothing because an invisible env var wins — or its mirror, an
+ *     operator reading a .env line that has silently done nothing for months.
+ *     Both directions are named, here and in the environment list below.
  */
 
 /* ---------------------------------------------------------------- time --- */
@@ -77,6 +91,24 @@ export function fmtAgo(s: string | null, now: number = Date.now()): string {
 
   const d = new Date(at);
   return `${MONTHS[d.getUTCMonth()] ?? ''} ${d.getUTCDate()} ${d.getUTCFullYear()}`;
+}
+
+/**
+ * A store stamp as a readable LOCAL datetime — "2 Aug 2026, 19:22".
+ *
+ * Deliberately absolute where `fmtAgo` is relative. A credential's stamps
+ * answer "is this fresh?", which relative time answers better; a setting's
+ * stamp answers "was that me, in the change I'm remembering?", and "3 d ago"
+ * is no help in placing an edit against the afternoon it happened. Local, not
+ * UTC, for the same reason: the memory being matched is in wall-clock time.
+ */
+export function fmtWhen(s: string | null): string {
+  if (!s) return 'never';
+  const at = Date.parse(normalizeStamp(s));
+  if (Number.isNaN(at)) return s;
+  return new Date(at).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 /** The exact instant, for a `title=` — relative is for reading, this is for checking. */
@@ -213,16 +245,231 @@ function Editor({ slot, busy, error, note, value, onChange, onSave, onCancel }: 
   );
 }
 
+/* ---- settings: plaintext, editable, and loud about precedence ---- */
+
+/** True when a stored row is actively beating a live environment variable. */
+function isOverriding(s: SettingView): boolean {
+  return s.source === 'db' && s.env_value !== null && s.env_value !== s.value;
+}
+
+/**
+ * Where the value in force came from, in one mark — the settings equivalent of
+ * `Pill`, and the same reading at the same glance distance. Brass only for the
+ * one case that can surprise you: a stored value quietly beating a variable
+ * that is still set to something else.
+ */
+function SourcePill({ s }: { s: SettingView }) {
+  if (s.source === 'db') {
+    const over = isOverriding(s);
+    return (
+      <span className={`cred-pill ${over ? 'warn' : 'ok'}`}>{over ? 'Set here · overriding' : 'Set here'}</span>
+    );
+  }
+  if (s.source === 'env') return <span className="cred-pill dim">From {s.envVar}</span>;
+  return <span className="cred-pill dim">Default</span>;
+}
+
+/**
+ * The sentence this section exists to say. Every branch names the source that
+ * won AND the source that lost, because either one alone leaves a reader who
+ * knows about the other convinced the page is lying to them.
+ */
+function Precedence({ s }: { s: SettingView }) {
+  if (s.source === 'db') {
+    if (isOverriding(s)) {
+      return (
+        <p className="cred-set-note override">
+          <span className="cred-set-mark" aria-hidden="true">
+            △
+          </span>
+          <span>
+            Overriding <code className="cred-name data">{s.envVar}</code> (
+            <code className="cred-env-val">{s.env_value}</code>) from the environment. The value stored here is
+            the one in force — that variable is still in the environment and is being ignored, and will stay
+            ignored until you stop overriding.
+          </span>
+        </p>
+      );
+    }
+    if (s.env_value !== null) {
+      return (
+        <p className="cred-set-note">
+          Stored here. <code className="cred-name data">{s.envVar}</code> is also set, to the same value, so
+          nothing would change if you stopped overriding.
+        </p>
+      );
+    }
+    return (
+      <p className="cred-set-note">
+        Stored here.{' '}
+        {s.value === s.default ? (
+          <>Same value as the built-in default.</>
+        ) : (
+          <>
+            The built-in default is <code className="cred-env-val">{s.default}</code>.
+          </>
+        )}
+      </p>
+    );
+  }
+
+  if (s.source === 'env') {
+    return (
+      <p className="cred-set-note">
+        This value comes from <code className="cred-name data">{s.envVar}</code> in the environment. Saving here
+        stores an override that outranks it from then on — the variable stays where it is, doing nothing.
+      </p>
+    );
+  }
+
+  return (
+    <p className="cred-set-note">
+      The built-in default — nothing is stored here
+      {s.envVar ? (
+        <>
+          , and <code className="cred-name data">{s.envVar}</code> is not set in the environment.
+        </>
+      ) : (
+        '.'
+      )}
+    </p>
+  );
+}
+
+interface SettingRowProps {
+  s: SettingView;
+  /** What's in the field right now. Only ever differs from `s.value` between a keystroke and a save. */
+  draft: string;
+  busy: boolean;
+  error: string | null;
+  onDraft: (v: string) => void;
+  onSave: (v: string) => void;
+  onRevert: () => void;
+}
+
+/**
+ * One editable setting.
+ *
+ * Nothing here is optimistic. A save shows a pending state and then renders
+ * whatever the server echoed back, because the server normalises — a trailing
+ * slash comes off an origin, a default port is dropped — and the difference
+ * between "what I typed" and "what is stored" is exactly the thing that would
+ * otherwise be discovered a week later by a redirect that doesn't match.
+ */
+function SettingRow({ s, draft, busy, error, onDraft, onSave, onRevert }: SettingRowProps) {
+  const id = `cred-setting-${s.key}`;
+  const dirty = draft.trim() !== s.value;
+  return (
+    <li className={`cred-set${isOverriding(s) ? ' is-overriding' : ''}`}>
+      <div className="cred-set-head">
+        <label className="cred-slot-label" htmlFor={id}>
+          {s.label}
+        </label>
+        <code className="cred-name data">{s.key}</code>
+        <SourcePill s={s} />
+      </div>
+
+      <div className="cred-set-control">
+        {s.type === 'enum' ? (
+          <>
+            {/* Saving on change is safe here because the choices are closed and
+                every one of them is a complete, valid value — there is no
+                half-typed state to protect, so a Save button would only be a
+                second click between deciding and it being true. */}
+            <select
+              id={id}
+              className="cred-select data"
+              value={draft}
+              disabled={busy}
+              onChange={(e) => onSave(e.target.value)}
+            >
+              {(s.options ?? []).map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+            {busy && <span className="cred-set-busy data">Saving…</span>}
+          </>
+        ) : (
+          <form
+            className="cred-set-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (dirty) onSave(draft);
+            }}
+          >
+            <input
+              id={id}
+              className="cred-input data"
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              value={draft}
+              disabled={busy}
+              onChange={(e) => onDraft(e.target.value)}
+            />
+            {/* Disabled while unchanged: a Save that does nothing still reads
+                as a change having been made, and this page's whole job is
+                keeping "what I did" and "what is true" the same sentence. */}
+            <button type="submit" className="cred-btn" disabled={busy || !dirty}>
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+          </form>
+        )}
+      </div>
+
+      {/* Inline, at the control that produced it, never a banner at the top of
+          the page: the 409 about linked banks is the most important thing this
+          surface can say, and it is only legible next to the selector that
+          caused it. */}
+      {error && <p className="cred-error data">{error}</p>}
+
+      <Precedence s={s} />
+      {s.restartRequired && (
+        <p className="cred-set-note">Read once at boot — this takes effect after Cabinet restarts, not on save.</p>
+      )}
+      <p className="cred-slot-desc">{s.description}</p>
+
+      {s.source === 'db' && (
+        <p className="cred-set-when data">
+          <span className="cred-env-k">stored</span> {fmtWhen(s.updated_at)}
+          {/* Offered ONLY for a stored value, because it is the only state
+              where there is an override to stop. Putting the old value back by
+              hand is not the same operation — it leaves a row that keeps
+              winning over whatever .env says next year. */}
+          <button type="button" className="cred-btn tiny subtle" disabled={busy} onClick={onRevert}>
+            {s.env_value !== null ? 'Stop overriding' : 'Revert to default'}
+          </button>
+        </p>
+      )}
+    </li>
+  );
+}
+
 /* ---- environment: read-only by nature, and it has to look it ---- */
 
-function EnvRow({ v }: { v: EnvVarReport }) {
+/**
+ * `setting` is the entry that supersedes this variable, when one exists — the
+ * row needs its label and its current value to say what actually won.
+ */
+function EnvRow({ v, setting }: { v: EnvVarReport; setting?: SettingView | null }) {
   // Belt and braces: the server only sends `value` for entries it has marked
   // as configuration rather than secret, and never for a scrubbed one. This
   // repeats that rule client-side so a server-side mistake still can't put a
   // secret on screen.
   const showValue = v.value !== null && !v.scrubbed;
+  // A superseded variable has been demoted to a legacy fallback: a stored
+  // setting beats it, so whatever is next to it on screen may not be in force.
+  // It stays listed — deleting it from the catalog would be tidier and worse,
+  // because the .env line does not disappear when the setting is created — but
+  // it is dimmed and labelled rather than left sitting there looking like the
+  // answer to "what is this configured to?".
+  const superseded = v.supersededBy !== null;
   return (
-    <li className="cred-env-row">
+    <li className={`cred-env-row${superseded ? ' is-superseded' : ''}`}>
       <div className="cred-env-head">
         <code className="cred-env-name data">{v.name}</code>
         <span className="cred-env-label">{v.label}</span>
@@ -230,11 +477,18 @@ function EnvRow({ v }: { v: EnvVarReport }) {
             words: every read-only row on this page says so on the row, not
             just once in a section lede a scroll away. */}
         <span className="cred-ro">read-only</span>
-        {/* An unset var is only a warning when something actually needs it.
-            PLAID_ENV has a default and the GitHub pair belongs to an
-            integration that may never be turned on — those go quiet, so the
-            one that IS missing and IS needed still reads as an exception. */}
-        <Pill set={v.set} required={v.required} />
+        {superseded ? (
+          // "Set / not set" is the wrong question for a variable that has been
+          // outranked — the answer would be true and useless — so the pill
+          // answers the one that matters instead.
+          <span className="cred-pill dim">Superseded</span>
+        ) : (
+          /* An unset var is only a warning when something actually needs it.
+             The GitHub pair belongs to an integration that may never be turned
+             on — that goes quiet, so the one that IS missing and IS needed
+             still reads as an exception. */
+          <Pill set={v.set} required={v.required} />
+        )}
       </div>
       {showValue ? (
         <p className="cred-env-value data">
@@ -254,9 +508,30 @@ function EnvRow({ v }: { v: EnvVarReport }) {
         </p>
       )}
       <p className="cred-env-desc">{v.description}</p>
-      <p className="cred-env-reason">
-        <span className="cred-env-k">why not here</span> {v.reason}
-      </p>
+      {superseded ? (
+        // Replaces the "why not here" line rather than joining it: for these
+        // entries the server's `reason` IS the supersession note, and saying it
+        // twice — once generically, once with the value that actually won —
+        // would bury the half that carries the information.
+        <p className="cred-env-reason cred-env-superseded">
+          <span className="cred-env-k">superseded</span> The{' '}
+          {setting ? `${setting.group} · ${setting.label}` : v.supersededBy} setting on this page takes
+          precedence over this variable
+          {setting ? (
+            <>
+              {' '}
+              and is currently <code className="cred-env-val">{setting.value}</code>
+              {setting.source === 'db' ? '' : ' — read from this variable, since nothing is stored yet'}.
+            </>
+          ) : (
+            '.'
+          )}
+        </p>
+      ) : (
+        <p className="cred-env-reason">
+          <span className="cred-env-k">why not here</span> {v.reason}
+        </p>
+      )}
     </li>
   );
 }
@@ -310,6 +585,20 @@ export function Credentials() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  /* ---- settings: a second, independent payload on the same page ----
+     Deliberately not folded into the credentials fetch. They are different
+     endpoints with opposite rules, and a settings outage should cost this page
+     the settings section, not the key cabinet. */
+  const [settings, setSettings] = useState<SettingView[] | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  /* Per-key edit state. `drafts` holds what is in the field, which differs from
+     the stored value only between a keystroke and the server's echo — the echo
+     writes back over it, so a normalised value replaces what was typed rather
+     than sitting next to it. */
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [settingBusy, setSettingBusy] = useState<string | null>(null);
+  const [settingErrors, setSettingErrors] = useState<Record<string, string>>({});
+
   useEffect(() => {
     let live = true;
     api
@@ -328,6 +617,24 @@ export function Credentials() {
     };
   }, [tick]);
 
+  useEffect(() => {
+    let live = true;
+    api
+      .settings()
+      .then((r) => {
+        if (!live) return;
+        setSettings(r.settings);
+        setSettingsError(null);
+      })
+      .catch((e: unknown) => {
+        if (!live) return;
+        setSettingsError(errText(e, "Couldn't read the settings."));
+      });
+    return () => {
+      live = false;
+    };
+  }, [tick]);
+
   // Catalog order, grouped — the server sends slots in catalog order, so the
   // first appearance of a group fixes that group's position.
   const groups = useMemo(() => {
@@ -339,6 +646,77 @@ export function Credentials() {
     }
     return out;
   }, [view]);
+
+  // Same grouping, same catalog order, so a setting sits under the same
+  // heading as the keys for the integration it configures.
+  const settingGroups = useMemo(() => {
+    const out: { name: string; items: SettingView[] }[] = [];
+    for (const s of settings ?? []) {
+      const found = out.find((g) => g.name === s.group);
+      if (found) found.items.push(s);
+      else out.push({ name: s.group, items: [s] });
+    }
+    return out;
+  }, [settings]);
+
+  /** Lets an environment row name the setting that outranks it, and its value. */
+  const settingByKey = useMemo(() => new Map((settings ?? []).map((s) => [s.key, s])), [settings]);
+
+  /* The server re-resolves after every write and echoes the result — which
+     source now wins, what the value normalised to, when it was stored. Taking
+     that verbatim is the only way the page can't drift from the store. */
+  const applySetting = useCallback((next: SettingView) => {
+    setSettings((prev) => (prev ? prev.map((s) => (s.key === next.key ? next : s)) : prev));
+    setDrafts((prev) => ({ ...prev, [next.key]: next.value }));
+  }, []);
+
+  const clearSettingError = useCallback((key: string) => {
+    setSettingErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  const saveSetting = (s: SettingView, value: string) => {
+    if (settingBusy) return;
+    setSettingBusy(s.key);
+    clearSettingError(s.key);
+    // Show the pick while the request is in flight — pending, not optimistic:
+    // the control still reads as un-settled, and what lands is the echo.
+    setDrafts((prev) => ({ ...prev, [s.key]: value }));
+    api
+      .saveSetting(s.key, value)
+      .then((r) => applySetting(r.setting))
+      .catch((e: unknown) => {
+        // The server's message is written for Ben — a 400 names the format it
+        // wanted, a 409 explains what the change would break — so it goes
+        // through as-is rather than being paraphrased into "save failed".
+        setSettingErrors((prev) => ({ ...prev, [s.key]: errText(e, "That setting wasn't saved.") }));
+        // A refused choice must not sit in a closed control looking chosen:
+        // for an enum there is nothing to correct, so it snaps back to what is
+        // actually stored. A typed value stays put, because the correction is
+        // an edit of what's already in the field.
+        if (s.type === 'enum') setDrafts((prev) => ({ ...prev, [s.key]: s.value }));
+      })
+      .finally(() => setSettingBusy(null));
+  };
+
+  const revertSetting = (s: SettingView) => {
+    if (settingBusy) return;
+    setSettingBusy(s.key);
+    clearSettingError(s.key);
+    api
+      .revertSetting(s.key)
+      .then((r) => applySetting(r.setting))
+      .catch((e: unknown) =>
+        // Reverting is a value change too, so it can be blocked for exactly
+        // the same reason a save can — and it lands in the same place.
+        setSettingErrors((prev) => ({ ...prev, [s.key]: errText(e, "That setting wasn't reverted.") })),
+      )
+      .finally(() => setSettingBusy(null));
+  };
 
   const openEditor = (slot: CredentialSlot) => {
     setOpenName(slot.name);
@@ -405,9 +783,9 @@ export function Credentials() {
   const missingRequired = view.slots.filter((s) => s.required && !s.stored).length;
   const hasManaged = view.managed.length > 0;
   const hasUnknown = view.unrecognised.length > 0;
-  const nManaged = '02';
-  const nUnknown = hasManaged ? '03' : '02';
-  const nEnv = String(2 + (hasManaged ? 1 : 0) + (hasUnknown ? 1 : 0)).padStart(2, '0');
+  const nManaged = '03';
+  const nUnknown = hasManaged ? '04' : '03';
+  const nEnv = String(3 + (hasManaged ? 1 : 0) + (hasUnknown ? 1 : 0)).padStart(2, '0');
 
   return (
     <section className="creds" aria-label="Credentials">
@@ -517,6 +895,39 @@ export function Credentials() {
         ))}
       </section>
 
+      {/* Directly under the keys, and above the read-only lists: a Plaid setup
+          is one job, and the environment selector belongs beside the pair of
+          keys it decides the meaning of. */}
+      <section className="cred-settings" aria-label="Settings">
+        <SectionLabel n="02">Settings</SectionLabel>
+        <p className="cred-section-lede">
+          Configuration rather than secrets: plaintext, readable, and editable right here. Anything saved in this
+          section outranks the matching environment variable listed further down — the variable stays where it is
+          and stops being used, and each control says which of the two is currently winning.
+        </p>
+        {settingsError && <p className="cred-error data">{settingsError}</p>}
+        {!settings && !settingsError && <p className="cred-loading data">Reading settings…</p>}
+        {settingGroups.map((group) => (
+          <article className="cred-group" key={group.name} aria-label={`${group.name} settings`}>
+            <h3 className="cred-group-name">{group.name}</h3>
+            <ul className="cred-set-list">
+              {group.items.map((s) => (
+                <SettingRow
+                  key={s.key}
+                  s={s}
+                  draft={drafts[s.key] ?? s.value}
+                  busy={settingBusy === s.key}
+                  error={settingErrors[s.key] ?? null}
+                  onDraft={(v) => setDrafts((prev) => ({ ...prev, [s.key]: v }))}
+                  onSave={(v) => saveSetting(s, v)}
+                  onRevert={() => revertSetting(s)}
+                />
+              ))}
+            </ul>
+          </article>
+        ))}
+      </section>
+
       {hasManaged && (
         <section className="cred-managed" aria-label="Managed automatically">
           <SectionLabel n={nManaged}>Managed automatically</SectionLabel>
@@ -553,16 +964,23 @@ export function Credentials() {
         </section>
       )}
 
-      <section className="cred-env" aria-label="Environment">
+      {/* aria-label is "Environment variables", not "Environment": one of the
+          settings above is literally called Environment, and two things on one
+          page answering to the same name is how you end up editing the wrong
+          one — or, for a screen reader, being told you are somewhere you are
+          not. The heading stays short because its column gives it context. */}
+      <section className="cred-env" aria-label="Environment variables">
         <SectionLabel n={nEnv}>Environment</SectionLabel>
         <p className="cred-section-lede">
           <span className="cred-ro">read-only</span> These are process environment variables, set outside the
           app — in root-owned config Cabinet can neither read nor write — and read once at boot. Nothing on this
-          page can change one, and changing one takes a restart, not a save.
+          page can change one, and changing one takes a restart, not a save. A variable marked{' '}
+          <em>superseded</em> has been replaced by a setting above, which wins: the line is still in the
+          environment, and it is no longer what Cabinet uses.
         </p>
         <ul className="cred-env-list">
           {view.env.map((v) => (
-            <EnvRow key={v.name} v={v} />
+            <EnvRow key={v.name} v={v} setting={v.supersededBy ? settingByKey.get(v.supersededBy) ?? null : null} />
           ))}
         </ul>
       </section>

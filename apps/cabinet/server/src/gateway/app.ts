@@ -20,6 +20,7 @@ import { createTranscriptRecorder, persistUserMessage } from './transcript.js';
 import { markTurnInFlight, clearTurnInFlightIf, type TurnOutcome } from './pendingTurn.js';
 import { registerSurfaceRoutes } from './surfaces.js';
 import { registerCredentialRoutes } from './credentialRoutes.js';
+import { registerSettingsRoutes } from './settingsRoutes.js';
 import { registerPlaidRoutes, registerPlaidWebhook } from './plaidRoutes.js';
 import type { PlaidClient } from '../integrations/plaid.js';
 import { credKey } from '../domains/credentials.js';
@@ -545,6 +546,7 @@ export function buildApp(deps: GatewayDeps) {
   // environment, and no route in this file can return a decrypted secret
   // because credentialRoutes.ts never imports the function that decrypts.
   registerCredentialRoutes(app, { db: deps.db, key: safeCredKey() });
+  registerSettingsRoutes(app, { db: deps.db });
 
   // Plaid + the money read surface. Same wall, same reasoning: the routes hold
   // a PlaidClient, never a token, so no response from them can carry one.

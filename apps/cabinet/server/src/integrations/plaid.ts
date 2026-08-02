@@ -31,6 +31,7 @@
 import type Database from 'better-sqlite3';
 import { createHash, createPublicKey, timingSafeEqual, verify as cryptoVerify } from 'node:crypto';
 import { getCredentialSecret, putCredential } from '../domains/credentials.js';
+import { getSetting } from '../domains/settings.js';
 import {
   applyTransactionSync,
   getItem,
@@ -70,13 +71,23 @@ export function itemCredentialName(itemId: string): string {
 
 export type PlaidEnv = 'sandbox' | 'production';
 
+/**
+ * Case- and whitespace-tolerant on the way in, exact on the way out. Anything
+ * unrecognised — including the 'development' environment Plaid decommissioned
+ * in June 2024 — falls back to sandbox rather than reaching real bank data by
+ * accident. Fail-closed is the right default here, but 'Production' silently
+ * meaning sandbox would be a genuinely nasty afternoon, so normalize first.
+ *
+ * This is applied to the value coming out of the settings store as well as to
+ * the env var. The settings layer validates writes against the enum, but this
+ * function is the last line before a hostname gets built, and it is cheap.
+ */
+export function normalisePlaidEnv(raw: string | null | undefined): PlaidEnv {
+  return raw?.trim().toLowerCase() === 'production' ? 'production' : 'sandbox';
+}
+
 export function plaidEnv(env: NodeJS.ProcessEnv = process.env): PlaidEnv {
-  // Case- and whitespace-tolerant on the way in, exact on the way out. Anything
-  // unrecognised — including the 'development' environment Plaid decommissioned
-  // in June 2024 — falls back to sandbox rather than reaching real bank data by
-  // accident. Fail-closed is the right default here, but 'Production' silently
-  // meaning sandbox would be a genuinely nasty afternoon, so normalize first.
-  return env.PLAID_ENV?.trim().toLowerCase() === 'production' ? 'production' : 'sandbox';
+  return normalisePlaidEnv(env.PLAID_ENV);
 }
 
 export class PlaidApiError extends Error {
@@ -175,20 +186,36 @@ export interface SyncReport {
 export class PlaidClient {
   private jwkCache = new Map<string, Record<string, unknown>>();
 
+  /**
+   * Both overrides default to null, which means "resolve from settings on every
+   * access". They are NOT snapshotted at construction, and that is the point:
+   * one PlaidClient is built at boot in index.ts and lives for the life of the
+   * process, so a constructor-frozen environment would mean every edit on the
+   * settings page silently required a restart to take effect. A settings page
+   * whose changes do nothing until you remember to restart is the same chore
+   * this whole exercise exists to delete, just moved to a different screen.
+   *
+   * The overrides exist for tests, which want a fixed environment without a
+   * settings row, and they win when supplied.
+   */
   constructor(
     private readonly db: Database.Database,
     private readonly key: Buffer | null,
-    private readonly env: PlaidEnv = plaidEnv(),
-    /** Public origin, for redirect_uri and the webhook. Injectable for tests. */
-    private readonly origin = process.env.CABINET_PUBLIC_ORIGIN ?? 'https://cabinet.benloe.com',
+    private readonly envOverride: PlaidEnv | null = null,
+    private readonly originOverride: string | null = null,
   ) {}
 
   get environment(): PlaidEnv {
-    return this.env;
+    return this.envOverride ?? normalisePlaidEnv(getSetting(this.db, 'plaid.env'));
+  }
+
+  /** Public origin, for redirect_uri and the webhook. */
+  get origin(): string {
+    return this.originOverride ?? getSetting(this.db, 'public.origin');
   }
 
   private get base(): string {
-    return `https://${this.env}.plaid.com`;
+    return `https://${this.environment}.plaid.com`;
   }
 
   /** The Link redirect landing page, and the URI that must be allow-listed in Plaid's dashboard. */
@@ -357,7 +384,7 @@ export class PlaidClient {
       putCredential(this.db, this.key, {
         name: credName,
         provider: 'plaid',
-        description: `Plaid access token — ${institutionName ?? 'linked institution'} (${this.env})`,
+        description: `Plaid access token — ${institutionName ?? 'linked institution'} (${this.environment})`,
         secret: ex.access_token,
       });
       setItemCredential(this.db, item.id, credName);

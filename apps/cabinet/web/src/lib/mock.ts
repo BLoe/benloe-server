@@ -2,7 +2,7 @@ import type {
   CabinetApi, TodayView, DomainId, DomainView, OpsFeed, MemoryView, RecallResponse, HealthInfo, ChatSummary, ChatMessage, InstrumentSpec,
   UsageView, UsageRollingView, PerfView,
   PlaidStatus, PlaidItemSummary, FinancialAccount, NetWorth, MoneySummary, MoneyTransaction, CategorySpend,
-  CredentialMeta, CredentialSlot, CredentialsView, EnvVarReport,
+  CredentialMeta, CredentialSlot, CredentialsView, EnvVarReport, SettingView,
 } from './contracts.js';
 
 /* Deterministic mock data in Cabinet's voice — lets Movement 2 surfaces build
@@ -322,27 +322,75 @@ const credentialEnv: EnvVarReport[] = [
     reason:
       'This is the bootstrap secret — the one value that cannot be stored in the store it unlocks. It lives in ' +
       '/srv/benloe/.env, which is root-owned and which Cabinet can neither read nor write by design.',
-    set: true, required: true, scrubbed: true, value: null,
+    set: true, required: true, scrubbed: true, value: null, supersededBy: null,
   },
   {
     name: 'PLAID_ENV', label: 'Plaid environment',
     description: "'sandbox' for fake test banks, 'production' for real ones. Defaults to sandbox when unset.",
-    reason: 'Read once at boot by the Plaid client. Changing it needs a process restart, not just a new value.',
-    set: true, required: false, scrubbed: false, value: 'sandbox',
+    reason: 'Superseded by the Plaid environment setting, which takes precedence over this variable.',
+    set: true, required: false, scrubbed: false, value: 'sandbox', supersededBy: 'plaid.env',
   },
+  // Deliberately NOT the value in force: the stored `public.origin` setting
+  // below outranks it. Dev should meet the confusing case — a .env line that
+  // looks authoritative and isn't — every time it opens the page, because that
+  // is the case the precedence copy exists to defuse.
   {
     name: 'CABINET_PUBLIC_ORIGIN', label: 'Public origin',
     description: 'Base URL used to build the Plaid OAuth redirect and webhook URLs.',
-    reason: 'Read at boot to build URLs Plaid has already allow-listed. A restart is the only safe way to change it.',
-    set: true, required: true, scrubbed: false, value: 'https://cabinet.benloe.com',
+    reason: 'Superseded by the public origin setting, which takes precedence over this variable.',
+    set: true, required: true, scrubbed: false, value: 'https://cabinet.local:8080', supersededBy: 'public.origin',
   },
   {
     name: 'GITHUB_APP_PRIVATE_KEY_B64', label: 'GitHub App private key',
     description: 'Scrubbed from the process environment at boot after a token is minted from it.',
     reason: 'Secret, and root-injected. Presence is inferred from the token it produced, not from the variable.',
-    set: false, required: false, scrubbed: true, value: null,
+    set: false, required: false, scrubbed: true, value: null, supersededBy: null,
   },
 ];
+
+/* ---- settings: the editable, plaintext half of the credentials page ----
+   Seeded across two different sources on purpose — one value coming from the
+   environment, one stored row overriding a DIFFERENT environment value — so
+   the precedence rendering has something to say in dev without anyone having
+   to hand-edit a database first. */
+const settingStore: SettingView[] = [
+  {
+    key: 'plaid.env', group: 'Plaid', label: 'Environment',
+    description:
+      "Which Plaid environment to call. 'sandbox' uses fake test banks and fake data; 'production' connects real " +
+      'accounts. The Client ID and Secret are environment-specific.',
+    type: 'enum', options: ['sandbox', 'production'], default: 'sandbox', envVar: 'PLAID_ENV',
+    value: 'sandbox', source: 'env', updated_at: null, env_value: 'sandbox',
+  },
+  {
+    key: 'public.origin', group: 'Plaid', label: 'Public origin',
+    description:
+      'Base URL Cabinet is reachable at. Used to build the Plaid OAuth redirect and webhook URLs, both of which ' +
+      "must match what is registered in Plaid's dashboard character-for-character.",
+    type: 'origin', default: 'https://cabinet.benloe.com', envVar: 'CABINET_PUBLIC_ORIGIN',
+    value: 'https://cabinet.benloe.com', source: 'db', updated_at: '2026-08-01 19:22:10',
+    env_value: 'https://cabinet.local:8080',
+  },
+];
+
+/** The server's normalisation, mirrored — the echo is only useful if it can differ from what was typed. */
+function normaliseMockSetting(spec: SettingView, raw: string): string {
+  const value = raw.trim();
+  if (value.length === 0) throw new Error(`${spec.label} cannot be empty.`);
+  if (spec.type === 'enum' && !(spec.options ?? []).includes(value)) {
+    throw new Error(`${spec.label} must be one of: ${(spec.options ?? []).join(', ')}.`);
+  }
+  if (spec.type === 'origin') {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`${spec.label} must be a full URL, e.g. https://cabinet.benloe.com`);
+    }
+    return `${url.protocol}//${url.host}`;
+  }
+  return value;
+}
 
 function credentialsView(): CredentialsView {
   const byName = new Map(credentialStore.map((c) => [c.name, c]));
@@ -405,6 +453,42 @@ export const mockApi: CabinetApi = {
     const idx = credentialStore.findIndex((c) => c.name === name);
     if (idx >= 0) credentialStore.splice(idx, 1);
     return delay({ ok: true, deleted: name });
+  },
+
+  settings: () => delay({ settings: settingStore.map((s) => ({ ...s })) }),
+  saveSetting: (key, value) => {
+    const spec = settingStore.find((s) => s.key === key);
+    if (!spec) return Promise.reject(new Error(`Unknown setting: ${key}`));
+    let next: string;
+    try {
+      next = normaliseMockSetting(spec, value);
+    } catch (e) {
+      return Promise.reject(e as Error);
+    }
+    // The guard the real server enforces, and the single most important message
+    // this page can show — so the mock can produce it too rather than leaving
+    // the blocked path untested until it happens for real.
+    if (key === 'plaid.env' && next !== spec.value && plaidItems.some((i) => i.status !== 'revoked')) {
+      const n = plaidItems.filter((i) => i.status !== 'revoked').length;
+      return Promise.reject(
+        new Error(
+          `Cannot switch to '${next}' while ${n} account connection${n === 1 ? ' is' : 's are'} linked — their ` +
+          'access tokens only work in the environment that issued them. Unlink first, then switch.',
+        ),
+      );
+    }
+    spec.value = next;
+    spec.source = 'db';
+    spec.updated_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    return delay({ setting: { ...spec } });
+  },
+  revertSetting: (key) => {
+    const spec = settingStore.find((s) => s.key === key);
+    if (!spec) return Promise.reject(new Error(`Unknown setting: ${key}`));
+    spec.value = spec.env_value ?? spec.default;
+    spec.source = spec.env_value !== null ? 'env' : 'default';
+    spec.updated_at = null;
+    return delay({ setting: { ...spec } });
   },
 
   plaidStatus: () => delay(plaidStatus),
