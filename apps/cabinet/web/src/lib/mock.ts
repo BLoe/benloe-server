@@ -1,6 +1,8 @@
 import type {
   CabinetApi, TodayView, DomainId, DomainView, OpsFeed, MemoryView, RecallResponse, HealthInfo, ChatSummary, ChatMessage, InstrumentSpec,
   UsageView, UsageRollingView, PerfView,
+  PlaidStatus, PlaidItemSummary, FinancialAccount, NetWorth, MoneySummary, MoneyTransaction, CategorySpend,
+  CredentialMeta, CredentialSlot, CredentialsView, EnvVarReport,
 } from './contracts.js';
 
 /* Deterministic mock data in Cabinet's voice — lets Movement 2 surfaces build
@@ -194,6 +196,168 @@ const sampleMessages: ChatMessage[] = [
   { id: 'm4', role: 'assistant', parts: [{ type: 'text', text: "Fair. They're cheap now but I'll add a short-TTL cache before it matters. Good catch." }], created_at: '2026-07-07T13:01:35-04:00' },
 ];
 
+/* ---------- money ----------
+   Deliberately not the happy path. Dev builds the Money surface against a
+   world where one bank is broken, two accounts have no current balance (so
+   accounts_counted < accounts_total and the caveat must render), and one
+   transaction is still pending. A mock where everything is fine is a mock
+   that lets the honest states rot. */
+const netWorth: NetWorth = {
+  cash: 24_318.44,
+  credit: 2_146.09, // positive = owed
+  investments: 118_402.7,
+  loans: 0,
+  net_worth: 140_575.05, // cash + investments − credit − loans
+  accounts_counted: 4,
+  accounts_total: 6,
+  stalest_balance_at: '2026-07-29 04:12:07',
+};
+
+const plaidItems: PlaidItemSummary[] = [
+  { id: 1, institution: 'Chase', status: 'active', error_code: null, last_synced_at: '2026-08-02 06:10:41', consent_expiration_time: null },
+  { id: 2, institution: 'Bank of America', status: 'login_required', error_code: 'ITEM_LOGIN_REQUIRED', last_synced_at: '2026-07-29 04:12:07', consent_expiration_time: null },
+  { id: 3, institution: 'Vanguard', status: 'active', error_code: null, last_synced_at: '2026-08-02 06:10:52', consent_expiration_time: null },
+];
+
+const plaidAccounts: FinancialAccount[] = [
+  { id: 11, account_id: 'acc_chase_checking', institution_name: 'Chase', name: 'Total Checking', mask: '4417', type: 'depository', subtype: 'checking', current_balance: 8_412.19, available_balance: 8_312.19, limit_amount: null, balance_as_of: '2026-08-02 06:10:41', item_status: 'active', hidden: 0 },
+  { id: 12, account_id: 'acc_chase_savings', institution_name: 'Chase', name: 'Premier Savings', mask: '9930', type: 'depository', subtype: 'savings', current_balance: 15_906.25, available_balance: 15_906.25, limit_amount: null, balance_as_of: '2026-08-02 06:10:41', item_status: 'active', hidden: 0 },
+  { id: 13, account_id: 'acc_chase_sapphire', institution_name: 'Chase', name: 'Sapphire Reserve', mask: '2201', type: 'credit', subtype: 'credit card', current_balance: 2_146.09, available_balance: null, limit_amount: 24_000, balance_as_of: '2026-08-02 06:10:41', item_status: 'active', hidden: 0 },
+  // Balances went stale the moment the item broke — no current_balance, so
+  // these two drop out of the rollup and the counted/total caveat fires.
+  { id: 21, account_id: 'acc_bofa_checking', institution_name: 'Bank of America', name: 'Advantage Plus', mask: '0088', type: 'depository', subtype: 'checking', current_balance: null, available_balance: null, limit_amount: null, balance_as_of: '2026-07-29 04:12:07', item_status: 'login_required', hidden: 0 },
+  { id: 22, account_id: 'acc_bofa_card', institution_name: 'Bank of America', name: 'Customized Cash', mask: '7715', type: 'credit', subtype: 'credit card', current_balance: null, available_balance: null, limit_amount: 9_500, balance_as_of: '2026-07-29 04:12:07', item_status: 'login_required', hidden: 0 },
+  { id: 31, account_id: 'acc_vanguard_brokerage', institution_name: 'Vanguard', name: 'Brokerage', mask: '5502', type: 'investment', subtype: 'brokerage', current_balance: 118_402.7, available_balance: null, limit_amount: null, balance_as_of: '2026-08-02 06:10:52', item_status: 'active', hidden: 0 },
+];
+
+const categories: CategorySpend[] = [
+  { category: 'FOOD_AND_DRINK', detailed_top: 'FOOD_AND_DRINK_RESTAURANT', spent: 812.44, txns: 31 },
+  { category: 'GENERAL_MERCHANDISE', detailed_top: 'GENERAL_MERCHANDISE_ONLINE_MARKETPLACES', spent: 421.08, txns: 14 },
+  { category: 'TRANSPORTATION', detailed_top: 'TRANSPORTATION_TAXIS_AND_RIDE_SHARES', spent: 188.6, txns: 19 },
+  { category: 'ENTERTAINMENT', detailed_top: 'ENTERTAINMENT_STREAMING', spent: 96.94, txns: 6 },
+  { category: 'PERSONAL_CARE', detailed_top: 'PERSONAL_CARE_GYMS_AND_FITNESS_CENTERS', spent: 64.0, txns: 2 },
+];
+
+const transactions: MoneyTransaction[] = [
+  // pending: the amount and the merchant can both still change under us.
+  { transaction_id: 'tx_1', date: '2026-08-02', amount: 18.42, merchant: 'Joe Coffee', category_primary: 'FOOD_AND_DRINK', category_detailed: 'FOOD_AND_DRINK_COFFEE', account: 'Total Checking', mask: '4417', pending: 1 },
+  { transaction_id: 'tx_2', date: '2026-08-01', amount: 126.31, merchant: 'Whole Foods', category_primary: 'FOOD_AND_DRINK', category_detailed: 'FOOD_AND_DRINK_GROCERIES', account: 'Sapphire Reserve', mask: '2201', pending: 0 },
+  // negative = money IN. The one row that catches a sign inversion.
+  { transaction_id: 'tx_3', date: '2026-07-31', amount: -4_820.0, merchant: 'Payroll — Benloe LLC', category_primary: 'INCOME', category_detailed: 'INCOME_WAGES', account: 'Total Checking', mask: '4417', pending: 0 },
+  { transaction_id: 'tx_4', date: '2026-07-31', amount: 42.6, merchant: 'MTA OMNY', category_primary: 'TRANSPORTATION', category_detailed: 'TRANSPORTATION_PUBLIC_TRANSIT', account: 'Total Checking', mask: '4417', pending: 0 },
+  { transaction_id: 'tx_5', date: '2026-07-30', amount: 19.99, merchant: 'Spotify', category_primary: 'ENTERTAINMENT', category_detailed: 'ENTERTAINMENT_STREAMING', account: 'Sapphire Reserve', mask: '2201', pending: 0 },
+  { transaction_id: 'tx_6', date: '2026-07-29', amount: 288.14, merchant: 'Con Edison', category_primary: 'RENT_AND_UTILITIES', category_detailed: 'RENT_AND_UTILITIES_GAS_AND_ELECTRICITY', account: 'Total Checking', mask: '4417', pending: 0 },
+];
+
+const plaidStatus: PlaidStatus = {
+  configured: true,
+  environment: 'sandbox',
+  redirect_uri: 'https://cabinet.benloe.com/plaid/oauth',
+  webhook_url: 'https://cabinet.benloe.com/api/plaid/webhook',
+  items: plaidItems,
+  accounts: plaidAccounts,
+  net_worth: netWorth,
+};
+
+const moneySummary: MoneySummary = {
+  linked_institutions: plaidItems.length,
+  needs_attention: [{ institution: 'Bank of America', status: 'login_required', error: 'ITEM_LOGIN_REQUIRED' }],
+  last_synced_at: '2026-08-02 06:10:52',
+  net_worth: netWorth,
+  window_days: 30,
+  total_spent: 1_583.06,
+  by_category: categories,
+  accounts: plaidAccounts,
+};
+
+/* ---------- credentials ----------
+   Same principle as the money mock: not the happy path. Dev builds the
+   Credentials surface against a store where one required slot is filled and
+   the other is missing (so "Set" and "Not set" both render, and the missing
+   one is required so the warning tone fires), a machine-managed per-bank
+   token is present (read-only section), and one stored name matches no slot
+   (the delete-only section). No mock here carries a secret value, because no
+   response shape has anywhere to put one. */
+let credentialSeq = 3;
+
+const credentialStore: CredentialMeta[] = [
+  {
+    id: 1, name: 'plaid-client-id', provider: 'Plaid', description: 'Identifies this Cabinet install to Plaid.',
+    created_at: '2026-07-18 15:02:44', updated_at: '2026-08-02 04:41:09', last_used_at: '2026-08-02 06:10:52', rotated_at: null,
+  },
+  {
+    id: 2, name: 'plaid-item-9f3ac1', provider: 'Plaid', description: 'Access token — Chase',
+    created_at: '2026-07-18 15:14:03', updated_at: '2026-07-18 15:14:03', last_used_at: '2026-08-02 06:10:41', rotated_at: null,
+  },
+  {
+    id: 3, name: 'weather-api-key', provider: null, description: null,
+    created_at: '2026-05-02 11:20:00', updated_at: '2026-05-02 11:20:00', last_used_at: null, rotated_at: null,
+  },
+];
+
+/** The catalog, mirroring server/src/domains/credentialCatalog.ts. */
+const credentialCatalog: Omit<CredentialSlot, 'stored' | 'meta'>[] = [
+  {
+    name: 'plaid-client-id', group: 'Plaid', label: 'Client ID',
+    description: 'Identifies this Cabinet install to Plaid. Needed before any bank can be linked.',
+    where: 'Plaid Dashboard → Developers → Keys → client_id', required: true,
+  },
+  {
+    name: 'plaid-secret', group: 'Plaid', label: 'Secret',
+    description:
+      'The API secret for the environment set in PLAID_ENV. Sandbox and Production have different secrets — ' +
+      'storing the wrong one fails at the first API call, not at save time.',
+    where: 'Plaid Dashboard → Developers → Keys → the row matching your environment', required: true,
+  },
+];
+
+const isManaged = (name: string) => name.startsWith('plaid-item-');
+
+const credentialEnv: EnvVarReport[] = [
+  {
+    name: 'CABINET_CRED_KEY', label: 'Credential encryption key',
+    description:
+      'The AES-256 key that encrypts everything on this page. Without it the store still lists names but ' +
+      'cannot encrypt or decrypt anything.',
+    reason:
+      'This is the bootstrap secret — the one value that cannot be stored in the store it unlocks. It lives in ' +
+      '/srv/benloe/.env, which is root-owned and which Cabinet can neither read nor write by design.',
+    set: true, required: true, scrubbed: true, value: null,
+  },
+  {
+    name: 'PLAID_ENV', label: 'Plaid environment',
+    description: "'sandbox' for fake test banks, 'production' for real ones. Defaults to sandbox when unset.",
+    reason: 'Read once at boot by the Plaid client. Changing it needs a process restart, not just a new value.',
+    set: true, required: false, scrubbed: false, value: 'sandbox',
+  },
+  {
+    name: 'CABINET_PUBLIC_ORIGIN', label: 'Public origin',
+    description: 'Base URL used to build the Plaid OAuth redirect and webhook URLs.',
+    reason: 'Read at boot to build URLs Plaid has already allow-listed. A restart is the only safe way to change it.',
+    set: true, required: true, scrubbed: false, value: 'https://cabinet.benloe.com',
+  },
+  {
+    name: 'GITHUB_APP_PRIVATE_KEY_B64', label: 'GitHub App private key',
+    description: 'Scrubbed from the process environment at boot after a token is minted from it.',
+    reason: 'Secret, and root-injected. Presence is inferred from the token it produced, not from the variable.',
+    set: false, required: false, scrubbed: true, value: null,
+  },
+];
+
+function credentialsView(): CredentialsView {
+  const byName = new Map(credentialStore.map((c) => [c.name, c]));
+  const catalogued = new Set(credentialCatalog.map((s) => s.name));
+  const extra = credentialStore.filter((c) => !catalogued.has(c.name));
+  return {
+    configured: true,
+    credentials: [...credentialStore],
+    slots: credentialCatalog.map((slot) => ({ ...slot, stored: byName.has(slot.name), meta: byName.get(slot.name) ?? null })),
+    managed: extra.filter((c) => isManaged(c.name)),
+    unrecognised: extra.filter((c) => !isManaged(c.name)),
+    env: credentialEnv,
+  };
+}
+
 const delay = <T>(v: T): Promise<T> => Promise.resolve(v);
 
 export const mockApi: CabinetApi = {
@@ -217,4 +381,56 @@ export const mockApi: CabinetApi = {
   },
   messages: () => delay({ messages: sampleMessages }),
   command: () => delay({ chatId: 't-new' }),
+
+  credentials: () => delay(credentialsView()),
+  // The mock takes the secret and drops it on the floor — deliberately. There
+  // is nothing to store it in, and a dev fixture that kept plaintext around
+  // would be the one place in this codebase that does.
+  saveCredential: ({ name, provider, description }) => {
+    const existing = credentialStore.find((c) => c.name === name);
+    const at = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    if (existing) {
+      existing.updated_at = at;
+      existing.rotated_at = at;
+      return delay({ ok: true, created: false, credential: existing });
+    }
+    const credential: CredentialMeta = {
+      id: ++credentialSeq, name, provider: provider ?? null, description: description ?? null,
+      created_at: at, updated_at: at, last_used_at: null, rotated_at: null,
+    };
+    credentialStore.push(credential);
+    return delay({ ok: true, created: true, credential });
+  },
+  deleteCredential: (name) => {
+    const idx = credentialStore.findIndex((c) => c.name === name);
+    if (idx >= 0) credentialStore.splice(idx, 1);
+    return delay({ ok: true, deleted: name });
+  },
+
+  plaidStatus: () => delay(plaidStatus),
+  plaidLinkToken: () => delay({ link_token: 'link-sandbox-mock-token', environment: plaidStatus.environment }),
+  plaidExchange: () => delay({ ok: true, item: { id: 4, institution: 'Mock Bank', status: 'active' as const }, syncing: true }),
+  plaidSync: () =>
+    delay({
+      reports: plaidItems.map((i) => ({
+        item_id: i.id,
+        institution: i.institution,
+        ok: i.status === 'active',
+        accounts: i.status === 'active' ? 2 : 0,
+        transactions: { added: i.status === 'active' ? 3 : 0, modified: 0, removed: 0, skipped: 0 },
+        holdings: 0,
+        ...(i.status === 'active' ? {} : { status: 'login_required', error: 'ITEM_LOGIN_REQUIRED' }),
+      })),
+      net_worth: netWorth,
+    }),
+  plaidUnlinkItem: (itemId) => delay({ ok: true, deleted: itemId }),
+  plaidSetAccountHidden: (accountId, hidden) => delay({ ok: true, id: accountId, hidden }),
+
+  moneySummary: () => delay(moneySummary),
+  moneyTransactions: () => delay({ transactions }),
+  moneyTrend: () => delay({ net_worth: [], spend_by_day: [] }),
+  moneyCategories: () => delay({ categories }),
+  // Empty on purpose: holdings only exist once an investment item has synced,
+  // so the graceful empty state is what dev sees first.
+  moneyHoldings: () => delay({ holdings: [] }),
 };

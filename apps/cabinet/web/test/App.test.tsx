@@ -21,12 +21,46 @@ vi.mock('../src/lib/cabinet.js', async (importOriginal) => {
     revertOp: async () => ({ ok: true }),
     usage: async () => ({ authMode: 'subscription', byDay: [] }),
     usageRolling: async () => ({ authMode: 'subscription', windows: [] }),
+    // Ops fetches this unconditionally on mount; without it, every test that
+    // navigates to Ops dies in an effect with "api.perf is not a function".
+    perf: async () => ({ enabled: false, window: '7d', turns: 0, byPhase: [], byTool: [], recent: [] }),
     memory: async () => ({ files: [], lessons: [] }),
     saveMemoryFile: async () => ({ ok: true }),
     recall: async (q: string) => ({ query: q, results: [] }),
     chats: async () => ({ chats: [] }),
     messages: async () => ({ messages: [] }),
     command: async () => ({ chatId: 't' }),
+    // Credentials: a store with no encryption key — the state the surface has
+    // to render as a banner rather than as a broken page.
+    credentials: async () => ({
+      configured: false, credentials: [], env: [], managed: [], unrecognised: [],
+      slots: [{
+        name: 'plaid-client-id', group: 'Plaid', label: 'Client ID', description: 'Identifies this install.',
+        where: 'Plaid Dashboard → Developers → Keys', required: true, stored: false, meta: null,
+      }],
+    }),
+    saveCredential: async () => ({ ok: true, created: true, credential: null }),
+    deleteCredential: async (name: string) => ({ ok: true, deleted: name }),
+    // Money: enough for the surface to mount if a test ever routes to it.
+    plaidStatus: async () => ({
+      configured: false, environment: 'sandbox', redirect_uri: '/plaid/oauth', webhook_url: '/api/plaid/webhook',
+      items: [], accounts: [],
+      net_worth: { cash: 0, credit: 0, investments: 0, loans: 0, net_worth: 0, accounts_counted: 0, accounts_total: 0, stalest_balance_at: null },
+    }),
+    plaidLinkToken: async () => ({ link_token: 'link-test', environment: 'sandbox' }),
+    plaidExchange: async () => ({ ok: true, item: { id: 1, institution: null, status: 'active' }, syncing: true }),
+    plaidSync: async () => ({ reports: [] }),
+    plaidUnlinkItem: async (id: number) => ({ ok: true, deleted: id }),
+    plaidSetAccountHidden: async (id: number, hidden: boolean) => ({ ok: true, id, hidden }),
+    moneySummary: async () => ({
+      linked_institutions: 0, needs_attention: [], last_synced_at: null,
+      net_worth: { cash: 0, credit: 0, investments: 0, loans: 0, net_worth: 0, accounts_counted: 0, accounts_total: 0, stalest_balance_at: null },
+      window_days: 30, total_spent: 0, by_category: [], accounts: [],
+    }),
+    moneyTransactions: async () => ({ transactions: [] }),
+    moneyTrend: async () => ({ net_worth: [], spend_by_day: [] }),
+    moneyCategories: async () => ({ categories: [] }),
+    moneyHoldings: async () => ({ holdings: [] }),
   };
   return { ...actual, api, usingMock: true };
 });
@@ -83,6 +117,33 @@ describe('Cabinet v2 console — integration', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Domains/ }).getAttribute('aria-current')).toBe('page'),
     );
+  });
+
+  it('deep-links to Money and mounts it inside the shell', async () => {
+    renderApp(['/money']);
+    expect(screen.getByTestId('location').textContent).toBe('/money');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Money/ }).getAttribute('aria-current')).toBe('page'),
+    );
+    // configured: false in the mock above — the setup panel, not a blank surface.
+    expect(await screen.findByLabelText('Plaid setup')).toBeTruthy();
+  });
+
+  it('deep-links to Credentials and mounts it inside the shell', async () => {
+    renderApp(['/credentials']);
+    expect(screen.getByTestId('location').textContent).toBe('/credentials');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Credentials/ }).getAttribute('aria-current')).toBe('page'),
+    );
+    // configured: false in the mock above — the "no encryption key" banner.
+    expect((await screen.findByRole('alert')).textContent).toContain('No encryption key on the server');
+  });
+
+  it('renders /plaid/oauth bare — outside the rail and topbar', async () => {
+    renderApp(['/plaid/oauth']);
+    await waitFor(() => expect(screen.queryByRole('navigation', { name: 'Surfaces' })).toBeNull());
+    // The landing page finds no stashed link token in a fresh jsdom.
+    expect(await screen.findByRole('link', { name: /Back to Money/ })).toBeTruthy();
   });
 
   it('redirects unknown paths and the root to /today', async () => {

@@ -15,6 +15,7 @@ import { localDay } from '../db/index.js';
 import { dailyTotals } from '../domains/food.js';
 import { weightTrend } from '../domains/training.js';
 import { medicationsLow } from '../domains/healthcare.js';
+import { cashflowSince, netByDay, categorySpendSince, recentTransactions } from '../domains/money.js';
 import type { MessagePart } from './fold.js';
 import type { MemoryHistoryEntry } from '../memory/index.js';
 
@@ -191,15 +192,13 @@ function todayView(db: Database.Database) {
   const dueToday = openTasks.filter((t) => t.due_on === today).length;
   const overdue = openTasks.filter((t) => t.due_on !== null && t.due_on < today).length;
 
-  // Money
-  const monthTxns = db.prepare(`SELECT amount FROM transaction_row WHERE posted_on >= ? AND posted_on <= ?`).all(monthStart, today) as { amount: number }[];
-  const inFlow = monthTxns.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-  const outFlow = monthTxns.filter((t) => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
-  const net = inFlow - outFlow;
-  const dailyNet = db
-    .prepare(`SELECT SUM(amount) net FROM transaction_row WHERE posted_on >= date(?, '-6 days') AND posted_on <= ? GROUP BY posted_on ORDER BY posted_on`)
-    .all(today, today) as { net: number }[];
-  const cashPoints = dailyNet.map((r) => Math.round(r.net));
+  // Money. Sign convention lives in domains/money.ts, not here — see the
+  // SURFACE HELPERS note there. `net` is already human-convention (in - out).
+  const flow = cashflowSince(db, monthStart);
+  const inFlow = flow.inflow;
+  const outFlow = flow.outflow;
+  const net = flow.net;
+  const cashPoints = netByDay(db, 7).map((r) => Math.round(r.net));
 
   const vitals: InstrumentSpec[] = [
     // With no agreed target (Phase 0), the dial reports what was eaten and
@@ -254,7 +253,7 @@ function todayView(db: Database.Database) {
   }
   const budgets = db.prepare(`SELECT category, monthly_limit FROM budget WHERE active = 1`).all() as { category: string; monthly_limit: number }[];
   for (const b of budgets) {
-    const spent = (db.prepare(`SELECT COALESCE(SUM(-amount),0) s FROM transaction_row WHERE category = ? AND amount < 0 AND posted_on >= ?`).get(b.category, monthStart) as { s: number }).s;
+    const spent = categorySpendSince(db, b.category, monthStart);
     const pct = b.monthly_limit > 0 ? spent / b.monthly_limit : 0;
     if (pct >= 0.8) {
       const remaining = Math.max(0, b.monthly_limit - spent);
@@ -425,28 +424,26 @@ function domainView(id: string, db: Database.Database) {
 
   if (id === 'money') {
     const monthStart = startOfMonth(today);
-    const monthTxns = db.prepare(`SELECT amount FROM transaction_row WHERE posted_on >= ?`).all(monthStart) as { amount: number }[];
-    const inFlow = monthTxns.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-    const outFlow = monthTxns.filter((t) => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
-    const net = inFlow - outFlow;
-    const dailyNet = db
-      .prepare(`SELECT SUM(amount) net FROM transaction_row WHERE posted_on >= date(?, '-6 days') AND posted_on <= ? GROUP BY posted_on ORDER BY posted_on`)
-      .all(today, today) as { net: number }[];
-    const points = dailyNet.map((r) => Math.round(r.net));
+    const flow = cashflowSince(db, monthStart);
+    const inFlow = flow.inflow;
+    const outFlow = flow.outflow;
+    const net = flow.net;
+    const points = netByDay(db, 7).map((r) => Math.round(r.net));
     const instruments: InstrumentSpec[] = [
       { kind: 'stat', label: 'Net · month', big: `${net >= 0 ? '+' : '-'}${money(net)}`, tone: net >= 0 ? 'ok' : 'warn', points: points.length ? points : undefined, pointsColor: 'var(--patina)' },
     ];
     const budgets = db.prepare(`SELECT category, monthly_limit FROM budget WHERE active = 1 ORDER BY category LIMIT 3`).all() as { category: string; monthly_limit: number }[];
     for (const b of budgets) {
-      const spent = (db.prepare(`SELECT COALESCE(SUM(-amount),0) s FROM transaction_row WHERE category = ? AND amount < 0 AND posted_on >= ?`).get(b.category, monthStart) as { s: number }).s;
+      const spent = categorySpendSince(db, b.category, monthStart);
       const pct = b.monthly_limit > 0 ? spent / b.monthly_limit : 0;
       instruments.push({ kind: 'gauge', label: b.category, value: Math.round(spent), max: Math.round(b.monthly_limit), threshold: 0.9, leftLabel: `${Math.round(pct * 100)}%`, rightLabel: `${money(Math.max(0, b.monthly_limit - spent))} left` });
     }
-    const rows = db.prepare(`SELECT id, posted_on, amount, merchant, category FROM transaction_row ORDER BY posted_on DESC, id DESC LIMIT 5`).all() as
-      { id: number; posted_on: string; amount: number; merchant: string | null; category: string | null }[];
+    // recentTransactions returns Plaid convention: positive = money OUT.
+    // The display flips it back so a $12 lunch reads as -$12.
+    const rows = recentTransactions(db, { days: 45, limit: 5 });
     const log: LogEntry[] = rows.map((r) => ({
-      id: String(r.id), at: r.posted_on, text: r.merchant ?? r.category ?? 'Transaction',
-      meta: `${r.amount >= 0 ? '+' : '-'}${money(r.amount)}${r.category ? ` · ${r.category}` : ''}`,
+      id: r.transaction_id, at: r.date, text: r.merchant ?? r.category_primary ?? 'Transaction',
+      meta: `${r.amount > 0 ? '-' : '+'}${money(r.amount)}${r.category_primary ? ` · ${r.category_primary}` : ''}${r.pending ? ' · pending' : ''}`,
     }));
     const narrative = `Net cash flow this month is ${net >= 0 ? '+' : '-'}${money(net)} (in ${money(inFlow)}, out ${money(outFlow)}).${budgets.length ? ` ${budgets.length} active budget${budgets.length === 1 ? '' : 's'} tracked.` : ''}`;
     return { id, label, instruments, narrative, log };

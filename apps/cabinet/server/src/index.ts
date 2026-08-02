@@ -52,7 +52,8 @@ import { ApprovalQueue } from './tiers/approvals.js';
 import { AgentRuntime } from './runtime/agent.js';
 import { buildCabinetMcpServer, cabinetAllowedTools } from './mcp/cabinet-server.js';
 import { buildExternalMcpServers } from './mcp/external.js';
-import { buildApp } from './gateway/app.js';
+import { buildApp, safeCredKey } from './gateway/app.js';
+import { PlaidClient, CLIENT_ID_CRED, SECRET_CRED } from './integrations/plaid.js';
 import { seedInsurancePlan } from './domains/healthcare.js';
 import { Scheduler } from './scheduler/index.js';
 import { buildJobs } from './scheduler/jobs.js';
@@ -117,6 +118,22 @@ const widgetBus = new EventEmitter();
 // process.env (agent shells snapshot it) and keeps GH_TOKEN fresh instead.
 startGithubAppTokenLoop();
 
+// Plaid. Constructed before buildApp and before the MCP server because both
+// need the same instance: the gateway serves Link and the webhook, the
+// scheduler syncs nightly, and the agent's money tools read through it.
+//
+// safeCredKey() is the single reader of CABINET_CRED_KEY — it caches, logs a
+// malformed key without taking the server down, and scrubs the variable out of
+// process.env so agent shells can't inherit it. Calling it here rather than
+// letting buildApp call it first is what makes the scrub happen exactly once,
+// early, with the key held only in closures from then on.
+const plaid = new PlaidClient(cabinet.db, safeCredKey());
+if (!plaid.configured()) {
+  console.warn(
+    `plaid: not configured (${plaid.environment}) — store '${CLIENT_ID_CRED}' and '${SECRET_CRED}' credentials to enable the money domain`,
+  );
+}
+
 const cabinetMcp = buildCabinetMcpServer({
   db: cabinet.db,
   readonlyDb: cabinet.readonlyDb,
@@ -125,6 +142,7 @@ const cabinetMcp = buildCabinetMcpServer({
   memory,
   approvals,
   widgetBus,
+  plaid,
 });
 
 const runtime = new AgentRuntime({
@@ -149,7 +167,17 @@ if (!pushConfig) console.warn('push: no VAPID keys configured — scheduled ping
 // manual trigger (gateway/app.ts's POST /api/admin/jobs/:name/run), which
 // needs the exact same JobSpec array the timers use, not a rebuilt copy.
 const scheduler = new Scheduler(
-  buildJobs({ db: cabinet.db, runtime, approvals, widgetBus, episodic, embedder, dataDir: DATA_DIR, pushService }),
+  buildJobs({
+    db: cabinet.db,
+    runtime,
+    approvals,
+    widgetBus,
+    episodic,
+    embedder,
+    dataDir: DATA_DIR,
+    pushService,
+    plaid,
+  }),
 );
 
 const app = buildApp({
@@ -166,6 +194,7 @@ const app = buildApp({
   buildMarker: buildInfo.sha,
   dataDir: DATA_DIR,
   push: pushService,
+  plaid,
 });
 
 app.listen(PORT, '127.0.0.1', () => {

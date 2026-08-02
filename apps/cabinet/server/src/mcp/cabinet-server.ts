@@ -21,10 +21,31 @@ import { logSymptom, symptomsOn, symptomHistory, ankleLoadResponse, ankleThresho
 import { markHabit, deriveHabits, adherence } from '../domains/adherence.js';
 import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
 import {
-  addJournal, addPriceWatch, importTransactionsCsv, listConstraints, logMood,
+  addJournal, addPriceWatch, listConstraints, logMood,
   upsertConstraint, upsertContact, upsertGoal, upsertTask,
 } from '../domains/misc.js';
+import {
+  foodDeliverySpend, importTransactionsCsv, listAccounts, listHoldings, moneySummary, netWorthNow,
+  netWorthTrend, recentTransactions, spendByCategory, spendByDay, upsertManualAccount,
+} from '../domains/money.js';
 import { truncateForModel } from '../runtime/toolTruncate.js';
+
+/**
+ * The slice of PlaidClient the agent's tools are allowed to reach.
+ *
+ * Deliberately structural and deliberately tiny. The full PlaidClient can
+ * exchange public tokens and decrypt access tokens; this interface can sync,
+ * search institutions, and report whether it is configured. Narrowing here
+ * means the MCP layer is not merely *discouraged* from touching credentials —
+ * it has no method that could, which is the same reasoning that keeps
+ * getCredentialSecret out of gateway/** and mcp/**.
+ */
+export interface MoneySync {
+  configured(): boolean;
+  readonly environment: string;
+  syncAll(): Promise<{ reports: unknown[]; net_worth: unknown }>;
+  searchInstitutions(query: string, products?: string[]): Promise<{ institution_id: string; name: string; products?: string[] }[]>;
+}
 
 export interface CabinetToolContext {
   db: Database.Database;
@@ -35,6 +56,8 @@ export interface CabinetToolContext {
   approvals: ApprovalQueue;
   /** render_widget / proactive cards flow to the gateway through this bus. */
   widgetBus: EventEmitter;
+  /** Absent when Plaid isn't wired; the money tools then report that plainly. */
+  plaid?: MoneySync;
 }
 
 // Step 3 (2026-07-16, token-cost work w/ benji): source-truncate large MCP
@@ -354,9 +377,31 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'import_transactions_csv',
-      'Import transactions from CSV text (date,amount,merchant[,category]). Idempotent.',
-      { csv: z.string(), account_id: z.number().optional() },
-      async ({ csv, account_id }) => ok(importTransactionsCsv(ctx.db, csv, account_id ?? null)),
+      'Import transactions from CSV text (date,amount,merchant[,category]) — the fallback for ' +
+        'institutions Plaid cannot link. Idempotent: re-importing an overlapping statement adds only ' +
+        'new rows. sign="bank" (default) means the file uses negative for money spent, which is ' +
+        'normalized on import to the convention used everywhere else (positive = money out).',
+      {
+        csv: z.string(),
+        account_id: z.number().optional(),
+        account_name: z.string().optional(),
+        sign: z.enum(['bank', 'plaid']).optional(),
+      },
+      async ({ csv, account_id, account_name, sign }) =>
+        ok(importTransactionsCsv(ctx.db, csv, { accountPk: account_id ?? null, accountName: account_name, sign })),
+    ),
+    tool(
+      'upsert_manual_account',
+      'Create or update an account Plaid cannot link (e.g. a UBS wealth-management account), so its ' +
+        'balance counts toward net worth alongside linked accounts. Idempotent on name.',
+      {
+        name: z.string(),
+        type: z.string().optional(),
+        subtype: z.string().optional(),
+        current_balance: z.number().optional(),
+        institution: z.string().optional(),
+      },
+      async (args) => ok({ account_pk: upsertManualAccount(ctx.db, args) }),
     ),
     tool(
       'update_pantry',
@@ -671,6 +716,78 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
           chatId: null,
         });
         return ok({ approvalId: id, status: 'pending' });
+      },
+    ),
+
+    /* ---------------------------------------------------------- money --- */
+
+    tool(
+      'money_summary',
+      'Linked accounts, net worth, and spending by category over a window. Start here for any money question. ' +
+        'net_worth carries accounts_counted vs accounts_total — if those disagree, some account failed to sync and ' +
+        'the total is understated; say so rather than reporting the number bare. needs_attention lists broken links.',
+      { days: z.number().optional() },
+      async ({ days }) => ok(moneySummary(ctx.db, days ?? 30)),
+    ),
+    tool(
+      'money_transactions',
+      'Recent transactions, newest first. AMOUNTS ARE POSITIVE FOR MONEY SPENT and negative for money received ' +
+        '(Plaid convention, preserved end-to-end). pending=1 means provisional — the amount can still change.',
+      { days: z.number().optional(), limit: z.number().optional() },
+      async ({ days, limit }) => ok({ transactions: recentTransactions(ctx.db, { days: days ?? 14, limit: limit ?? 100 }) }),
+    ),
+    tool(
+      'money_categories',
+      'Spending grouped by Plaid category over a window, largest first. Transfers between Ben\'s own accounts and ' +
+        'credit-card payments are excluded, so these figures are consumption and do not double-count card spending.',
+      { days: z.number().optional() },
+      async ({ days }) => ok({ categories: spendByCategory(ctx.db, days ?? 30) }),
+    ),
+    tool(
+      'money_trend',
+      'Time series: net worth by day, total spend by day, and restaurant/delivery spend by day (groceries excluded). ' +
+        "The delivery series is the financial fingerprint of the 8pm-to-midnight loop — join it against craving_event, " +
+        'food logs, or evening-block completion to test PLAYBOOK P4 with money instead of memory.',
+      { days: z.number().optional() },
+      async ({ days }) => {
+        const d = days ?? 90;
+        return ok({
+          net_worth_by_day: netWorthTrend(ctx.db, d),
+          spend_by_day: spendByDay(ctx.db, Math.min(d, 90)),
+          food_delivery_by_day: foodDeliverySpend(ctx.db, Math.min(d, 90)),
+          current: netWorthNow(ctx.db),
+        });
+      },
+    ),
+    tool(
+      'money_holdings',
+      'Investment positions across all linked brokerage/retirement accounts, largest value first.',
+      {},
+      async () => ok({ holdings: listHoldings(ctx.db), accounts: listAccounts(ctx.db) }),
+    ),
+    tool(
+      'money_sync',
+      'Pull fresh balances, transactions and holdings from every linked institution now, then record a net-worth ' +
+        'snapshot. Read-only against the bank. Normally unnecessary (a webhook syncs on new transactions and a job ' +
+        'runs nightly at 04:30) — use it when data looks stale or right after fixing a broken link.',
+      {},
+      async () => {
+        if (!ctx.plaid) return fail('Plaid is not wired into this server.');
+        if (!ctx.plaid.configured()) {
+          return fail("Plaid has no API credentials stored — add 'plaid-client-id' and 'plaid-secret' first.");
+        }
+        return ok(await ctx.plaid.syncAll());
+      },
+    ),
+    tool(
+      'plaid_institution_search',
+      'Search Plaid\'s institution directory — the definitive answer to whether a given bank or brokerage can be ' +
+        'linked at all, and which products it supports. Pass products like ["investments"] to filter to institutions ' +
+        'supporting all of them.',
+      { query: z.string(), products: z.array(z.string()).optional() },
+      async ({ query, products }) => {
+        if (!ctx.plaid?.configured()) return fail('Plaid has no API credentials stored yet.');
+        return ok({ institutions: await ctx.plaid.searchInstitutions(query, products ?? []) });
       },
     ),
   ];

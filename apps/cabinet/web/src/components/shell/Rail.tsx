@@ -8,9 +8,18 @@ import { SURFACES, type SurfaceId } from './surfaces.js';
 const ICONS: Record<SurfaceId, ReactNode> = {
   today: <path d="M2 6l6-4 6 4v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z M6 14V9h4v5" />,
   domains: <><rect x="2" y="2" width="5" height="5" rx="1" /><rect x="9" y="2" width="5" height="5" rx="1" /><rect x="2" y="9" width="5" height="5" rx="1" /><rect x="9" y="9" width="5" height="5" rx="1" /></>,
+  // lucide's `banknote`, redrawn on the 16-grid the rest of this record uses.
+  // Its two side dots are dropped: the parent <svg> has no round linecap, so
+  // a zero-length `h.01` segment renders as nothing — short ticks carry the
+  // same read.
+  money: <><rect x="1.5" y="4" width="13" height="8" rx="1.5" /><circle cx="8" cy="8" r="1.75" /><path d="M4 6.75v2.5M12 6.75v2.5" /></>,
   ops: <path d="M2 8h3l2 5 3-10 2 5h2" />,
   brain: <path d="M8 2.5C5.5 2.5 4 4 4 6c-1 .4-1.5 1.3-1.5 2.3 0 1 .6 1.9 1.5 2.2 0 1.6 1.3 2.7 3 2.7 M8 2.5c2.5 0 4 1.5 4 3.5 1 .4 1.5 1.3 1.5 2.3 0 1-.6 1.9-1.5 2.2 0 1.6-1.3 2.7-3 2.7 M8 2.5v11" />,
   chat: <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7" />,
+  // lucide's `key`, rescaled from its 24-grid onto the 16-grid the rest of
+  // this record uses: bow bottom-left, shaft running up to the right, two
+  // ward teeth. Stroke-only, like every other icon here.
+  credentials: <><circle cx="5" cy="10.5" r="3.4" /><path d="M13.9 1.6 7.6 7.9" /><path d="m10.4 5.1 2 2 2.3-2.3-2-2" /></>,
 };
 
 /** Everything the rail's Chat accordion needs — owned by App, so the list

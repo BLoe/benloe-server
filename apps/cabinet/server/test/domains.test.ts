@@ -7,9 +7,10 @@ import { dailyTotals, logFood, updatePantry, addRecipe } from '../src/domains/fo
 import { ewma, logBodyMetric, logWorkout, weightTrend } from '../src/domains/training.js';
 import { accumulators, logClaim, logHsaContribution, logLab, logMedication, medicationsLow, seedInsurancePlan } from '../src/domains/healthcare.js';
 import {
-  addJournal, addPriceWatch, importTransactionsCsv, listConstraints, logMood,
+  addJournal, addPriceWatch, listConstraints, logMood,
   upsertConstraint, upsertContact, upsertGoal, upsertTask,
 } from '../src/domains/misc.js';
+import { importTransactionsCsv } from '../src/domains/money.js';
 
 let dir: string;
 let cabinet: CabinetDb;
@@ -133,9 +134,35 @@ describe('money csv import', () => {
 
   it('parses quoted fields and imports rows', () => {
     const r = importTransactionsCsv(cabinet.db, csv);
-    expect(r).toEqual({ inserted: 3, skipped: 0 });
-    const rent = cabinet.db.prepare("SELECT amount, merchant FROM transaction_row WHERE category='housing'").get() as any;
-    expect(rent).toEqual({ amount: -1200, merchant: 'Rent, LLC' });
+    expect(r.inserted).toBe(3);
+    expect(r.skipped).toBe(0);
+    expect(r.account_pk).toBeGreaterThan(0);
+    const rent = cabinet.db
+      .prepare("SELECT amount, merchant_name, source FROM financial_transaction WHERE category_primary='HOUSING'")
+      .get() as any;
+    // The bank export says -1200 (money out, its convention). Plaid — and
+    // therefore every reader in domains/money.ts — says money out is POSITIVE.
+    // If this ever comes back -1200, rent is being counted as income.
+    expect(rent).toEqual({ amount: 1200, merchant_name: 'Rent, LLC', source: 'csv' });
+  });
+
+  it('normalizes the sign so imported rows land in the same totals as Plaid rows', () => {
+    importTransactionsCsv(cabinet.db, csv);
+    const income = cabinet.db
+      .prepare("SELECT amount FROM financial_transaction WHERE category_primary='INCOME'")
+      .get() as { amount: number };
+    expect(income.amount).toBe(-3000); // money IN is negative under Plaid's convention
+  });
+
+  it('respects sign: "plaid" stores the file value verbatim', () => {
+    importTransactionsCsv(cabinet.db, csv, { sign: 'plaid', accountName: 'Already Plaid-signed' });
+    const rent = cabinet.db
+      .prepare(
+        `SELECT t.amount FROM financial_transaction t JOIN financial_account a ON a.id = t.account_pk
+          WHERE a.name = 'Already Plaid-signed' AND t.category_primary = 'HOUSING'`,
+      )
+      .get() as { amount: number };
+    expect(rent.amount).toBe(-1200);
   });
 
   it('is idempotent: re-import inserts nothing', () => {
@@ -143,13 +170,36 @@ describe('money csv import', () => {
     const again = importTransactionsCsv(cabinet.db, csv);
     expect(again.inserted).toBe(0);
     expect(again.skipped).toBe(3);
-    const n = cabinet.db.prepare('SELECT COUNT(*) n FROM transaction_row').get() as { n: number };
+    const n = cabinet.db.prepare('SELECT COUNT(*) n FROM financial_transaction').get() as { n: number };
     expect(n.n).toBe(3);
+  });
+
+  it('changing the sign option does not re-import the same lines', () => {
+    const first = importTransactionsCsv(cabinet.db, csv);
+    // Same account, opposite sign interpretation. The dedupe hash is built from
+    // the FILE's values, not the normalized ones, so this must be a no-op
+    // rather than three duplicate rows carrying inverted amounts.
+    const second = importTransactionsCsv(cabinet.db, csv, { accountPk: first.account_pk, sign: 'plaid' });
+    expect(second.inserted).toBe(0);
+    const n = cabinet.db.prepare('SELECT COUNT(*) n FROM financial_transaction').get() as { n: number };
+    expect(n.n).toBe(3);
+  });
+
+  it('routes rows into a manual account that counts toward net worth', () => {
+    const r = importTransactionsCsv(cabinet.db, csv, { accountName: 'BofA Checking (CSV)' });
+    const acct = cabinet.db
+      .prepare('SELECT name, source, item_pk FROM financial_account WHERE id = ?')
+      .get(r.account_pk) as any;
+    expect(acct.name).toBe('BofA Checking (CSV)');
+    expect(acct.source).toBe('manual');
+    expect(acct.item_pk).toBeNull();
   });
 
   it('skips malformed rows without aborting the batch', () => {
     const messy = 'date,amount,merchant\n2026-07-04,not-a-number,X\n2026-07-05,-10,Coffee';
-    expect(importTransactionsCsv(cabinet.db, messy)).toEqual({ inserted: 1, skipped: 1 });
+    const r = importTransactionsCsv(cabinet.db, messy);
+    expect(r.inserted).toBe(1);
+    expect(r.skipped).toBe(1);
   });
 });
 
