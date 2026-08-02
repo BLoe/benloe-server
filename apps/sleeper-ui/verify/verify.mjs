@@ -53,6 +53,9 @@ const ROUTES = [
   { name: 'chat', path: `/l/${LEAGUE}/chat`, waitFor: 'text=Read only' },
 ];
 
+/** The signed-out entry screen, captured before any session exists. */
+const SIGNIN_ROUTE = { name: 'signin', path: '/', waitFor: 'text=Sleeper username' };
+
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
     const [k, v] = a.replace(/^--/, '').split('=');
@@ -137,6 +140,30 @@ async function main() {
         colorScheme: 'dark',
         reducedMotion: 'reduce',
       });
+
+      // Capture the signed-out screen first, then sign in through the real form
+      // so every later route exercises the same session path a visitor does.
+      {
+        const page = await ctx.newPage();
+        const label = `${SIGNIN_ROUTE.name}@${viewName}`;
+        try {
+          await page.goto(`${BASE}${SIGNIN_ROUTE.path}`, { waitUntil: 'networkidle', timeout: 30_000 });
+          await page.waitForSelector(SIGNIN_ROUTE.waitFor, { timeout: 15_000 });
+          await page.evaluate(() => document.fonts.ready);
+          const file = join(OUT, `${SIGNIN_ROUTE.name}.${viewName}.png`);
+          await page.screenshot({ path: file, fullPage: true });
+          shots.push(file);
+
+          await page.fill('#username', 'BenLoe');
+          await page.click('button[type=submit]');
+          await page.waitForSelector('text=Standings', { timeout: 20_000 });
+          console.log(`  ✓ ${label.padEnd(22)} signed in`);
+        } catch (err) {
+          problems.push(`${label}: ${err.message}`);
+          console.log(`  ✗ ${label} — ${err.message}`);
+        }
+        await page.close();
+      }
 
       for (const route of routes) {
         const page = await ctx.newPage();

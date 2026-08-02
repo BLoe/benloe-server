@@ -157,6 +157,16 @@ export async function getPlayerOutlook(playerId: string, season: string, o?: Fet
  * messages(parent_id: <league_id>). There is no separate channel to resolve.
  * ------------------------------------------------------------------ */
 
+/**
+ * Who does this token belong to? Used to make sure league chat is only ever
+ * served back to that same account, never to another visitor of a public site.
+ */
+export async function getTokenOwner(opts: FetchOpts): Promise<{ user_id: string } | null> {
+  if (!opts.token) return null;
+  const d = await graphql(`query { me { user_id username display_name } }`, opts);
+  return d.me ?? null;
+}
+
 export interface RawMessage {
   message_id: string;
   parent_id: string;

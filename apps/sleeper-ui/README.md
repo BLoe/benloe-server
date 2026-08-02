@@ -7,6 +7,19 @@ same data laid out for a laptop: everything on one screen, nothing behind a tap.
 
 Read-only. It never writes to Sleeper.
 
+## Identity
+
+The site is public and multi-visitor. Each visitor enters their own Sleeper
+username, which is resolved against Sleeper and stored in an HMAC-signed,
+HttpOnly cookie (`src/server/session.ts`, signed with `JWT_SECRET`). There is no
+password, because a Sleeper username and every REST endpoint this app reads are
+already public — the session only answers *whose leagues am I looking at*.
+
+`SLEEPER_USERNAME` is **not** an identity. It only pre-fills the sign-in box.
+
+Every `/api/league/*` route requires a session, and "my team" highlighting comes
+from that session's user id.
+
 ## Where the data comes from
 
 Two upstreams, both reached from `src/lib/sleeper.ts`:
@@ -34,6 +47,13 @@ SLEEPER_ALLOW_POSTING=false   # true enables the composer
 
 To get the token: sign in to sleeper.com in Chrome, open DevTools → Application →
 Local Storage, and copy the session token value. Then `pm2 restart sleeper-ui`.
+
+**Chat is the one section that cannot be per-visitor.** It rides a single token,
+so it belongs to exactly one Sleeper account. `src/server/chatAccess.ts` resolves
+the token's owner via the `me` query and serves chat only to the visitor whose
+session matches; everyone else gets a 403 and an explanation. That check is pure
+and unit tested, because on a public site getting it wrong would expose private
+league conversations to strangers.
 
 Without a token the rest of the dashboard works normally and the Chat section
 explains what is missing. `GET /api/health` reports `chat.enabled` and `chat.canPost`.

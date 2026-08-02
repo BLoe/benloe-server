@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { useApi, type LeagueBundle, type Me } from './api';
+import SignIn from './pages/SignIn';
 import { Avatar, ErrorState, Loading } from './components';
 import Dashboard from './pages/Dashboard';
 import Matchups from './pages/Matchups';
@@ -15,31 +17,75 @@ const NAV = [
   { to: 'chat', label: 'Chat' },
 ];
 
-export default function App() {
-  const { data: me, error, loading } = useApi<Me>('/api/me');
+interface SessionInfo {
+  session: { userId: string; username: string } | null;
+  suggestedUsername: string | null;
+}
 
-  if (loading) return <Loading label="Connecting to Sleeper" />;
+export default function App() {
+  // Bumping this refetches everything session-dependent after sign in or out.
+  const [nonce, setNonce] = useState(0);
+  const sess = useApi<SessionInfo>(`/api/session?n=${nonce}`);
+
+  if (sess.loading) return <Loading label="Starting up" />;
+  if (sess.error) return <ErrorState message={sess.error} />;
+
+  if (!sess.data?.session) {
+    return (
+      <SignIn
+        suggested={sess.data?.suggestedUsername ?? null}
+        onSignedIn={() => setNonce((n) => n + 1)}
+      />
+    );
+  }
+
+  return <SignedIn nonce={nonce} onSessionChange={() => setNonce((n) => n + 1)} />;
+}
+
+function SignedIn({
+  nonce,
+  onSessionChange,
+}: {
+  nonce: number;
+  onSessionChange: () => void;
+}) {
+  const { data: me, error, loading } = useApi<Me>(`/api/me?n=${nonce}`);
+
+  const signOut = async () => {
+    await fetch('/api/session', { method: 'DELETE' });
+    onSessionChange();
+  };
+
+  if (loading) return <Loading label="Loading your leagues" />;
   if (error || !me) return <ErrorState message={error ?? 'No account data returned.'} />;
   if (!me.leagues.length) {
-    return <ErrorState message={`No leagues found for ${me.user.displayName}.`} />;
+    return (
+      <ErrorState
+        message={`No leagues found for ${me.user.displayName}. If that is not you, switch accounts and try another username.`}
+        onRetry={signOut}
+      />
+    );
   }
 
   return (
     <Routes>
       <Route path="/" element={<Navigate to={`/l/${me.leagues[0].leagueId}`} replace />} />
-      <Route path="/l/:leagueId/*" element={<LeagueShell me={me} />} />
+      <Route
+        path="/l/:leagueId/*"
+        element={<LeagueShell me={me} onSignOut={signOut} />}
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
-function LeagueShell({ me }: { me: Me }) {
+function LeagueShell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const { leagueId } = useParams();
   const bundle = useApi<LeagueBundle>(leagueId ? `/api/league/${leagueId}` : null);
 
   return (
     <div className="relative z-10 flex min-h-screen">
-      <Rail me={me} activeLeagueId={leagueId!} />
+      <Rail me={me} activeLeagueId={leagueId!} onSignOut={onSignOut} />
 
       <div className="flex-1 min-w-0 flex flex-col">
         <TopBar bundle={bundle.data} me={me} />
@@ -69,7 +115,15 @@ function LeagueShell({ me }: { me: Me }) {
  * site never gives you: league switching and section navigation always in view,
  * no hamburger, no back button.
  */
-function Rail({ me, activeLeagueId }: { me: Me; activeLeagueId: string }) {
+function Rail({
+  me,
+  activeLeagueId,
+  onSignOut,
+}: {
+  me: Me;
+  activeLeagueId: string;
+  onSignOut: () => void;
+}) {
   return (
     <nav
       className="hidden md:flex w-[220px] shrink-0 flex-col border-r border-line bg-panel/60 sticky top-0 h-screen"
@@ -136,12 +190,20 @@ function Rail({ me, activeLeagueId }: { me: Me; activeLeagueId: string }) {
 
       <div className="mt-auto p-3 border-t border-line flex items-center gap-2.5">
         <Avatar url={me.user.avatar} name={me.user.displayName} size={26} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="font-display font-semibold text-[13px] truncate leading-tight">
             {me.user.displayName}
           </div>
-          <div className="text-dim text-[10px] leading-tight">Sleeper</div>
+          <div className="text-dim text-[10px] leading-tight truncate">@{me.user.username}</div>
         </div>
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="stat-label hover:text-ink transition-colors shrink-0"
+          title="Look at a different Sleeper account"
+        >
+          Switch
+        </button>
       </div>
     </nav>
   );
