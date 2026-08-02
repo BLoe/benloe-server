@@ -66,6 +66,25 @@ export default function PlayerPage({ bundle }: { bundle: LeagueBundle }) {
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-wrap divide-x divide-y lg:divide-y-0 divide-line flex-1">
             <Stat label="Season points" value={fmt1(data.totals.points)} size="lg" />
+            {data.projection.week ? (
+              <Stat
+                label={`Week ${data.projection.weekNumber} projection`}
+                value={fmt1(data.projection.week.points)}
+                sub={data.projection.week.opponent ? `vs ${data.projection.week.opponent}` : undefined}
+              />
+            ) : (
+              data.projection.season && (
+                <Stat
+                  label="Projected season"
+                  value={fmt1(data.projection.season.points)}
+                  sub={
+                    data.projection.season.games
+                      ? `over ${data.projection.season.games} games`
+                      : undefined
+                  }
+                />
+              )
+            )}
             <Stat label="Per game" value={fmt1(data.totals.average)} sub={`${data.totals.games} games`} />
             <Stat label="Best week" value={fmt1(data.totals.best)} />
             <Stat
@@ -132,16 +151,97 @@ export default function PlayerPage({ bundle }: { bundle: LeagueBundle }) {
         </Panel>
       </div>
 
+      {!!data.history.length && (
+        <Panel
+          title="In this league"
+          note="Every move involving this player in this league, oldest first."
+        >
+          <ol>
+            {data.history.map((e, i) => (
+              <li
+                key={i}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3 border-b border-line/60 last:border-b-0"
+              >
+                <span className="chip shrink-0" style={eventStyle(e.kind)}>
+                  {e.kind === 'drafted' ? 'Drafted' : e.kind === 'added' ? 'Added' : e.kind === 'dropped' ? 'Dropped' : 'Traded'}
+                </span>
+
+                <span className="min-w-0" style={{ fontSize: 'var(--t-body)' }}>
+                  {e.kind === 'traded' ? (
+                    <>
+                      <TeamLink rosterId={e.fromRosterId}>{e.fromTeam ?? 'somebody'}</TeamLink>
+                      <span className="text-dim"> → </span>
+                      <TeamLink rosterId={e.toRosterId}>{e.toTeam ?? 'somebody'}</TeamLink>
+                    </>
+                  ) : e.kind === 'dropped' ? (
+                    <TeamLink rosterId={e.fromRosterId}>{e.fromTeam ?? 'somebody'}</TeamLink>
+                  ) : (
+                    <TeamLink rosterId={e.toRosterId}>{e.toTeam ?? 'somebody'}</TeamLink>
+                  )}
+                </span>
+
+                {e.faab != null && (
+                  <span
+                    className="font-display font-bold shrink-0"
+                    style={{ color: 'var(--live)', fontSize: 'var(--t-h2)' }}
+                  >
+                    ${e.faab}
+                  </span>
+                )}
+
+                <span className="text-dim ml-auto shrink-0" style={{ fontSize: 'var(--t-meta)' }}>
+                  {e.detail ?? [e.method, e.week ? `week ${e.week}` : null].filter(Boolean).join(' · ')}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </Panel>
+      )}
+
+      {data.outlook && (
+        <Panel
+          title={`${data.outlook.season} outlook`}
+          action={
+            data.outlook.source && <span className="eyebrow">{data.outlook.source}</span>
+          }
+        >
+          <p className="px-4 py-4 text-muted" style={{ fontSize: 'var(--t-body)', lineHeight: 1.65, maxWidth: '72ch' }}>
+            {data.outlook.text}
+          </p>
+        </Panel>
+      )}
+
       {!!data.news.length && (
-        <Panel title="Latest news">
+        <Panel title="News">
           <ul>
             {data.news.map((n, i) => (
-              <li key={i} className="px-4 py-3 border-b border-line/60 last:border-b-0">
-                <p style={{ fontSize: 'var(--t-body)' }}>{n.title}</p>
-                <p className="text-dim mt-1" style={{ fontSize: 'var(--t-meta)' }}>
+              <li key={i} className="px-4 py-4 border-b border-line/60 last:border-b-0">
+                <h3 className="entity" style={{ fontSize: 'var(--t-h2)' }}>
+                  {n.title}
+                </h3>
+                <div className="text-dim mt-1" style={{ fontSize: 'var(--t-meta)' }}>
                   {n.source ?? 'Sleeper'}
                   {n.published ? ` · ${new Date(n.published).toLocaleDateString()}` : ''}
-                </p>
+                </div>
+                {/* The write-up is the point; the headline alone said almost nothing. */}
+                {n.body && (
+                  <p
+                    className="text-muted mt-2"
+                    style={{ fontSize: 'var(--t-body)', lineHeight: 1.6, maxWidth: '72ch' }}
+                  >
+                    {n.body}
+                  </p>
+                )}
+                {n.url && (
+                  <a
+                    href={n.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="link eyebrow inline-block mt-2 hover:text-ink"
+                  >
+                    Read at {n.source ?? 'source'} →
+                  </a>
+                )}
               </li>
             ))}
           </ul>
@@ -149,6 +249,14 @@ export default function PlayerPage({ bundle }: { bundle: LeagueBundle }) {
       )}
     </div>
   );
+}
+
+/** Colour a history event by whether the player arrived or left. */
+function eventStyle(kind: string): React.CSSProperties {
+  if (kind === 'drafted') return { color: 'var(--pos-wr-ink)', background: 'color-mix(in srgb, var(--pos-wr) 18%, transparent)' };
+  if (kind === 'added') return { color: 'var(--win)', background: 'rgba(63,191,127,.16)' };
+  if (kind === 'dropped') return { color: 'var(--loss)', background: 'rgba(229,72,77,.16)' };
+  return { color: 'var(--pos-k-ink)', background: 'color-mix(in srgb, var(--pos-k) 20%, transparent)' };
 }
 
 function PlayerFace({ id, name }: { id: string; name: string }) {

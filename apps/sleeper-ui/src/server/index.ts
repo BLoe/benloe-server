@@ -40,7 +40,10 @@ import {
   buildChatFeed,
   buildActivityRows,
   buildDepthChart,
+  buildPlayerHistory,
   describePeriod,
+  indexProjections,
+  scoringKey,
   type PlayerIndex,
 } from '../lib/derive.js';
 
@@ -217,6 +220,50 @@ async function loadPlayers(): Promise<PlayerIndex> {
   return slim;
 }
 
+/**
+ * Projection index for a season, or a specific week.
+ *
+ * The upstream payload is 5–9MB of every player in the league, most with nothing
+ * but an ADP, so it is disk-cached and trimmed to the handful of fields the
+ * player page renders.
+ */
+const projectionMemo = new Map<string, Record<string, any>>();
+
+async function loadProjections(
+  season: string,
+  week: number | null,
+  scoring: Record<string, number> | undefined
+) {
+  if (useFixtures()) return {};
+  const key = week ? `projections-${season}-w${week}` : `projections-${season}-season`;
+  const scored = `${key}:${scoringKey(scoring)}`;
+
+  // Keep the indexed form in memory. The raw payload is 8MB of 9,400 entries,
+  // and re-parsing and re-walking it on every player page was most of the
+  // request time.
+  const hit = projectionMemo.get(scored);
+  if (hit) return hit;
+
+  const raw = await diskCached<any[]>(CACHE_DIR, key, 6 * 60 * 60_000, () =>
+    S.getProjections(season, week)
+  );
+  const index = indexProjections(raw, scoringKey(scoring));
+  projectionMemo.set(scored, index);
+  return index;
+}
+
+/** Draft picks for a league, so a player can show where they were taken. */
+async function loadDraftPicks(leagueId: string) {
+  if (useFixtures()) return { picks: [], season: undefined as string | undefined };
+  return cached(`draft-picks:${leagueId}`, TTL.league, async () => {
+    const drafts = await S.getDrafts(leagueId).catch(() => []);
+    const draft = (drafts ?? [])[0];
+    if (!draft?.draft_id) return { picks: [], season: undefined };
+    const picks = await S.getDraftPicks(draft.draft_id).catch(() => []);
+    return { picks: picks ?? [], season: draft.season as string | undefined };
+  });
+}
+
 /* ------------------------------------------------------------------ *
  * Routes
  * ------------------------------------------------------------------ */
@@ -329,6 +376,7 @@ app.get('/api/health', (_req, res) => {
 app.post('/api/cache/flush', (_req, res) => {
   invalidate();
   playerIndexMemo = null;
+  projectionMemo.clear();
   res.json({ ok: true });
 });
 
@@ -587,23 +635,65 @@ app.get(
     const scored = weeks.filter((w) => w.points !== 0 || w.started);
     const total = weeks.reduce((sum, w) => sum + w.points, 0);
 
-    // News is best-effort: undocumented endpoint, and the page is useful without it.
-    let news: any[] = [];
-    if (!useFixtures()) {
+    // News, outlook, projections and draft position are all best-effort: every
+    // one is an undocumented endpoint, and the page is useful without any of them.
+    const settle = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
       try {
-        const raw = await S.getPlayerNews(playerId, 6);
-        news = (raw ?? [])
-          .map((n: any) => ({
-            title: n.metadata?.title ?? n.metadata?.description ?? null,
-            source: n.source ?? null,
-            published: n.published ?? null,
-            url: n.metadata?.url ?? null,
-          }))
-          .filter((n: any) => n.title);
+        return await fn();
       } catch {
-        news = [];
+        return fallback;
       }
-    }
+    };
+
+    const period = describePeriod(state, {
+      season: league.season,
+      status: league.status,
+      playoffWeekStart: playoffStart,
+    });
+
+    const [newsRaw, outlookRaw, seasonProj, weekProj, draft, txWeeks] = await Promise.all([
+      useFixtures() ? Promise.resolve([]) : settle(() => S.getPlayerNews(playerId, 8), []),
+      useFixtures()
+        ? Promise.resolve(null)
+        : settle(() => S.getPlayerOutlook(playerId, league.season), null),
+      settle(() => loadProjections(league.season, null, league.scoring_settings), {}),
+      period.week
+        ? settle(() => loadProjections(league.season, period.week, league.scoring_settings), {})
+        : Promise.resolve({}),
+      settle(() => loadDraftPicks(leagueId), { picks: [], season: undefined }),
+      Promise.all(
+        [...Array(Math.max(1, lastWeek))].map((_, i) =>
+          loadTransactions(leagueId, i + 1).catch(() => [])
+        )
+      ),
+    ]);
+
+    const news = (newsRaw ?? [])
+      .map((n: any) => ({
+        title: n.metadata?.title ?? null,
+        // The full write-up, which is what makes these worth showing at all.
+        body: n.metadata?.description ?? null,
+        source: n.source ?? null,
+        published: n.published ?? null,
+        url: n.metadata?.url ?? null,
+      }))
+      .filter((n: any) => n.title || n.body);
+
+    const outlook = outlookRaw?.metadata?.description
+      ? {
+          text: outlookRaw.metadata.description as string,
+          source: outlookRaw.source ?? null,
+          season: league.season as string,
+        }
+      : null;
+
+    const history = buildPlayerHistory(
+      playerId,
+      txWeeks.flat(),
+      draft.picks,
+      teams,
+      draft.season
+    );
 
     res.json({
       player,
@@ -621,6 +711,14 @@ app.get(
         best: weeks.length ? Math.max(...weeks.map((w) => w.points)) : 0,
       },
       news,
+      outlook,
+      history,
+      projection: {
+        season: (seasonProj as any)[playerId] ?? null,
+        week: (weekProj as any)[playerId] ?? null,
+        weekNumber: period.week,
+        scoring: scoringKey(league.scoring_settings),
+      },
     });
   })
 );

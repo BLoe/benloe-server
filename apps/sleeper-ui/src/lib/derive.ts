@@ -381,6 +381,68 @@ function unknownPlayer(id: string): Player {
 }
 
 /* ------------------------------------------------------------------ *
+ * Projections
+ * ------------------------------------------------------------------ */
+
+export interface Projection {
+  points: number;
+  /** Games the projection covers — 1 for a week, ~18 for a season. */
+  games: number | null;
+  opponent: string | null;
+  /** A few headline stat lines, already filtered to what this player does. */
+  lines: Array<{ label: string; value: number }>;
+}
+
+/** Which projected-points field matches this league's scoring. */
+export function scoringKey(scoring: Record<string, number> | undefined): 'pts_ppr' | 'pts_half_ppr' | 'pts_std' {
+  const rec = scoring?.rec ?? 0;
+  if (rec >= 0.75) return 'pts_ppr';
+  if (rec >= 0.25) return 'pts_half_ppr';
+  return 'pts_std';
+}
+
+const PROJECTION_LINES: Array<[string, string]> = [
+  ['pass_yd', 'Pass yds'],
+  ['pass_td', 'Pass TD'],
+  ['pass_int', 'Int'],
+  ['rush_yd', 'Rush yds'],
+  ['rush_td', 'Rush TD'],
+  ['rec', 'Rec'],
+  ['rec_yd', 'Rec yds'],
+  ['rec_td', 'Rec TD'],
+];
+
+/**
+ * Reduce a projections payload to one entry per player.
+ *
+ * The raw response is 5–9MB of every player in the league including thousands
+ * with nothing but an ADP, so this keeps only entries that actually carry a
+ * points projection.
+ */
+export function indexProjections(
+  raw: any[],
+  key: 'pts_ppr' | 'pts_half_ppr' | 'pts_std'
+): Record<string, Projection> {
+  const out: Record<string, Projection> = {};
+  for (const row of raw ?? []) {
+    const stats = row?.stats;
+    const points = stats?.[key];
+    if (points == null || !row.player_id) continue;
+
+    out[row.player_id] = {
+      points: Math.round(points * 100) / 100,
+      games: stats.gp ?? null,
+      opponent: row.opponent ?? null,
+      lines: PROJECTION_LINES.filter(([k]) => (stats[k] ?? 0) > 0).map(([k, label]) => ({
+        label,
+        value: Math.round((stats[k] as number) * 10) / 10,
+      })),
+    };
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
  * Where the season is
  *
  * "Week 1" is wrong for most of the year. Sleeper's state carries a
@@ -867,6 +929,110 @@ export function dayLabel(ts: number, now: number): string {
     day: 'numeric',
     year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric',
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * A player's history in this league
+ *
+ * Where they came from and everywhere they have been: drafted here, claimed off
+ * waivers for this much, traded there. Sleeper shows none of this on a player.
+ * ------------------------------------------------------------------ */
+
+export interface PlayerEvent {
+  kind: 'drafted' | 'added' | 'dropped' | 'traded';
+  week: number | null;
+  created: number;
+  /** Team that gained them, when there is one. */
+  toRosterId: number | null;
+  toTeam: string | null;
+  /** Team that lost them, when there is one. */
+  fromRosterId: number | null;
+  fromTeam: string | null;
+  /** FAAB paid, on a winning waiver claim. */
+  faab: number | null;
+  method: 'Draft' | 'Waivers' | 'Free agency' | 'Trade' | 'Commissioner';
+  /** Draft position, e.g. "Round 1, pick 7". */
+  detail: string | null;
+}
+
+export interface RawDraftPick {
+  player_id: string;
+  round: number;
+  pick_no: number;
+  draft_slot: number;
+  roster_id: number;
+  picked_by: string | null;
+  is_keeper: boolean | null;
+}
+
+export function buildPlayerHistory(
+  playerId: string,
+  transactions: RawTransaction[],
+  draftPicks: RawDraftPick[],
+  teams: Map<number, Team>,
+  draftSeason?: string
+): PlayerEvent[] {
+  const events: PlayerEvent[] = [];
+  const teamName = (id: number | null | undefined) =>
+    id == null ? null : (teams.get(id)?.teamName ?? `Roster ${id}`);
+
+  for (const pick of draftPicks ?? []) {
+    if (pick.player_id !== playerId) continue;
+    events.push({
+      kind: 'drafted',
+      week: null,
+      // Drafts predate the season; sort them before any transaction.
+      created: 0,
+      toRosterId: pick.roster_id,
+      toTeam: teamName(pick.roster_id),
+      fromRosterId: null,
+      fromTeam: null,
+      faab: null,
+      method: 'Draft',
+      detail: `Round ${pick.round}, pick ${pick.pick_no}${draftSeason ? ` · ${draftSeason}` : ''}${pick.is_keeper ? ' · keeper' : ''}`,
+    });
+  }
+
+  for (const t of transactions ?? []) {
+    if (t.status !== 'complete') continue;
+    const gained = (t.adds ?? {})[playerId];
+    const lost = (t.drops ?? {})[playerId];
+    if (gained == null && lost == null) continue;
+
+    const method: PlayerEvent['method'] =
+      t.type === 'trade'
+        ? 'Trade'
+        : t.type === 'waiver'
+          ? 'Waivers'
+          : t.type === 'commissioner'
+            ? 'Commissioner'
+            : 'Free agency';
+
+    // A trade moves a player between two rosters in one event rather than
+    // reading as an unrelated add and drop.
+    const kind: PlayerEvent['kind'] =
+      method === 'Trade' ? 'traded' : gained != null ? 'added' : 'dropped';
+
+    events.push({
+      kind,
+      week: t.leg ?? null,
+      created: t.created,
+      toRosterId: gained ?? null,
+      toTeam: teamName(gained),
+      fromRosterId: lost ?? null,
+      fromTeam: teamName(lost),
+      // The bid bought whoever was added. A player dropped in the same
+      // transaction was cut to make room and did not cost anything.
+      faab:
+        method === 'Waivers' && gained != null && (t.settings?.waiver_bid ?? 0) > 0
+          ? t.settings!.waiver_bid!
+          : null,
+      method,
+      detail: null,
+    });
+  }
+
+  return events.sort((a, b) => a.created - b.created);
 }
 
 /* ------------------------------------------------------------------ *

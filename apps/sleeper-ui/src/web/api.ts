@@ -261,5 +261,39 @@ export interface PlayerDetail {
   isStarter: boolean;
   weeks: Array<{ week: number; points: number; started: boolean }>;
   totals: { points: number; games: number; average: number; best: number };
-  news: Array<{ title: string; source: string | null; published: number | null; url: string | null }>;
+  news: Array<{
+    title: string | null;
+    body: string | null;
+    source: string | null;
+    published: number | null;
+    url: string | null;
+  }>;
+  outlook: { text: string; source: string | null; season: string } | null;
+  history: PlayerEvent[];
+  projection: {
+    season: Projection | null;
+    week: Projection | null;
+    weekNumber: number | null;
+    scoring: 'pts_ppr' | 'pts_half_ppr' | 'pts_std';
+  };
+}
+
+export interface Projection {
+  points: number;
+  games: number | null;
+  opponent: string | null;
+  lines: Array<{ label: string; value: number }>;
+}
+
+export interface PlayerEvent {
+  kind: 'drafted' | 'added' | 'dropped' | 'traded';
+  week: number | null;
+  created: number;
+  toRosterId: number | null;
+  toTeam: string | null;
+  fromRosterId: number | null;
+  fromTeam: string | null;
+  faab: number | null;
+  method: 'Draft' | 'Waivers' | 'Free agency' | 'Trade' | 'Commissioner';
+  detail: string | null;
 }
