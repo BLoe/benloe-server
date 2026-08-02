@@ -5,6 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/srv/benloe/infra/scripts/apt-delayed-upgrade.sh
+ExecStart=/usr/local/sbin/apt-delayed-upgrade.sh
 StandardOutput=append:/srv/benloe/logs/apt-delayed-upgrade.log
 StandardError=append:/srv/benloe/logs/apt-delayed-upgrade.log

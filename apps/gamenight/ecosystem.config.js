@@ -12,6 +12,10 @@ module.exports = {
     {
       name: 'gamenight-api',
       script: 'api/dist/server.js',
+      // Unprivileged as benloe-apps via the root-owned setpriv shim
+      // (2026-08-02 privilege-separation audit). See
+      // infra/scripts/node-as.template.sh.
+      interpreter: '/usr/local/lib/benloe/node-as-benloe-apps',
       cwd: '/srv/benloe/apps/gamenight',
       instances: 1,
       exec_mode: 'fork',

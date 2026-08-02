@@ -12,13 +12,26 @@ module.exports = {
     {
       name: 'artanis-auth',
       script: 'dist/server.js',
+      // Runs as its OWN uid (not benloe-apps) via a root-owned setpriv shim —
+      // 2026-08-02 privilege-separation audit. Artanis issues the sessions
+      // that guard every other app including Cabinet, so it gets the tightest
+      // treatment on the box:
+      //   - runs unprivileged, under a uid nothing else uses
+      //   - its code tree is root-owned, so the agent cannot inject into it
+      //   - its database moved to /var/lib/artanis (root:artanis 750), out of
+      //     the agent-writable tree entirely
+      // Before this, artanis ran as root with agent-writable code, and
+      // artanis.db sat in /srv/benloe/data owned by claude-worker mode 600 —
+      // the agent could read the users/sessions/api_keys tables directly, no
+      // exploit required.
+      interpreter: '/usr/local/lib/benloe/node-as-artanis',
       cwd: '/srv/benloe/apps/artanis',
       instances: 1,
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
         PORT: 3002,
-        DATABASE_URL: 'file:/srv/benloe/data/artanis.db',
+        DATABASE_URL: 'file:/var/lib/artanis/artanis.db',
         JWT_SECRET: env.JWT_SECRET,
         JWT_EXPIRES_IN: '30d',
         MAILGUN_API_KEY: env.MAILGUN_API_KEY,
