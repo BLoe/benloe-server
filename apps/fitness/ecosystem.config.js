@@ -28,7 +28,6 @@ module.exports = {
         DATABASE_URL: 'file:/srv/benloe/data/fitness.db',
         AUTH_SERVICE_URL: 'http://localhost:3002',
         WEIGHTS_API_URL: 'http://localhost:3003',
-        JWT_SECRET: env.JWT_SECRET,
       },
       error_file: '/srv/benloe/logs/fitness-api-err.log',
       out_file: '/srv/benloe/logs/fitness-api-out.log',

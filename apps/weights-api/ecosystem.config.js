@@ -24,7 +24,6 @@ module.exports = {
         PORT: 3003,
         DATABASE_URL: 'file:/srv/benloe/data/weights.db',
         AUTH_SERVICE_URL: 'http://localhost:3002',
-        JWT_SECRET: env.JWT_SECRET,
       },
       error_file: '/srv/benloe/logs/weights-api-err.log',
       out_file: '/srv/benloe/logs/weights-api-out.log',
