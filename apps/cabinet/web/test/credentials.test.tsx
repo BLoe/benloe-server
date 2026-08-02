@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
-import type { CredentialMeta, CredentialSlot, CredentialsView, EnvVarReport } from '../src/lib/contracts.js';
+import type {
+  CredentialMeta, CredentialSlot, CredentialsView, EnvVarReport, SettingView,
+} from '../src/lib/contracts.js';
 
-const { credentialsMock, saveMock, deleteMock } = vi.hoisted(() => ({
+const { credentialsMock, saveMock, deleteMock, settingsMock, saveSettingMock, revertSettingMock } = vi.hoisted(() => ({
   credentialsMock: vi.fn<() => Promise<CredentialsView>>(),
   saveMock: vi.fn(),
   deleteMock: vi.fn(),
+  settingsMock: vi.fn<() => Promise<{ settings: SettingView[] }>>(),
+  saveSettingMock: vi.fn<(key: string, value: string) => Promise<{ setting: SettingView }>>(),
+  revertSettingMock: vi.fn<(key: string) => Promise<{ setting: SettingView }>>(),
 }));
 
 vi.mock('../src/lib/cabinet.js', async (importActual) => {
@@ -17,6 +22,9 @@ vi.mock('../src/lib/cabinet.js', async (importActual) => {
       credentials: credentialsMock,
       saveCredential: saveMock,
       deleteCredential: deleteMock,
+      settings: settingsMock,
+      saveSetting: saveSettingMock,
+      revertSetting: revertSettingMock,
     },
   };
 });
@@ -25,7 +33,7 @@ import userEvent from '@testing-library/user-event';
 // ApiError is deliberately NOT mocked: the surface's error handling keys off
 // the real class, so the tests throw the real thing.
 import { ApiError } from '../src/lib/client.js';
-import { Credentials, fmtAgo, normalizeStamp } from '../src/surfaces/Credentials.js';
+import { Credentials, fmtAgo, fmtWhen, normalizeStamp } from '../src/surfaces/Credentials.js';
 
 /* Every stamp below is SQLite-shaped — naive UTC, no zone marker — because
    that is what the server actually sends and the parsing of it is the one
@@ -79,27 +87,29 @@ const UNRECOGNISED: CredentialMeta[] = [
 ];
 
 const ENV: EnvVarReport[] = [
-  // Non-secret config, and optional: it has a working default, so unset would
-  // be fine. Set here, and the value is the point, so it renders.
+  // Non-secret config, still set in .env, and SUPERSEDED: the `plaid.env`
+  // setting outranks it now. The value it carries still renders — you have to
+  // be able to read the line that is being ignored — but the row must not read
+  // as the answer to "what is Plaid pointed at?".
   {
     name: 'PLAID_ENV', label: 'Plaid environment',
     description: "'sandbox' for fake test banks, 'production' for real ones.",
-    reason: 'Read once at boot by the Plaid client.',
-    set: true, required: false, scrubbed: false, value: 'sandbox',
+    reason: 'Superseded by the Plaid environment setting, which takes precedence over this variable.',
+    set: true, required: false, scrubbed: false, value: 'sandbox', supersededBy: 'plaid.env',
   },
   // The master key: presence only, forever.
   {
     name: 'CABINET_CRED_KEY', label: 'Credential encryption key',
     description: 'The AES-256 key that encrypts everything on this page.',
     reason: 'The bootstrap secret — it lives in root-owned /srv/benloe/.env.',
-    set: true, required: true, scrubbed: true, value: null,
+    set: true, required: true, scrubbed: true, value: null, supersededBy: null,
   },
   // Required AND missing — the one env row that has earned a warning.
   {
     name: 'CABINET_PUBLIC_ORIGIN', label: 'Public origin',
     description: 'Base URL used to build the Plaid OAuth redirect and webhook URLs.',
     reason: 'Read at boot to build URLs Plaid has already allow-listed.',
-    set: false, required: true, scrubbed: false, value: null,
+    set: false, required: true, scrubbed: false, value: null, supersededBy: null,
   },
   // Hostile fixture: a scrubbed entry that arrives WITH a value anyway. The
   // server can't produce this, but if a future one ever does, the page must
@@ -109,9 +119,29 @@ const ENV: EnvVarReport[] = [
     name: 'GITHUB_APP_PRIVATE_KEY_B64', label: 'GitHub App private key',
     description: 'Scrubbed from the process environment at boot.',
     reason: 'Secret, and root-injected.',
-    set: false, required: false, scrubbed: true, value: 'leak-me-please',
+    set: false, required: false, scrubbed: true, value: 'leak-me-please', supersededBy: null,
   },
 ];
+
+/* ---- settings: the editable half, fixtured across all three sources ----
+   `plaid.env` is the case the section exists for — a stored value beating a
+   live environment variable that says something else — and `public.origin` is
+   the quiet one that merely reports where its value came from. */
+const PLAID_ENV_SETTING: SettingView = {
+  key: 'plaid.env', group: 'Plaid', label: 'Environment',
+  description: "Which Plaid environment to call. 'sandbox' uses fake test banks; 'production' connects real accounts.",
+  type: 'enum', options: ['sandbox', 'production'], default: 'sandbox', envVar: 'PLAID_ENV',
+  value: 'production', source: 'db', updated_at: '2026-08-01 19:22:10', env_value: 'sandbox',
+};
+
+const ORIGIN_SETTING: SettingView = {
+  key: 'public.origin', group: 'Plaid', label: 'Public origin',
+  description: 'Base URL Cabinet is reachable at. Used to build the Plaid OAuth redirect and webhook URLs.',
+  type: 'origin', default: 'https://cabinet.benloe.com', envVar: 'CABINET_PUBLIC_ORIGIN',
+  value: 'https://cabinet.benloe.com', source: 'env', updated_at: null, env_value: 'https://cabinet.benloe.com',
+};
+
+const SETTINGS: SettingView[] = [PLAID_ENV_SETTING, ORIGIN_SETTING];
 
 function view(overrides: Partial<CredentialsView> = {}): CredentialsView {
   return {
@@ -144,14 +174,22 @@ function viewWithSecretStored(): CredentialsView {
 }
 
 beforeEach(() => {
-  for (const m of [credentialsMock, saveMock, deleteMock]) m.mockReset();
+  for (const m of [credentialsMock, saveMock, deleteMock, settingsMock, saveSettingMock, revertSettingMock]) {
+    m.mockReset();
+  }
   credentialsMock.mockResolvedValue(view());
   saveMock.mockResolvedValue({ ok: true, created: true, credential: CLIENT_ID_META });
   deleteMock.mockResolvedValue({ ok: true, deleted: 'plaid-client-id' });
+  settingsMock.mockResolvedValue({ settings: SETTINGS.map((s) => ({ ...s })) });
+  saveSettingMock.mockResolvedValue({ setting: PLAID_ENV_SETTING });
+  revertSettingMock.mockResolvedValue({ setting: PLAID_ENV_SETTING });
 });
 afterEach(cleanup);
 
 const slotRow = (label: string) => screen.getByText(label).closest('li') as HTMLElement;
+/** A settings row, found through its control's label rather than any stray copy. */
+const settingRow = async (label: string) =>
+  (await screen.findByLabelText(label)).closest('li') as HTMLElement;
 
 describe('naive-UTC timestamps', () => {
   it("appends the zone SQLite's datetime('now') leaves off", () => {
@@ -234,7 +272,9 @@ describe('Credentials surface', () => {
     expect(input.getAttribute('spellcheck')).toBe('false');
 
     await userEvent.type(input, 'sandbox-secret-abc123');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    // Scoped to the slot: the Settings section further down has Save buttons
+    // of its own, and a page-wide lookup would be a coin flip.
+    await userEvent.click(within(slotRow('Secret')).getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
       expect(saveMock).toHaveBeenCalledWith(
@@ -284,7 +324,7 @@ describe('Credentials surface', () => {
     await screen.findByLabelText('Integrations');
     await userEvent.click(within(slotRow('Client ID')).getByRole('button', { name: 'Rotate' }));
     await userEvent.type(screen.getByLabelText('New value for Client ID'), 'nope');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(within(slotRow('Client ID')).getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText(/managed automatically by an integration/)).toBeTruthy();
   });
@@ -296,7 +336,7 @@ describe('Credentials surface', () => {
     await screen.findByLabelText('Integrations');
     await userEvent.click(within(slotRow('Secret')).getByRole('button', { name: 'Set' }));
     await userEvent.type(screen.getByLabelText('Value for Secret'), 'abc');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(within(slotRow('Secret')).getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText(/No encryption key on the server/)).toBeTruthy();
   });
@@ -342,21 +382,23 @@ describe('Credentials surface', () => {
 
   it('renders an environment value only when the server sent one, and never for a secret', async () => {
     render(<Credentials />);
-    const env = await screen.findByLabelText('Environment');
+    const env = await screen.findByLabelText('Environment variables');
 
     // Read-only, and it says so, with the restart caveat.
     expect(env.textContent).toContain('read-only');
     expect(env.textContent).toMatch(/restart/i);
 
-    // Config var: value present, so it's on screen.
+    // Config var: value present, so it's on screen — being superseded doesn't
+    // hide what the ignored line says, it just stops it reading as the answer.
     const plaidEnv = within(env).getByText('PLAID_ENV').closest('li') as HTMLElement;
     expect(plaidEnv.querySelector('.cred-env-val')?.textContent).toBe('sandbox');
-    expect(plaidEnv.textContent).toContain('Read once at boot by the Plaid client.');
 
-    // Master key: no value sent, none invented.
+    // Master key: no value sent, none invented, and the "why not here" line
+    // every un-superseded row carries.
     const key = within(env).getByText('CABINET_CRED_KEY').closest('li') as HTMLElement;
     expect(key.querySelector('.cred-env-val')).toBeNull();
     expect(key.textContent).toContain('not shown');
+    expect(key.textContent).toContain('The bootstrap secret — it lives in root-owned /srv/benloe/.env.');
     expect(within(key).getByText('Set')).toBeTruthy();
 
     // Hostile payload: scrubbed AND carrying a value. Still never rendered.
@@ -368,7 +410,7 @@ describe('Credentials surface', () => {
 
   it('warns about an unset env var only when it is required', async () => {
     render(<Credentials />);
-    const env = await screen.findByLabelText('Environment');
+    const env = await screen.findByLabelText('Environment variables');
 
     // Optional and unset: a feature that's off, not a fault. Quiet tone, and
     // no "required" in the label — a page that shouts about integrations Ben
@@ -392,7 +434,7 @@ describe('Credentials surface', () => {
 
   it('marks every environment row read-only, not just the section lede', async () => {
     render(<Credentials />);
-    const env = await screen.findByLabelText('Environment');
+    const env = await screen.findByLabelText('Environment variables');
 
     // Four rows in the fixture, each carrying the same per-row marker the
     // managed list carries — plus the one in the section lede.
@@ -401,5 +443,235 @@ describe('Credentials surface', () => {
     for (const row of rows) {
       expect(row.querySelector('.cred-ro')?.textContent).toBe('read-only');
     }
+  });
+
+  it('demotes a superseded environment variable instead of letting it look authoritative', async () => {
+    render(<Credentials />);
+    const env = await screen.findByLabelText('Environment variables');
+
+    const plaidEnv = within(env).getByText('PLAID_ENV').closest('li') as HTMLElement;
+    expect(plaidEnv.className).toContain('is-superseded');
+    expect((plaidEnv.querySelector('.cred-pill') as HTMLElement).textContent).toBe('Superseded');
+    // Named, and answered: which setting won, and what it currently says. The
+    // row's own value ('sandbox') is still readable, but the value in force
+    // ('production') is on the row too, so the two can't be confused.
+    expect(plaidEnv.textContent).toContain('Plaid · Environment');
+    expect(plaidEnv.textContent).toContain('takes precedence over this variable');
+    expect(plaidEnv.querySelector('.cred-env-superseded')?.textContent).toContain('production');
+
+    // An un-superseded row is untouched: no dimming, and the ordinary pill.
+    const key = within(env).getByText('CABINET_CRED_KEY').closest('li') as HTMLElement;
+    expect(key.className).not.toContain('is-superseded');
+    expect(key.textContent).not.toContain('Superseded');
+  });
+});
+
+/* ============================================================================
+   Settings — the editable, plaintext half of the same page.
+
+   Every test below is about ONE question: which value is in force, and where
+   did it come from. That is the only thing this section can get wrong in a way
+   that costs anything, because every other failure is visible immediately and
+   this one is invisible until a redirect URI stops matching.
+   ========================================================================== */
+describe('Settings section', () => {
+  it('formats a store stamp as a readable absolute datetime', () => {
+    // Timezone-agnostic on purpose: the runner's zone isn't pinned, so this
+    // asserts the SHAPE (absolute, readable, no raw ISO punctuation) rather
+    // than a wall-clock string that would only pass in one country.
+    const out = fmtWhen('2026-08-01 19:22:10');
+    expect(out).toContain('2026');
+    expect(out).toMatch(/Jul|Aug/);
+    expect(out).not.toContain('T');
+    expect(out).not.toContain('Z');
+    expect(fmtWhen(null)).toBe('never');
+    expect(fmtWhen('not a date')).toBe('not a date');
+  });
+
+  it('groups settings under their integration and names the source of each value', async () => {
+    render(<Credentials />);
+    const settings = await screen.findByLabelText('Settings');
+
+    // One heading, shared with the credential slots for the same integration.
+    expect(within(settings).getAllByRole('heading').map((h) => h.textContent)).toEqual(['Plaid']);
+
+    const env = (await settingRow('Environment')) as HTMLElement;
+    expect((env.querySelector('.cred-pill') as HTMLElement).textContent).toBe('Set here · overriding');
+    const origin = (await settingRow('Public origin')) as HTMLElement;
+    expect((origin.querySelector('.cred-pill') as HTMLElement).textContent).toBe('From CABINET_PUBLIC_ORIGIN');
+
+    // The control matches the type: closed choice → select, free text → input.
+    expect((within(env).getByLabelText('Environment') as HTMLSelectElement).tagName).toBe('SELECT');
+    expect((within(origin).getByLabelText('Public origin') as HTMLInputElement).type).toBe('text');
+  });
+
+  it('says plainly that a stored value is overriding a live environment variable', async () => {
+    render(<Credentials />);
+    const row = await settingRow('Environment');
+
+    // The whole point: the variable is named, ITS value is quoted, and the row
+    // says which one is actually being used. A reader who knows PLAID_ENV says
+    // 'sandbox' must not be able to leave this row thinking Plaid is in sandbox.
+    const note = row.querySelector('.cred-set-note.override') as HTMLElement;
+    expect(note).toBeTruthy();
+    expect(note.textContent).toContain('Overriding');
+    expect(note.textContent).toContain('PLAID_ENV');
+    expect(note.textContent).toContain('sandbox');
+    expect(note.textContent).toMatch(/being ignored/);
+    expect((within(row).getByLabelText('Environment') as HTMLSelectElement).value).toBe('production');
+    // …and the row carries the brass edge, so it's findable without reading.
+    expect(row.className).toContain('is-overriding');
+  });
+
+  it('tells a value that came from the environment that editing here will outrank it', async () => {
+    render(<Credentials />);
+    const row = await settingRow('Public origin');
+
+    const note = row.querySelector('.cred-set-note') as HTMLElement;
+    expect(note.textContent).toContain('CABINET_PUBLIC_ORIGIN');
+    expect(note.textContent).toMatch(/comes from/);
+    expect(note.textContent).toMatch(/outranks it/);
+    expect(note.className).not.toContain('override');
+  });
+
+  it('renders a 409 inline at the control that produced it, not as a page banner', async () => {
+    const blocked =
+      "Cannot switch to 'sandbox' while 2 account connections are linked — their access tokens only work in the " +
+      'environment that issued them. Unlink first, then switch.';
+    saveSettingMock.mockRejectedValue(new ApiError(409, blocked));
+    render(<Credentials />);
+
+    const row = await settingRow('Environment');
+    await userEvent.selectOptions(within(row).getByLabelText('Environment'), 'sandbox');
+
+    await waitFor(() => expect(saveSettingMock).toHaveBeenCalledWith('plaid.env', 'sandbox'));
+    // Verbatim, and INSIDE the setting's own row — the server wrote this for
+    // Ben, and it only means anything next to the selector he just moved.
+    const err = await within(row).findByText(blocked);
+    expect(err.closest('li')).toBe(row);
+    // Not promoted to the page-level alert slot, which belongs to the missing
+    // encryption key and would bury this one under a different subject.
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    // The refused choice does not sit in the control looking chosen.
+    expect((within(row).getByLabelText('Environment') as HTMLSelectElement).value).toBe('production');
+  });
+
+  it('offers the revert action only for a value that is actually stored here', async () => {
+    render(<Credentials />);
+
+    // source 'db', with an environment value underneath it to fall back to.
+    const stored = await settingRow('Environment');
+    expect(within(stored).getByRole('button', { name: 'Stop overriding' })).toBeTruthy();
+    expect(stored.textContent).toContain('stored');
+
+    // source 'env' — there is no override to stop, so no button and no stamp.
+    const fromEnv = await settingRow('Public origin');
+    expect(within(fromEnv).queryByRole('button', { name: /stop overriding|revert/i })).toBeNull();
+  });
+
+  it('reads "Revert to default" when there is no environment variable to fall back to', async () => {
+    settingsMock.mockResolvedValue({
+      settings: [{ ...PLAID_ENV_SETTING, envVar: undefined, env_value: null }],
+    });
+    render(<Credentials />);
+
+    const row = await settingRow('Environment');
+    expect(within(row).getByRole('button', { name: 'Revert to default' })).toBeTruthy();
+    // And it names what it would fall back to, rather than just promising one.
+    expect(row.textContent).toContain('sandbox');
+  });
+
+  it('reverting hands the value back to the environment and re-renders from the echo', async () => {
+    revertSettingMock.mockResolvedValue({
+      setting: { ...PLAID_ENV_SETTING, value: 'sandbox', source: 'env', updated_at: null },
+    });
+    render(<Credentials />);
+
+    const row = await settingRow('Environment');
+    await userEvent.click(within(row).getByRole('button', { name: 'Stop overriding' }));
+
+    await waitFor(() => expect(revertSettingMock).toHaveBeenCalledWith('plaid.env'));
+    await waitFor(() =>
+      expect((row.querySelector('.cred-pill') as HTMLElement).textContent).toBe('From PLAID_ENV'),
+    );
+    expect(within(row).queryByRole('button', { name: 'Stop overriding' })).toBeNull();
+    expect(row.querySelector('.cred-set-note.override')).toBeNull();
+  });
+
+  it('shows what the server stored, not what was typed', async () => {
+    // The server normalises — a trailing slash comes off an origin — and the
+    // difference is exactly what would otherwise be found out a week later by
+    // an OAuth redirect that doesn't match.
+    saveSettingMock.mockResolvedValue({
+      setting: {
+        ...ORIGIN_SETTING, value: 'https://cabinet.example.com', source: 'db',
+        updated_at: '2026-08-02 07:15:00',
+      },
+    });
+    render(<Credentials />);
+
+    const row = await settingRow('Public origin');
+    const input = within(row).getByLabelText('Public origin') as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, 'https://cabinet.example.com/');
+    await userEvent.click(within(row).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(saveSettingMock).toHaveBeenCalledWith('public.origin', 'https://cabinet.example.com/'));
+    // The echo replaces the draft — the slash is gone from the field itself,
+    // not merely reported as gone somewhere else on the row.
+    await waitFor(() => expect(input.value).toBe('https://cabinet.example.com'));
+    // …and the save moved the row's source: it is now stored here, and beating
+    // the CABINET_PUBLIC_ORIGIN it used to simply report.
+    expect((row.querySelector('.cred-pill') as HTMLElement).textContent).toBe('Set here · overriding');
+    expect(row.querySelector('.cred-set-note.override')?.textContent).toContain('https://cabinet.benloe.com');
+  });
+
+  it('keeps Save inert until the field actually differs, and shows a pending state while it saves', async () => {
+    let release: (v: { setting: SettingView }) => void = () => {};
+    saveSettingMock.mockReturnValue(new Promise((res) => { release = res; }));
+    render(<Credentials />);
+
+    const row = await settingRow('Public origin');
+    const input = within(row).getByLabelText('Public origin') as HTMLInputElement;
+    const save = () => within(row).getByRole('button', { name: /save|saving/i }) as HTMLButtonElement;
+
+    // Unchanged: a Save that does nothing would still read as a change made.
+    expect(save().disabled).toBe(true);
+    await userEvent.type(input, '/health');
+    expect(save().disabled).toBe(false);
+
+    await userEvent.click(save());
+    await waitFor(() => expect(save().textContent).toBe('Saving…'));
+    expect(input.disabled).toBe(true);
+
+    release({ setting: { ...ORIGIN_SETTING, value: 'https://cabinet.benloe.com', source: 'db', updated_at: '2026-08-02 07:15:00' } });
+    await waitFor(() => expect(save().disabled).toBe(true));
+  });
+
+  it('keeps a rejected free-text value in the field so the typo can be fixed', async () => {
+    saveSettingMock.mockRejectedValue(new ApiError(400, 'Public origin must be a full URL, e.g. https://cabinet.benloe.com'));
+    render(<Credentials />);
+
+    const row = await settingRow('Public origin');
+    const input = within(row).getByLabelText('Public origin') as HTMLInputElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, 'cabinet.benloe.com');
+    await userEvent.click(within(row).getByRole('button', { name: 'Save' }));
+
+    // The server's own words, verbatim, and the bad value still there to edit.
+    expect(await within(row).findByText(/must be a full URL/)).toBeTruthy();
+    expect(input.value).toBe('cabinet.benloe.com');
+  });
+
+  it('loses only the settings section when the settings endpoint is down', async () => {
+    settingsMock.mockRejectedValue(new Error('settings unavailable'));
+    render(<Credentials />);
+
+    // The key cabinet still renders — two endpoints, two failure domains.
+    expect(await screen.findByLabelText('Integrations')).toBeTruthy();
+    const settings = screen.getByLabelText('Settings');
+    expect(within(settings).getByText('settings unavailable')).toBeTruthy();
+    expect(within(settings).queryByRole('combobox')).toBeNull();
   });
 });

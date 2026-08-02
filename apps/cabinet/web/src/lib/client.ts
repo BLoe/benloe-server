@@ -2,7 +2,7 @@ import type {
   CabinetApi, TodayView, DomainId, DomainView, OpsFeed, OpsKind, MemoryView, RecallResponse, HealthInfo, ChatSummary, ChatMessage,
   UsageView, UsageRollingView, PerfView,
   PlaidStatus, LinkTokenResponse, ExchangeResponse, SyncResponse, MoneySummary, MoneyTransaction, MoneyTrend, CategorySpend, Holding,
-  CredentialsView, CredentialSaveResult,
+  CredentialsView, CredentialSaveResult, SettingView,
 } from './contracts.js';
 
 /* The real client: fetches the gateway endpoints the contracts define. The
@@ -100,6 +100,13 @@ export const fetchApi: CabinetApi = {
   credentials: () => get<CredentialsView>('/api/credentials'),
   saveCredential: (input) => send<CredentialSaveResult>('/api/credentials', 'POST', input),
   deleteCredential: (name) => send<{ ok: boolean; deleted: string }>(`/api/credentials/${encodeURIComponent(name)}`, 'DELETE'),
+
+  // Settings are the inverse of the three lines above: readable, echoed, and
+  // safe in a log. The PUT/DELETE responses both carry the re-resolved view, so
+  // the caller never has to guess what was stored or which source now wins.
+  settings: () => get<{ settings: SettingView[] }>('/api/settings'),
+  saveSetting: (key, value) => send<{ setting: SettingView }>(`/api/settings/${encodeURIComponent(key)}`, 'PUT', { value }),
+  revertSetting: (key) => send<{ setting: SettingView }>(`/api/settings/${encodeURIComponent(key)}`, 'DELETE'),
 
   plaidStatus: () => get<PlaidStatus>('/api/plaid/status'),
   // The server reads item_id off the body and ignores anything non-positive,

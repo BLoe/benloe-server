@@ -41,6 +41,12 @@ vi.mock('../src/lib/cabinet.js', async (importOriginal) => {
     }),
     saveCredential: async () => ({ ok: true, created: true, credential: null }),
     deleteCredential: async (name: string) => ({ ok: true, deleted: name }),
+    // Settings share the Credentials surface and are fetched on the same mount,
+    // from a different endpoint. Empty is a valid payload — the section renders
+    // its lede and nothing else.
+    settings: async () => ({ settings: [] }),
+    saveSetting: async (key: string, value: string) => ({ setting: { key, value } }),
+    revertSetting: async (key: string) => ({ setting: { key } }),
     // Money: enough for the surface to mount if a test ever routes to it.
     plaidStatus: async () => ({
       configured: false, environment: 'sandbox', redirect_uri: '/plaid/oauth', webhook_url: '/api/plaid/webhook',

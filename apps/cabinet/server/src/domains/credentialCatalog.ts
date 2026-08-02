@@ -110,6 +110,19 @@ export interface EnvVarSpec {
    * a missing feature rather than a deliberate boundary.
    */
   reason: string;
+  /**
+   * The app_setting key that now owns this value (migration 019). When set, the
+   * variable is a LEGACY FALLBACK: a DB row wins over it, so an entry that is
+   * still present in .env may not be the value actually in force.
+   *
+   * This field is why these entries stay listed at all after becoming editable.
+   * Deleting them from the catalog would be tidier and worse — the .env line
+   * does not disappear when the setting is created, and an operator reading
+   * .env would have no way to learn it has been overridden. Listing the
+   * variable and naming its successor is what makes the precedence discoverable
+   * from either direction.
+   */
+  supersededBy?: string;
 }
 
 /**
@@ -136,15 +149,16 @@ export const ENV_CATALOG: EnvVarSpec[] = [
     label: 'Plaid environment',
     description: "'sandbox' for fake test banks, 'production' for real ones. Defaults to sandbox when unset.",
     publicValue: true,
-    reason: 'Read once at boot by the Plaid client. Changing it needs a process restart, not just a new value.',
+    supersededBy: 'plaid.env',
+    reason: 'Superseded by the Plaid environment setting below, which takes precedence over this variable.',
   },
   {
     name: 'CABINET_PUBLIC_ORIGIN',
     label: 'Public origin',
     description: 'Base URL used to build the Plaid OAuth redirect and webhook URLs. Must match what Plaid has on file.',
     publicValue: true,
-    required: true,
-    reason: 'Read once at boot; also configured in Caddy, so the two have to change together.',
+    supersededBy: 'public.origin',
+    reason: 'Superseded by the public origin setting below, which takes precedence over this variable.',
   },
   {
     name: 'CABINET_VAPID_PUBLIC_KEY',
@@ -187,6 +201,8 @@ export interface EnvVarReport {
   scrubbed: boolean;
   /** The value — non-null ONLY for entries explicitly marked publicValue. */
   value: string | null;
+  /** app_setting key that outranks this variable, when one exists. */
+  supersededBy: string | null;
 }
 
 /**
@@ -218,6 +234,7 @@ export function envReport(
       // An empty string is "set to nothing" — a different, more confusing state
       // than unset — so it survives as an empty value rather than becoming null.
       value: !scrubbed && spec.publicValue === true && typeof raw === 'string' ? raw : null,
+      supersededBy: spec.supersededBy ?? null,
     };
   });
 }
