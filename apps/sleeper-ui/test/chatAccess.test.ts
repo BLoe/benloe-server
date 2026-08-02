@@ -1,72 +1,78 @@
 import { describe, it, expect } from 'vitest';
-import { chatAccess } from '../src/server/chatAccess.js';
+import { chatAccess, type ChatAccessInput } from '../src/server/chatAccess.js';
 
 const BEN = '810215947997663232';
 const STRANGER = '483459259485384704';
 
-const input = (over: Partial<Parameters<typeof chatAccess>[0]> = {}) => ({
+const input = (over: Partial<ChatAccessInput> = {}): ChatAccessInput => ({
   fixtures: false,
-  hasToken: true,
-  tokenOwnerId: BEN,
   visitorId: BEN,
+  hasOwnToken: false,
+  hasServerToken: false,
+  serverTokenOwnerId: null,
   ...over,
 });
 
+const deny = (r: ReturnType<typeof chatAccess>) => {
+  if (r.allowed) throw new Error('expected a denial');
+  return r;
+};
+
 describe('chatAccess', () => {
-  it('allows the account the token belongs to', () => {
-    expect(chatAccess(input())).toEqual({ allowed: true });
+  it("allows a visitor who has connected their own account", () => {
+    expect(chatAccess(input({ hasOwnToken: true }))).toEqual({ allowed: true, using: 'own' });
   });
 
-  it('refuses a different signed-in visitor', () => {
-    const got = chatAccess(input({ visitorId: STRANGER }));
-    expect(got.allowed).toBe(false);
-    if (got.allowed) throw new Error('unreachable');
+  it('prefers a visitor own token over the server token', () => {
+    const got = chatAccess(
+      input({ hasOwnToken: true, hasServerToken: true, serverTokenOwnerId: BEN })
+    );
+    expect(got).toEqual({ allowed: true, using: 'own' });
+  });
+
+  it('lets the server token be used by the account that owns it', () => {
+    const got = chatAccess(input({ hasServerToken: true, serverTokenOwnerId: BEN }));
+    expect(got).toEqual({ allowed: true, using: 'server' });
+  });
+
+  it('never lends the server token to a different visitor', () => {
+    const got = deny(
+      chatAccess(input({ visitorId: STRANGER, hasServerToken: true, serverTokenOwnerId: BEN }))
+    );
     expect(got.status).toBe(403);
-    expect(got.code).toBe('notChatOwner');
+    expect(got.code).toBe('needsLogin');
   });
 
-  it('refuses a signed-out visitor before considering the token', () => {
-    const got = chatAccess(input({ visitorId: null }));
-    expect(got.allowed).toBe(false);
-    if (got.allowed) throw new Error('unreachable');
+  it('refuses a server token it cannot attribute', () => {
+    const got = deny(chatAccess(input({ hasServerToken: true, serverTokenOwnerId: null })));
+    expect(got.code).toBe('needsLogin');
+  });
+
+  it('refuses a signed-out visitor before considering any token', () => {
+    const got = deny(
+      chatAccess(input({ visitorId: null, hasOwnToken: true, hasServerToken: true, serverTokenOwnerId: BEN }))
+    );
     expect(got.status).toBe(401);
     expect(got.code).toBe('noSession');
   });
 
-  it('reports a missing token', () => {
-    const got = chatAccess(input({ hasToken: false, tokenOwnerId: null }));
-    expect(got.allowed).toBe(false);
-    if (got.allowed) throw new Error('unreachable');
-    expect(got.status).toBe(503);
-    expect(got.code).toBe('needsToken');
+  it('asks an unconnected visitor to sign in', () => {
+    const got = deny(chatAccess(input()));
+    expect(got.status).toBe(403);
+    expect(got.code).toBe('needsLogin');
   });
 
-  it('refuses a token it cannot attribute, even to a signed-in visitor', () => {
-    // An unattributable token must never be used on anyone's behalf.
-    const got = chatAccess(input({ tokenOwnerId: null }));
-    expect(got.allowed).toBe(false);
-    if (got.allowed) throw new Error('unreachable');
-    expect(got.status).toBe(503);
-  });
-
-  it('never allows a stranger regardless of token state', () => {
-    for (const over of [
-      { hasToken: true, tokenOwnerId: BEN },
-      { hasToken: true, tokenOwnerId: null },
-      { hasToken: false, tokenOwnerId: null },
-    ]) {
-      const got = chatAccess(input({ ...over, visitorId: STRANGER }));
+  it('does not treat near-miss ids as the same account', () => {
+    for (const id of [BEN + '0', BEN.slice(0, -1), ' ' + BEN]) {
+      const got = chatAccess(input({ visitorId: id, hasServerToken: true, serverTokenOwnerId: BEN }));
       expect(got.allowed).toBe(false);
     }
   });
 
-  it('does not treat similar ids as equal', () => {
-    expect(chatAccess(input({ visitorId: BEN + '0' })).allowed).toBe(false);
-    expect(chatAccess(input({ visitorId: BEN.slice(0, -1) })).allowed).toBe(false);
-  });
-
   it('exempts fixture mode so the screenshot harness needs no secret', () => {
-    expect(chatAccess(input({ fixtures: true, hasToken: false, tokenOwnerId: null, visitorId: null })))
-      .toEqual({ allowed: true });
+    expect(chatAccess(input({ fixtures: true, visitorId: null }))).toEqual({
+      allowed: true,
+      using: 'fixtures',
+    });
   });
 });

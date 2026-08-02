@@ -126,8 +126,10 @@ body::before {
 
   .panel { @apply bg-panel border border-line; position: relative; }
 
+  /* Wraps rather than overflowing: panel headers carry filter rows and counts
+     that do not fit a phone on one line. */
   .panel-head {
-    @apply flex items-center justify-between gap-3 border-b border-line px-4;
+    @apply flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-line px-4 py-1.5;
     min-height: 44px;
   }
 

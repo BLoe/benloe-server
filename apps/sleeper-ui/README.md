@@ -34,37 +34,49 @@ The REST API is [documented](https://docs.sleeper.com/) and rate limited to 1000
 calls/minute. The GraphQL endpoint is undocumented but has introspection enabled;
 it is what Sleeper's own apps use.
 
-## League chat
+## League chat and Sleeper sign-in
 
 A Sleeper league is itself the message parent — chat is `messages(parent_id: <league_id>)`,
 with no separate channel to resolve. It is the one endpoint that requires signing in.
 
+Visitors connect their own account from the Chat page: the password goes straight
+to Sleeper's `login` query over TLS, and only the token it returns is kept. That
+token is encrypted with AES-256-GCM (`src/server/tokenStore.ts`, key derived from
+`JWT_SECRET` via scrypt) and stored per Sleeper user id. The password is never
+written to disk, never logged, and never echoed back in an error.
+
+`src/server/chatAccess.ts` decides who may read chat, and is pure and unit tested:
+a visitor's own token always wins; the optional server-wide `SLEEPER_TOKEN` is
+honoured only for the account it actually belongs to. On a public page, lending
+one person's token to another visitor would expose their private conversations.
+
+**This is a public page that asks for a Sleeper password.** That is worth being
+deliberate about. Two switches:
+
 ```bash
-# /srv/benloe/.env
-SLEEPER_TOKEN=<your token>
-SLEEPER_ALLOW_POSTING=false   # true enables the composer
+SLEEPER_LOGIN_ENABLED=false          # close sign-in entirely
+SLEEPER_LOGIN_ALLOW=benloe,someone   # or restrict it to named accounts
 ```
 
-To get the token: sign in to sleeper.com in Chrome, open DevTools → Application →
-Local Storage, and copy the session token value. Then `pm2 restart sleeper-ui`.
-
-**Chat is the one section that cannot be per-visitor.** It rides a single token,
-so it belongs to exactly one Sleeper account. `src/server/chatAccess.ts` resolves
-the token's owner via the `me` query and serves chat only to the visitor whose
-session matches; everyone else gets a 403 and an explanation. That check is pure
-and unit tested, because on a public site getting it wrong would expose private
-league conversations to strangers.
-
-Without a token the rest of the dashboard works normally and the Chat section
-explains what is missing. `GET /api/health` reports `chat.enabled` and `chat.canPost`.
-
-**Posting is the only write in the app** and is off unless `SLEEPER_ALLOW_POSTING=true`.
-It puts a real message in a real league in front of real people, so it does not
-inherit the token's permission — it needs its own.
+Posting is still the only write in the app and needs `SLEEPER_ALLOW_POSTING=true`
+on top of a connected account.
 
 Chat polls every 15s while the tab is visible. In fixture mode it renders
 `fixtures/chat.sample.json`, a synthetic feed with invented content — real chat
-cannot be captured without a token, and the screenshot harness must not depend on one.
+cannot be captured without a token, and the screenshot harness must not need one.
+
+## League activity
+
+Sleeper's transaction feed is shaped for machines: a `type` that says *how* a move
+was made rather than *what happened*, with adds and drops as maps of player id to
+roster id. Read literally it produces nonsense — a drop rendered under an "add"
+label, because both are `type: free_agent`.
+
+`buildActivityRows` in `src/lib/derive.ts` turns each transaction into **one row
+per manager**, with the action derived from what actually moved (Added, Dropped,
+Added & dropped, Trade) and the method kept separate (Waivers, Free agency,
+Trade). A two-team trade becomes two rows, one from each side, so every row
+answers a single question: what did this manager gain, and what did it cost.
 
 ## Design notes
 

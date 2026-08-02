@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { record, useApi, type ChatMessage, type LeagueBundle, type Transaction } from '../api';
+import { record, useApi, type ChatMessage, type LeagueBundle, type ActivityRow } from '../api';
 import { Avatar, Empty, ErrorState, Loading, Panel, PlayerLink, TeamLink } from '../components';
 
 interface ChatResponse {
@@ -19,16 +19,8 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
     canPost: boolean;
     loading: boolean;
     error: string | null;
-    needsToken: boolean;
-    notChatOwner: boolean;
-  }>({
-    messages: [],
-    canPost: false,
-    loading: true,
-    error: null,
-    needsToken: false,
-    notChatOwner: false,
-  });
+    needsLogin: boolean;
+  }>({ messages: [], canPost: false, loading: true, error: null, needsLogin: false });
 
   const scroller = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
@@ -43,9 +35,8 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
           setState((s) => ({
             ...s,
             loading: false,
-            error: body.error ?? `Request failed: ${res.status}`,
-            needsToken: !!body.needsToken,
-            notChatOwner: !!body.notChatOwner,
+            error: body.needsLogin ? null : (body.error ?? `Request failed: ${res.status}`),
+            needsLogin: !!body.needsLogin,
           }));
           return;
         }
@@ -55,8 +46,7 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
           canPost: data.canPost,
           loading: false,
           error: null,
-          needsToken: false,
-          notChatOwner: false,
+          needsLogin: false,
         });
       } catch (err) {
         setState((s) => ({ ...s, loading: false, error: (err as Error).message }));
@@ -96,8 +86,7 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
     pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
-  if (state.notChatOwner) return <ChatUnavailable />;
-  if (state.needsToken) return <TokenSetup />;
+  if (state.needsLogin) return <ConnectSleeper onConnected={() => load()} />;
 
   return (
     // Chat beside live league context. A full-width message list is unreadable
@@ -151,10 +140,10 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
  */
 function ContextRail({ bundle }: { bundle: LeagueBundle }) {
   const { league, standings, myRosterId } = bundle;
-  const tx = useApi<{ transactions: Transaction[] }>(
+  const tx = useApi<{ rows: ActivityRow[] }>(
     `/api/league/${league.leagueId}/transactions?through=${Math.max(1, bundle.currentWeek)}`
   );
-  const recent = (tx.data?.transactions ?? []).slice(0, 8);
+  const recent = (tx.data?.rows ?? []).slice(0, 8);
 
   return (
     <div className="hidden xl:block space-y-4 sticky top-[68px]">
@@ -188,19 +177,18 @@ function ContextRail({ bundle }: { bundle: LeagueBundle }) {
         {!recent.length && <Empty title="Nothing yet" />}
         <ul>
           {recent.map((t) => (
-            <li key={t.id} className="px-3 py-2 border-b border-line/50 last:border-b-0">
-              <div className="text-dim text-[10px] uppercase tracking-wide">
-                {t.type === 'free_agent' ? 'Add' : t.type} · wk {t.week}
+            <li key={t.key} className="px-3 py-2 border-b border-line/50 last:border-b-0">
+              <div className="stat-label">
+                {t.action} · week {t.week}
               </div>
-              <div className="leading-snug flex flex-wrap gap-x-2" style={{ fontSize: 'var(--t-body)' }}>
-                {(t.adds.length ? t.adds : t.drops).map((x: any, i: number) => (
-                  <PlayerLink key={i} id={x.playerId} name={x.player} />
+              <div className="leading-snug flex flex-wrap gap-x-2 mt-0.5" style={{ fontSize: 'var(--t-body)' }}>
+                {(t.added.length ? t.added : t.dropped).map((x, i) => (
+                  <PlayerLink key={i} id={x.playerId} name={x.name} />
                 ))}
-                {!t.adds.length && !t.drops.length && '—'}
               </div>
-              <div className="text-dim truncate" style={{ fontSize: 'var(--t-meta)' }}>
-                {t.teams.map((x) => x.teamName).join(', ')}
-              </div>
+              <TeamLink rosterId={t.rosterId} className="text-dim block truncate" style={{ fontSize: 'var(--t-meta)' }}>
+                {t.teamName}
+              </TeamLink>
             </li>
           ))}
         </ul>
@@ -349,57 +337,103 @@ function Composer({
 }
 
 /**
- * Chat is the one section that cannot be per-visitor: it rides a single Sleeper
- * token, so it belongs to exactly one account. Everyone else gets this.
+ * Sleeper sign-in.
+ *
+ * Chat is the only Sleeper surface that requires being signed in. Credentials go
+ * straight to Sleeper over TLS; this server keeps only the token Sleeper hands
+ * back, encrypted, and only for the account it belongs to.
  */
-function ChatUnavailable() {
+function ConnectSleeper({ onConnected }: { onConnected: () => void }) {
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || !identifier.trim() || !password) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/sleeper-login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier: identifier.trim(), password }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `Request failed: ${res.status}`);
+      setPassword('');
+      onConnected();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="pt-4">
-      <Panel title="Chat is not available for this account">
-        <div className="p-6 max-w-2xl space-y-3 text-[13.5px] leading-relaxed">
-          <p className="text-muted">
-            League chat requires being signed in to Sleeper, and this server holds a
-            session for one account only. Chat is shown to that account and nobody else.
-          </p>
-          <p className="text-dim text-[12px]">
-            Everything else in the dashboard works normally for your leagues — standings,
-            matchups, rosters and activity are all public data.
-          </p>
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-/** Shown to the token's owner when no token is configured at all. */
-function TokenSetup() {
-  return (
-    <div className="pt-4">
-      <Panel title="Chat needs a Sleeper token">
-        <div className="p-6 max-w-2xl space-y-4 text-[13.5px] leading-relaxed">
-          <p className="text-muted">
-            League chat is the one part of Sleeper that will not answer without being signed
-            in. Everything else in this dashboard uses public endpoints.
+    <div className="pt-5 max-w-[560px]">
+      <Panel title="Connect your Sleeper account">
+        <form onSubmit={submit} className="p-5 space-y-4">
+          <p className="text-muted" style={{ fontSize: 'var(--t-body)' }}>
+            League chat is the only part of Sleeper that will not answer without being
+            signed in. Everything else in this dashboard uses public data.
           </p>
 
-          <ol className="space-y-2 text-muted list-decimal pl-5">
-            <li>Open sleeper.com in Chrome and sign in.</li>
-            <li>Open DevTools, then the Application tab.</li>
-            <li>
-              Under Local Storage, find the entry holding your session token and copy its
-              value.
-            </li>
-            <li>
-              Add it to <code className="text-ink">/srv/benloe/.env</code> as{' '}
-              <code className="text-ink">SLEEPER_TOKEN=…</code> and restart the app.
-            </li>
-          </ol>
+          <div>
+            <label htmlFor="sleeper-id" className="stat-label block mb-1.5">
+              Sleeper username or email
+            </label>
+            <input
+              id="sleeper-id"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              autoComplete="username"
+              autoCapitalize="off"
+              spellCheck={false}
+              className="w-full bg-raised border border-line rounded-[3px] px-3 py-2 placeholder:text-dim focus:border-line2 outline-none"
+              style={{ fontSize: 'var(--t-body)' }}
+            />
+          </div>
 
-          <p className="text-dim text-[12px]">
-            The token stays on this server and is never committed. Posting stays disabled
-            until <code>SLEEPER_ALLOW_POSTING=true</code> is set separately.
-          </p>
-        </div>
+          <div>
+            <label htmlFor="sleeper-pw" className="stat-label block mb-1.5">
+              Sleeper password
+            </label>
+            <input
+              id="sleeper-pw"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              className="w-full bg-raised border border-line rounded-[3px] px-3 py-2 placeholder:text-dim focus:border-line2 outline-none"
+              style={{ fontSize: 'var(--t-body)' }}
+            />
+          </div>
+
+          {error && <p style={{ color: 'var(--loss)', fontSize: 'var(--t-meta)' }}>{error}</p>}
+
+          <button
+            type="submit"
+            disabled={busy || !identifier.trim() || !password}
+            className="tab border border-line2 px-5 disabled:opacity-40 disabled:cursor-not-allowed hover:border-dim"
+          >
+            {busy ? 'Connecting' : 'Connect'}
+          </button>
+
+          <div
+            className="border-t border-line pt-3 text-dim space-y-1.5"
+            style={{ fontSize: 'var(--t-meta)' }}
+          >
+            <p>
+              Your password goes to Sleeper to obtain a session token. It is not stored
+              here, written to disk, or logged.
+            </p>
+            <p>
+              The token is encrypted at rest and used only for your own account. Disconnect
+              any time from the chat header.
+            </p>
+          </div>
+        </form>
       </Panel>
     </div>
   );

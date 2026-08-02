@@ -16,6 +16,7 @@ import {
   currentStreak,
   buildRosterView,
   buildChatFeed,
+  buildActivityRows,
   dayLabel,
   type RawRoster,
   type RawUser,
@@ -549,5 +550,206 @@ describe('auction league fixture', () => {
     expect(aLeague.roster_positions).toContain('DEF');
     const view = buildRosterView(aRosters[0], aLeague.roster_positions, players);
     expect(view.find((s) => s.slot === 'DEF')).toBeDefined();
+  });
+});
+
+describe('buildActivityRows', () => {
+  const teams = buildTeams(rosters, users);
+  const benRoster = rosters.find((r) => r.owner_id === BEN)!;
+  const otherRoster = rosters.find((r) => r.roster_id !== benRoster.roster_id)!;
+
+  const tx = (over: Partial<any> = {}): any => ({
+    transaction_id: 't1',
+    type: 'free_agent',
+    status: 'complete',
+    leg: 4,
+    created: 1_760_000_000_000,
+    roster_ids: [benRoster.roster_id],
+    adds: null,
+    drops: null,
+    draft_picks: null,
+    settings: null,
+    ...over,
+  });
+
+  it('labels an add-only move "Added"', () => {
+    const [row] = buildActivityRows([tx({ adds: { '4984': benRoster.roster_id } })], teams, players);
+    expect(row.action).toBe('Added');
+    expect(row.added.map((a) => a.name)).toEqual([players['4984'].name]);
+    expect(row.dropped).toEqual([]);
+  });
+
+  it('labels a drop-only move "Dropped" rather than "Add"', () => {
+    // This is the bug the redesign fixed: Sleeper types both as `free_agent`,
+    // so a drop was rendering under an "Add" chip.
+    const [row] = buildActivityRows([tx({ drops: { '4984': benRoster.roster_id } })], teams, players);
+    expect(row.action).toBe('Dropped');
+    expect(row.added).toEqual([]);
+    expect(row.dropped).toHaveLength(1);
+  });
+
+  it('labels a swap "Added & dropped"', () => {
+    const [row] = buildActivityRows(
+      [tx({ adds: { '4984': benRoster.roster_id }, drops: { '6786': benRoster.roster_id } })],
+      teams,
+      players
+    );
+    expect(row.action).toBe('Added & dropped');
+    expect(row.added).toHaveLength(1);
+    expect(row.dropped).toHaveLength(1);
+  });
+
+  it('reports the method separately from the action', () => {
+    const [waiver] = buildActivityRows(
+      [tx({ type: 'waiver', adds: { '4984': benRoster.roster_id }, settings: { waiver_bid: 17 } })],
+      teams,
+      players
+    );
+    expect(waiver.action).toBe('Added');
+    expect(waiver.method).toBe('Waivers');
+    expect(waiver.faab).toBe(17);
+  });
+
+  it('only attributes FAAB to a waiver claim', () => {
+    const [fa] = buildActivityRows(
+      [tx({ adds: { '4984': benRoster.roster_id }, settings: { waiver_bid: 17 } })],
+      teams,
+      players
+    );
+    expect(fa.method).toBe('Free agency');
+    expect(fa.faab).toBeNull();
+  });
+
+  it('treats a zero bid as no cost', () => {
+    const [row] = buildActivityRows(
+      [tx({ type: 'waiver', adds: { '4984': benRoster.roster_id }, settings: { waiver_bid: 0 } })],
+      teams,
+      players
+    );
+    expect(row.faab).toBeNull();
+  });
+
+  it('splits a trade into one row per side', () => {
+    const rows = buildActivityRows(
+      [
+        tx({
+          type: 'trade',
+          roster_ids: [benRoster.roster_id, otherRoster.roster_id],
+          adds: { '4984': benRoster.roster_id, '6786': otherRoster.roster_id },
+          drops: { '4984': otherRoster.roster_id, '6786': benRoster.roster_id },
+        }),
+      ],
+      teams,
+      players
+    );
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.action).toBe('Trade');
+      expect(row.added).toHaveLength(1);
+      expect(row.dropped).toHaveLength(1);
+      expect(row.counterparties).toHaveLength(1);
+      expect(row.counterparties[0].rosterId).not.toBe(row.rosterId);
+    }
+    // Each side gained what the other gave up.
+    expect(rows[0].added[0].name).toBe(rows[1].dropped[0].name);
+  });
+
+  it('puts draft picks on the right side of a trade', () => {
+    const rows = buildActivityRows(
+      [
+        tx({
+          type: 'trade',
+          roster_ids: [benRoster.roster_id, otherRoster.roster_id],
+          draft_picks: [
+            { season: '2027', round: 1, owner_id: benRoster.roster_id, previous_owner_id: otherRoster.roster_id },
+          ],
+        }),
+      ],
+      teams,
+      players
+    );
+    const gained = rows.find((r) => r.rosterId === benRoster.roster_id)!;
+    const gave = rows.find((r) => r.rosterId === otherRoster.roster_id)!;
+    expect(gained.added[0]).toMatchObject({ kind: 'pick', name: '2027 round 1 pick' });
+    expect(gave.dropped[0]).toMatchObject({ kind: 'pick' });
+  });
+
+  it('skips incomplete transactions', () => {
+    expect(
+      buildActivityRows([tx({ status: 'failed', adds: { '4984': benRoster.roster_id } })], teams, players)
+    ).toEqual([]);
+  });
+
+  it('skips a roster that neither gained nor lost anything', () => {
+    const rows = buildActivityRows(
+      [tx({ roster_ids: [benRoster.roster_id, otherRoster.roster_id], adds: { '4984': benRoster.roster_id } })],
+      teams,
+      players
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].rosterId).toBe(benRoster.roster_id);
+  });
+
+  it('resolves team names and a team defense from the player index', () => {
+    const [row] = buildActivityRows([tx({ adds: { SF: benRoster.roster_id } })], teams, players);
+    expect(row.teamName).toBe("Mr. Rodger's Naberhood");
+    expect(row.added[0].name).toBe('San Francisco 49ers');
+    expect(row.added[0].pos).toBe('DEF');
+  });
+
+  it('falls back to a readable label for a defense missing from the index', () => {
+    const [row] = buildActivityRows([tx({ adds: { SF: benRoster.roster_id } })], teams, {});
+    expect(row.added[0].name).toBe('SF Defense');
+    expect(row.added[0].pos).toBe('DEF');
+  });
+
+  it('does not invent a name for an unknown player id', () => {
+    const [row] = buildActivityRows([tx({ adds: { '99999999': benRoster.roster_id } })], teams, {});
+    expect(row.added[0].name).toBe('Player 99999999');
+    expect(row.added[0].pos).toBeNull();
+  });
+
+  it('sorts newest first', () => {
+    const rows = buildActivityRows(
+      [
+        tx({ transaction_id: 'old', created: 1000, adds: { '4984': benRoster.roster_id } }),
+        tx({ transaction_id: 'new', created: 9000, adds: { '6786': benRoster.roster_id } }),
+      ],
+      teams,
+      players
+    );
+    expect(rows.map((r) => r.transactionId)).toEqual(['new', 'old']);
+  });
+
+  it('gives every row a unique key', () => {
+    const rows = buildActivityRows(
+      [
+        tx({
+          type: 'trade',
+          roster_ids: [benRoster.roster_id, otherRoster.roster_id],
+          adds: { '4984': benRoster.roster_id, '6786': otherRoster.roster_id },
+        }),
+      ],
+      teams,
+      players
+    );
+    expect(new Set(rows.map((r) => r.key)).size).toBe(rows.length);
+  });
+
+  it('handles the real 2025 transaction feed without producing an empty row', () => {
+    const raw = Object.values(load('dynasty-2025.transactions') as Record<string, any[]>).flat();
+    const rows = buildActivityRows(raw, teams, players);
+    expect(rows.length).toBeGreaterThan(100);
+    for (const row of rows) {
+      expect(row.added.length + row.dropped.length).toBeGreaterThan(0);
+      expect(row.teamName).not.toMatch(/^Roster /);
+      // The action must agree with what actually moved.
+      if (row.action === 'Added') expect(row.dropped).toHaveLength(0);
+      if (row.action === 'Dropped') expect(row.added).toHaveLength(0);
+    }
+    // Real leagues do all three, so all three labels should appear.
+    const actions = new Set(rows.map((r) => r.action));
+    expect(actions.has('Added')).toBe(true);
+    expect(actions.has('Dropped')).toBe(true);
   });
 });

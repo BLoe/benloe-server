@@ -28,8 +28,12 @@ module.exports = {
         SLEEPER_TOKEN: env.SLEEPER_TOKEN || '',
         // Posting writes to a real league; it stays off unless .env says otherwise.
         SLEEPER_ALLOW_POSTING: env.SLEEPER_ALLOW_POSTING || 'false',
-        // Signs the per-visitor session cookie.
+        // Signs the per-visitor session cookie and encrypts stored Sleeper tokens.
         JWT_SECRET: env.JWT_SECRET,
+        // Sleeper sign-in. Set to 'false' to close it, or list usernames in
+        // SLEEPER_LOGIN_ALLOW to restrict who may connect an account.
+        SLEEPER_LOGIN_ENABLED: env.SLEEPER_LOGIN_ENABLED || 'true',
+        SLEEPER_LOGIN_ALLOW: env.SLEEPER_LOGIN_ALLOW || '',
       },
       error_file: '/srv/benloe/logs/sleeper-ui-err.log',
       out_file: '/srv/benloe/logs/sleeper-ui-out.log',

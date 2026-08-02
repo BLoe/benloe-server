@@ -28,7 +28,7 @@ sleeper.benloe.com {
 
     @static {
         file
-        path /assets/* /fonts/* *.png *.svg *.ico *.woff *.woff2
+        path /assets/* /fonts/* *.png *.svg *.ico *.woff *.woff2 *.webmanifest
     }
     header @static Cache-Control "public, max-age=31536000"
 
