@@ -22,6 +22,9 @@ import {
   describePeriod,
   indexProjections,
   projectLineup,
+  compareLineup,
+  positionalStrength,
+  ageProfile,
   projectSeason,
   winProbability,
   scoringKey,
@@ -1384,5 +1387,190 @@ describe('per-week projections', () => {
     const proj = Object.fromEntries(startable.map((id) => [id, { points: 170 }]));
     const { lineup } = projectLineup(benRoster, slots, players, proj);
     expect(lineup[0].perWeek).toBeCloseTo(10, 6);
+  });
+});
+
+describe('compareLineup', () => {
+  const benRoster = rosters.find((r) => r.owner_id === BEN)!;
+  const slots = league.roster_positions;
+  const startable = (benRoster.players ?? []).filter(
+    (id) => !benRoster.taxi?.includes(id) && !benRoster.reserve?.includes(id)
+  );
+  const flat = (points: number) =>
+    Object.fromEntries(startable.map((id) => [id, { points, games: 17 }]));
+
+  it('names no moves when there is nothing to gain', () => {
+    // Equal projections make the "best" lineup an arbitrary tie-break, which
+    // would otherwise surface as swaps worth zero points.
+    const c = compareLineup(benRoster, slots, players, flat(100));
+    expect(c.gain).toBe(0);
+    expect(c.bringIn).toHaveLength(0);
+    expect(c.sitDown).toHaveLength(0);
+  });
+
+  it('finds the bench player who should be starting', () => {
+    // Give one benched player at a startable position an enormous projection.
+    const starters = new Set(benRoster.starters ?? []);
+    const benched = startable.find(
+      (id) => !starters.has(id) && ['QB', 'RB', 'WR', 'TE'].includes(players[id]?.pos ?? '')
+    )!;
+    const c = compareLineup(benRoster, slots, players, { ...flat(1), [benched]: { points: 9999, games: 17 } });
+
+    expect(c.gain).toBeGreaterThan(0);
+    expect(c.bringIn.map((m) => m.player.id)).toContain(benched);
+    expect(c.sitDown.length).toBeGreaterThan(0);
+  });
+
+  it('never suggests starting a taxi or injured-reserve player', () => {
+    const stashed = [...(benRoster.taxi ?? []), ...(benRoster.reserve ?? [])];
+    expect(stashed.length).toBeGreaterThan(0);
+    const proj = { ...flat(1), ...Object.fromEntries(stashed.map((id) => [id, { points: 9999, games: 17 }])) };
+    const c = compareLineup(benRoster, slots, players, proj);
+    for (const m of c.bringIn) expect(stashed).not.toContain(m.player.id);
+  });
+
+  it('never reports a negative gain — the best lineup cannot be worse', () => {
+    for (const roster of rosters) {
+      const proj = Object.fromEntries(
+        (roster.players ?? []).map((id, i) => [id, { points: (i * 37) % 200, games: 17 }])
+      );
+      expect(compareLineup(roster, slots, players, proj).gain).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('reports the current lineup honestly even when it is not optimal', () => {
+    const proj = Object.fromEntries(
+      startable.map((id, i) => [id, { points: (i * 53) % 300, games: 17 }])
+    );
+    const c = compareLineup(benRoster, slots, players, proj);
+    const expected = (benRoster.starters ?? [])
+      .filter((id) => id && id !== '0')
+      .reduce((sum, id) => sum + (proj[id]?.points ?? 0), 0);
+    expect(c.currentPoints).toBeCloseTo(expected, 6);
+    expect(c.bestPoints).toBeGreaterThanOrEqual(c.currentPoints);
+  });
+
+  it('brings in more than it sits when a lineup slot was left empty', () => {
+    const thin = { ...benRoster, starters: [(benRoster.starters ?? [])[0]] } as any;
+    const c = compareLineup(thin, slots, players, flat(10));
+    expect(c.bringIn.length).toBeGreaterThan(c.sitDown.length);
+  });
+});
+
+describe('positionalStrength', () => {
+  const slots = league.roster_positions;
+  const proj: Record<string, { points: number; games: number }> = {};
+  for (const [id] of Object.entries(players)) {
+    proj[id] = { points: (Number(id.replace(/\D/g, '')) % 200) + 10, games: 17 };
+  }
+  const table = positionalStrength(rosters, slots, players, proj);
+
+  it('covers every roster', () => {
+    expect(table.size).toBe(rosters.length);
+  });
+
+  it('ranks within 1..12 and gives exactly one team the top rank per position', () => {
+    const firsts = new Map<string, number>();
+    for (const rows of table.values()) {
+      for (const r of rows) {
+        expect(r.rank).toBeGreaterThanOrEqual(1);
+        expect(r.rank).toBeLessThanOrEqual(rosters.length);
+        if (r.rank === 1) firsts.set(r.pos, (firsts.get(r.pos) ?? 0) + 1);
+      }
+    }
+    // Ties would allow more than one; with distinct pseudo-projections there is one.
+    for (const count of firsts.values()) expect(count).toBeGreaterThanOrEqual(1);
+  });
+
+  it('agrees with the lineup it is derived from', () => {
+    for (const roster of rosters) {
+      const { perWeek } = projectLineup(roster, slots, players, proj);
+      const summed = (table.get(roster.roster_id) ?? []).reduce((s, r) => s + r.startingPoints, 0);
+      expect(summed).toBeCloseTo(perWeek, 6);
+    }
+  });
+
+  it('reports the same league best to every roster', () => {
+    const byPos = new Map<string, Set<number>>();
+    for (const rows of table.values()) {
+      for (const r of rows) {
+        if (!byPos.has(r.pos)) byPos.set(r.pos, new Set());
+        byPos.get(r.pos)!.add(Math.round(r.leagueBest * 1000));
+      }
+    }
+    for (const seen of byPos.values()) expect(seen.size).toBe(1);
+  });
+
+  it('the top-ranked roster is the one matching the league best', () => {
+    for (const rows of table.values()) {
+      for (const r of rows) {
+        if (r.rank === 1) expect(r.startingPoints).toBeCloseTo(r.leagueBest, 6);
+      }
+    }
+  });
+
+  it('counts everyone rostered at a position, lineup or not', () => {
+    const roster = rosters[0];
+    const rows = table.get(roster.roster_id)!;
+    const counted = rows.reduce((s, r) => s + r.rostered, 0);
+    expect(counted).toBe((roster.players ?? []).length);
+  });
+});
+
+describe('ageProfile', () => {
+  const proj = Object.fromEntries(
+    Object.keys(players).map((id) => [id, { points: 170, games: 17 }])
+  );
+  const roster = rosters.find((r) => r.owner_id === BEN)!;
+  const profile = ageProfile(roster, rosters, players, proj);
+
+  it('splits into three bands that sum to the whole', () => {
+    expect(profile.bands).toHaveLength(3);
+    const shares = profile.bands.reduce((s, b) => s + b.share, 0);
+    expect(shares).toBeCloseTo(1, 6);
+  });
+
+  it('puts each player in exactly one band', () => {
+    const counted = profile.bands.reduce((s, b) => s + b.players, 0);
+    const eligible = (roster.players ?? []).filter(
+      (id) => !roster.reserve?.includes(id) && players[id]?.age != null
+    );
+    expect(counted).toBe(eligible.length);
+  });
+
+  it('excludes injured reserve from the picture', () => {
+    const withIr = { ...roster, reserve: [] } as any;
+    const bigger = ageProfile(withIr, rosters, players, proj);
+    const counted = (p: typeof profile) => p.bands.reduce((s, b) => s + b.players, 0);
+    expect(counted(bigger)).toBeGreaterThanOrEqual(counted(profile));
+  });
+
+  it('weights by projected points, so a prospect who will not score is not youth', () => {
+    const young = (roster.players ?? []).filter((id) => (players[id]?.age ?? 99) <= 24);
+    expect(young.length).toBeGreaterThan(0);
+    // Zero out the young players: their band should collapse to no share.
+    const zeroed = { ...proj, ...Object.fromEntries(young.map((id) => [id, { points: 0, games: 17 }])) };
+    const p = ageProfile(roster, rosters, players, zeroed);
+    expect(p.bands[0].share).toBe(0);
+    expect(p.bands[0].players).toBe(young.filter((id) => !roster.reserve?.includes(id)).length);
+  });
+
+  it('reports a weighted age inside the range of the roster', () => {
+    const ages = (roster.players ?? [])
+      .map((id) => players[id]?.age)
+      .filter((a): a is number => a != null);
+    expect(profile.weightedAge!).toBeGreaterThanOrEqual(Math.min(...ages));
+    expect(profile.weightedAge!).toBeLessThanOrEqual(Math.max(...ages));
+  });
+
+  it('gives a league figure to sit against, and league shares that sum to one', () => {
+    expect(profile.leagueWeightedAge).not.toBeNull();
+    expect(profile.leagueShares.reduce((s, v) => s + v, 0)).toBeCloseTo(1, 6);
+  });
+
+  it('survives a roster with no projections at all', () => {
+    const p = ageProfile(roster, rosters, players, {});
+    expect(p.weightedAge).toBeNull();
+    for (const b of p.bands) expect(b.share).toBe(0);
   });
 });

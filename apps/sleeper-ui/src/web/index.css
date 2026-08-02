@@ -51,6 +51,13 @@
   --pos-flex-ink: #d8b23a;
 
   /* --- status ------------------------------------------------------- */
+  /* Age bands: a sequential ramp, young to old. One hue, light to dark, so it
+     reads as a progression rather than three unrelated categories. Validated
+     on the dark surface for CVD separation and 3:1 contrast. */
+  --age-young: #c8ecfa;
+  --age-prime: #6db8d8;
+  --age-old: #35789b;
+
   --win: #3fbf7f;
   --loss: #e5484d;
   --live: #f5c518;
