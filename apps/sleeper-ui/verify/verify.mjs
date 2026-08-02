@@ -51,6 +51,7 @@ const ROUTES = [
   // production caught a bug here that the completed-season fixture could not.
   { name: 'preseason', path: `/l/${PRESEASON}`, waitFor: 'text=No games yet' },
   { name: 'chat', path: `/l/${LEAGUE}/chat`, waitFor: 'text=Read only' },
+  { name: 'activity-trades', path: `/l/${LEAGUE}/activity`, waitFor: 'text=One row per manager' },
   { name: 'matchup-detail', path: `/l/${LEAGUE}/matchups/12/1`, waitFor: 'text=Edge by slot' },
   { name: 'player', path: `/l/${LEAGUE}/players/4984`, waitFor: 'text=Points by week' },
 ];

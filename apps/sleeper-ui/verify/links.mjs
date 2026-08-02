@@ -78,13 +78,13 @@ await check('matchup lineup player → player page', async () => {
 await check('activity player → player page', async () => {
   await page.goto(`${BASE}/l/${LG}/activity`, { waitUntil: 'networkidle' });
   await page.waitForSelector('text=League activity');
-  await page.click('ul li a[href*="/players/"] >> nth=0');
+  await page.click('table a[href*="/players/"] >> nth=0');
   await page.waitForURL(/\/players\/\w+/, { timeout: 10000 });
 });
 
 await check('activity team → team page', async () => {
   await page.goto(`${BASE}/l/${LG}/activity`, { waitUntil: 'networkidle' });
-  await page.click('ul li a[href*="/teams/"] >> nth=0');
+  await page.click('table a[href*="/teams/"] >> nth=0');
   await page.waitForURL(/\/teams\/\d+/, { timeout: 10000 });
 });
 

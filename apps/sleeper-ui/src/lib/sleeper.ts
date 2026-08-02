@@ -157,6 +157,51 @@ export async function getPlayerOutlook(playerId: string, season: string, o?: Fet
  * messages(parent_id: <league_id>). There is no separate channel to resolve.
  * ------------------------------------------------------------------ */
 
+export interface SleeperLoginResult {
+  user_id: string;
+  username: string | null;
+  display_name: string | null;
+  token: string;
+}
+
+/**
+ * Exchange Sleeper credentials for a session token.
+ *
+ * Returns null when Sleeper rejects the credentials — it answers with a null
+ * login rather than an error, and we deliberately do not try to distinguish
+ * "wrong password" from "no such user".
+ *
+ * The password is passed straight through to Sleeper over TLS and is not stored,
+ * logged, or included in any error surfaced to the caller.
+ */
+export async function login(
+  identifier: string,
+  password: string,
+  opts: FetchOpts = {}
+): Promise<SleeperLoginResult | null> {
+  let d: any;
+  try {
+    d = await graphql(
+      `query {
+        login(email_or_phone_or_username: ${JSON.stringify(identifier)}, password: ${JSON.stringify(password)}) {
+          user_id username display_name token
+        }
+      }`,
+      opts
+    );
+  } catch (err) {
+    // Sleeper answers a rejected login two different ways: a null result for an
+    // unknown account, a GraphQL error for a bad password. Both mean the same
+    // thing to us, and we deliberately do not tell the caller which it was.
+    if (err instanceof SleeperError && err.status === 200) return null;
+    throw err; // transport or HTTP failure — the caller should retry
+  }
+
+  const user = d?.login;
+  if (!user?.token) return null;
+  return user as SleeperLoginResult;
+}
+
 /**
  * Who does this token belong to? Used to make sure league chat is only ever
  * served back to that same account, never to another visitor of a public site.

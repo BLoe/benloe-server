@@ -1,37 +1,44 @@
 import { useState } from 'react';
-import { relativeTime, useApi, type LeagueBundle, type Transaction } from '../api';
+import { useApi, type ActivityAsset, type ActivityRow, type LeagueBundle } from '../api';
 import { Empty, ErrorState, Loading, Panel, Pos, PlayerLink, TeamLink } from '../components';
 
 const FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'trade', label: 'Trades' },
-  { key: 'waiver', label: 'Waivers' },
-  { key: 'free_agent', label: 'Free agents' },
+  { key: 'all', label: 'Everything' },
+  { key: 'Trade', label: 'Trades' },
+  { key: 'Waivers', label: 'Waivers' },
+  { key: 'Free agency', label: 'Free agency' },
 ] as const;
 
+/**
+ * Every row is one manager's action.
+ *
+ * Sleeper's own feed is shaped for machines — a `type` describing how a move was
+ * made rather than what happened — which is why a drop could show up labelled
+ * "add". Here the action is derived from what actually moved, and a trade is
+ * split into one row per side so each row answers a single question: what did
+ * this manager gain, and what did it cost them.
+ */
 export default function Activity({ bundle }: { bundle: LeagueBundle }) {
   const { league } = bundle;
   const [filter, setFilter] = useState<string>('all');
-  const [limit, setLimit] = useState(50);
+  const [limit, setLimit] = useState(60);
 
   const through = league.status === 'complete' ? 18 : Math.max(1, bundle.currentWeek);
-  const { data, loading, error } = useApi<{ transactions: Transaction[] }>(
+  const { data, loading, error } = useApi<{ rows: ActivityRow[] }>(
     `/api/league/${league.leagueId}/transactions?through=${through}`
   );
 
-  const matching = (data?.transactions ?? []).filter((t) => filter === 'all' || t.type === filter);
-  const items = matching.slice(0, limit);
+  const matching = (data?.rows ?? []).filter((r) => filter === 'all' || r.method === filter);
+  const rows = matching.slice(0, limit);
 
   return (
-    // Constrained measure: a transaction is one short sentence, and stretching it
-    // across a 1700px screen put the money 1000px from the player it bought.
-    <div className="pt-5 max-w-[1000px]">
+    <div className="pt-5 max-w-[1240px]">
       <Panel
         title="League activity"
         action={
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <span className="text-dim mr-2" style={{ fontSize: 'var(--t-meta)' }}>
-              {matching.length} move{matching.length === 1 ? '' : 's'}
+              {matching.length} action{matching.length === 1 ? '' : 's'}
             </span>
             {FILTERS.map((f) => (
               <button
@@ -39,7 +46,7 @@ export default function Activity({ bundle }: { bundle: LeagueBundle }) {
                 type="button"
                 onClick={() => {
                   setFilter(f.key);
-                  setLimit(50);
+                  setLimit(60);
                 }}
                 className="tab"
                 data-active={filter === f.key}
@@ -49,52 +56,112 @@ export default function Activity({ bundle }: { bundle: LeagueBundle }) {
             ))}
           </div>
         }
+        note={
+          <div className="flex flex-wrap gap-x-7 gap-y-1.5">
+            <span>One row per manager. A trade appears twice — once from each side.</span>
+            <span>
+              <strong className="text-muted">Added</strong> joined the roster;{' '}
+              <strong className="text-muted">Dropped</strong> left it.
+            </span>
+            <span>Cost is the FAAB spent on a winning waiver claim.</span>
+          </div>
+        }
       >
-        {loading && <Loading label="Loading transactions" />}
+        {loading && <Loading label="Loading activity" />}
         {error && <ErrorState message={error} />}
-        {data && !items.length && (
+        {data && !rows.length && (
           <Empty title="Nothing here yet" hint="Adds, drops and trades appear as they happen." />
         )}
 
-        <ul>
-          {items.map((t) => (
-            <li
-              key={t.id}
-              className="grid grid-cols-[86px_minmax(0,1fr)_auto] gap-4 px-4 py-3 border-b border-line/60 last:border-b-0 hover:bg-raised transition-colors"
-            >
-              <div>
-                <TypeChip type={t.type} />
-                <div className="text-dim mt-1.5" style={{ fontSize: 'var(--t-meta)' }}>
-                  Week {t.week}
-                </div>
-              </div>
+        {!!rows.length && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] border-collapse">
+              <thead>
+                <tr className="border-b border-line2">
+                  <th className="th w-[110px]">When</th>
+                  <th className="th w-[150px]">Action</th>
+                  <th className="th min-w-[190px]">Manager</th>
+                  <th className="th min-w-[230px]">Added</th>
+                  <th className="th min-w-[230px]">Dropped</th>
+                  <th className="th w-[90px] text-right">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.key} className="border-b border-line/70 hover:bg-raised transition-colors align-top">
+                    <td className="td">
+                      <div className="font-display font-semibold" style={{ fontSize: 'var(--t-body)' }}>
+                        Week {r.week}
+                      </div>
+                      <div className="text-dim" style={{ fontSize: 'var(--t-meta)' }}>
+                        {new Date(r.created).toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                        })}
+                      </div>
+                    </td>
 
-              <div className="min-w-0">
-                {t.type === 'trade' ? <TradeBody t={t} /> : <MoveBody t={t} />}
-              </div>
+                    <td className="td">
+                      <ActionChip action={r.action} />
+                      <div className="text-dim mt-1" style={{ fontSize: 'var(--t-meta)' }}>
+                        {r.method}
+                      </div>
+                    </td>
 
-              <div className="text-right shrink-0">
-                {t.bid != null && t.bid > 0 && (
-                  <div className="font-display font-bold" style={{ color: 'var(--live)', fontSize: 'var(--t-h2)' }}>
-                    ${t.bid}
-                  </div>
-                )}
-                <div className="text-dim" style={{ fontSize: 'var(--t-meta)' }}>
-                  {relativeTime(t.created)}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+                    <td className="td">
+                      <TeamLink rosterId={r.rosterId} className="entity block truncate">
+                        {r.teamName}
+                      </TeamLink>
+                      {r.counterparties.length > 0 && (
+                        <div className="text-dim mt-0.5" style={{ fontSize: 'var(--t-meta)' }}>
+                          with{' '}
+                          {r.counterparties.map((c, i) => (
+                            <span key={c.rosterId}>
+                              {i > 0 && ', '}
+                              <TeamLink rosterId={c.rosterId} className="text-muted">
+                                {c.teamName}
+                              </TeamLink>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
 
-        {matching.length > items.length && (
+                    <td className="td">
+                      <AssetList assets={r.added} tone="add" />
+                    </td>
+
+                    <td className="td">
+                      <AssetList assets={r.dropped} tone="drop" />
+                    </td>
+
+                    <td className="td text-right">
+                      {r.faab != null ? (
+                        <span
+                          className="font-display font-bold"
+                          style={{ color: 'var(--live)', fontSize: 'var(--t-h2)' }}
+                        >
+                          ${r.faab}
+                        </span>
+                      ) : (
+                        <span className="text-dim">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {matching.length > rows.length && (
           <div className="p-3 border-t border-line text-center">
             <button
               type="button"
-              onClick={() => setLimit((n) => n + 50)}
+              onClick={() => setLimit((n) => n + 60)}
               className="tab border border-line2 hover:border-dim"
             >
-              Show 50 more
+              Show 60 more
             </button>
           </div>
         )}
@@ -103,95 +170,53 @@ export default function Activity({ bundle }: { bundle: LeagueBundle }) {
   );
 }
 
-function TypeChip({ type }: { type: string }) {
-  const map: Record<string, { label: string; color: string }> = {
-    trade: { label: 'Trade', color: 'var(--pos-k-ink)' },
-    waiver: { label: 'Waiver', color: 'var(--live)' },
-    free_agent: { label: 'Add', color: 'var(--pos-wr-ink)' },
-    commissioner: { label: 'Commish', color: '#93A2B2' },
+function ActionChip({ action }: { action: ActivityRow['action'] }) {
+  const map: Record<ActivityRow['action'], string> = {
+    Added: 'var(--win)',
+    Dropped: 'var(--loss)',
+    'Added & dropped': 'var(--pos-wr-ink)',
+    Trade: 'var(--pos-k-ink)',
+    Commissioner: '#93A2B2',
   };
-  const m = map[type] ?? { label: type, color: '#93A2B2' };
+  const color = map[action];
   return (
-    <span className="chip" style={{ color: m.color, background: `color-mix(in srgb, ${m.color} 16%, transparent)` }}>
-      {m.label}
+    <span className="chip" style={{ color, background: `color-mix(in srgb, ${color} 16%, transparent)` }}>
+      {action}
     </span>
   );
 }
 
-/**
- * The team is the actor and leads the line; the players are what it did.
- * Previously the team name was smaller than the player names, which read
- * backwards.
- */
-function MoveBody({ t }: { t: Transaction }) {
+function AssetList({ assets, tone }: { assets: ActivityAsset[]; tone: 'add' | 'drop' }) {
+  if (!assets.length) {
+    return <span className="text-dim" style={{ fontSize: 'var(--t-body)' }}>—</span>;
+  }
   return (
-    <>
-      <div className="mb-1">
-        {t.teams.map((team, i) => (
-          <span key={team.rosterId}>
-            {i > 0 && <span className="text-dim">, </span>}
-            <TeamLink rosterId={team.rosterId} className="entity" style={{ fontSize: 'var(--t-h2)' }}>
-              {team.teamName}
-            </TeamLink>
-          </span>
-        ))}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-        {t.adds.map((a, i) => (
-          <span key={`a${i}`} className="flex items-center gap-1.5" style={{ fontSize: 'var(--t-body)' }}>
-            <span style={{ color: 'var(--win)' }}>+</span>
-            <PlayerLink id={a.playerId} name={a.player} />
-            <Pos pos={a.pos} />
-          </span>
-        ))}
-        {t.drops.map((d, i) => (
-          <span key={`d${i}`} className="flex items-center gap-1.5 text-muted" style={{ fontSize: 'var(--t-body)' }}>
-            <span style={{ color: 'var(--loss)' }}>−</span>
-            <PlayerLink id={d.playerId} name={d.player} />
-            <Pos pos={d.pos} muted />
-          </span>
-        ))}
-      </div>
-    </>
-  );
-}
-
-/** Trades read best grouped by who received what. */
-function TradeBody({ t }: { t: Transaction }) {
-  const byRoster = new Map<number, { name: string; got: React.ReactNode[] }>();
-  for (const team of t.teams) byRoster.set(team.rosterId, { name: team.teamName, got: [] });
-
-  t.adds.forEach((a, i) => {
-    if (a.toRosterId == null) return;
-    byRoster.get(a.toRosterId)?.got.push(
-      <span key={`p${i}`} className="flex items-center gap-1.5">
-        <PlayerLink id={a.playerId} name={a.player} />
-        <Pos pos={a.pos} />
-      </span>
-    );
-  });
-  t.picks.forEach((p, i) => {
-    if (p.toRosterId == null) return;
-    byRoster.get(p.toRosterId)?.got.push(
-      <span key={`k${i}`} className="text-muted">
-        {p.season} round {p.round}
-      </span>
-    );
-  });
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
-      {[...byRoster.entries()].map(([rosterId, v]) => (
-        <div key={rosterId} className="min-w-0">
-          <TeamLink rosterId={rosterId} className="entity block truncate" style={{ fontSize: 'var(--t-h2)' }}>
-            {v.name}
-          </TeamLink>
-          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1" style={{ fontSize: 'var(--t-body)' }}>
-            {v.got.length ? v.got : <span className="text-dim">nothing</span>}
-          </div>
-        </div>
+    <ul className="space-y-1">
+      {assets.map((a, i) => (
+        <li key={i} className="flex items-center gap-2 min-w-0">
+          {a.kind === 'player' ? (
+            <>
+              <PlayerLink
+                id={a.playerId}
+                name={a.name}
+                className="truncate"
+                style={{
+                  fontSize: 'var(--t-body)',
+                  color: tone === 'drop' ? '#93A2B2' : undefined,
+                }}
+              />
+              <Pos pos={a.pos} muted={tone === 'drop'} />
+            </>
+          ) : (
+            <span
+              className="truncate"
+              style={{ fontSize: 'var(--t-body)', color: tone === 'drop' ? '#93A2B2' : '#93A2B2' }}
+            >
+              {a.name}
+            </span>
+          )}
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }

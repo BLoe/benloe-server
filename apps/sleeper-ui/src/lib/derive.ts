@@ -381,6 +381,169 @@ function unknownPlayer(id: string): Player {
 }
 
 /* ------------------------------------------------------------------ *
+ * League activity
+ *
+ * Sleeper's transaction feed is shaped for machines: a `type` that says how a
+ * move was made rather than what happened, and adds/drops as maps of player id
+ * to roster id. Read literally it produces nonsense like a move labelled "add"
+ * that only drops somebody.
+ *
+ * These transforms turn each transaction into one row per manager, which is how
+ * a person actually thinks about it: this team added these players and dropped
+ * those, on this date, for this much. A two-team trade becomes two rows — one
+ * from each side — so every row answers "what did this manager do".
+ * ------------------------------------------------------------------ */
+
+export interface RawTransaction {
+  transaction_id: string;
+  type: string;
+  status: string;
+  leg: number;
+  created: number;
+  roster_ids: number[] | null;
+  adds: Record<string, number> | null;
+  drops: Record<string, number> | null;
+  draft_picks: Array<{ season: string; round: number; owner_id: number; previous_owner_id: number }> | null;
+  settings: { waiver_bid?: number } | null;
+}
+
+export interface ActivityAsset {
+  kind: 'player' | 'pick';
+  playerId: string | null;
+  name: string;
+  pos: string | null;
+}
+
+export type ActivityAction = 'Added' | 'Dropped' | 'Added & dropped' | 'Trade' | 'Commissioner';
+
+export interface ActivityRow {
+  /** Unique per row — a trade yields one row per team from one transaction. */
+  key: string;
+  transactionId: string;
+  week: number;
+  created: number;
+  /** What the manager did, in plain terms. */
+  action: ActivityAction;
+  /** How it was done: waivers, free agency, a trade. */
+  method: 'Waivers' | 'Free agency' | 'Trade' | 'Commissioner';
+  rosterId: number;
+  teamName: string;
+  managerName: string;
+  added: ActivityAsset[];
+  dropped: ActivityAsset[];
+  /** FAAB spent, when this was a waiver claim. */
+  faab: number | null;
+  /** The other side of a trade. */
+  counterparties: Array<{ rosterId: number; teamName: string }>;
+}
+
+function assetForPlayer(id: string, players: PlayerIndex): ActivityAsset {
+  const p = players[id];
+  return {
+    kind: 'player',
+    playerId: id,
+    name: p?.name ?? (/^[A-Z]{2,3}$/.test(id) ? `${id} Defense` : `Player ${id}`),
+    pos: p?.pos ?? (/^[A-Z]{2,3}$/.test(id) ? 'DEF' : null),
+  };
+}
+
+const pickAsset = (season: string, round: number): ActivityAsset => ({
+  kind: 'pick',
+  playerId: null,
+  name: `${season} round ${round} pick`,
+  pos: null,
+});
+
+export function buildActivityRows(
+  transactions: RawTransaction[],
+  teams: Map<number, Team>,
+  players: PlayerIndex
+): ActivityRow[] {
+  const rows: ActivityRow[] = [];
+
+  for (const t of transactions) {
+    if (t.status !== 'complete') continue;
+
+    // Which rosters this transaction touched. Trades list several; an add or a
+    // drop lists one.
+    const rosterIds = new Set<number>(t.roster_ids ?? []);
+    for (const rid of Object.values(t.adds ?? {})) rosterIds.add(rid);
+    for (const rid of Object.values(t.drops ?? {})) rosterIds.add(rid);
+    for (const p of t.draft_picks ?? []) {
+      rosterIds.add(p.owner_id);
+      rosterIds.add(p.previous_owner_id);
+    }
+    if (!rosterIds.size) continue;
+
+    const isTrade = t.type === 'trade';
+    const faab = t.settings?.waiver_bid ?? null;
+
+    for (const rosterId of rosterIds) {
+      const team = teams.get(rosterId);
+
+      const added: ActivityAsset[] = [];
+      const dropped: ActivityAsset[] = [];
+
+      for (const [playerId, rid] of Object.entries(t.adds ?? {})) {
+        if (rid === rosterId) added.push(assetForPlayer(playerId, players));
+      }
+      for (const [playerId, rid] of Object.entries(t.drops ?? {})) {
+        if (rid === rosterId) dropped.push(assetForPlayer(playerId, players));
+      }
+      for (const p of t.draft_picks ?? []) {
+        if (p.owner_id === rosterId) added.push(pickAsset(p.season, p.round));
+        else if (p.previous_owner_id === rosterId) dropped.push(pickAsset(p.season, p.round));
+      }
+
+      // A roster listed on a transaction that gained and lost nothing has no
+      // story to tell; skip it rather than showing an empty row.
+      if (!added.length && !dropped.length) continue;
+
+      const action: ActivityAction = isTrade
+        ? 'Trade'
+        : t.type === 'commissioner'
+          ? 'Commissioner'
+          : added.length && dropped.length
+            ? 'Added & dropped'
+            : added.length
+              ? 'Added'
+              : 'Dropped';
+
+      const method: ActivityRow['method'] = isTrade
+        ? 'Trade'
+        : t.type === 'waiver'
+          ? 'Waivers'
+          : t.type === 'commissioner'
+            ? 'Commissioner'
+            : 'Free agency';
+
+      rows.push({
+        key: `${t.transaction_id}:${rosterId}`,
+        transactionId: t.transaction_id,
+        week: t.leg,
+        created: t.created,
+        action,
+        method,
+        rosterId,
+        teamName: team?.teamName ?? `Roster ${rosterId}`,
+        managerName: team?.managerName ?? 'Unknown',
+        added,
+        dropped,
+        // Only a waiver claim actually spent FAAB.
+        faab: method === 'Waivers' && faab != null && faab > 0 ? faab : null,
+        counterparties: isTrade
+          ? [...rosterIds]
+              .filter((id) => id !== rosterId)
+              .map((id) => ({ rosterId: id, teamName: teams.get(id)?.teamName ?? `Roster ${id}` }))
+          : [],
+      });
+    }
+  }
+
+  return rows.sort((a, b) => b.created - a.created || a.teamName.localeCompare(b.teamName));
+}
+
+/* ------------------------------------------------------------------ *
  * League chat
  * ------------------------------------------------------------------ */
 

@@ -121,16 +121,27 @@ export interface ChatMessage {
   hasAttachment: boolean;
 }
 
-export interface Transaction {
-  id: string;
-  type: string;
+export interface ActivityAsset {
+  kind: 'player' | 'pick';
+  playerId: string | null;
+  name: string;
+  pos: string | null;
+}
+
+export interface ActivityRow {
+  key: string;
+  transactionId: string;
   week: number;
   created: number;
-  teams: Array<{ rosterId: number; teamName: string }>;
-  adds: Array<{ playerId: string; player: string; pos: string | null; toRosterId: number | null; to: string | null }>;
-  drops: Array<{ playerId: string; player: string; pos: string | null; fromRosterId: number | null; from: string | null }>;
-  bid: number | null;
-  picks: Array<{ season: string; round: number; from: string | null; toRosterId: number | null; to: string | null }>;
+  action: 'Added' | 'Dropped' | 'Added & dropped' | 'Trade' | 'Commissioner';
+  method: 'Waivers' | 'Free agency' | 'Trade' | 'Commissioner';
+  rosterId: number;
+  teamName: string;
+  managerName: string;
+  added: ActivityAsset[];
+  dropped: ActivityAsset[];
+  faab: number | null;
+  counterparties: Array<{ rosterId: number; teamName: string }>;
 }
 
 async function get<T>(path: string): Promise<T> {
