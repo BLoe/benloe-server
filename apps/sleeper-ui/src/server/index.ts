@@ -512,6 +512,7 @@ app.get(
     );
 
     const named = (id: string) => players[id]?.name ?? id;
+    // Ids ride along with every name so the client can link each one.
     const items = weeks
       .flat()
       .filter((t: any) => t.status === 'complete')
@@ -520,15 +521,22 @@ app.get(
         type: t.type,
         week: t.leg,
         created: t.created,
-        teams: (t.roster_ids ?? []).map((rid: number) => teams.get(rid)?.teamName ?? `#${rid}`),
+        teams: (t.roster_ids ?? []).map((rid: number) => ({
+          rosterId: rid,
+          teamName: teams.get(rid)?.teamName ?? `#${rid}`,
+        })),
         adds: Object.entries(t.adds ?? {}).map(([pid, rid]) => ({
+          playerId: pid,
           player: named(pid),
           pos: players[pid]?.pos ?? null,
+          toRosterId: (rid as number) ?? null,
           to: teams.get(rid as number)?.teamName ?? null,
         })),
         drops: Object.entries(t.drops ?? {}).map(([pid, rid]) => ({
+          playerId: pid,
           player: named(pid),
           pos: players[pid]?.pos ?? null,
+          fromRosterId: (rid as number) ?? null,
           from: teams.get(rid as number)?.teamName ?? null,
         })),
         bid: t.settings?.waiver_bid ?? null,
@@ -536,6 +544,7 @@ app.get(
           season: p.season,
           round: p.round,
           from: teams.get(p.previous_owner_id)?.teamName ?? null,
+          toRosterId: p.owner_id ?? null,
           to: teams.get(p.owner_id)?.teamName ?? null,
         })),
       }))
@@ -652,6 +661,92 @@ app.post(
     });
   })
 );
+
+/**
+ * One player, in the context of this league: who owns them, how they have
+ * scored week by week, and what the beat reporters are saying.
+ */
+app.get(
+  '/api/league/:leagueId/player/:playerId',
+  requireSession,
+  wrap(async (req, res) => {
+    const { leagueId, playerId } = req.params;
+    const [league, rosters, users, players, state] = await Promise.all([
+      loadLeague(leagueId),
+      loadRosters(leagueId),
+      loadLeagueUsers(leagueId),
+      loadPlayers(),
+      loadState(),
+    ]);
+
+    const player = players[playerId];
+    if (!player) return res.status(404).json({ error: 'Player not found.' });
+
+    const teams = buildTeams(rosters, users);
+    const roster = rosters.find((r: any) => (r.players ?? []).includes(playerId));
+    const team = roster ? teams.get(roster.roster_id) : null;
+
+    const playoffStart: number = league.settings?.playoff_week_start ?? 15;
+    const lastWeek =
+      league.status === 'complete' ? playoffStart + 2 : Math.max(1, Number(state.week) || 1);
+    const allMatchups = await loadAllMatchups(leagueId, lastWeek);
+
+    // Weekly scoring comes from whichever roster held the player that week, so
+    // a mid-season pickup still shows a full season of production.
+    const weeks: Array<{ week: number; points: number; started: boolean }> = [];
+    for (const [weekKey, entries] of Object.entries(allMatchups as Record<string, any[]>)) {
+      const week = Number(weekKey);
+      if (Number.isNaN(week)) continue;
+      for (const entry of entries ?? []) {
+        const pts = entry.players_points?.[playerId];
+        if (pts == null) continue;
+        weeks.push({ week, points: pts, started: (entry.starters ?? []).includes(playerId) });
+        break;
+      }
+    }
+    weeks.sort((a, b) => a.week - b.week);
+
+    const scored = weeks.filter((w) => w.points !== 0 || w.started);
+    const total = weeks.reduce((sum, w) => sum + w.points, 0);
+
+    // News is best-effort: undocumented endpoint, and the page is useful without it.
+    let news: any[] = [];
+    if (!useFixtures()) {
+      try {
+        const raw = await S.getPlayerNews(playerId, 6);
+        news = (raw ?? [])
+          .map((n: any) => ({
+            title: n.metadata?.title ?? n.metadata?.description ?? null,
+            source: n.source ?? null,
+            published: n.published ?? null,
+            url: n.metadata?.url ?? null,
+          }))
+          .filter((n: any) => n.title);
+      } catch {
+        news = [];
+      }
+    }
+
+    res.json({
+      player,
+      owner: team
+        ? { rosterId: team.rosterId, teamName: team.teamName, managerName: team.managerName, avatar: team.avatar }
+        : null,
+      onTaxi: !!roster?.taxi?.includes(playerId),
+      onIr: !!roster?.reserve?.includes(playerId),
+      isStarter: !!roster?.starters?.includes(playerId),
+      weeks,
+      totals: {
+        points: Math.round(total * 100) / 100,
+        games: scored.length,
+        average: scored.length ? Math.round((total / scored.length) * 100) / 100 : 0,
+        best: weeks.length ? Math.max(...weeks.map((w) => w.points)) : 0,
+      },
+      news,
+    });
+  })
+);
+
 
 /** Slim player index for client-side search. */
 app.get(

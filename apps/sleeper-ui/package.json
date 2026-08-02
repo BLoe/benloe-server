@@ -12,7 +12,8 @@
     "capture": "tsx scripts/capture-fixtures.ts",
     "test": "vitest run",
     "verify": "node verify/verify.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "links": "node verify/links.mjs"
   },
   "dependencies": {
     "compression": "^1.7.5",
