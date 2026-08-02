@@ -28,6 +28,33 @@ export function seedInsurancePlan(db: Database.Database, planYear: number = new 
   return Number(lastInsertRowid);
 }
 
+/**
+ * The plan whose effective period covers `day` — the correct answer to
+ * "which deductible does this date of service count against".
+ *
+ * A mid-year carrier switch (Aetna -> Anthem, 2026) means plan_year alone is
+ * ambiguous, and guessing wrong doesn't fail loudly: it silently books a
+ * claim against the wrong deductible clock and reports progress that the
+ * payer disagrees with. Resolution order is deliberately narrowest-first —
+ * an explicit effective period beats a year match, because the period is a
+ * fact read off the card and the year is an inference.
+ *
+ * Falls back to `seedInsurancePlan` for the day's year so callers that just
+ * need *a* plan id keep working on a box where no real plan is on file yet.
+ */
+export function planForDate(db: Database.Database, day: string = localDay()): number {
+  const covered = db
+    .prepare(
+      `SELECT id FROM insurance_plan
+       WHERE effective_from IS NOT NULL AND effective_from <= @day
+         AND (effective_to IS NULL OR effective_to >= @day)
+       ORDER BY effective_from DESC LIMIT 1`,
+    )
+    .get({ day }) as { id: number } | undefined;
+  if (covered) return covered.id;
+  return seedInsurancePlan(db, Number(day.slice(0, 4)));
+}
+
 export interface Accumulators {
   planYear: number;
   deductible: { applied: number; limit: number | null; remaining: number | null };
@@ -52,6 +79,65 @@ export function accumulators(db: Database.Database, planId: number): Accumulator
   };
 }
 
+export interface NetworkAccumulators {
+  planYear: number;
+  crossAccumulates: boolean | null;
+  inNetwork: Accumulators['deductible'] & { oopApplied: number; oopLimit: number | null };
+  outOfNetwork: Accumulators['deductible'] & { oopApplied: number; oopLimit: number | null };
+  unclassified: number;
+}
+
+/**
+ * Deductible/OOP progress split by network, which on Ben's Anthem plan is
+ * the only honest way to report it: the SPD says in-network and
+ * out-of-network "Do Not Apply To Each Other", so a single blended number
+ * would overstate in-network progress by exactly the amount he has spent
+ * out-of-network — the larger figure, in his case.
+ *
+ * `unclassified` is surfaced rather than silently bucketed. A claim whose
+ * network is unknown cannot be assigned to either accumulator without
+ * inventing the answer, and a visible "$X unclassified" is what prompts
+ * someone to go read the EOB. Folding it into in-network would be the
+ * flattering default and the wrong one.
+ */
+export function networkAccumulators(db: Database.Database, planId: number): NetworkAccumulators {
+  const plan = db
+    .prepare(
+      `SELECT plan_year, deductible_individual, oop_max_individual,
+              oon_deductible_individual, oon_oop_max_individual, cross_accumulates
+       FROM insurance_plan WHERE id = ?`,
+    )
+    .get(planId) as {
+    plan_year: number; deductible_individual: number | null; oop_max_individual: number | null;
+    oon_deductible_individual: number | null; oon_oop_max_individual: number | null;
+    cross_accumulates: number | null;
+  };
+  const bucket = (net: string) =>
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(applied_to_deductible),0) d, COALESCE(SUM(applied_to_oop),0) o
+         FROM claim WHERE plan_id = @plan AND status != 'denied' AND COALESCE(network,'unknown') = @net`,
+      )
+      .get({ plan: planId, net }) as { d: number; o: number };
+  const inn = bucket('in');
+  const oon = bucket('out');
+  const unk = bucket('unknown');
+  const rem = (limit: number | null, applied: number) => (limit === null ? null : Math.max(0, limit - applied));
+  return {
+    planYear: plan.plan_year,
+    crossAccumulates: plan.cross_accumulates === null ? null : plan.cross_accumulates === 1,
+    inNetwork: {
+      applied: inn.d, limit: plan.deductible_individual, remaining: rem(plan.deductible_individual, inn.d),
+      oopApplied: inn.o, oopLimit: plan.oop_max_individual,
+    },
+    outOfNetwork: {
+      applied: oon.d, limit: plan.oon_deductible_individual, remaining: rem(plan.oon_deductible_individual, oon.d),
+      oopApplied: oon.o, oopLimit: plan.oon_oop_max_individual,
+    },
+    unclassified: unk.d,
+  };
+}
+
 export function logClaim(
   db: Database.Database,
   c: {
@@ -59,17 +145,19 @@ export function logClaim(
     billed?: number; allowed?: number; plan_paid?: number; patient_owed?: number;
     applied_to_deductible?: number; applied_to_oop?: number;
     status?: 'submitted' | 'processed' | 'paid' | 'denied' | 'appeal';
+    network?: 'in' | 'out' | 'unknown';
   },
 ): { id: number; accumulators: Accumulators } {
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO claim (plan_id, service_date, provider, description, billed, allowed, plan_paid, patient_owed, applied_to_deductible, applied_to_oop, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO claim (plan_id, service_date, provider, description, billed, allowed, plan_paid, patient_owed, applied_to_deductible, applied_to_oop, status, network)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       c.planId, c.service_date ?? null, c.provider ?? null, c.description ?? null,
       c.billed ?? null, c.allowed ?? null, c.plan_paid ?? null, c.patient_owed ?? null,
       c.applied_to_deductible ?? 0, c.applied_to_oop ?? 0, c.status ?? 'processed',
+      c.network ?? 'unknown',
     );
   return { id: Number(lastInsertRowid), accumulators: accumulators(db, c.planId) };
 }

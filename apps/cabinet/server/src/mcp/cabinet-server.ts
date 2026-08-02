@@ -19,7 +19,7 @@ import { ingestHealthDay, recentHealth } from '../domains/health.js';
 import { logCraving, resolveCraving, cravingsOn, redirectRanking, e1Readout } from '../domains/cravings.js';
 import { logSymptom, symptomsOn, symptomHistory, ankleLoadResponse, ankleThreshold } from '../domains/symptoms.js';
 import { markHabit, deriveHabits, adherence } from '../domains/adherence.js';
-import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, seedInsurancePlan } from '../domains/healthcare.js';
+import { accumulators as claimAccumulators, logClaim, logHsaContribution, logLab, logMedication, planForDate } from '../domains/healthcare.js';
 import {
   addJournal, addPriceWatch, listConstraints, logMood,
   upsertConstraint, upsertContact, upsertGoal, upsertTask,
@@ -338,8 +338,14 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         applied_to_deductible: z.number().optional(),
         applied_to_oop: z.number().optional(),
         status: z.enum(['submitted', 'processed', 'paid', 'denied', 'appeal']).optional(),
+        network: z.enum(['in', 'out', 'unknown']).optional(),
       },
-      async (args) => ok(logClaim(ctx.db, { planId: seedInsurancePlan(ctx.db), ...args })),
+      // Plan is resolved from the SERVICE DATE, not "today". Ben's coverage
+      // changed carriers mid-2026, so a claim backfilled from the old plan
+      // must land on the old plan's deductible clock — attaching it to
+      // whatever is currently effective would inflate the live accumulator
+      // with spend the new payer has never heard of.
+      async (args) => ok(logClaim(ctx.db, { planId: planForDate(ctx.db, args.service_date), ...args })),
     ),
     tool(
       'log_lab',

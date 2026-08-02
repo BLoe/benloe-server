@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { openDb, type CabinetDb } from '../src/db/index.js';
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../src/domains/food.js';
 import { ewma, logBodyMetric, logWorkout, weightTrend } from '../src/domains/training.js';
-import { accumulators, logClaim, logHsaContribution, logLab, logMedication, medicationsLow, seedInsurancePlan } from '../src/domains/healthcare.js';
+import { accumulators, logClaim, logHsaContribution, logLab, logMedication, medicationsLow, networkAccumulators, planForDate, seedInsurancePlan } from '../src/domains/healthcare.js';
 import {
   addJournal, addPriceWatch, listConstraints, logMood,
   upsertConstraint, upsertContact, upsertGoal, upsertTask,
@@ -102,6 +102,60 @@ describe('healthcare accumulators', () => {
     expect(acc.deductible).toEqual({ applied: 2140, limit: 3300, remaining: 1160 });
     expect(acc.oop.applied).toBe(2140);
     expect(acc.oop.remaining).toBe(8500 - 2140);
+  });
+
+  it('planForDate routes a claim to the plan effective on the service date', () => {
+    // The mid-year carrier switch case (Aetna -> Anthem, 2026). Both rows
+    // share plan_year 2026, so a year-based lookup cannot tell them apart —
+    // only the effective period can.
+    const aetna = Number(
+      cabinet.db
+        .prepare(
+          'INSERT INTO insurance_plan (plan_name, plan_year, carrier, effective_from, effective_to, deductible_individual) VALUES (?,?,?,?,?,?)',
+        )
+        .run('Aetna 2026', 2026, 'Aetna', '2026-01-01', '2026-06-30', 2000).lastInsertRowid,
+    );
+    const anthem = Number(
+      cabinet.db
+        .prepare(
+          'INSERT INTO insurance_plan (plan_name, plan_year, carrier, effective_from, effective_to, deductible_individual) VALUES (?,?,?,?,?,?)',
+        )
+        .run('Anthem 2026', 2026, 'Anthem', '2026-07-01', '2026-12-31', 3300).lastInsertRowid,
+    );
+    expect(planForDate(cabinet.db, '2026-05-22')).toBe(aetna);
+    expect(planForDate(cabinet.db, '2026-07-15')).toBe(anthem);
+    // Boundary days belong to the plan that starts/ends on them.
+    expect(planForDate(cabinet.db, '2026-06-30')).toBe(aetna);
+    expect(planForDate(cabinet.db, '2026-07-01')).toBe(anthem);
+
+    // The regression that matters: old-carrier spend must not inflate the
+    // live plan's deductible.
+    logClaim(cabinet.db, { planId: planForDate(cabinet.db, '2026-05-22'), applied_to_deductible: 1800 });
+    expect(accumulators(cabinet.db, anthem).deductible.applied).toBe(0);
+    expect(accumulators(cabinet.db, aetna).deductible.applied).toBe(1800);
+  });
+
+  it('networkAccumulators keeps in- and out-of-network spend separate', () => {
+    const planId = Number(
+      cabinet.db
+        .prepare(
+          'INSERT INTO insurance_plan (plan_name, plan_year, deductible_individual, oon_deductible_individual, cross_accumulates) VALUES (?,?,?,?,?)',
+        )
+        .run('No-Cross Plan', 2026, 3300, 6000, 0).lastInsertRowid,
+    );
+    logClaim(cabinet.db, { planId, applied_to_deductible: 500, network: 'in' });
+    logClaim(cabinet.db, { planId, applied_to_deductible: 4850, network: 'out' });
+    logClaim(cabinet.db, { planId, applied_to_deductible: 263 }); // network omitted
+
+    const n = networkAccumulators(cabinet.db, planId);
+    expect(n.crossAccumulates).toBe(false);
+    // The whole point: $4,850 out-of-network buys nothing in-network.
+    expect(n.inNetwork.applied).toBe(500);
+    expect(n.inNetwork.remaining).toBe(2800);
+    expect(n.outOfNetwork.applied).toBe(4850);
+    expect(n.outOfNetwork.remaining).toBe(1150);
+    // Unknown-network spend is surfaced, never folded into in-network.
+    expect(n.unclassified).toBe(263);
   });
 
   it('HSA contributions compute YTD and 2026 headroom', () => {
