@@ -18,6 +18,7 @@ import * as S from '../lib/sleeper.js';
 import { cached, diskCached, TTL, stats, invalidate } from './cache.js';
 import { chatAccess } from './chatAccess.js';
 import { TokenStore, defaultTokenPath } from './tokenStore.js';
+import { mayConnectSleeper, parseAllowList } from './loginPolicy.js';
 import {
   COOKIE_NAME,
   cookieHeader,
@@ -76,11 +77,11 @@ const SECURE_COOKIES = process.env.NODE_ENV === 'production';
  * Off switch, plus an optional allowlist of usernames — this is a public page
  * asking for a Sleeper password, so it should be easy to narrow or close.
  */
-const LOGIN_ENABLED = process.env.SLEEPER_LOGIN_ENABLED !== 'false';
-const LOGIN_ALLOW = (process.env.SLEEPER_LOGIN_ALLOW || '')
-  .split(',')
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
+const LOGIN_POLICY = {
+  enabled: process.env.SLEEPER_LOGIN_ENABLED !== 'false',
+  allow: parseAllowList(process.env.SLEEPER_LOGIN_ALLOW),
+};
+const LOGIN_ENABLED = LOGIN_POLICY.enabled;
 
 const tokens = SESSION_SECRET
   ? new TokenStore(defaultTokenPath(CACHE_DIR), SESSION_SECRET)
@@ -646,18 +647,21 @@ async function resolveChat(req: express.Request): Promise<
     return {
       ok: false,
       status: decision.status,
-      body: { error: decision.error, [decision.code]: true, canLogIn: LOGIN_ENABLED },
+      body: {
+        error: decision.error,
+        [decision.code]: true,
+        // This visitor's own permission, not the global switch — the client uses
+        // it to decide between showing a sign-in form and explaining why not.
+        canLogIn: session ? loginPermitted(session) : false,
+      },
     };
   }
   return { ok: true, token: decision.using === 'own' ? ownToken! : SLEEPER_TOKEN };
 }
 
 /** May this visitor connect a Sleeper account at all? */
-function loginPermitted(session: Session): boolean {
-  if (!LOGIN_ENABLED) return false;
-  if (!LOGIN_ALLOW.length) return true;
-  return LOGIN_ALLOW.includes(session.username.toLowerCase());
-}
+const loginPermitted = (session: Session): boolean =>
+  mayConnectSleeper(session.username, LOGIN_POLICY);
 
 /** Whether this visitor already has an account connected. */
 app.get(
@@ -688,7 +692,11 @@ app.post(
     const session: Session = (req as any).session;
     if (!tokens) return res.status(500).json({ error: 'Server is missing a signing secret.' });
     if (!loginPermitted(session)) {
-      return res.status(403).json({ error: 'Sleeper sign-in is not enabled for this account.' });
+      return res.status(403).json({
+        error:
+          'Sleeper sign-in on this server is limited to managers in the league. ' +
+          'If that should include you, ask Ben to add your username.',
+      });
     }
 
     const identifier = typeof req.body?.identifier === 'string' ? req.body.identifier.trim() : '';

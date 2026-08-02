@@ -20,7 +20,8 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
     loading: boolean;
     error: string | null;
     needsLogin: boolean;
-  }>({ messages: [], canPost: false, loading: true, error: null, needsLogin: false });
+    canLogIn: boolean;
+  }>({ messages: [], canPost: false, loading: true, error: null, needsLogin: false, canLogIn: true });
 
   // Whether this visitor has their own Sleeper account connected, which decides
   // if there is anything to disconnect from.
@@ -55,6 +56,7 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
             loading: false,
             error: body.needsLogin ? null : (body.error ?? `Request failed: ${res.status}`),
             needsLogin: !!body.needsLogin,
+            canLogIn: body.canLogIn !== false,
           }));
           return;
         }
@@ -65,6 +67,7 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
           loading: false,
           error: null,
           needsLogin: false,
+          canLogIn: true,
         });
       } catch (err) {
         setState((s) => ({ ...s, loading: false, error: (err as Error).message }));
@@ -104,6 +107,9 @@ export default function Chat({ bundle }: { bundle: LeagueBundle }) {
     pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
+  // Offering a sign-in form to somebody who is not allowed to use it would just
+  // be a password prompt that always fails.
+  if (state.needsLogin && !state.canLogIn) return <ChatRestricted />;
   if (state.needsLogin) {
     return (
       <ConnectSleeper
@@ -358,6 +364,26 @@ function Composer({
           {sending ? 'Sending' : 'Send'}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Shown when this server's sign-in is limited to a league the visitor is not in. */
+function ChatRestricted() {
+  return (
+    <div className="pt-5 max-w-[560px]">
+      <Panel title="Chat is limited to league managers">
+        <div className="p-5 space-y-3">
+          <p className="text-muted" style={{ fontSize: 'var(--t-body)' }}>
+            Reading league chat means signing in to Sleeper, and this server only accepts
+            sign-ins from managers in Ben's dynasty league.
+          </p>
+          <p className="text-dim" style={{ fontSize: 'var(--t-meta)' }}>
+            Everything else works normally for your own leagues — standings, matchups,
+            rosters and activity are all public data.
+          </p>
+        </div>
+      </Panel>
     </div>
   );
 }
