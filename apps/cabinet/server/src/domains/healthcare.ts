@@ -174,18 +174,71 @@ export function logHsaContribution(
   return { id: Number(lastInsertRowid), ytd, limit, headroom: limit === null ? null : Math.max(0, limit - ytd) };
 }
 
-export function logLab(
-  db: Database.Database,
-  l: { drawn_on: string; panel?: string; analyte: string; value?: number; unit?: string; ref_low?: number; ref_high?: number },
-): { id: number; flag: string | null } {
+export interface LabInput {
+  drawn_on: string;
+  panel?: string;
+  analyte: string;
+  /** Numeric result. Omit for qualitative ("Negative") or censored ("<10") results — use value_text. */
+  value?: number;
+  /** Verbatim result when it is not a number: "Negative", "<10", "None Seen", "Rh(d) Positive". */
+  value_text?: string;
+  unit?: string;
+  ref_low?: number;
+  ref_high?: number;
+  /**
+   * The LAB's own classification, when it publishes one. Takes precedence over
+   * deriving a flag from ref_low/ref_high, because a lab that says "Above
+   * Range" without publishing the interval is still stating a fact, and the
+   * derivation would silently return null — rendering an entire abnormal panel
+   * as normal. 'N' means the lab affirmatively called it in range.
+   */
+  flag?: 'H' | 'L' | 'N' | 'E';
+  /** 'month' when only the month of the draw is known and the day is a placeholder. */
+  date_precision?: 'day' | 'month';
+  document_id?: number;
+  source?: string;
+}
+
+export function logLab(db: Database.Database, l: LabInput): { id: number; flag: string | null } {
+  // An explicitly reported flag always wins; only fall back to deriving one
+  // from reference bounds when the lab gave no verdict of its own.
   const flag =
-    l.value !== undefined && l.ref_high !== undefined && l.value > l.ref_high ? 'H'
+    l.flag !== undefined ? (l.flag === 'N' ? null : l.flag)
+    : l.value !== undefined && l.ref_high !== undefined && l.value > l.ref_high ? 'H'
     : l.value !== undefined && l.ref_low !== undefined && l.value < l.ref_low ? 'L'
     : null;
   const { lastInsertRowid } = db
-    .prepare('INSERT INTO lab_result (drawn_on, panel, analyte, value, unit, ref_low, ref_high, flag) VALUES (?,?,?,?,?,?,?,?)')
-    .run(l.drawn_on, l.panel ?? null, l.analyte, l.value ?? null, l.unit ?? null, l.ref_low ?? null, l.ref_high ?? null, flag);
+    .prepare(
+      `INSERT INTO lab_result (drawn_on, panel, analyte, value, value_text, unit, ref_low, ref_high, flag, date_precision, document_id, source)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    )
+    .run(
+      l.drawn_on, l.panel ?? null, l.analyte, l.value ?? null, l.value_text ?? null,
+      l.unit ?? null, l.ref_low ?? null, l.ref_high ?? null, flag,
+      l.date_precision ?? 'day', l.document_id ?? null, l.source ?? null,
+    );
   return { id: Number(lastInsertRowid), flag };
+}
+
+/**
+ * Every abnormal marker from the most recent draw of each analyte.
+ *
+ * Deliberately keyed on the LAB's flag rather than a recomputed comparison:
+ * for panels that report a verdict without publishing reference intervals, a
+ * recomputation returns an empty list and reads as "nothing wrong" — the most
+ * expensive possible false negative this module can produce.
+ */
+export function labFlags(db: Database.Database, drawnOn?: string): {
+  analyte: string; value: number | null; value_text: string | null; unit: string | null; flag: string; drawn_on: string;
+}[] {
+  const where = drawnOn ? 'AND drawn_on = @drawn' : '';
+  return db
+    .prepare(
+      `SELECT analyte, value, value_text, unit, flag, drawn_on FROM lab_result
+       WHERE flag IS NOT NULL ${where}
+       ORDER BY drawn_on DESC, flag, analyte`,
+    )
+    .all(drawnOn ? { drawn: drawnOn } : {}) as never;
 }
 
 export function logMedication(

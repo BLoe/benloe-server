@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { openDb, type CabinetDb } from '../src/db/index.js';
 import { dailyTotals, logFood, updatePantry, addRecipe } from '../src/domains/food.js';
 import { ewma, logBodyMetric, logWorkout, weightTrend } from '../src/domains/training.js';
-import { accumulators, logClaim, logHsaContribution, logLab, logMedication, medicationsLow, networkAccumulators, planForDate, seedInsurancePlan } from '../src/domains/healthcare.js';
+import { accumulators, labFlags, logClaim, logHsaContribution, logLab, logMedication, medicationsLow, networkAccumulators, planForDate, seedInsurancePlan } from '../src/domains/healthcare.js';
 import {
   addJournal, addPriceWatch, listConstraints, logMood,
   upsertConstraint, upsertContact, upsertGoal, upsertTask,
@@ -170,6 +170,50 @@ describe('healthcare accumulators', () => {
     expect(logLab(cabinet.db, { drawn_on: '2026-06-01', analyte: 'LDL', value: 160, ref_low: 0, ref_high: 130 }).flag).toBe('H');
     expect(logLab(cabinet.db, { drawn_on: '2026-06-01', analyte: 'VitD', value: 12, ref_low: 30, ref_high: 100 }).flag).toBe('L');
     expect(logLab(cabinet.db, { drawn_on: '2026-06-01', analyte: 'A1c', value: 5.2, ref_low: 4, ref_high: 5.6 }).flag).toBeNull();
+  });
+
+  // NOTE: fixtures below are invented, not anyone's real results. This repo is
+  // public; real lab values belong only in the gitignored data/ tree.
+  //
+  // Consumer panels report a verdict per marker while publishing no reference
+  // interval. Deriving the flag returns null for every one of them, which
+  // renders a wholly abnormal panel as clean — the expensive false negative.
+  it('labs trust the lab’s own flag when no reference range is published', () => {
+    expect(logLab(cabinet.db, { drawn_on: '2026-03-04', analyte: 'MarkerHigh', value: 42, unit: 'mg/dL', flag: 'H' }).flag).toBe('H');
+    expect(logLab(cabinet.db, { drawn_on: '2026-03-04', analyte: 'MarkerLow', value: 7, unit: 'ng/mL', flag: 'L' }).flag).toBe('L');
+    expect(logLab(cabinet.db, { drawn_on: '2026-03-04', analyte: 'MarkerOk', value: 50, unit: 'mg/dL', flag: 'N' }).flag).toBeNull();
+    expect(labFlags(cabinet.db, '2026-03-04').map((f) => f.analyte)).toEqual(['MarkerHigh', 'MarkerLow']);
+  });
+
+  // "<10" must never become the number 10: a below-detection result and a
+  // measured value sitting exactly at the detection threshold mean opposite
+  // things, and for genetically-fixed risk markers that gap is the whole signal.
+  it('labs preserve censored and qualitative results verbatim', () => {
+    const censored = logLab(cabinet.db, { drawn_on: '2026-03-04', analyte: 'CensoredMarker', value_text: '<10', unit: 'nmol/L', flag: 'N' });
+    const qual = logLab(cabinet.db, { drawn_on: '2026-03-04', analyte: 'QualitativeMarker', value_text: 'Negative', flag: 'N' });
+    const row = (id: number) =>
+      cabinet.db.prepare('SELECT value, value_text FROM lab_result WHERE id = ?').get(id) as { value: number | null; value_text: string | null };
+    expect(row(censored.id)).toEqual({ value: null, value_text: '<10' });
+    expect(row(qual.id)).toEqual({ value: null, value_text: 'Negative' });
+  });
+
+  // A month-precision draw date is a placeholder in the day component. Storing
+  // it without saying so is how a guess becomes a fact three sessions later.
+  it('labs record when only the month of the draw is known', () => {
+    const approx = logLab(cabinet.db, { drawn_on: '2026-03-01', analyte: 'MarkerHigh', value: 42, flag: 'H', date_precision: 'month' });
+    const precision = (id: number) =>
+      (cabinet.db.prepare('SELECT date_precision FROM lab_result WHERE id = ?').get(id) as { date_precision: string }).date_precision;
+    expect(precision(approx.id)).toBe('month');
+    // Default stays 'day' so existing callers keep their exact-date semantics.
+    expect(precision(logLab(cabinet.db, { drawn_on: '2026-06-02', analyte: 'MarkerHigh', value: 38 }).id)).toBe('day');
+  });
+
+  // Re-running an import must not double every marker: a duplicated lab value
+  // is indistinguishable from a genuine repeat draw.
+  it('labs reject a duplicate analyte for the same draw', () => {
+    const dup = { drawn_on: '2026-03-04', panel: 'lipids', analyte: 'MarkerHigh', value: 42, flag: 'H' as const };
+    logLab(cabinet.db, dup);
+    expect(() => logLab(cabinet.db, dup)).toThrow();
   });
 
   it('medicationsLow counts down days of supply', () => {
