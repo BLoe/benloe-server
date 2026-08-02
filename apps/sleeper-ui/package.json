@@ -13,7 +13,8 @@
     "test": "vitest run",
     "verify": "node verify/verify.mjs",
     "typecheck": "tsc --noEmit",
-    "links": "node verify/links.mjs"
+    "links": "node verify/links.mjs",
+    "mobile": "node verify/mobile.mjs"
   },
   "dependencies": {
     "compression": "^1.7.5",
