@@ -70,6 +70,8 @@ const TRANSACTIONS: MoneyTransaction[] = [
 function status(overrides: Partial<PlaidStatus> = {}): PlaidStatus {
   return {
     configured: true,
+    state: 'ready',
+    detail: null,
     environment: 'sandbox',
     redirect_uri: 'https://cabinet.benloe.com/plaid/oauth',
     webhook_url: 'https://cabinet.benloe.com/api/plaid/webhook',
@@ -103,16 +105,23 @@ afterEach(cleanup);
 
 describe('Money surface', () => {
   it('renders setup guidance — not a secret form — when Plaid is unconfigured', async () => {
-    statusMock.mockResolvedValue(status({ configured: false, items: [], accounts: [] }));
+    statusMock.mockResolvedValue(status({ configured: false, state: 'unconfigured', items: [], accounts: [] }));
     render(<Money />);
 
     const setup = await screen.findByLabelText('Plaid setup');
-    // Names the two credentials, and points at the credential API rather than
-    // offering a field of its own.
+    // Names the two credentials, and points at the service that actually holds
+    // them rather than offering a field of its own.
     expect(within(setup).getByText('plaid-client-id')).toBeTruthy();
     expect(within(setup).getByText('plaid-secret')).toBeTruthy();
-    expect(within(setup).getByText('/api/credentials')).toBeTruthy();
     expect(setup.querySelectorAll('input, textarea, form').length).toBe(0);
+
+    // The destination is a real link, and it is the broker's dashboard. The old
+    // text sent Ben to POST at /api/credentials — an endpoint whose store lost
+    // its encryption key in the split, so following that instruction would have
+    // put a Plaid secret on his clipboard and then refused it with a 503.
+    const dash = within(setup).getByRole('link', { name: 'https://secrets.benloe.com' });
+    expect(dash.getAttribute('href')).toBe('https://secrets.benloe.com');
+    expect(setup.textContent).not.toContain('/api/credentials');
 
     // Both dashboard URLs are present and click-to-copy.
     expect(within(setup).getByText('https://cabinet.benloe.com/plaid/oauth')).toBeTruthy();
@@ -122,6 +131,43 @@ describe('Money surface', () => {
 
     // Nothing that implies real, complete data is on screen.
     expect(screen.queryByLabelText('Net worth')).toBeNull();
+  });
+
+  it('an unreachable secrets service is not rendered as "add your keys"', async () => {
+    // The whole reason `state` exists alongside `configured`. An outage reports
+    // configured: false, and showing the setup steps would tell Ben to re-paste
+    // credentials that were never the problem — then leave him unable to tell
+    // whether he had pasted them wrong when it still didn't work.
+    statusMock.mockResolvedValue(
+      status({
+        configured: false,
+        state: 'unreachable',
+        detail: 'no socket at /run/cabinet-secrets/broker.sock — the cabinet-secrets service is not running',
+        items: [],
+        accounts: [],
+      }),
+    );
+    render(<Money />);
+
+    const panel = await screen.findByLabelText('Plaid setup');
+    expect(panel.textContent).toMatch(/can.t get to the service/i);
+    // No setup instructions at all — not the slugs, not the dashboard link.
+    expect(within(panel).queryByText('plaid-client-id')).toBeNull();
+    expect(within(panel).queryByRole('link', { name: 'https://secrets.benloe.com' })).toBeNull();
+    // The diagnosis is shown rather than swallowed: it names a system, never a
+    // secret, and this route is owner-only.
+    expect(panel.textContent).toContain('/run/cabinet-secrets/broker.sock');
+  });
+
+  it('an unknown status still reads as setup, not as an outage', async () => {
+    // Cold start, before the first successful poll. Erring toward the setup
+    // steps is right: they are harmless if the keys turn out to be there, and
+    // "the secrets service is down" would be a false alarm about my own health.
+    statusMock.mockResolvedValue(status({ configured: false, state: 'unknown', items: [], accounts: [] }));
+    render(<Money />);
+
+    const panel = await screen.findByLabelText('Plaid setup');
+    expect(within(panel).getByText('plaid-client-id')).toBeTruthy();
   });
 
   it('marks the environment so sandbox data can never read as real', async () => {

@@ -53,7 +53,7 @@ import { AgentRuntime } from './runtime/agent.js';
 import { buildCabinetMcpServer, cabinetAllowedTools } from './mcp/cabinet-server.js';
 import { buildExternalMcpServers } from './mcp/external.js';
 import { buildApp, safeCredKey } from './gateway/app.js';
-import { PlaidClient, CLIENT_ID_CRED, SECRET_CRED } from './integrations/plaid.js';
+import { PlaidClient, CLIENT_ID_CRED, SECRET_CRED, SECRETS_DASHBOARD } from './integrations/plaid.js';
 import { seedInsurancePlan } from './domains/healthcare.js';
 import { Scheduler } from './scheduler/index.js';
 import { buildJobs } from './scheduler/jobs.js';
@@ -122,17 +122,29 @@ startGithubAppTokenLoop();
 // need the same instance: the gateway serves Link and the webhook, the
 // scheduler syncs nightly, and the agent's money tools read through it.
 //
-// safeCredKey() is the single reader of CABINET_CRED_KEY — it caches, logs a
-// malformed key without taking the server down, and scrubs the variable out of
-// process.env so agent shells can't inherit it. Calling it here rather than
-// letting buildApp call it first is what makes the scrub happen exactly once,
-// early, with the key held only in closures from then on.
-const plaid = new PlaidClient(cabinet.db, safeCredKey());
-if (!plaid.configured()) {
-  console.warn(
-    `plaid: not configured (${plaid.environment}) — store '${CLIENT_ID_CRED}' and '${SECRET_CRED}' credentials to enable the money domain`,
-  );
-}
+// It no longer takes a decryption key: as of 2026-08-02 every Plaid credential
+// lives in cabinet-secrets and is reached over a unix socket (docs/SECRETS.md).
+// This process holds none of them.
+const plaid = new PlaidClient(cabinet.db);
+
+// Prime the broker status cache once, here, so configured() — which is
+// synchronous and called from routes, MCP tools and the scheduler — has a real
+// answer before the first request rather than the pessimistic 'unknown'
+// default. This is the ONLY awaited status poll; every later refresh runs in
+// the background off a stale TTL.
+void plaid.refreshStatus().then((status) => {
+  if (status.state === 'ready') return;
+  // Three states, three different next actions, so three different messages.
+  // A single "plaid not configured" line would have sent Ben to re-paste
+  // credentials during a socket outage that had nothing to do with them.
+  if (status.state === 'unreachable') {
+    console.warn(`plaid: secrets broker unreachable — ${status.detail ?? 'no detail'}`);
+  } else {
+    console.warn(
+      `plaid: not configured (${status.environment}) — store '${CLIENT_ID_CRED}' and '${SECRET_CRED}' at ${SECRETS_DASHBOARD} to enable the money domain`,
+    );
+  }
+});
 
 const cabinetMcp = buildCabinetMcpServer({
   db: cabinet.db,

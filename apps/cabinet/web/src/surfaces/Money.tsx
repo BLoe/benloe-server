@@ -117,31 +117,65 @@ function Copyable({ label, value }: { label: string; value: string }) {
   );
 }
 
+const SECRETS_DASHBOARD = 'https://secrets.benloe.com';
+
+/**
+ * The secrets service is down. NOT a setup panel wearing different words — the
+ * distinction is the entire reason `state` exists on the status payload.
+ *
+ * Both cases render as "Plaid isn't working", but one is Ben's move and the
+ * other is mine. Showing the setup steps during an outage would send him to
+ * re-paste credentials that were never the problem, and when that failed to fix
+ * it he would have no way to tell whether he had pasted them wrong.
+ */
+function BrokerDownPanel({ status }: { status: PlaidStatus }) {
+  return (
+    <section className="money-setup" aria-label="Plaid setup">
+      <SectionLabel n="01">Secrets service unreachable</SectionLabel>
+      <p className="money-setup-lede voice">
+        Your credentials are fine — I just can&rsquo;t get to the service that holds them, so no Plaid call can
+        be made right now. This is mine to fix, not yours. Nothing has been lost: balances and transactions are
+        exactly where the last sync left them, and they resume on their own once the socket is back.
+      </p>
+      {status.detail && (
+        <p className="money-step-body data" role="status">
+          {status.detail}
+        </p>
+      )}
+    </section>
+  );
+}
+
 /**
  * No API keys stored. Deliberately NOT a form: this page never touches a
- * secret. Keys go into the credential store through its own API, which is the
- * only thing that can encrypt them, and this panel just says so and hands
- * over the two URLs Plaid's dashboard needs.
+ * secret, and as of the 2026-08-02 credential split this process could not
+ * store one if it tried. Keys go into cabinet-secrets, which holds its own
+ * encryption key outside this server; this panel says where, and hands over the
+ * two URLs Plaid's dashboard needs.
  */
 function SetupPanel({ status }: { status: PlaidStatus }) {
   return (
     <section className="money-setup" aria-label="Plaid setup">
       <SectionLabel n="01">Not connected yet</SectionLabel>
       <p className="money-setup-lede voice">
-        I can&rsquo;t reach Plaid — the API keys aren&rsquo;t in the credential store. Nothing here is broken;
-        this is what the surface looks like before it has been given a key.
+        I can&rsquo;t reach Plaid — the API keys aren&rsquo;t in the vault yet. Nothing here is broken; this is
+        what the surface looks like before it has been given a key.
       </p>
 
       <ol className="money-setup-steps">
         <li>
           <span className="money-step-n data">1</span>
           <div>
-            <p className="money-step-title">Store the two keys as credentials</p>
+            <p className="money-step-title">Paste the two keys at the secrets dashboard</p>
             <p className="money-step-body">
               They must be named exactly <code className="data">plaid-client-id</code> and{' '}
-              <code className="data">plaid-secret</code>. Post them to <code className="data">/api/credentials</code>{' '}
-              (or ask me to, in a conversation) — that endpoint owns the encryption. I won&rsquo;t take a secret
-              typed into this page, and there&rsquo;s no field here to type one into.
+              <code className="data">plaid-secret</code>. They go in at{' '}
+              <a className="data" href={SECRETS_DASHBOARD} target="_blank" rel="noreferrer">
+                {SECRETS_DASHBOARD}
+              </a>
+              , which is the only thing here that can encrypt them — and the only thing that can read them back.
+              I never hold either value: I name a credential and that service makes the call. There&rsquo;s no
+              field on this page to type a secret into, and there won&rsquo;t be.
             </p>
           </div>
         </li>
@@ -164,8 +198,10 @@ function SetupPanel({ status }: { status: PlaidStatus }) {
           <div>
             <p className="money-step-title">Reload this page</p>
             <p className="money-step-body">
-              Once the keys are readable, &ldquo;Link an account&rdquo; appears here and the rest of the surface
-              fills in behind it.
+              Once the keys are in the vault, &ldquo;Link an account&rdquo; appears here and the rest of the
+              surface fills in behind it. Give it up to half a minute — I cache the answer to &ldquo;is Plaid set
+              up&rdquo; for thirty seconds so that every page, tool and scheduler tick isn&rsquo;t opening a
+              socket to ask.
             </p>
           </div>
         </li>
@@ -682,7 +718,14 @@ export function Money() {
       {note && <p className="money-note data">{note}</p>}
       {linkError && <p className="money-error data">{linkError}</p>}
 
-      {!status.configured ? (
+      {status.state === 'unreachable' ? (
+        // Checked before `configured`, because an unreachable secrets service
+        // reports configured: false — every caller uses that flag to decide
+        // whether attempting a call is worth it, and against a dead socket it
+        // isn't. The flag is right; it just isn't the whole answer, and the
+        // setup steps would be actively misleading advice here.
+        <BrokerDownPanel status={status} />
+      ) : !status.configured ? (
         <SetupPanel status={status} />
       ) : (
         <>

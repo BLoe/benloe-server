@@ -46,20 +46,27 @@ export interface SettingSpec {
   restartRequired?: boolean;
 }
 
+/*
+ * REMOVED 2026-08-02: 'plaid.env'.
+ *
+ * It shipped this morning and lasted about four hours, which is worth writing
+ * down rather than quietly deleting. When Cabinet held the Plaid credentials,
+ * choosing the environment here was correct. It no longer does — cabinet-secrets
+ * holds them, and a Plaid key pair belongs to exactly one environment, so the
+ * broker's config is the only place where the environment and the keys that
+ * match it can be changed together.
+ *
+ * Leaving the control in place would have made it possible to select
+ * 'production' while the broker still held sandbox keys. Every call would then
+ * fail as an authentication error pointing at the credentials rather than at
+ * the mismatch — the worst kind of wrong, a setting that looks applied and
+ * silently isn't. That is exactly the failure the `source` field on this page
+ * exists to prevent, one level up.
+ *
+ * The value is still SHOWN — PlaidClient.environment reflects
+ * /v1/plaid/status — it is simply not editable from here.
+ */
 export const SETTING_CATALOG: SettingSpec[] = [
-  {
-    key: 'plaid.env',
-    group: 'Plaid',
-    label: 'Environment',
-    description:
-      "Which Plaid environment to call. 'sandbox' uses fake test banks and fake data; 'production' connects real " +
-      'accounts. The Client ID and Secret are environment-specific — the sandbox pair will not authenticate against ' +
-      'production, and vice versa.',
-    type: 'enum',
-    options: ['sandbox', 'production'],
-    default: 'sandbox',
-    envVar: 'PLAID_ENV',
-  },
   {
     key: 'public.origin',
     group: 'Plaid',
@@ -174,29 +181,16 @@ export function normaliseSetting(spec: SettingSpec, raw: string): string {
 /**
  * Rules that depend on the rest of the database rather than on the value
  * alone. Returns a human-readable refusal, or null to allow.
+ *
+ * Currently empty, and deliberately kept rather than deleted. Its only rule
+ * guarded 'plaid.env' — refusing an environment switch while banks were linked,
+ * because access tokens only work in the environment that issued them. That
+ * setting moved to the broker (see the note above SETTING_CATALOG), taking its
+ * guard with it. The hook stays because the next setting with a cross-table
+ * precondition should land in one obvious place, and because both callers
+ * (PUT and DELETE in settingsRoutes.ts) already route through it.
  */
-export function blockingReason(db: Database.Database, key: string, value: string): string | null {
-  if (key !== 'plaid.env') return null;
-
-  const current = getSetting(db, key);
-  if (current === value) return null;
-
-  // Plaid access tokens are environment-scoped. Flipping this while banks are
-  // linked does not fail here — it fails at the next sync, as
-  // INVALID_ACCESS_TOKEN against every institution at once, which reads like
-  // the banks all revoked consent simultaneously rather than like a settings
-  // change. The tokens would also be unrecoverable: they can only be revoked
-  // through the environment that issued them, so switching back afterwards is
-  // the only way to clean them up, and nothing on screen would suggest that.
-  const linked = db
-    .prepare("SELECT COUNT(*) AS n FROM plaid_item WHERE status != 'revoked'")
-    .get() as { n: number };
-  if (linked.n > 0) {
-    return (
-      `Cannot switch to '${value}' while ${linked.n} account connection${linked.n === 1 ? ' is' : 's are'} linked — ` +
-      'their access tokens only work in the environment that issued them. Unlink first, then switch.'
-    );
-  }
+export function blockingReason(_db: Database.Database, _key: string, _value: string): string | null {
   return null;
 }
 
