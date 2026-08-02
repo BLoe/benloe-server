@@ -178,10 +178,9 @@ function Rail({
         })}
       </ul>
 
-      <div className="px-4 pt-6 pb-2">
-        <div className="stat-label">Sections</div>
-      </div>
-      <ul className="px-2 space-y-0.5">
+      {/* No heading — the section list is self-evident, and the label was just
+          taking up room. The name stays for screen readers. */}
+      <ul className="px-2 pt-6 space-y-0.5" aria-label="Sections">
         {NAV.map((n) => (
           <li key={n.label}>
             <NavLink
