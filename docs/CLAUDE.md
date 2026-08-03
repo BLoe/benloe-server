@@ -103,7 +103,7 @@ Current secrets:
 | kickball-api | 3009 | apps/kickball | Kickball lineups |
 | sleeper-ui | 3010 | apps/sleeper-ui | Sleeper League Desk |
 | cabinet-secrets | 3011 | apps/cabinet | Cabinet secrets service |
-| waker-api | 3012 | apps/waker | Waker fantasy decision desk (next free port: 3013) |
+| waker-api | 3012 | apps/waker | Waker — fantasy decision desk (next free port: 3013) |
 
 Check services: `pm2 list`
 
