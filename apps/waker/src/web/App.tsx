@@ -4,6 +4,7 @@ import { useApi, type Me } from './api';
 import SignIn from './pages/SignIn';
 import { ErrorNote, Loading } from './components';
 import Now from './pages/Now';
+import Horizon from './pages/Horizon';
 
 /**
  * Three horizons, not five entity pages.
@@ -179,7 +180,7 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         <Routes>
           <Route index element={<Now league={league} />} />
           <Route path="season" element={<Placeholder title="Season" />} />
-          <Route path="horizon" element={<Placeholder title="Horizon" />} />
+          <Route path="horizon" element={<Horizon league={league} />} />
         </Routes>
       </main>
     </div>

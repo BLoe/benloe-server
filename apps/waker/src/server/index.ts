@@ -26,6 +26,7 @@ import { parseAllowList } from './loginPolicy.js';
 import { loadMarket, type Market } from './market.js';
 import { readCycle } from '../lib/analysis/cycle.js';
 import { buildFeed } from './feed.js';
+import { orientationOf } from '../lib/analysis/orientation.js';
 import { indexProjections } from '../lib/projections.js';
 import {
   COOKIE_NAME,
@@ -345,6 +346,88 @@ app.get(
       picks: market.crosswalk.picks.length,
       players: Object.keys(players).length,
     });
+  })
+);
+
+/**
+ * The board: every rostered player as a point in value-by-age space.
+ *
+ * Returns the whole league, not just one roster, because the shape of your
+ * roster only means something against the shapes of the others.
+ */
+app.get(
+  '/api/league/:leagueId/board',
+  requireSession,
+  wrap(async (req, res) => {
+    const { leagueId } = req.params;
+    const session: Session = (req as any).session;
+
+    const [league, rosters, users, players] = await Promise.all([
+      loadLeague(leagueId),
+      loadRosters(leagueId),
+      loadLeagueUsers(leagueId),
+      loadPlayers(),
+    ]);
+    const [market, projections] = await Promise.all([
+      loadMarketFor(league, players),
+      loadProjections(league.season, league.scoring_settings),
+    ]);
+
+    const nameOf = new Map<string, string>(
+      users.map((u: any) => [u.user_id, u.metadata?.team_name || u.display_name || 'Unnamed'])
+    );
+    const mine = rosters.find(
+      (r: any) => r.owner_id === session.userId || r.co_owners?.includes(session.userId)
+    );
+
+    const teams = rosters.map((r: any) => {
+      const taxi = new Set<string>(r.taxi ?? []);
+      const reserve = new Set<string>(r.reserve ?? []);
+      const roster = (r.players ?? [])
+        .map((id: string) => {
+          const p = players[id];
+          if (!p) return null;
+          const v = market.crosswalk.bySleeperId.get(id);
+          const proj = projections[id];
+          const games = Math.min(17, Math.max(1, proj?.games ?? 17));
+          return {
+            id,
+            name: p.name,
+            position: p.pos,
+            team: p.team,
+            age: p.age,
+            perWeek: (proj?.points ?? 0) / games,
+            dynasty: v?.dynasty ?? null,
+            redraft: v?.redraft ?? null,
+            trend7Day: v?.trend7Day ?? null,
+            onTaxi: taxi.has(id),
+            onIr: reserve.has(id),
+          };
+        })
+        .filter(Boolean);
+
+      const orientation = orientationOf(
+        roster.map((p: any) => ({ playerId: p.id, dynasty: p.dynasty, redraft: p.redraft }))
+      );
+
+      return {
+        rosterId: r.roster_id,
+        teamName: nameOf.get(r.owner_id) ?? `Roster ${r.roster_id}`,
+        wins: r.settings?.wins ?? 0,
+        losses: r.settings?.losses ?? 0,
+        mine: r.roster_id === mine?.roster_id,
+        orientation: {
+          index: orientation.index,
+          label: orientation.label,
+          dynastyValue: orientation.dynastyValue,
+          redraftValue: orientation.redraftValue,
+          unpriced: orientation.unpriced,
+        },
+        players: roster,
+      };
+    });
+
+    res.json({ teams, myRosterId: mine?.roster_id ?? null, coverage: market.health });
   })
 );
 
