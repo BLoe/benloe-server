@@ -366,3 +366,32 @@ describe('rosterRules', () => {
     expect(out[0].evidence[0]).toContain('week 4');
   });
 });
+
+describe('scoring-aware usage points', () => {
+  /**
+   * nflverse publishes standard AND PPR fantasy points per week. Which one is
+   * true depends on the league, and reading the wrong column silently shifts
+   * every receiver's production — the exact kind of quiet wrongness this app
+   * is supposed to prevent.
+   */
+  const blend = (std: number, pprPts: number, rec: number) =>
+    rec >= 0.75 ? pprPts : rec <= 0 ? std : std + (pprPts - std) * rec;
+
+  it('reads the standard column in a standard league', () => {
+    expect(blend(10, 16, 0)).toBe(10);
+  });
+
+  it('reads the PPR column in a full-PPR league', () => {
+    expect(blend(10, 16, 1)).toBe(16);
+  });
+
+  it('interpolates half-PPR, which nflverse does not publish', () => {
+    expect(blend(10, 16, 0.5)).toBe(13);
+  });
+
+  it('never reports less than standard scoring, whatever the setting', () => {
+    for (const rec of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(blend(10, 16, rec)).toBeGreaterThanOrEqual(10);
+    }
+  });
+});

@@ -5,6 +5,7 @@ import {
   quantile,
   usageScore,
   usageTrend,
+  verdictFor,
   type PlayerUsageInput,
 } from '../src/lib/analysis/divergence.js';
 import {
@@ -987,5 +988,105 @@ describe('quantile', () => {
   it('clamps a percentile outside 0-1', () => {
     expect(quantile([0, 10], 5)).toBe(10);
     expect(quantile([0, 10], -3)).toBe(0);
+  });
+});
+
+describe('findTrades: only deals that are actually worth making', () => {
+  const levels = levelsFor({ QB: 10, RB: 8, WR: 8, TE: 5 });
+  const p = (playerId: string, position: string, points: number) => ({
+    playerId,
+    name: playerId,
+    position,
+    points,
+    value: 1000,
+  });
+  const ONE_FLEX = ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'BN'];
+
+  const mine = {
+    rosterId: 1,
+    teamName: 'Mine',
+    players: [p('qb1', 'QB', 22), p('qb2', 'QB', 19), p('rb1', 'RB', 15), p('rb2', 'RB', 14)],
+  };
+
+  it('does not offer a player who would not improve the other roster', () => {
+    // They already start a quarterback just as good. The surplus/need test
+    // pairs them anyway; the gain filter is what stops the proposal.
+    const equal = {
+      rosterId: 2,
+      teamName: 'Equal',
+      players: [p('theirQb', 'QB', 19.2), p('trb', 'RB', 15), p('tte', 'TE', 12)],
+    };
+    const matches = findTrades(mine, [equal], ONE_FLEX, levels);
+    expect(matches.every((m) => m.theirGain > 0.5 || m.yourGain > 0.5)).toBe(true);
+  });
+
+  it('still offers it when the upgrade is real', () => {
+    const needy = {
+      rosterId: 3,
+      teamName: 'Needy',
+      players: [p('theirQb', 'QB', 5), p('trb', 'RB', 15), p('tte', 'TE', 12)],
+    };
+    const matches = findTrades(mine, [needy], ONE_FLEX, levels);
+    expect(matches.length).toBeGreaterThan(0);
+    expect(matches[0].theirGain).toBeGreaterThan(0.5);
+  });
+
+  it('treats a sub-half-point upgrade as noise, not an upgrade', () => {
+    const marginal = {
+      rosterId: 4,
+      teamName: 'Marginal',
+      players: [p('theirQb', 'QB', 18.7), p('trb', 'RB', 15), p('tte', 'TE', 12)],
+    };
+    // 19 - 18.7 = 0.3 a week; the projections cannot resolve that.
+    expect(findTrades(mine, [marginal], ONE_FLEX, levels)).toEqual([]);
+  });
+});
+
+describe('verdictFor: the percentile test alone fails at the tails', () => {
+  it('calls a star whose percentile has run out of room', () => {
+    // 99th percentile usage, 85th percentile production: divergence is only
+    // 0.14, under the percentile threshold, but he is scoring eight a game
+    // less than his usage says. The percentile has nowhere left to move.
+    expect(verdictFor(0.14, 8.2)).toBe('buy');
+  });
+
+  it('still calls a mid-pack player the points gap would miss', () => {
+    // A big percentile move on small absolute numbers — the case the points
+    // test cannot see.
+    expect(verdictFor(0.35, 2.1)).toBe('buy');
+    expect(verdictFor(-0.35, -2.1)).toBe('sell');
+  });
+
+  it('says nothing when neither test clears', () => {
+    expect(verdictFor(0.1, 1.5)).toBe('fair');
+    expect(verdictFor(-0.1, -1.5)).toBe('fair');
+  });
+
+  it('refuses to call it when the two tests disagree in direction', () => {
+    // A player cannot be under-producing on one measure and over-producing on
+    // the other; that combination is noise, not a signal.
+    expect(verdictFor(0.4, -5)).toBe('fair');
+    expect(verdictFor(-0.4, 5)).toBe('fair');
+  });
+
+  it('is symmetric between buying and selling', () => {
+    expect(verdictFor(0.3, 4)).toBe('buy');
+    expect(verdictFor(-0.3, -4)).toBe('sell');
+  });
+});
+
+describe('findDivergence: the tail case end to end', () => {
+  it('does not leave the biggest gap on the page labelled "in line"', () => {
+    // One receiver on enormous usage scoring badly, in a field where everyone
+    // else is consistent. His percentile gap is small because he is already at
+    // the ceiling of usage; his points gap is not.
+    const field = [
+      mk('star', 'WR', 0.98, 6),
+      ...['a', 'b', 'c', 'd', 'e'].map((id, i) => mk(id, 'WR', 0.9 - i * 0.15, 16 - i * 2)),
+    ];
+    const rows = findDivergence(field, 4);
+    const star = rows.find((r) => r.playerId === 'star')!;
+    expect(star.pointsGap).toBeGreaterThan(3);
+    expect(star.verdict).toBe('buy');
   });
 });

@@ -48,9 +48,11 @@ const args = Object.fromEntries(
  */
 const ROUTES = [
   { name: 'now', path: '', waitFor: 'text=What needs you' },
-  { name: 'season', path: 'season', waitFor: 'text=/playoff|Playoff/' },
+  { name: 'season', path: 'season', waitFor: 'text=seasons simulated' },
   { name: 'horizon', path: 'horizon', waitFor: 'text=The board' },
-  { name: 'tape', path: 'tape', waitFor: 'text=/usage|Usage/' },
+  // Not 'usage': that is the nav gloss, which is hidden on a phone, and
+  // waitForSelector waits for VISIBILITY. Exactly the trap in the header above.
+  { name: 'tape', path: 'tape', waitFor: 'text=ranked' },
   // The tide strip in its in-season shape, which the preseason fixture cannot
   // otherwise reach. The clock and week are pinned, so this is deterministic.
   {

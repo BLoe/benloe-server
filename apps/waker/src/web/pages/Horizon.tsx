@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useApi } from '../api';
 import { ErrorNote, Loading, Sheet } from '../components';
 import { Board, BoardTable, type BoardPlayer, type ValueMode } from '../Board';
+import { LedgerPanel } from '../Ledger';
 
 interface BoardTeam {
   rosterId: number;
@@ -85,6 +86,8 @@ export default function Horizon({ league }: { league: { leagueId: string } }) {
       <Sheet title="Where every roster sits" note="Built to win now on the right, built for later on the left. Bar length is total dynasty value, so a big rebuild and a thin one are visibly different things.">
         <OrientationRule teams={teams} />
       </Sheet>
+
+      <LedgerPanel league={league} />
 
       <Sheet title={`${selected.teamName} in full`}>
         <BoardTable players={selected.players} mode={mode} />

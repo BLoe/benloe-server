@@ -36,7 +36,9 @@ export function TideStrip({ cycle }: { cycle: CyclePosition }) {
         <svg
           viewBox={`0 0 ${W} ${H + LABELS}`}
           className="w-full"
-          style={{ maxHeight: 168 }}
+          // preserveAspectRatio="none" would flatten the curve, which is the
+          // whole argument; a floor keeps the shape and the height instead.
+          style={{ minHeight: 108, maxHeight: 168 }}
           role="img"
           aria-label={`${cycle.title}. ${Math.round(
             cycle.agency * 100
@@ -129,7 +131,13 @@ function SlackWater({ cycle }: { cycle: CyclePosition }) {
       </div>
 
       <div className="px-4 pb-3 pt-2">
-        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 56 }} aria-hidden="true">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="w-full"
+          preserveAspectRatio="none"
+          style={{ minHeight: 40, maxHeight: 56 }}
+          aria-hidden="true"
+        >
           <path d={`M 0 8 L ${W} 8 L ${W} ${H} L 0 ${H} Z`} fill="var(--depth)" opacity="0.13" />
           <line x1="0" y1="8" x2={W} y2="8" stroke="var(--depth)" strokeWidth="1.75" />
           <line x1="0" y1={H} x2={W} y2={H} stroke="var(--rule)" strokeWidth="1" />

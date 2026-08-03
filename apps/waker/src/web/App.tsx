@@ -5,6 +5,8 @@ import SignIn from './pages/SignIn';
 import { ErrorNote, Loading } from './components';
 import Now from './pages/Now';
 import Horizon from './pages/Horizon';
+import Season from './pages/Season';
+import TapePage from './pages/TapePage';
 
 /**
  * Three horizons, not five entity pages.
@@ -17,6 +19,7 @@ import Horizon from './pages/Horizon';
  */
 const HORIZONS = [
   { to: '', label: 'Now', end: true, gloss: 'days' },
+  { to: 'tape', label: 'Tape', gloss: 'usage' },
   { to: 'season', label: 'Season', gloss: 'weeks' },
   { to: 'horizon', label: 'Horizon', gloss: 'years' },
 ];
@@ -142,7 +145,7 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
               to={`/l/${league.leagueId}/${h.to}`}
               end={h.end}
               className={({ isActive }) =>
-                `relative px-4 py-2 -mb-px border-l border-r border-t transition-colors ${
+                `relative flex items-center px-4 py-2 -mb-px border-l border-r border-t transition-colors ${
                   isActive
                     ? 'border-[var(--rule-strong)] bg-[var(--paper)]'
                     : 'border-transparent hover:bg-[var(--band)]'
@@ -150,6 +153,9 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
               }
               style={({ isActive }) => ({
                 borderBottomColor: isActive ? 'var(--paper)' : 'transparent',
+                // A thumb cut you cannot hit is not navigation. 44px is the
+                // long-standing touch guideline and these were coming out at 38.
+                minHeight: 44,
               })}
             >
               {({ isActive }) => (
@@ -179,7 +185,8 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       <main className="mx-auto max-w-[1180px] px-4 py-5 space-y-5">
         <Routes>
           <Route index element={<Now league={league} />} />
-          <Route path="season" element={<Placeholder title="Season" />} />
+          <Route path="season" element={<Season league={league} />} />
+          <Route path="tape" element={<TapePage league={league} />} />
           <Route path="horizon" element={<Horizon league={league} />} />
         </Routes>
       </main>
@@ -187,13 +194,4 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   );
 }
 
-function Placeholder({ title }: { title: string }) {
-  return (
-    <div className="sheet px-4 py-8">
-      <div className="label">{title}</div>
-      <p className="slab mt-1" style={{ fontSize: 'var(--t-lede)' }}>
-        Not built yet.
-      </p>
-    </div>
-  );
-}
+
