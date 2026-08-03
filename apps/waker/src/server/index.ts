@@ -21,8 +21,9 @@ import { readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as S from '../lib/sleeper.js';
-import { cached, TTL, stats, invalidate } from './cache.js';
+import { cached, diskCached, TTL, stats, invalidate } from './cache.js';
 import { parseAllowList } from './loginPolicy.js';
+import { loadMarket, type Market } from './market.js';
 import {
   COOKIE_NAME,
   cookieHeader,
@@ -44,6 +45,8 @@ export const CACHE_DIR = process.env.WAKER_CACHE_DIR || join(ROOT, '.cache');
 
 const PORT = Number(process.env.PORT || 3012);
 const SOURCE = (process.env.WAKER_SOURCE || 'live') as 'live' | 'fixtures';
+/** Which NFL season the captured fixtures describe. See scripts/capture-fixtures. */
+const FIXTURE_SEASON = '2025';
 
 /** Signs session cookies. Shared with the other apps on this box. */
 const SESSION_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || '';
@@ -153,6 +156,8 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/cache/flush', (_req, res) => {
   invalidate();
+  playerMemo = null;
+  marketMemo.clear();
   res.json({ ok: true });
 });
 
@@ -196,6 +201,113 @@ app.get(
         status: l.status,
         totalRosters: l.total_rosters,
       })),
+    });
+  })
+);
+
+/* ------------------------------------------------------------------ *
+ * League data
+ * ------------------------------------------------------------------ */
+
+async function loadLeague(leagueId: string) {
+  if (useFixtures()) return readFixture('league');
+  return cached(`league:${leagueId}`, TTL.league, () => S.getLeague(leagueId));
+}
+
+async function loadRosters(leagueId: string) {
+  if (useFixtures()) return readFixture('rosters');
+  return cached(`rosters:${leagueId}`, TTL.rosters, () => S.getRosters(leagueId));
+}
+
+async function loadLeagueUsers(leagueId: string) {
+  if (useFixtures()) return readFixture('users');
+  return cached(`users:${leagueId}`, TTL.league, () => S.getLeagueUsers(leagueId));
+}
+
+/**
+ * Slim player index. The full dump is ~14MB of mostly-inactive players; this
+ * keeps the fields any Waker view actually reads.
+ */
+export interface PlayerRow {
+  id: string;
+  name: string;
+  pos: string | null;
+  team: string | null;
+  age: number | null;
+  exp: number | null;
+  status: string | null;
+  bye: number | null;
+  rank: number | null;
+}
+
+let playerMemo: Record<string, PlayerRow> | null = null;
+
+async function loadPlayers(): Promise<Record<string, PlayerRow>> {
+  if (playerMemo) return playerMemo;
+  const full: Record<string, any> = useFixtures()
+    ? await readFixture('players')
+    : await diskCached(CACHE_DIR, 'players-full', TTL.players, () => S.getAllPlayers());
+
+  const slim: Record<string, PlayerRow> = {};
+  for (const [id, p] of Object.entries(full)) {
+    if (!p.active && !p.team) continue;
+    slim[id] = {
+      id,
+      name: p.full_name ?? `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim(),
+      pos: p.position ?? null,
+      team: p.team ?? null,
+      age: p.age ?? null,
+      exp: p.years_exp ?? null,
+      status: p.injury_status ?? null,
+      bye: p.bye_week ?? null,
+      rank: p.search_rank ?? null,
+    };
+  }
+  playerMemo = slim;
+  return slim;
+}
+
+/** The third-party layer for one league, memoised per league shape. */
+const marketMemo = new Map<string, Promise<Market>>();
+
+async function loadMarketFor(league: any, players: Record<string, PlayerRow>): Promise<Market> {
+  const numQbs = (league.roster_positions ?? []).filter(
+    (p: string) => p === 'QB' || p === 'SUPER_FLEX'
+  ).length;
+  const ppr = league.scoring_settings?.rec ?? 0;
+  const key = `${league.season}-${numQbs}-${league.total_rosters}-${ppr}`;
+
+  let hit = marketMemo.get(key);
+  if (!hit) {
+    hit = loadMarket(Object.values(players), league.season, {
+      cacheDir: CACHE_DIR,
+      fixtures: useFixtures(),
+      fixtureDir: FIXTURES,
+      fixtureSeason: FIXTURE_SEASON,
+      numQbs: Math.max(1, numQbs),
+      numTeams: league.total_rosters ?? 12,
+      ppr,
+    });
+    marketMemo.set(key, hit);
+  }
+  return hit;
+}
+
+/**
+ * Coverage report. Not a debug route — the UI uses it to say which sources are
+ * actually answering rather than implying complete data.
+ */
+app.get(
+  '/api/league/:leagueId/sources',
+  requireSession,
+  wrap(async (req, res) => {
+    const league = await loadLeague(req.params.leagueId);
+    const players = await loadPlayers();
+    const market = await loadMarketFor(league, players);
+    res.json({
+      health: market.health,
+      picks: market.crosswalk.picks.length,
+      players: Object.keys(players).length,
     });
   })
 );
