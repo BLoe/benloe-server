@@ -25,6 +25,8 @@ import { cached, diskCached, TTL, stats, invalidate } from './cache.js';
 import { parseAllowList } from './loginPolicy.js';
 import { loadMarket, type Market } from './market.js';
 import { readCycle } from '../lib/analysis/cycle.js';
+import { buildFeed } from './feed.js';
+import { indexProjections } from '../lib/projections.js';
 import {
   COOKIE_NAME,
   cookieHeader,
@@ -159,6 +161,7 @@ app.post('/api/cache/flush', (_req, res) => {
   invalidate();
   playerMemo = null;
   marketMemo.clear();
+  projectionMemo.clear();
   res.json({ ok: true });
 });
 
@@ -273,6 +276,33 @@ async function loadPlayers(): Promise<Record<string, PlayerRow>> {
   return slim;
 }
 
+/** Rotowire season projections, indexed and memoised. */
+const projectionMemo = new Map<string, Record<string, { points: number; games: number | null }>>();
+
+async function loadProjections(season: string, scoring: Record<string, number> | undefined) {
+  const key = `${season}:${scoringKey(scoring)}`;
+  const hit = projectionMemo.get(key);
+  if (hit) return hit;
+
+  const raw = useFixtures()
+    ? await readFixture('projections')
+    : await diskCached(CACHE_DIR, `projections-${season}`, 6 * 60 * 60_000, () =>
+        S.getProjections(season, null)
+      ).catch(() => []);
+
+  const index = indexProjections(raw, scoringKey(scoring));
+  projectionMemo.set(key, index);
+  return index;
+}
+
+/** Which projected-points field matches this league's scoring. */
+function scoringKey(scoring: Record<string, number> | undefined): 'pts_ppr' | 'pts_half_ppr' | 'pts_std' {
+  const rec = scoring?.rec ?? 0;
+  if (rec >= 0.75) return 'pts_ppr';
+  if (rec >= 0.25) return 'pts_half_ppr';
+  return 'pts_std';
+}
+
 /** The third-party layer for one league, memoised per league shape. */
 const marketMemo = new Map<string, Promise<Market>>();
 
@@ -315,6 +345,75 @@ app.get(
       picks: market.crosswalk.picks.length,
       players: Object.keys(players).length,
     });
+  })
+);
+
+/**
+ * The feed: what needs you, ranked by what is at stake.
+ *
+ * Everything the app knows meets here. Each source is already best-effort, so a
+ * dead upstream removes its cards rather than the page.
+ */
+app.get(
+  '/api/league/:leagueId/feed',
+  requireSession,
+  wrap(async (req, res) => {
+    const { leagueId } = req.params;
+    const session: Session = (req as any).session;
+
+    const [league, rosters, players, state] = await Promise.all([
+      loadLeague(leagueId),
+      loadRosters(leagueId),
+      loadPlayers(),
+      useFixtures() ? readFixture('state') : cached('state', TTL.state, () => S.getState()),
+    ]);
+
+    const roster = rosters.find(
+      (r: any) => r.owner_id === session.userId || r.co_owners?.includes(session.userId)
+    );
+    if (!roster) {
+      return res.status(404).json({ error: 'You do not have a roster in this league.' });
+    }
+
+    const [market, projections] = await Promise.all([
+      loadMarketFor(league, players),
+      loadProjections(league.season, league.scoring_settings),
+    ]);
+
+    const inSeason = state.season_type === 'regular' || state.season_type === 'post';
+    const week: number = state.week ?? 0;
+    const phase = readCycle({
+      now: new Date(),
+      gamesScheduled: inSeason,
+      periodLabel: inSeason ? `Week ${week}` : 'Preseason',
+    }).phase;
+
+    // The usage window.
+    //
+    // In season, four recent games: long enough that one blowout does not
+    // define a player, short enough to catch a role that changed a month ago.
+    //
+    // Out of season, the whole season that was played — and deliberately NOT
+    // through week 18. Week 18 is the one where playoff teams rest their
+    // starters, and reading it as usage produced a feed full of "Michael
+    // Pittman is being used more than he is scoring" at 2.1 points a game,
+    // which was an artefact of him sitting out, not a signal about his role.
+    const throughWeek = inSeason && week > 0 ? week : 17;
+    const usageWindow = inSeason && week > 0 ? 4 : 17;
+
+    res.json(
+      buildFeed({
+        phase,
+        roster,
+        rosters,
+        league,
+        players,
+        projections,
+        market,
+        throughWeek,
+        usageWindow,
+      })
+    );
   })
 );
 

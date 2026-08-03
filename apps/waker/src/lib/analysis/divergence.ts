@@ -44,6 +44,16 @@ export interface DivergenceRow {
   targetShare: number | null;
   /** Points per game over the window. */
   pointsPerGame: number;
+  /**
+   * What a player at this usage level typically scores at this position —
+   * read off the production distribution at his usage percentile.
+   */
+  expectedPointsPerGame: number;
+  /**
+   * expectedPointsPerGame - pointsPerGame. Real points per game, not a
+   * percentile: this is what the divergence is actually worth.
+   */
+  pointsGap: number;
   /** Percentile of this player's usage within his position, 0-1. */
   usageRank: number;
   /** Percentile of his production within his position, 0-1. */
@@ -80,6 +90,24 @@ export const DIVERGENCE_THRESHOLD = 0.2;
 
 /** Games needed before a divergence is worth reporting at all. */
 export const MIN_GAMES = 2;
+
+/**
+ * Positions this method can actually speak about.
+ *
+ * Quarterbacks are excluded, and the reason is worth stating because the
+ * omission looks arbitrary. Snap share is the backbone of the usage score, and
+ * every starting quarterback plays essentially every snap — so their usage
+ * percentiles collapse into a tie near the top while their production spreads
+ * out normally. The method then reads every below-average quarterback as
+ * "heavily used but not scoring", which is not a finding, it is an artefact of
+ * measuring a variable that does not vary. It put four quarterbacks at the top
+ * of the buy list on first run.
+ *
+ * A quarterback's real usage signal is pass attempts and designed runs relative
+ * to his own offence, which is a different measurement; until that exists here,
+ * saying nothing is the honest answer.
+ */
+export const RANKABLE_POSITIONS = new Set(['RB', 'WR', 'TE']);
 
 const mean = (xs: number[]): number =>
   xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
@@ -164,6 +192,7 @@ export function findDivergence(
   const byPosition = new Map<string, typeof summaries>();
   for (const s of summaries) {
     if (s.games < MIN_GAMES) continue;
+    if (!RANKABLE_POSITIONS.has(s.position)) continue;
     const bucket = byPosition.get(s.position);
     if (bucket) bucket.push(s);
     else byPosition.set(s.position, [s]);
@@ -183,12 +212,19 @@ export function findDivergence(
       const productionRank = percentileRank(g.pointsPerGame, pointsSorted);
       const divergence = usageRank - productionRank;
 
+      // Put the divergence back into points. A percentile gap is not something
+      // a manager can weigh against anything else in the app; "he is scoring
+      // four a game less than his usage says he should" is.
+      const expectedPointsPerGame = quantile(pointsSorted, usageRank);
+
       out.push({
         playerId: g.playerId,
         position,
         snapShare: g.snapShare,
         targetShare: g.targetShare,
         pointsPerGame: g.pointsPerGame,
+        expectedPointsPerGame,
+        pointsGap: expectedPointsPerGame - g.pointsPerGame,
         usageRank,
         productionRank,
         divergence,
@@ -206,6 +242,22 @@ export function findDivergence(
   // Strongest signal first, in both directions — the biggest sell is as
   // actionable as the biggest buy.
   return out.sort((a, b) => Math.abs(b.divergence) - Math.abs(a.divergence));
+}
+
+/**
+ * The value at a given percentile of a sorted-ascending list, interpolated.
+ *
+ * Used to answer "what does a player at this usage level normally score",
+ * which is what turns a percentile gap back into points.
+ */
+export function quantile(sorted: number[], p: number): number {
+  if (!sorted.length) return 0;
+  if (sorted.length === 1) return sorted[0];
+  const pos = Math.max(0, Math.min(1, p)) * (sorted.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
 /**
