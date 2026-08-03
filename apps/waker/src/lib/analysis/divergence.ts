@@ -88,6 +88,24 @@ export const WINDOW = 4;
  */
 export const DIVERGENCE_THRESHOLD = 0.2;
 
+/**
+ * The same test in points, which is what actually governs.
+ *
+ * A percentile threshold fails at the tails, and the tails are where the most
+ * valuable calls live. A receiver at the 99th percentile of usage scoring at
+ * the 85th has a divergence of only 0.14 — under the percentile threshold — but
+ * is scoring eight points a game less than his usage says he should. The
+ * percentile simply has nowhere left to move.
+ *
+ * That produced a genuinely incoherent screen: Justin Jefferson sat at the top
+ * of a list headed "26 to buy, 30 to sell" labelled "in line", carrying the
+ * largest number on the page. Either test alone is wrong; a player qualifies if
+ * he clears EITHER, because each catches what the other misses — the percentile
+ * catches a mid-pack player whose absolute points are small, and the points
+ * gap catches a star the percentile has run out of room to describe.
+ */
+export const POINTS_GAP_THRESHOLD = 3;
+
 /** Games needed before a divergence is worth reporting at all. */
 export const MIN_GAMES = 2;
 
@@ -229,12 +247,7 @@ export function findDivergence(
         productionRank,
         divergence,
         games: g.games,
-        verdict:
-          divergence >= DIVERGENCE_THRESHOLD
-            ? 'buy'
-            : divergence <= -DIVERGENCE_THRESHOLD
-              ? 'sell'
-              : 'fair',
+        verdict: verdictFor(divergence, expectedPointsPerGame - g.pointsPerGame),
       });
     }
   }
@@ -242,6 +255,25 @@ export function findDivergence(
   // Strongest signal first, in both directions — the biggest sell is as
   // actionable as the biggest buy.
   return out.sort((a, b) => Math.abs(b.divergence) - Math.abs(a.divergence));
+}
+
+/**
+ * Buy, sell, or nothing worth saying.
+ *
+ * The two tests must agree in direction — a player cannot be under-producing on
+ * one measure and over-producing on the other — and clearing either one is
+ * enough. See POINTS_GAP_THRESHOLD for why one test alone will not do.
+ */
+export function verdictFor(divergence: number, pointsGap: number): 'buy' | 'sell' | 'fair' {
+  const bigPercentile = Math.abs(divergence) >= DIVERGENCE_THRESHOLD;
+  const bigPoints = Math.abs(pointsGap) >= POINTS_GAP_THRESHOLD;
+  if (!bigPercentile && !bigPoints) return 'fair';
+
+  // Under-producing shows as a positive divergence and a positive gap; both
+  // must point the same way before a call is made.
+  if (divergence > 0 && pointsGap > 0) return 'buy';
+  if (divergence < 0 && pointsGap < 0) return 'sell';
+  return 'fair';
 }
 
 /**

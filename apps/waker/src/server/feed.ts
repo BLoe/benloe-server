@@ -134,6 +134,12 @@ function replacementPerWeek(
 function buildSignals(input: FeedInput, mineIds: Set<string>): MarketSignal[] {
   const { market, players, throughWeek } = input;
 
+  // nflverse files BOTH standard and PPR fantasy points. Reading the standard
+  // column in a PPR league understates every receiver's production, which
+  // inflates their apparent divergence and turns half the receiving corps into
+  // false buy signals. The league's own scoring decides which column is true.
+  const ppr = input.league.scoring_settings?.rec ?? 0;
+
   const usageInputs: PlayerUsageInput[] = [];
   for (const [id, usage] of market.usage) {
     const p = players[id];
@@ -142,7 +148,11 @@ function buildSignals(input: FeedInput, mineIds: Set<string>): MarketSignal[] {
       playerId: id,
       position: p.pos,
       snaps: market.snaps.get(id)?.weeks ?? [],
-      usage: usage.weeks,
+      usage: usage.weeks.map((w) => ({
+        ...w,
+        // Half-PPR is interpolated: nflverse publishes only the two ends.
+        points: ppr >= 0.75 ? w.pointsPpr : ppr <= 0 ? w.points : w.points + (w.pointsPpr - w.points) * ppr,
+      })),
     });
   }
 

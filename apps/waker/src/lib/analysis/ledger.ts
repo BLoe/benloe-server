@@ -158,6 +158,14 @@ export function standings(
   return out.sort((a, b) => b.depth - a.depth);
 }
 
+/**
+ * How much a side must gain before the deal is worth naming.
+ *
+ * Half a point a week. Below that the projections are not precise enough to
+ * distinguish the two players, and the "upgrade" is noise.
+ */
+export const MIN_GAIN = 0.5;
+
 export interface TradeMatch {
   /** The other roster. */
   rosterId: number;
@@ -237,10 +245,18 @@ export function findTrades(
     }
   }
 
-  return matches.sort((a, b) => {
-    // Two-way fits first, then by how much the deal is worth in total.
-    const twoWay = Number(!!b.get) - Number(!!a.get);
-    if (twoWay) return twoWay;
-    return b.yourGain + b.theirGain - (a.yourGain + a.theirGain);
-  });
+  return (
+    matches
+      // A trade nobody gains from is not a trade. The surplus/need test can
+      // pair a spare player against a slot the other manager already fills
+      // just as well, which produces a proposal worth exactly zero to them —
+      // and sending that is how you get ignored.
+      .filter((m) => m.theirGain > MIN_GAIN || m.yourGain > MIN_GAIN)
+      .sort((a, b) => {
+        // Two-way fits first, then by how much the deal is worth in total.
+        const twoWay = Number(!!b.get) - Number(!!a.get);
+        if (twoWay) return twoWay;
+        return b.yourGain + b.theirGain - (a.yourGain + a.theirGain);
+      })
+  );
 }

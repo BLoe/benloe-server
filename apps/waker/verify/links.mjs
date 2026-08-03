@@ -33,9 +33,9 @@ try {
 
   // The thumb index is the app's only navigation, so every tab must work.
   for (const [label, path, proof] of [
-    ['Season', 'season', 'text=/playoff|Playoff/'],
+    ['Season', 'season', 'text=seasons simulated'],
     ['Horizon', 'horizon', 'text=The board'],
-    ['Tape', 'tape', 'text=/usage|Usage/'],
+    ['Tape', 'tape', 'text=ranked'],
     ['Now', '', 'text=What needs you'],
   ]) {
     await check(`thumb index → ${label}`, async () => {

@@ -39,6 +39,10 @@ import {
 import { parseAllowList } from './loginPolicy.js';
 import { readCycle } from '../lib/analysis/cycle.js';
 import { buildFeed } from './feed.js';
+// Feature routes live in their own modules so index.ts stays a wiring file.
+import { tapeRouter } from './routes/tape.js';
+import { seasonRouter } from './routes/season.js';
+import { ledgerRouter } from './routes/ledger.js';
 import { orientationOf } from '../lib/analysis/orientation.js';
 import {
   COOKIE_NAME,
@@ -443,6 +447,17 @@ function daysToKickoff(season: string, now: Date): number | null {
   const days = Math.ceil((kickoff - now.getTime()) / 86_400_000);
   return days > 0 ? days : null;
 }
+
+/* ------------------------------------------------------------------ *
+ * Feature routes
+ *
+ * Each module owns its own surface and does its own session check, so adding
+ * one is a single line here rather than another block in this file.
+ * ------------------------------------------------------------------ */
+
+app.use(tapeRouter);
+app.use(seasonRouter);
+app.use(ledgerRouter);
 
 /* ------------------------------------------------------------------ *
  * Static + errors

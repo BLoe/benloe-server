@@ -34,9 +34,9 @@ try {
 
   for (const [name, path, proof] of [
     ['m-now', '', 'text=What needs you'],
-    ['m-season', 'season', 'text=/playoff|Playoff/'],
+    ['m-season', 'season', 'text=seasons simulated'],
     ['m-horizon', 'horizon', 'text=The board'],
-    ['m-tape', 'tape', 'text=/usage|Usage/'],
+    ['m-tape', 'tape', 'text=ranked'],
   ]) {
     await check(name, async () => {
       await page.goto(`${server.base}/l/${league}/${path}`, { waitUntil: 'domcontentloaded' });
