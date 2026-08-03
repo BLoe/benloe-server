@@ -109,9 +109,8 @@ export function buildDashboardApp(deps: DashboardDeps) {
     if (!CREDENTIAL_NAME_RE.test(name)) {
       return res.status(400).json({ error: 'Name must be a lowercase slug, e.g. plaid-secret.' });
     }
-    const { secret, provider, description } = (req.body ?? {}) as {
+    const { secret, description } = (req.body ?? {}) as {
       secret?: unknown;
-      provider?: unknown;
       description?: unknown;
     };
     if (typeof secret !== 'string' || secret.length === 0) {
@@ -121,7 +120,6 @@ export function buildDashboardApp(deps: DashboardDeps) {
       const result = putCredential(deps.db, deps.key, {
         name,
         secret,
-        provider: typeof provider === 'string' ? provider : null,
         description: typeof description === 'string' ? description : null,
       });
       deps.audit({

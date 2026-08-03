@@ -38,7 +38,6 @@ export class CredentialAuthError extends Error {}
 
 export interface CredentialInput {
   name: string;
-  provider?: string | null;
   description?: string | null;
   /** Plaintext. Never stored, never returned, never logged. */
   secret: string;
@@ -51,7 +50,6 @@ export interface CredentialInput {
 export interface CredentialMeta {
   id: number;
   name: string;
-  provider: string | null;
   description: string | null;
   created_at: string;
   updated_at: string;
@@ -72,7 +70,6 @@ export function migrate(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS credential (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL UNIQUE,
-      provider    TEXT,
       description TEXT,
       ciphertext  BLOB NOT NULL,
       iv          BLOB NOT NULL,
@@ -83,6 +80,16 @@ export function migrate(db: Database.Database): void {
       rotated_at  TEXT
     );
   `);
+
+  // 2026-08-03: `provider` dropped. It was stored and displayed but never read
+  // by any logic — redundant with the naming convention that already encodes
+  // it (`plaid-secret` says "Plaid" perfectly well). CREATE TABLE IF NOT EXISTS
+  // won't alter an existing table, so an already-deployed database needs this
+  // explicit drop. Guarded by a column check so it is idempotent.
+  const hasProvider = (db.prepare('PRAGMA table_info(credential)').all() as { name: string }[]).some(
+    (c) => c.name === 'provider',
+  );
+  if (hasProvider) db.exec('ALTER TABLE credential DROP COLUMN provider');
 }
 
 /**
@@ -165,17 +172,16 @@ export function putCredential(db: Database.Database, key: Buffer | null, input: 
 
   const existed = !!db.prepare('SELECT 1 FROM credential WHERE name = ?').get(name);
   db.prepare(
-    `INSERT INTO credential (name, provider, description, ciphertext, iv, auth_tag)
-     VALUES (?,?,?,?,?,?)
+    `INSERT INTO credential (name, description, ciphertext, iv, auth_tag)
+     VALUES (?,?,?,?,?)
      ON CONFLICT(name) DO UPDATE SET
-       provider    = COALESCE(excluded.provider, credential.provider),
        description = COALESCE(excluded.description, credential.description),
        ciphertext  = excluded.ciphertext,
        iv          = excluded.iv,
        auth_tag    = excluded.auth_tag,
        updated_at  = datetime('now'),
        rotated_at  = datetime('now')`,
-  ).run(name, input.provider ?? null, input.description ?? null, ciphertext, iv, tag);
+  ).run(name, input.description ?? null, ciphertext, iv, tag);
 
   return { name, created: !existed };
 }
@@ -232,7 +238,7 @@ export function decryptSecret(db: Database.Database, key: Buffer | null, name: s
 export function listCredentials(db: Database.Database): CredentialMeta[] {
   return db
     .prepare(
-      `SELECT id, name, provider, description, created_at, updated_at, last_used_at, rotated_at
+      `SELECT id, name, description, created_at, updated_at, last_used_at, rotated_at
        FROM credential ORDER BY name`,
     )
     .all() as CredentialMeta[];
@@ -241,7 +247,7 @@ export function listCredentials(db: Database.Database): CredentialMeta[] {
 export function getCredentialMeta(db: Database.Database, name: string): CredentialMeta | null {
   const row = db
     .prepare(
-      `SELECT id, name, provider, description, created_at, updated_at, last_used_at, rotated_at
+      `SELECT id, name, description, created_at, updated_at, last_used_at, rotated_at
        FROM credential WHERE name = ?`,
     )
     .get(name) as CredentialMeta | undefined;
