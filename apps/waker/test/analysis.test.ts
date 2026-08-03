@@ -933,10 +933,9 @@ describe('gameLeverage', () => {
     expect(rows[1].opponentRosterId).toBe(8);
   });
 
-  it('makes winning worth more than losing, every time', () => {
+  it('makes winning worth at least as much as losing', () => {
     for (const r of rows) {
-      expect(r.ifWon).toBeGreaterThan(r.ifLost);
-      expect(r.swing).toBeGreaterThan(0);
+      expect(r.swing).toBeGreaterThanOrEqual(0);
     }
   });
 
@@ -1088,5 +1087,111 @@ describe('findDivergence: the tail case end to end', () => {
     const star = rows.find((r) => r.playerId === 'star')!;
     expect(star.pointsGap).toBeGreaterThan(3);
     expect(star.verdict).toBe('buy');
+  });
+});
+
+describe('gameLeverage: the forced result must not cost a team its tiebreaker', () => {
+  const teams = Array.from({ length: 8 }, (_, i) => ({
+    rosterId: i + 1,
+    weeklyPoints: 100 - i * 3,
+    wins: 3,
+    losses: 3,
+    pointsFor: 600,
+  }));
+  const remaining = [
+    { week: 7, homeRosterId: 1, awayRosterId: 2 },
+    { week: 8, homeRosterId: 3, awayRosterId: 4 },
+    { week: 8, homeRosterId: 1, awayRosterId: 5 },
+  ];
+
+  it('agrees with the headline odds it sits beside', () => {
+    // Awarding a forced win without the points left the team a whole game of
+    // points-for behind everyone else, and points-for is the tiebreaker — so
+    // the forced runs quietly lost every tie and the leverage panel disagreed
+    // with the odds table directly above it.
+    const headline =
+      simulateSeason(teams, remaining, { playoffTeams: 4, runs: 4000 }).find(
+        (o) => o.rosterId === 1
+      )?.playoffs ?? 0;
+
+    const rows = gameLeverage(1, teams, remaining, { playoffTeams: 4, runs: 4000 });
+    const game = rows[0];
+    // The unconditional odds are the average of the two branches, since the
+    // game itself is close to a coin flip between these two teams.
+    const blended = (game.ifWon + game.ifLost) / 2;
+    expect(Math.abs(blended - headline)).toBeLessThan(0.06);
+  });
+
+  it('never reports winning as worse than losing', () => {
+    for (const r of gameLeverage(1, teams, remaining, { playoffTeams: 4, runs: 4000 })) {
+      expect(r.swing).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('finds a real swing in a league where the race is actually close', () => {
+    // Twelve evenly matched teams with a full slate left: every game matters.
+    const even = Array.from({ length: 12 }, (_, i) => ({
+      rosterId: i + 1,
+      weeklyPoints: 100 - i * 0.5,
+      wins: 0,
+      losses: 0,
+      pointsFor: 0,
+    }));
+    const slate = [];
+    for (let week = 1; week <= 12; week++) {
+      for (let i = 0; i < 6; i++) {
+        slate.push({ week, homeRosterId: even[i].rosterId, awayRosterId: even[11 - i].rosterId });
+      }
+    }
+    const rows = gameLeverage(1, even, slate, { playoffTeams: 6, runs: 3000 });
+    expect(rows.length).toBe(12);
+    expect(Math.max(...rows.map((r) => r.swing))).toBeGreaterThan(0.05);
+  });
+});
+
+describe('findTrades: gain is measured against the slot being filled', () => {
+  const levels = levelsFor({ QB: 10, RB: 8, WR: 8, TE: 5 });
+  const p = (playerId: string, position: string, points: number) => ({
+    playerId,
+    name: playerId,
+    position,
+    points,
+    value: 1000,
+  });
+  const SLOTS = ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'BN'];
+
+  it('does not measure against a starter the trade would never displace', () => {
+    // They have one excellent back and nothing behind him, so RB2 is the hole.
+    // Measuring the upgrade against their BEST back said this trade was worth
+    // nothing; the slot it actually fills is the empty one.
+    const mine = {
+      rosterId: 1,
+      teamName: 'Mine',
+      players: [
+        p('rb1', 'RB', 20),
+        p('rb2', 'RB', 18),
+        p('rb3', 'RB', 16),
+        p('rb4', 'RB', 14), // genuine surplus
+        p('qb1', 'QB', 22),
+        p('wr1', 'WR', 15),
+        p('wr2', 'WR', 14),
+        p('te1', 'TE', 12),
+      ],
+    };
+    const lopsided = {
+      rosterId: 2,
+      teamName: 'One Good Back',
+      players: [
+        p('star', 'RB', 24), // fills RB1, never displaced
+        p('qb', 'QB', 20),
+        p('wr1', 'WR', 15),
+        p('wr2', 'WR', 14),
+        p('te', 'TE', 12),
+      ],
+    };
+    const matches = findTrades(mine, [lopsided], SLOTS, levels);
+    expect(matches.length).toBeGreaterThan(0);
+    // 14 against a replacement-level RB2 slot, not against their 24-point RB1.
+    expect(matches[0].theirGain).toBeGreaterThan(3);
   });
 });

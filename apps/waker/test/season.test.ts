@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { projectLineup, slotEligibility, type LineupPlayer } from '../src/lib/analysis/lineup.js';
-import { pairMatchups, pointsFor, simKey, weeksPlayed } from '../src/server/routes/season.js';
+import {
+  expectedLosses,
+  pairMatchups,
+  playoffFieldSize,
+  playoffStartWeek,
+  pointsFor,
+  simKey,
+  unprojectedStarters,
+  weeksPlayed,
+} from '../src/server/routes/season.js';
 import type { SimGame, SimTeam } from '../src/lib/analysis/playoffs.js';
 
 const p = (over: Partial<LineupPlayer> & { playerId: string }): LineupPlayer => ({
@@ -218,6 +227,23 @@ describe('pairMatchups', () => {
   it('handles a week Sleeper answered with nothing', () => {
     expect(pairMatchups(9, [])).toEqual([]);
   });
+
+  it('leaves a week short when only some of its groups pair', () => {
+    // Four teams, one clean pair and one three-team group. The route compares
+    // the games returned against floor(rows / 2) to notice, because a week that
+    // half-paired still looks scheduled and would otherwise be simulated with a
+    // game silently missing from it.
+    const rows = [
+      { roster_id: 1, matchup_id: 1 },
+      { roster_id: 2, matchup_id: 1 },
+      { roster_id: 3, matchup_id: 2 },
+      { roster_id: 4, matchup_id: 2 },
+      { roster_id: 5, matchup_id: 2 },
+      { roster_id: 6, matchup_id: 3 },
+    ];
+    expect(pairMatchups(4, rows)).toHaveLength(1);
+    expect(pairMatchups(4, rows).length).toBeLessThan(Math.floor(rows.length / 2));
+  });
 });
 
 describe('weeksPlayed', () => {
@@ -282,6 +308,97 @@ describe('simKey', () => {
     expect(simKey('L', [team({ rosterId: 1 })], [], 6, 1)).not.toBe(
       simKey('L', [team({ rosterId: 1 })], games, 6, 1)
     );
+  });
+});
+
+describe('playoffStartWeek', () => {
+  it('takes the league at its word when the setting is real', () => {
+    expect(playoffStartWeek(15)).toBe(15);
+    expect(playoffStartWeek(14)).toBe(14);
+  });
+
+  it('treats zero as unset rather than as week zero', () => {
+    // Sleeper reports 0 for a league whose playoff schedule has not been set,
+    // which is most leagues in the preseason. Believed, it makes the regular
+    // season minus one weeks long: no schedule, no simulation, and copy that
+    // reads "-1 weeks".
+    expect(playoffStartWeek(0)).toBe(15);
+    expect(playoffStartWeek(undefined)).toBe(15);
+    expect(playoffStartWeek(null)).toBe(15);
+    expect(playoffStartWeek('nonsense')).toBe(15);
+    expect(playoffStartWeek(-4)).toBe(15);
+  });
+
+  it('will not send us fetching thirty weeks of matchups', () => {
+    expect(playoffStartWeek(40)).toBe(19);
+  });
+});
+
+describe('playoffFieldSize', () => {
+  it('takes a real setting', () => {
+    expect(playoffFieldSize(6, 12)).toBe(6);
+    expect(playoffFieldSize(4, 10)).toBe(4);
+  });
+
+  it('treats zero as unset — a field of none would put nobody in the playoffs', () => {
+    expect(playoffFieldSize(0, 12)).toBe(6);
+    expect(playoffFieldSize(undefined, 12)).toBe(6);
+  });
+
+  it('never seeds more teams than the league has', () => {
+    expect(playoffFieldSize(6, 4)).toBe(4);
+    expect(playoffFieldSize(0, 4)).toBe(4);
+  });
+});
+
+describe('expectedLosses', () => {
+  it("fills out the rest of a team's own schedule", () => {
+    // 3 played, 11 to come, 8.4 wins expected across the fourteen.
+    expect(expectedLosses({ wins: 2, losses: 1, ties: 0 }, 11, 8.4)).toBeCloseTo(5.6, 6);
+  });
+
+  it('does not count a tie as a defeat', () => {
+    // playoffs.ts has no concept of a tie, so a drawn game is neither won nor
+    // lost. Folding it into the losses would misreport a real result.
+    expect(expectedLosses({ wins: 3, losses: 3, ties: 1 }, 7, 6.5)).toBeCloseTo(6.5, 6);
+  });
+
+  it("is per team, so a short schedule does not borrow another team's games", () => {
+    // A week Sleeper never published leaves some rosters with fewer fixtures.
+    const full = expectedLosses({ wins: 0, losses: 0, ties: 0 }, 14, 7);
+    const short = expectedLosses({ wins: 0, losses: 0, ties: 0 }, 12, 7);
+    expect(full).toBe(7);
+    expect(short).toBe(5);
+  });
+
+  it('never goes negative when a team wins more than it plays', () => {
+    expect(expectedLosses({ wins: 0, losses: 0, ties: 0 }, 2, 2.0000001)).toBe(0);
+  });
+
+  it('reads a finished season as its actual record', () => {
+    expect(expectedLosses({ wins: 9, losses: 5, ties: 0 }, 0, 9)).toBe(5);
+  });
+});
+
+describe('unprojectedStarters', () => {
+  const slot = (playerId: string | null) => ({ player: playerId ? { playerId } : null });
+
+  it('counts a starter the projections have never heard of', () => {
+    // He scores zero, so he only reaches a slot when nobody better exists — and
+    // then the team's expected score is built on a number we do not have.
+    expect(unprojectedStarters([slot('a'), slot('b')], { a: {} })).toBe(1);
+  });
+
+  it('does not count an empty slot, which is reported separately', () => {
+    expect(unprojectedStarters([slot(null), slot('a')], { a: {} })).toBe(0);
+  });
+
+  it('says zero when every starter is covered', () => {
+    expect(unprojectedStarters([slot('a'), slot('b')], { a: {}, b: {} })).toBe(0);
+  });
+
+  it('copes with a lineup nobody starts in', () => {
+    expect(unprojectedStarters([], {})).toBe(0);
   });
 });
 

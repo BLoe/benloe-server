@@ -13,6 +13,7 @@ import {
   type SparkPoint,
   type TapeRow,
 } from '../src/web/Tape.js';
+import { nothing } from '../src/web/pages/TapePage.js';
 
 /* ================================================================== *
  * The window
@@ -236,6 +237,7 @@ describe('buildTape', () => {
     });
     expect(tape.rows).toEqual([]);
     expect(tape.considered).toBe(0);
+    expect(tape.withoutSnaps).toBe(0);
   });
 
   it('ignores usage for players Sleeper has never heard of', () => {
@@ -255,7 +257,7 @@ describe('buildTape', () => {
     expect(buildTape(src).rows.some((r) => r.id === 'stranger')).toBe(false);
   });
 
-  it('reports a snap trend when there is one, and null when there are no snaps', () => {
+  it('reports a snap trend when there is one', () => {
     const src = sources(FIELD);
     src.snaps.set('lead', {
       weeks: [
@@ -265,13 +267,37 @@ describe('buildTape', () => {
         { week: 4, offensePct: 0.9 },
       ],
     });
-    // The name join can resolve usage without resolving snaps; the row must
-    // still render rather than reporting a trend it does not have.
-    src.snaps.delete('c');
+    expect(byId(buildTape(src), 'lead').trend).toBeCloseTo(0.6, 5);
+  });
+
+  it('refuses to rank a player whose snap counts never joined, and counts him', () => {
+    // usageScore falls back to raw target share when snap share is null, and
+    // raw target share tops out near 0.30 while the rest of the field is scored
+    // on a blend running to 1.0. The man lands at the bottom of his position
+    // whatever his role, and the screen calls him a sell on the strength of a
+    // failed name join. Against the real fixtures this happened to Chig Okonkwo
+    // and Taysom Hill, both at a starter's target share.
+    const src = sources(FIELD);
+    src.snaps.delete('lead');
     const tape = buildTape(src);
-    expect(byId(tape, 'lead').trend).toBeCloseTo(0.6, 5);
-    expect(byId(tape, 'c').trend).toBeNull();
-    expect(byId(tape, 'c').weeks.every((w) => w.snap === null)).toBe(true);
+
+    expect(tape.rows.some((r) => r.id === 'lead')).toBe(false);
+    expect(tape.withoutSnaps).toBe(1);
+    // Everyone else is still ranked; one bad join must not empty the page.
+    expect(tape.considered).toBe(5);
+  });
+
+  it('does not count a player who simply did not play in the window', () => {
+    // Absent from the window is not the same as missing from a source, and
+    // rolling the two together would inflate the coverage warning every week.
+    const field = FIELD.map((f) => (f.id === 'lead' ? { ...f, weeks: [9, 10] } : f));
+    const src = sources(field, { throughWeek: 4, window: 4 });
+    src.snaps.delete('lead');
+    expect(buildTape(src).withoutSnaps).toBe(0);
+  });
+
+  it('reports no missing snaps when every join held', () => {
+    expect(buildTape(sources(FIELD)).withoutSnaps).toBe(0);
   });
 });
 
@@ -370,6 +396,15 @@ describe('describeSeries', () => {
     expect(text).toContain('3 weeks in that span with no game');
   });
 
+  it('takes the caller\'s idea of a move, so a points series is not all "rising"', () => {
+    // The default threshold is five *share* points. Reused on a series drawn in
+    // fantasy points, it would call a fifth of a point a trend.
+    const pts1 = (v: number) => v.toFixed(1);
+    const series = pts([1, 8], [2, 8.2], [3, 8.1], [4, 8.4]);
+    expect(describeSeries('Points', series, pts1)).toContain('rising');
+    expect(describeSeries('Points', series, pts1, 2)).toContain('steady');
+  });
+
   it('says nothing about gaps when a player played every week', () => {
     const text = describeSeries('Snap share', pts([1, 0.4], [2, 0.5], [3, 0.6]), pc);
     expect(text).not.toContain('no game');
@@ -411,6 +446,43 @@ function row(over: Partial<TapeRow['divergence']> = {}, rest: Partial<TapeRow> =
     ...rest,
   };
 }
+
+describe('the empty state names the right cause', () => {
+  const base = { coverage: { usage: 366, snaps: 370 }, usageSeason: '2025', weekTo: 17, windowFrom: 1, minGames: 2 };
+
+  it('blames the source only when the source really said nothing', () => {
+    const e = nothing({ ...base, coverage: { usage: 0, snaps: 0 } });
+    expect(e.hint).toContain('nflverse published no weekly snap or target data');
+  });
+
+  it('does not blame the source for an empty week one', () => {
+    // Every year, on the Tuesday after week one, nobody has the two games a
+    // divergence needs. Saying "nflverse published nothing" then would be a
+    // flat lie about a feed that had just published a full week.
+    const e = nothing({ ...base, weekTo: 1, windowFrom: 1 });
+    expect(e.hint).not.toContain('nflverse');
+    expect(e.hint).toContain('2 games are the least');
+    expect(e.hint).toContain('week 2');
+  });
+
+  it('says the join failed when the source answered but nothing could be ranked', () => {
+    const e = nothing(base);
+    expect(e.hint).toContain('366 usage histories');
+    expect(e.hint).toContain('joined');
+  });
+
+  it('never implies coverage it does not have, whichever cause it names', () => {
+    for (const t of [
+      { ...base, coverage: { usage: 0, snaps: 0 } },
+      { ...base, weekTo: 1, windowFrom: 1 },
+      base,
+    ]) {
+      const e = nothing(t);
+      expect(e.title.length).toBeGreaterThan(0);
+      expect(e.hint.length).toBeGreaterThan(0);
+    }
+  });
+});
 
 describe('sentence', () => {
   it('states the gap in points, which is the thing a manager acts on', () => {

@@ -251,3 +251,27 @@ Deployed by PM2 (`waker-api`) behind Caddy. Secrets come from
 requires a key, which is why they were chosen.
 
 Waker is **read-only against every upstream**. It has no write path at all.
+
+---
+
+## Known limits
+
+Recorded rather than hidden, because a tool that overstates its confidence is
+worse than one that admits a gap.
+
+- **The Tape reads last season until games are played.** nflverse publishes a
+  season's files once that season starts, so in the preseason every usage signal
+  is about the year before. The column head names the season it is reading; it
+  will not reflect this year's trades or draft until week 1.
+- **`weeksPlayed` takes the maximum games played across the league**, so a week
+  in progress counts as played the moment any single team's result posts.
+- **The Ledger proposes only the best spare player at each position**, so deeper
+  surplus is never offered, and that one player is proposed to every team that
+  needs him rather than to the best fit.
+- **A week Sleeper does not return is dropped from the simulation entirely.**
+  The odds panel says so when it happens.
+- **Leagues that are not straight head-to-head** — median scoring, multi-team
+  matchup groups — have those weeks skipped rather than guessed at.
+- **The in-season branch of The Tape has never been rendered in a browser.** It
+  is unit-tested, but the fixtures are frozen in the preseason and only the
+  `/cycle` route has an `inSeason` override.

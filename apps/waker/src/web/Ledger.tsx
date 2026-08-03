@@ -52,6 +52,8 @@ interface MatchRow {
   yourGain: number;
   theirCurrent: { name: string; points: number } | null;
   yourCurrent: { name: string; points: number } | null;
+  theirBaseline: number;
+  yourBaseline: number | null;
   giveValue: number | null;
   getValue: number | null;
   price: Price;
@@ -71,12 +73,15 @@ interface LedgerResponse {
   matches: MatchRow[];
   picks: PickYear[];
   noFitReason: string | null;
+  projectionsOut: boolean;
   coverage: {
     counted: number;
     unavailable: number;
     unprojected: number;
     priced: number;
     dismissed: number;
+    pool: number;
+    poolProjected: number;
     picks: number;
     market: { fantasyCalc: number; ktc: number; joined: number };
   };
@@ -91,6 +96,21 @@ export function LedgerPanel({ league }: { league: { leagueId: string } }) {
 
   const d = ledger.data;
 
+  // With no projections there is no replacement level, so nobody clears it and
+  // every position on every roster reads as thin. That is a fact about a dead
+  // upstream, not about a roster, and the page must not spend three panels
+  // implying otherwise.
+  if (d.projectionsOut) {
+    return (
+      <Sheet title="Where you are deep, where you are thin">
+        <Empty
+          title="No projections, so no ledger."
+          hint="The projection feed returned nothing for any player in the league, and surplus is defined against it. Nothing can be said about depth, and no trade can be proposed, until it answers again."
+        />
+      </Sheet>
+    );
+  }
+
   return (
     <>
       <Sheet
@@ -104,11 +124,7 @@ export function LedgerPanel({ league }: { league: { leagueId: string } }) {
       <Sheet
         title="Who wants what you have"
         count={d.matches.length ? `${d.matches.length} fit${d.matches.length === 1 ? '' : 's'}` : undefined}
-        note={
-          d.matches.length
-            ? 'Their gain is measured the same way yours is: points per week over whoever they are starting at that slot now. A trade only happens if it is good for the other manager too.'
-            : undefined
-        }
+        note={d.matches.length ? MATCH_NOTE : undefined}
       >
         <Matches matches={d.matches} reason={d.noFitReason} dismissed={d.coverage.dismissed} />
       </Sheet>
@@ -116,17 +132,38 @@ export function LedgerPanel({ league }: { league: { leagueId: string } }) {
       <Sheet
         title="What a pick is worth"
         count={d.coverage.picks ? `${d.coverage.picks} priced` : undefined}
-        note={
-          d.picks.length
-            ? 'KeepTradeCut, on the same scale as the player values above, so a pick and a player can be weighed against each other. FantasyCalc does not price picks at all.'
-            : undefined
-        }
+        note={d.picks.length ? PICK_NOTE : undefined}
       >
         <Picks years={d.picks} />
       </Sheet>
     </>
   );
 }
+
+/**
+ * What the trade list is and is not claiming.
+ *
+ * Two caveats have to be here rather than left for the reader to discover. The
+ * gain is measured against the best player the other manager already has at the
+ * position, so a team who is only thin at a second slot shows a smaller gain
+ * than the deal is really worth — the number is a floor, not an estimate. And a
+ * spare player is offered to every team who could use him, so the rows are
+ * alternatives rather than a list of trades to make.
+ */
+const MATCH_NOTE =
+  'Their gain is measured the same way yours is: points per week over the best they already have at that slot, or over a freely available player where that is higher. It is a floor — a team thin only at a second slot gains more than the figure shown. The same spare player is offered to everyone who could use him, so these are alternatives, not a shopping list.';
+
+/**
+ * The pick prices are KeepTradeCut's and the player prices are FantasyCalc's.
+ *
+ * These are different scales and saying otherwise would be the most expensive
+ * lie on the page: in this league's own data Drake London prices at 5,719 on
+ * FantasyCalc and 7,387 on KeepTradeCut, against a 2026 early first at 6,203.
+ * Read across the two and you conclude the pick beats the player, when on a
+ * single scale it does not.
+ */
+const PICK_NOTE =
+  'KeepTradeCut, which is the only source here that prices picks at all. These are on KeepTradeCut’s scale and the player values above are on FantasyCalc’s, so rank picks against each other with them — not a pick against a player.';
 
 /** What the depth table is and is not counting. Said, never implied. */
 function depthNote(d: LedgerResponse): string {
@@ -265,8 +302,21 @@ function Tally({ startable, slots, spare }: { startable: number; slots: number; 
   // real thing and would otherwise push the table sideways.
   const shown = marks.slice(0, TALLY_CAP);
 
+  // Every mark is decorative on its own, so the row is described once, in full,
+  // rather than read out as a run of blank cells. The count is the uncapped one:
+  // the drawing is allowed to elide, the description is not.
+  const description =
+    [
+      filled && `${filled} in a slot`,
+      flexed && `${flexed} in a flex`,
+      spare && `${spare} spare`,
+      unfilled && `${unfilled} unfilled`,
+    ]
+      .filter(Boolean)
+      .join(', ') || 'nobody startable and no slot to fill';
+
   return (
-    <span className="inline-flex items-center gap-[3px]">
+    <span className="inline-flex items-center gap-[3px]" role="img" aria-label={description}>
       {shown.map((fill, i) => (
         <span
           key={i}
@@ -403,7 +453,7 @@ function MatchRowView({ match: m }: { match: MatchRow }) {
       <span
         aria-hidden="true"
         className="fig select-none pt-0.5"
-        style={{ fontSize: 15, color: 'var(--rule-strong)', width: 16 }}
+        style={{ fontSize: 'var(--t-lede)', color: 'var(--rule-strong)', width: 16 }}
       >
         ⇌
       </span>
@@ -425,21 +475,27 @@ function MatchRowView({ match: m }: { match: MatchRow }) {
 
         <div className="mt-1.5 space-y-0.5" style={{ maxWidth: '68ch' }}>
           <Line>
-            They start{' '}
-            {m.theirCurrent
-              ? `${m.theirCurrent.name} at ${m.theirCurrent.points.toFixed(1)} a week`
-              : 'nobody at all'}
-            . {m.give.name} projects {m.give.points.toFixed(1)}, so the slot improves by{' '}
+            <Bar
+              current={m.theirCurrent}
+              baseline={m.theirBaseline}
+              position={m.position}
+              who="They"
+            />{' '}
+            {m.give.name} projects {m.give.points.toFixed(1)}, so the slot improves by{' '}
             {m.theirGain.toFixed(1)} a week.
           </Line>
 
           {m.get && m.getPosition ? (
             <Line>
               Back the other way, {m.get.name} at {m.get.points.toFixed(1)} fills your {m.getPosition}
-              {m.yourCurrent
-                ? `, where ${m.yourCurrent.name} gives you ${m.yourCurrent.points.toFixed(1)}`
-                : ', which is empty'}
-              .
+              .{' '}
+              <Bar
+                current={m.yourCurrent}
+                baseline={m.yourBaseline ?? 0}
+                position={m.getPosition}
+                who="You"
+              />{' '}
+              You gain {m.yourGain.toFixed(1)} a week.
             </Line>
           ) : (
             <Line>
@@ -470,6 +526,48 @@ function MatchRowView({ match: m }: { match: MatchRow }) {
         </div>
       </div>
     </article>
+  );
+}
+
+/**
+ * The bar a gain is measured against, said out loud.
+ *
+ * Without it the sentence is three numbers that do not add up: "they start
+ * somebody at 2.8, yours projects 10.0, the slot improves by 4.3". The missing
+ * term is that a manager who is thin can add a freely available player for
+ * nothing, so replacement level — not the body on their bench — is the bar
+ * whenever it is higher. A reader who catches this page out on arithmetic is
+ * right to stop believing the rest of it.
+ */
+function Bar({
+  current,
+  baseline,
+  position,
+  who,
+}: {
+  current: { name: string; points: number } | null;
+  baseline: number;
+  position: string;
+  who: 'They' | 'You';
+}) {
+  const start = who === 'They' ? 'They start' : 'You start';
+  const above = current != null && baseline <= current.points + 0.05;
+
+  if (current && above) {
+    return (
+      <>
+        {start} {current.name} at {current.points.toFixed(1)} a week, the best {position} on the
+        roster, which is the bar.
+      </>
+    );
+  }
+  return (
+    <>
+      {current
+        ? `${start} ${current.name} at ${current.points.toFixed(1)} a week, but a freely available ${position} gives ${baseline.toFixed(1)}`
+        : `${start} nobody at ${position}, and a freely available one gives ${baseline.toFixed(1)}`}
+      , so that is the bar.
+    </>
   );
 }
 

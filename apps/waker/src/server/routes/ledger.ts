@@ -98,7 +98,8 @@ export function buildRoster(
   raw: RosterRow,
   teamName: string,
   players: Record<string, PlayerRow>,
-  pointsOf: (playerId: string) => number,
+  /** Per-week projection, or null where the feed has no row for this player. */
+  pointsOf: (playerId: string) => number | null,
   valueOf: (playerId: string) => { dynasty: number | null; redraft: number | null } | undefined
 ): RosterBuild {
   const benched = new Set<string>([...(raw.taxi ?? []), ...(raw.reserve ?? [])]);
@@ -116,15 +117,19 @@ export function buildRoster(
       continue;
     }
 
-    const points = pointsOf(id);
-    if (points <= 0) unprojected++;
+    // Missing and zero are different facts. A projection of zero is a claim the
+    // feed made; no row at all is a gap in our coverage, and telling the reader
+    // "no projection on file" about a player who was genuinely projected for
+    // nothing is a small lie about how much this page actually knows.
+    const projected = pointsOf(id);
+    if (projected == null) unprojected++;
     const market = valueOf(id);
 
     byId.set(id, {
       playerId: id,
       name: meta.name,
       position: meta.pos,
-      points,
+      points: projected ?? 0,
       value: market?.dynasty ?? null,
       redraft: market?.redraft ?? null,
       team: meta.team,
@@ -149,6 +154,45 @@ export function bestAt(players: LedgerPlayer[], position: string): LedgerPlayer 
     if (!best || p.points > best.points) best = p;
   }
   return best;
+}
+
+/**
+ * The bar a gain is measured against.
+ *
+ * `findTrades` scores an upgrade as the surplus player's projection minus
+ * whoever the roster already has at that position, floored at replacement level
+ * — a manager who is thin can always add a free agent for nothing, so beating
+ * the body on their bench is not on its own worth a trade.
+ *
+ * The page has to be told this number. Printing "they start somebody at 2.8,
+ * yours projects 10.0, so the slot improves by 4.3" without it reads as an
+ * arithmetic error, and a reader who catches the page out on arithmetic is
+ * right to stop believing the rest of it.
+ */
+export function baselineFor(
+  players: LedgerPlayer[],
+  position: string,
+  level: number | null
+): number {
+  return Math.max(bestAt(players, position)?.points ?? 0, level ?? 0);
+}
+
+/**
+ * Did the projection feed answer at all?
+ *
+ * Every claim on this page rests on projections. When the feed returns nothing
+ * — which `loadProjections` swallows quietly, by design, so one dead upstream
+ * cannot take the app down — replacement level collapses to zero, nobody clears
+ * it, and the page reports every position on every roster as thin. That reads
+ * as "your roster is bad" when the truth is "we could not price anybody today",
+ * so the outage is detected and said out loud instead.
+ *
+ * The test is deliberately the whole pool rather than one roster: a manager can
+ * genuinely own eleven players nobody projects, but nobody in the league having
+ * a projection is only ever an outage.
+ */
+export function projectionsOut(pool: number, projected: number): boolean {
+  return pool > 0 && projected === 0;
 }
 
 export type Price = 'unpriced' | 'even' | 'you-pay' | 'you-gain';
@@ -189,7 +233,15 @@ export function explainNoFits(o: {
   others: number;
   /** Fits that existed but gained the other manager nothing. */
   dismissed: number;
+  /** The projection feed returned nothing, so none of the rest is a fact. */
+  projectionsOut: boolean;
 }): string {
+  // Checked before anything else: with no projections, "nothing is spare" and
+  // "everyone is thin" are both artefacts of the outage rather than facts about
+  // a roster, and stating either would be the page's worst possible failure.
+  if (o.projectionsOut) {
+    return 'The projection feed returned nothing, so there is no way to tell surplus from a bench body. Nothing on this page is a judgement about your roster until it answers again.';
+  }
   if (o.others === 0) {
     return 'There are no other rosters loaded, so there is nobody to trade with.';
   }
@@ -283,6 +335,9 @@ export interface LedgerMatchRow {
   /** Who they are starting there now, so their gain can be checked. */
   theirCurrent: { name: string; points: number } | null;
   yourCurrent: { name: string; points: number } | null;
+  /** The bar `theirGain` was measured against: their incumbent, or replacement. */
+  theirBaseline: number;
+  yourBaseline: number | null;
   giveValue: number | null;
   getValue: number | null;
   price: Price;
@@ -299,6 +354,8 @@ export interface LedgerResponse {
   picks: PickYear[];
   /** Set only when there are no matches at all. */
   noFitReason: string | null;
+  /** The projection feed returned nothing, so no figure below means anything. */
+  projectionsOut: boolean;
   coverage: {
     /** Rostered players on your team the maths could actually use. */
     counted: number;
@@ -308,6 +365,9 @@ export interface LedgerResponse {
     priced: number;
     /** Fits that were found and dropped for gaining the other side nothing. */
     dismissed: number;
+    /** Players in the whole pool, and how many of them the feed projected. */
+    pool: number;
+    poolProjected: number;
     picks: number;
     market: { fantasyCalc: number; ktc: number; joined: number };
   };
@@ -365,8 +425,16 @@ async function handle(req: express.Request, res: express.Response, session: Sess
   const numTeams: number = league.total_rosters ?? rosters.length ?? 12;
   const nameOf = teamNames(users);
 
-  const pointsOf = (id: string) => perWeek(projections[id]);
+  // Null where the feed has no row for this player, so a genuine zero and a gap
+  // in coverage stay distinguishable all the way to the page.
+  const projectionOf = (id: string): number | null =>
+    projections[id] ? perWeek(projections[id]) : null;
+  const pointsOf = (id: string) => projectionOf(id) ?? 0;
   const valueOf = (id: string) => market.crosswalk.bySleeperId.get(id);
+
+  const pool = Object.values(players);
+  const poolProjected = pool.reduce((n, p) => n + (projectionOf(p.id) == null ? 0 : 1), 0);
+  const outage = projectionsOut(pool.length, poolProjected);
 
   /**
    * Replacement level over the whole pool, free agents included.
@@ -376,7 +444,7 @@ async function handle(req: express.Request, res: express.Response, session: Sess
    * nothing — not against the worst player somebody happens to be rostering.
    */
   const levels = replacementLevels(
-    Object.values(players).map((p) => ({ playerId: p.id, position: p.pos, points: pointsOf(p.id) })),
+    pool.map((p) => ({ playerId: p.id, position: p.pos, points: pointsOf(p.id) })),
     rosterPositions,
     numTeams
   );
@@ -385,7 +453,13 @@ async function handle(req: express.Request, res: express.Response, session: Sess
   for (const r of rosters as RosterRow[]) {
     builds.set(
       r.roster_id,
-      buildRoster(r, nameOf.get(r.owner_id ?? '') ?? `Roster ${r.roster_id}`, players, pointsOf, valueOf)
+      buildRoster(
+        r,
+        nameOf.get(r.owner_id ?? '') ?? `Roster ${r.roster_id}`,
+        players,
+        projectionOf,
+        valueOf
+      )
     );
   }
 
@@ -427,6 +501,18 @@ async function handle(req: express.Request, res: express.Response, session: Sess
       yourGain: round(m.yourGain),
       theirCurrent: incumbent(theirBuild.input.players, m.position),
       yourCurrent: m.getPosition ? incumbent(myBuild.input.players, m.getPosition) : null,
+      theirBaseline: round(
+        baselineFor(theirBuild.input.players, m.position, levels.byPosition.get(m.position) ?? null)
+      ),
+      yourBaseline: m.getPosition
+        ? round(
+            baselineFor(
+              myBuild.input.players,
+              m.getPosition,
+              levels.byPosition.get(m.getPosition) ?? null
+            )
+          )
+        : null,
       giveValue: m.giveValue,
       getValue: m.getValue,
       price,
@@ -469,13 +555,17 @@ async function handle(req: express.Request, res: express.Response, session: Sess
           leagueNeeds: [...leagueNeeds].sort(),
           others: others.length,
           dismissed,
+          projectionsOut: outage,
         }),
+    projectionsOut: outage,
     coverage: {
       counted: myBuild.input.players.length,
       unavailable: myBuild.unavailable,
       unprojected: myBuild.unprojected,
       priced: myBuild.input.players.filter((p) => p.value != null).length,
       dismissed,
+      pool: pool.length,
+      poolProjected,
       picks: market.crosswalk.picks.length,
       market: {
         fantasyCalc: market.health.fantasyCalc,

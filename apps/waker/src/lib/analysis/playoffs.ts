@@ -175,13 +175,24 @@ export interface GameLeverage {
  *
  * This is the part a standings table can never tell you: two games against
  * identical opponents can be worth wildly different amounts depending on where
- * they fall in the schedule and who else is fighting for the same spot. Forcing
- * each result and re-simulating is expensive but it is the only way to get a
- * number that means what it says.
+ * they fall in the schedule and who else is fighting for the same spot.
  *
- * Uses fewer runs than the headline odds on purpose — this is a comparison
- * between games, where a little more noise on each is a fair trade for being
- * able to compute all of them.
+ * Computed by CONDITIONING, not by forcing. The season is played out once, and
+ * every run is filed under which of your games it happened to win; the odds for
+ * "if you win week 7" are simply the share of the runs that won week 7 and also
+ * made the playoffs. That is the definition of a conditional probability, so it
+ * is unbiased by construction — and it does every game in one pass rather than
+ * two simulations per game.
+ *
+ * The earlier version forced a result by handing out a win and re-simulating.
+ * That was wrong twice over, and the second error was hidden by the first.
+ * Awarding a win without the points left both teams a whole game of points-for
+ * behind everyone else, and points-for is the tiebreaker, so the forced runs
+ * quietly lost every tie — biasing the absolute odds down by three to five
+ * points of probability against the table printed directly above them. Crediting
+ * the expected points instead over-corrected, because the *other* six teams'
+ * games that week were still being simulated with real variance while these two
+ * got a flat average. Conditioning has neither problem.
  */
 export function gameLeverage(
   rosterId: number,
@@ -189,33 +200,79 @@ export function gameLeverage(
   remaining: SimGame[],
   o: SimOptions
 ): GameLeverage[] {
-  const mine = remaining.filter(
-    (g) => g.homeRosterId === rosterId || g.awayRosterId === rosterId
-  );
-  const runs = o.runs ?? 400;
-  const out: GameLeverage[] = [];
+  const mine = remaining.filter((g) => g.homeRosterId === rosterId || g.awayRosterId === rosterId);
+  if (!mine.length) return [];
 
-  for (const game of mine) {
-    const others = remaining.filter((g) => g !== game);
-    const opponentRosterId =
-      game.homeRosterId === rosterId ? game.awayRosterId : game.homeRosterId;
+  const runs = o.runs ?? 4000;
+  const rand = makeRandom(o.seed ?? 20260803);
+  const byId = new Map(teams.map((t) => [t.rosterId, t]));
 
-    const forced = (won: boolean): number => {
-      // A forced result is modelled by starting the team a win up (or the
-      // opponent a win up) and simulating everything else normally.
-      const adjusted = teams.map((t) => {
-        if (t.rosterId === rosterId) return { ...t, wins: t.wins + (won ? 1 : 0) };
-        if (t.rosterId === opponentRosterId) return { ...t, wins: t.wins + (won ? 0 : 1) };
-        return t;
-      });
-      const odds = simulateSeason(adjusted, others, { ...o, runs });
-      return odds.find((r) => r.rosterId === rosterId)?.playoffs ?? 0;
-    };
+  // Per game: how many runs won it, and how many of those also made the field.
+  const won = mine.map(() => 0);
+  const wonAndIn = mine.map(() => 0);
+  const lostAndIn = mine.map(() => 0);
 
-    const ifWon = forced(true);
-    const ifLost = forced(false);
-    out.push({ week: game.week, opponentRosterId, ifWon, ifLost, swing: ifWon - ifLost });
+  for (let run = 0; run < runs; run++) {
+    const wins = new Map<number, number>();
+    const points = new Map<number, number>();
+    for (const t of teams) {
+      wins.set(t.rosterId, t.wins);
+      points.set(t.rosterId, t.pointsFor);
+    }
+
+    const wonThisRun: boolean[] = mine.map(() => false);
+
+    for (const game of remaining) {
+      const home = byId.get(game.homeRosterId);
+      const away = byId.get(game.awayRosterId);
+      if (!home || !away) continue;
+
+      const hs = home.weeklyPoints + normal(rand) * teamSigma(home.weeklyPoints);
+      const as = away.weeklyPoints + normal(rand) * teamSigma(away.weeklyPoints);
+      points.set(home.rosterId, points.get(home.rosterId)! + hs);
+      points.set(away.rosterId, points.get(away.rosterId)! + as);
+
+      const homeWon = hs >= as;
+      if (homeWon) wins.set(home.rosterId, wins.get(home.rosterId)! + 1);
+      else wins.set(away.rosterId, wins.get(away.rosterId)! + 1);
+
+      const index = mine.indexOf(game);
+      if (index >= 0) {
+        wonThisRun[index] = game.homeRosterId === rosterId ? homeWon : !homeWon;
+      }
+    }
+
+    const table = teams
+      .map((t) => ({ id: t.rosterId, w: wins.get(t.rosterId)!, pf: points.get(t.rosterId)! }))
+      .sort((a, b) => b.w - a.w || b.pf - a.pf);
+    const madeIt = table.findIndex((r) => r.id === rosterId) < o.playoffTeams;
+
+    for (let i = 0; i < mine.length; i++) {
+      if (wonThisRun[i]) {
+        won[i]++;
+        if (madeIt) wonAndIn[i]++;
+      } else if (madeIt) {
+        lostAndIn[i]++;
+      }
+    }
   }
 
-  return out.sort((a, b) => a.week - b.week);
+  return mine.map((game, i) => {
+    const lost = runs - won[i];
+    // A game the simulation never lost (or never won) has no conditional odds
+    // on that side; reporting 0 there would read as "certain to miss" when it
+    // actually means "no evidence". The unconditional share is the honest
+    // stand-in, which makes the swing zero rather than fabricated.
+    const unconditional = (wonAndIn[i] + lostAndIn[i]) / runs;
+    const ifWon = won[i] ? wonAndIn[i] / won[i] : unconditional;
+    const ifLost = lost ? lostAndIn[i] / lost : unconditional;
+
+    return {
+      week: game.week,
+      opponentRosterId: game.homeRosterId === rosterId ? game.awayRosterId : game.homeRosterId,
+      ifWon,
+      ifLost,
+      swing: ifWon - ifLost,
+    };
+  }).sort((a, b) => a.week - b.week);
 }
