@@ -100,7 +100,10 @@ Current secrets:
 | yahoo-fantasy-mcp | 3006 | apps/yahoo-fantasy-mcp | Yahoo Fantasy MCP server |
 | fitness-api | 3007 | apps/fitness | Fitness director API |
 | cabinet-api | 3008 | apps/cabinet | Cabinet personal agent |
-| kickball-api | 3009 | apps/kickball | Kickball lineups (next free port: 3010) |
+| kickball-api | 3009 | apps/kickball | Kickball lineups |
+| sleeper-ui | 3010 | apps/sleeper-ui | Sleeper League Desk |
+| cabinet-secrets | 3011 | apps/cabinet | Cabinet secrets service |
+| waker-api | 3012 | apps/waker | Waker fantasy decision desk (next free port: 3013) |
 
 Check services: `pm2 list`
 
