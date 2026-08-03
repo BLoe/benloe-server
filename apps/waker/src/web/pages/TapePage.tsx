@@ -21,12 +21,15 @@ import { TapeRowView, VERDICT, type TapeRow } from '../Tape';
 interface TapeResponse {
   rows: TapeRow[];
   considered: number;
+  /** Played inside the window but has no snap count for it; left unranked. */
+  withoutSnaps: number;
   weekFrom: number;
   weekTo: number;
   windowFrom: number;
   limit: number;
   inSeason: boolean;
   window: number;
+  minGames: number;
   usageSeason: string;
   leagueSeason: string;
   pointsPerReception: number;
@@ -150,10 +153,7 @@ export default function TapePage({ league }: { league: { leagueId: string } }) {
       )}
 
       {t.considered === 0 ? (
-        <Empty
-          title="No usage on file."
-          hint={`nflverse published no weekly snap or target data for the ${t.usageSeason} season, so there is no tape to read. Nothing here is estimated in its place.`}
-        />
+        <Empty title={nothing(t).title} hint={nothing(t).hint} />
       ) : rows.length === 0 ? (
         <Empty
           title="Nothing matches that filter."
@@ -229,6 +229,42 @@ function Choice<T extends string>({
 }
 
 /**
+ * Why there is nothing to rank.
+ *
+ * Three different causes, and saying the wrong one is worse than saying
+ * nothing: an empty week one is not a dead source, and a dead source is not a
+ * quiet week. The first version of this page blamed nflverse for all three,
+ * which would have been a lie every year on the Tuesday after week one.
+ */
+export function nothing(t: {
+  coverage: { usage: number; snaps: number };
+  usageSeason: string;
+  weekTo: number;
+  windowFrom: number;
+  minGames: number;
+}): { title: string; hint: string } {
+  if (!t.coverage.usage) {
+    return {
+      title: 'No usage on file.',
+      hint: `nflverse published no weekly snap or target data for the ${t.usageSeason} season, so there is no tape to read. Nothing here is estimated in its place.`,
+    };
+  }
+
+  const played = t.weekTo - t.windowFrom + 1;
+  if (played < t.minGames) {
+    return {
+      title: 'Too early to read anything.',
+      hint: `Only ${played === 1 ? 'one week' : `${played} weeks`} of the ${t.usageSeason} season sits inside the window, and ${t.minGames} games are the least a usage reading can be taken from. Come back after week ${t.windowFrom + t.minGames - 1}.`,
+    };
+  }
+
+  return {
+    title: 'Nothing could be ranked.',
+    hint: `nflverse filed ${t.coverage.usage} usage histories and ${t.coverage.snaps} snap counts, but none of them joined to enough players at a position to rank against each other. Nothing here is estimated in its place.`,
+  };
+}
+
+/**
  * What this page is reading, said plainly.
  *
  * The season is stated first because it is the thing a chart can most easily
@@ -240,7 +276,9 @@ function note(t: TapeResponse): string {
 
   parts.push(
     t.inSeason
-      ? `Usage from the ${t.usageSeason} season, judged on weeks ${t.windowFrom}–${t.weekTo}; the lines show every week from ${t.weekFrom} and the upright marks where the window starts.`
+      ? `Usage from the ${t.usageSeason} season, judged on weeks ${t.windowFrom}–${t.weekTo}; the lines show every week from ${t.weekFrom}${
+          t.windowFrom > t.weekFrom ? ' and the upright marks where the window starts' : ''
+        }.`
       : `No games are being played, so this is the whole ${t.usageSeason} season, weeks ${t.weekFrom}–${t.weekTo}. Week 18 is left out: it is when playoff teams rest starters, and reading it as usage says nothing about a role.`
   );
 
@@ -263,6 +301,16 @@ function note(t: TapeResponse): string {
       ? `Reading ${t.coverage.usage} usage histories and ${t.coverage.snaps} snap counts from nflverse.`
       : 'nflverse returned nothing, so no usage was read.'
   );
+
+  // The two nflverse files are joined by name and they do not name quite the
+  // same people. Ranking a man on target share alone put him at the bottom of
+  // his position whatever his role, so those rows are left out — and left out
+  // silently would be its own lie about how complete this list is.
+  if (t.withoutSnaps > 0) {
+    parts.push(
+      `${t.withoutSnaps} player${t.withoutSnaps === 1 ? '' : 's'} played but had no snap count to read, so ${t.withoutSnaps === 1 ? 'he is' : 'they are'} absent rather than ranked on target share alone.`
+    );
+  }
 
   if (t.rows.length >= t.limit) {
     parts.push(`Capped at the ${t.limit} biggest gaps of ${t.considered} ranked.`);

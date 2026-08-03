@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
+  baselineFor,
   bestAt,
   buildRoster,
   explainNoFits,
   groupPicks,
   humanList,
   priceOf,
+  projectionsOut,
   type RosterRow,
 } from '../src/server/routes/ledger.js';
 import type { PlayerRow } from '../src/server/data.js';
@@ -33,8 +35,12 @@ const POOL: Record<string, PlayerRow> = {
   rb1: player('rb1', 'First RB', 'RB'),
   rb2: player('rb2', 'Second RB', 'RB'),
   te1: player('te1', 'A Tight End', 'TE'),
+  unlisted: player('unlisted', 'Nobody Projected', 'WR'),
 };
 
+// te1 is projected for a real zero; ghost ids and anyone absent from this map
+// have no row in the feed at all. The two are different facts and the ledger
+// has to keep them apart.
 const POINTS: Record<string, number> = { qb1: 20, rb1: 14, rb2: 9, te1: 0 };
 const VALUES: Record<string, { dynasty: number | null; redraft: number | null }> = {
   qb1: { dynasty: 5000, redraft: 3000 },
@@ -46,7 +52,7 @@ const build = (raw: RosterRow) =>
     raw,
     'The Test Team',
     POOL,
-    (id) => POINTS[id] ?? 0,
+    (id) => POINTS[id] ?? null,
     (id) => VALUES[id]
   );
 
@@ -75,9 +81,23 @@ describe('buildRoster', () => {
   });
 
   it('counts players with no projection, since they read as thinner than they are', () => {
-    const b = build({ roster_id: 1, players: ['qb1', 'te1'] });
+    const b = build({
+      roster_id: 1,
+      // 'unlisted' is in the player index but has no row in the projection feed.
+      players: ['qb1', 'unlisted'],
+    });
     expect(b.unprojected).toBe(1);
+    expect(b.byId.get('unlisted')!.points).toBe(0);
+  });
+
+  it('does not call a genuine zero projection "no projection on file"', () => {
+    // A player the feed says will score nothing is a claim we have; a player the
+    // feed has never heard of is a gap in our coverage. Reporting the first as
+    // the second overstates how little this page knows, and the note under the
+    // depth table says the number out loud.
+    const b = build({ roster_id: 1, players: ['qb1', 'te1'] });
     expect(b.byId.get('te1')!.points).toBe(0);
+    expect(b.unprojected).toBe(0);
   });
 
   it('prices on the dynasty scale and never falls back to redraft', () => {
@@ -155,7 +175,22 @@ describe('priceOf', () => {
  * ================================================================== */
 
 describe('explainNoFits', () => {
-  const base = { mySurplus: ['RB'], leagueNeeds: ['TE'], others: 11, dismissed: 0 };
+  const base = {
+    mySurplus: ['RB'],
+    leagueNeeds: ['TE'],
+    others: 11,
+    dismissed: 0,
+    projectionsOut: false,
+  };
+
+  it('blames the outage before it blames the roster', () => {
+    // With no projections nobody clears replacement level, so "nothing is spare"
+    // and "everyone is thin" are both artefacts. Saying either would be the page
+    // asserting a confident judgement about a roster it cannot see.
+    const said = explainNoFits({ ...base, mySurplus: [], projectionsOut: true });
+    expect(said).toMatch(/projection feed returned nothing/);
+    expect(said).not.toMatch(/Nothing on your roster is spare/);
+  });
 
   it('says when there is simply nobody to trade with', () => {
     expect(explainNoFits({ ...base, others: 0 })).toMatch(/nobody to trade with/);
@@ -178,9 +213,54 @@ describe('explainNoFits', () => {
   });
 
   it('otherwise names both sides of the mismatch', () => {
-    const said = explainNoFits({ mySurplus: ['QB', 'RB'], leagueNeeds: ['TE'], others: 11, dismissed: 0 });
+    const said = explainNoFits({ ...base, mySurplus: ['QB', 'RB'], leagueNeeds: ['TE'] });
     expect(said).toMatch(/deep at QB and RB/);
     expect(said).toMatch(/thin at TE/);
+  });
+});
+
+/* ================================================================== *
+ * The bar a gain is measured against
+ * ================================================================== */
+
+describe('baselineFor', () => {
+  const roster = [
+    { playerId: 'a', name: 'Their RB1', position: 'RB', points: 9.7, value: null },
+    { playerId: 'b', name: 'Their RB2', position: 'RB', points: 2.8, value: null },
+  ];
+
+  it('is the incumbent where he already beats a free agent', () => {
+    expect(baselineFor(roster, 'RB', 5.7)).toBeCloseTo(9.7);
+  });
+
+  it('is replacement level where the incumbent is worse than the waiver wire', () => {
+    // This is the case that makes the page's arithmetic look broken if the bar
+    // is not printed: a 2.8 incumbent, a 10.0 acquisition and a gain of 4.3.
+    expect(baselineFor([roster[1]], 'RB', 5.7)).toBeCloseTo(5.7);
+  });
+
+  it('is replacement level where the roster has nobody there at all', () => {
+    expect(baselineFor([], 'RB', 5.7)).toBeCloseTo(5.7);
+  });
+
+  it('falls back to the incumbent where the position has no replacement level', () => {
+    // Kickers and defences can have an empty pool. Treating a missing level as
+    // zero rather than as "no bar" would inflate every gain at that position.
+    expect(baselineFor(roster, 'RB', null)).toBeCloseTo(9.7);
+    expect(baselineFor([], 'RB', null)).toBe(0);
+  });
+});
+
+describe('projectionsOut', () => {
+  it('is true only when the feed projected nobody in the whole pool', () => {
+    // One manager can genuinely own eleven players nobody projects. An entire
+    // league of them is only ever a dead upstream.
+    expect(projectionsOut(4000, 0)).toBe(true);
+    expect(projectionsOut(4000, 1)).toBe(false);
+  });
+
+  it('is false when there is no pool to judge, rather than claiming an outage', () => {
+    expect(projectionsOut(0, 0)).toBe(false);
   });
 });
 

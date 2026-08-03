@@ -203,6 +203,7 @@ export function findTrades(
   const myNeeds = new Set(myStandings.filter((s) => s.needy).map((s) => s.position));
 
   const matches: TradeMatch[] = [];
+  const { fixed } = lineupShape(rosterPositions);
 
   for (const other of others) {
     const theirs = standings(other, rosterPositions, levels);
@@ -213,12 +214,24 @@ export function findTrades(
       const give = row.surplus[0];
       const level = levels.byPosition.get(row.position) ?? 0;
 
-      // What they gain is the upgrade over what they are starting now, which is
-      // by definition at or below replacement.
-      const theirCurrent = other.players
+      // What they gain is the upgrade over the player who actually occupies
+      // the slot this fills — their LAST starter at the position, not their
+      // first.
+      //
+      // Measuring against their best was wrong in the direction that matters:
+      // a "needy" position is one where a marginal slot cannot be filled above
+      // replacement, and their best player at that position is by definition
+      // already starting and not being displaced. Comparing against him
+      // understated every upgrade, and for a team with one good starter and a
+      // hole behind him it reported a real trade as worth nothing.
+      const slotsAt = fixed.get(row.position) ?? 0;
+      const theirGroup = other.players
         .filter((p) => (p.position ?? '').toUpperCase() === row.position)
-        .sort((a, b) => b.points - a.points)[0];
-      const theirGain = give.points - Math.max(theirCurrent?.points ?? 0, level);
+        .sort((a, b) => b.points - a.points);
+      const incumbent = theirGroup[Math.max(0, slotsAt - 1)];
+      // A slot they cannot fill above replacement gets streamed from the wire,
+      // so replacement level is the floor on what they are already getting.
+      const theirGain = give.points - Math.max(incumbent?.points ?? 0, level);
 
       // Do they have anything spare that fills one of my holes?
       const backFill = theirs.find((s) => s.surplus.length && myNeeds.has(s.position));

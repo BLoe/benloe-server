@@ -168,6 +168,68 @@ export function simKey(
 export const pointsFor = (settings: { fpts?: number; fpts_decimal?: number } | undefined): number =>
   (settings?.fpts ?? 0) + (settings?.fpts_decimal ?? 0) / 100;
 
+/** Longest a regular season can be. A malformed setting must not make us fetch 30 weeks. */
+const MAX_NFL_WEEK = 18;
+
+/**
+ * The week the playoffs open.
+ *
+ * Sleeper reports `playoff_week_start: 0` for a league that has not had its
+ * playoff schedule set — which is most leagues in the preseason, when this page
+ * is most likely to be opened. Left alone that becomes a regular season of minus
+ * one weeks: no schedule, no simulation, and copy that says "-1 weeks of it".
+ * Zero means "not set", so it takes the default rather than being believed.
+ */
+export function playoffStartWeek(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 1) return 15;
+  return Math.min(MAX_NFL_WEEK + 1, Math.floor(n));
+}
+
+/** Same story: an unset `playoff_teams` comes back as 0, which would be no field at all. */
+export function playoffFieldSize(raw: unknown, totalRosters: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return Math.min(6, Math.max(1, totalRosters));
+  return Math.min(Math.floor(n), Math.max(1, totalRosters));
+}
+
+/**
+ * Expected losses for one team.
+ *
+ * playoffs.ts derives this figure from the first team in the array and hands the
+ * same number to everybody, which is only right when every roster plays the same
+ * number of games and nobody has tied. Neither holds in general: a tie is a game
+ * played that is neither a win nor a loss, and a week Sleeper never published
+ * leaves some teams short. Recomputing per team keeps the record column adding
+ * up to the games that team actually plays.
+ */
+export function expectedLosses(
+  record: { wins: number; losses: number; ties: number },
+  remainingForTeam: number,
+  expectedWins: number
+): number {
+  const games = record.wins + record.losses + record.ties + remainingForTeam;
+  // Ties are not simulated at all, so they are carried separately rather than
+  // being quietly counted as defeats.
+  return Math.max(0, games - record.ties - expectedWins);
+}
+
+/**
+ * Starters the model has no projection for.
+ *
+ * A player with no projection scores zero, so he only reaches a starting slot on
+ * a roster with nobody better — and then the slot looks filled while the team's
+ * expected score is built on a number we do not have. That is indistinguishable
+ * from an empty slot in the arithmetic and must not be indistinguishable on the
+ * page, so it is counted and reported.
+ */
+export function unprojectedStarters(
+  slots: Array<{ player: { playerId: string } | null }>,
+  projections: Record<string, unknown>
+): number {
+  return slots.filter((s) => s.player && !projections[s.player.playerId]).length;
+}
+
 /* ------------------------------------------------------------------ *
  * The schedule loader
  * ------------------------------------------------------------------ */
@@ -180,7 +242,16 @@ export const pointsFor = (settings: { fpts?: number; fpts_decimal?: number } | u
  * preseason, and remembering "there is no schedule" for six hours would keep the
  * page empty long after it stopped being true.
  */
-async function loadSchedule(leagueId: string, throughWeek: number): Promise<Map<number, SimGame[]>> {
+interface ScheduledWeek {
+  games: SimGame[];
+  /** Games this week should have had, from the number of roster rows Sleeper sent. */
+  expected: number;
+}
+
+async function loadSchedule(
+  leagueId: string,
+  throughWeek: number
+): Promise<Map<number, ScheduledWeek>> {
   const weeks = Array.from({ length: Math.max(0, throughWeek) }, (_, i) => i + 1);
 
   const raw: Record<number, MatchupRow[]> = useFixtures()
@@ -203,12 +274,16 @@ async function loadSchedule(leagueId: string, throughWeek: number): Promise<Map<
         return Object.fromEntries(pages);
       });
 
-  const out = new Map<number, SimGame[]>();
+  const out = new Map<number, ScheduledWeek>();
   for (const week of weeks) {
     const rows = raw[week];
     if (!Array.isArray(rows) || !rows.length) continue;
     const games = pairMatchups(week, rows);
-    if (games.length) out.set(week, games);
+    // One row per team, so a straight head-to-head week has half as many games
+    // as rows. Anything short of that is a matchup group we could not pair, and
+    // the caller has to be able to say so rather than quietly simulating a
+    // season with a game missing from it.
+    if (games.length) out.set(week, { games, expected: Math.floor(rows.length / 2) });
   }
   return out;
 }
@@ -229,8 +304,8 @@ export interface SeasonTeam {
   weeklyPoints: number;
   /** Starting slots nobody on the roster can fill. */
   emptySlots: string[];
-  /** Rostered players with no projection on file, so coverage is never implied. */
-  unprojected: number;
+  /** Starters with no projection on file, so coverage is never implied. */
+  unprojectedStarters: number;
   odds: PlayoffOdds | null;
 }
 
@@ -251,6 +326,8 @@ export interface SeasonResponse {
   remainingGames: number;
   /** Weeks the schedule is missing entirely. */
   missingWeeks: number[];
+  /** Weeks that came back with fewer games than teams — a matchup group we could not pair. */
+  partialWeeks: number[];
   leverage: Array<GameLeverage & { opponentName: string }>;
 }
 
@@ -294,8 +371,11 @@ async function handle(req: express.Request, res: express.Response, session: Sess
   const mine = myRoster(rosters, session.userId);
 
   const rosterPositions: string[] = league.roster_positions ?? [];
-  const playoffWeekStart: number = league.settings?.playoff_week_start ?? 15;
-  const playoffTeams: number = league.settings?.playoff_teams ?? 6;
+  const playoffWeekStart = playoffStartWeek(league.settings?.playoff_week_start);
+  const playoffTeams = playoffFieldSize(
+    league.settings?.playoff_teams,
+    rosters.length || league.total_rosters || 12
+  );
   const lastRegularWeek = Math.max(0, playoffWeekStart - 1);
 
   const played = weeksPlayed(rosters);
@@ -308,14 +388,16 @@ async function handle(req: express.Request, res: express.Response, session: Sess
   const schedule: Array<SimGame & { played: boolean }> = [];
   const remaining: SimGame[] = [];
   const missingWeeks: number[] = [];
+  const partialWeeks: number[] = [];
   for (let week = 1; week <= lastRegularWeek; week++) {
-    const games = byWeek.get(week);
-    if (!games?.length) {
+    const entry = byWeek.get(week);
+    if (!entry?.games.length) {
       missingWeeks.push(week);
       continue;
     }
+    if (entry.games.length < entry.expected) partialWeeks.push(week);
     const done = week <= played;
-    for (const game of games) {
+    for (const game of entry.games) {
       schedule.push({ ...game, played: done });
       if (!done) remaining.push(game);
     }
@@ -359,8 +441,15 @@ async function handle(req: express.Request, res: express.Response, session: Sess
       pointsFor: pointsFor(r.settings),
       weeklyPoints: lineup.points,
       emptySlots: lineup.empty,
-      unprojected: ids.filter((id) => !projections[id]).length,
+      unprojectedStarters: unprojectedStarters(lineup.slots, projections),
     });
+  }
+
+  /** How many games each roster still has, for the record column. */
+  const remainingByRoster = new Map<number, number>();
+  for (const g of remaining) {
+    remainingByRoster.set(g.homeRosterId, (remainingByRoster.get(g.homeRosterId) ?? 0) + 1);
+    remainingByRoster.set(g.awayRosterId, (remainingByRoster.get(g.awayRosterId) ?? 0) + 1);
   }
 
   // With nothing played and nothing scheduled there is no season to simulate,
@@ -408,10 +497,19 @@ async function handle(req: express.Request, res: express.Response, session: Sess
     leverageRuns: leverage.length ? LEVERAGE_RUNS : 0,
     seed: SIM_SEED,
     myRosterId: mine?.roster_id ?? null,
-    teams: ordered.map((t) => ({ ...t, odds: oddsById.get(t.rosterId) ?? null })),
+    teams: ordered.map((t) => {
+      const o = oddsById.get(t.rosterId);
+      return {
+        ...t,
+        odds: o
+          ? { ...o, expectedLosses: expectedLosses(t, remainingByRoster.get(t.rosterId) ?? 0, o.expectedWins) }
+          : null,
+      };
+    }),
     schedule,
     remainingGames: remaining.length,
     missingWeeks,
+    partialWeeks,
     leverage,
   };
 

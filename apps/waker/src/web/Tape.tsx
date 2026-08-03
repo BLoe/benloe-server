@@ -91,7 +91,14 @@ export function trendWord(points: SparkPoint[], threshold = 0.05): Trend {
 export function describeSeries(
   label: string,
   points: SparkPoint[],
-  format: (v: number) => string
+  format: (v: number) => string,
+  /**
+   * What counts as a move, in the series' own units. Defaults to five share
+   * points, which is right for the snap shares this page draws and wrong for
+   * anything else — a points series left on that default would read "rising"
+   * off a twentieth of a point.
+   */
+  threshold?: number
 ): string {
   const seen = points.filter((p) => p.value != null) as Array<{ week: number; value: number }>;
   if (!seen.length) return `${label}: no weekly data on file.`;
@@ -103,7 +110,7 @@ export function describeSeries(
   const last = seen[seen.length - 1];
   const high = seen.reduce((a, b) => (b.value > a.value ? b : a));
   const low = seen.reduce((a, b) => (b.value < a.value ? b : a));
-  const t = trendWord(points);
+  const t = threshold == null ? trendWord(points) : trendWord(points, threshold);
 
   // Weeks inside the span with no game. A sighted reader sees these as breaks
   // in the line; a listener would otherwise hear an unbroken run of games.
@@ -138,6 +145,7 @@ export function Sparkline({
   height = 30,
   markWeek,
   emptyNote = 'no data',
+  trendThreshold,
 }: {
   points: SparkPoint[];
   from: number;
@@ -152,6 +160,8 @@ export function Sparkline({
   /** Draws a hairline where the judging window begins. */
   markWeek?: number;
   emptyNote?: string;
+  /** What counts as a move, in the series' units. Defaults to snap-share terms. */
+  trendThreshold?: number;
 }) {
   const runs = segments(points);
   const seen = runs.flat();
@@ -161,7 +171,7 @@ export function Sparkline({
   const y = (v: number) =>
     height - PAD_Y - (Math.max(0, Math.min(max, v)) / max) * (height - PAD_Y * 2);
 
-  const description = describeSeries(label, points, format);
+  const description = describeSeries(label, points, format, trendThreshold);
   const band = Math.max(7, (width - PAD_X * 2) / (span + 1));
 
   return (

@@ -20,6 +20,7 @@ import express from 'express';
 import {
   findDivergence,
   usageTrend,
+  MIN_GAMES,
   type DivergenceRow,
   type PlayerUsageInput,
 } from '../../lib/analysis/divergence.js';
@@ -160,6 +161,13 @@ export interface Tape {
   rows: TapeRow[];
   /** How many players the divergence ranked before the cap. */
   considered: number;
+  /**
+   * Players who played inside the window but have no snap row for it, and were
+   * therefore left out. See buildTape for why they cannot be ranked; the count
+   * is carried so the page can say what is missing instead of implying the list
+   * is the whole field.
+   */
+  withoutSnaps: number;
   /** X domain every sparkline shares, so two rows can be compared by shape. */
   weekFrom: number;
   weekTo: number;
@@ -180,12 +188,36 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
  */
 export function buildTape(src: TapeSources): Tape {
   const rec = src.pointsPerReception ?? 0;
+  const from = src.throughWeek - src.window + 1;
+  const inWindow = (week: number) => week >= from && week <= src.throughWeek;
   const scored = new Map<string, PlayerUsageInput['usage']>();
 
   const usageInputs: PlayerUsageInput[] = [];
+  let withoutSnaps = 0;
+
   for (const [id, u] of src.usage) {
     const p = src.players[id];
     if (!p) continue;
+
+    const snaps = src.snaps.get(id)?.weeks ?? [];
+
+    // A player with usage but no snap row cannot be ranked, and ranking him
+    // anyway is worse than dropping him. `usageScore` falls back to raw target
+    // share when snap share is null — a number that tops out around 0.30 while
+    // the rest of the field is scored on a blend that runs to 1.0 — so he lands
+    // at the bottom of his position's usage percentile whatever his real role
+    // is, and the screen calls him a sell. It did: the snap join misses Chig
+    // Okonkwo and Taysom Hill entirely, and both arrived at a starter's target
+    // share with a usage rank in the bottom 3% and a fabricated points gap.
+    // The two nflverse files do not name quite the same people, so this is a
+    // coverage hole rather than a fact about a player, and it is reported as
+    // one instead of being dressed up as a verdict.
+    const played = u.weeks.some((w) => inWindow(w.week));
+    if (played && !snaps.some((s) => inWindow(s.week))) {
+      withoutSnaps++;
+      continue;
+    }
+
     const weeks = rec
       ? u.weeks.map((w) => ({ ...w, points: w.points + rec * (w.receptions ?? 0) }))
       : u.weeks;
@@ -193,7 +225,7 @@ export function buildTape(src: TapeSources): Tape {
     usageInputs.push({
       playerId: id,
       position: p.pos,
-      snaps: src.snaps.get(id)?.weeks ?? [],
+      snaps,
       usage: weeks,
     });
   }
@@ -209,6 +241,7 @@ export function buildTape(src: TapeSources): Tape {
   return {
     rows,
     considered: ranked.length,
+    withoutSnaps,
     // Always from week one, even when nobody in the list played it. A shared
     // domain is the whole reason two sparklines can be compared at a glance,
     // and a per-player domain would silently rescale every row.
@@ -326,14 +359,16 @@ async function handle(req: express.Request, res: express.Response) {
     loadProjections(league.season, league.scoring_settings),
   ]);
 
-  const nameOf = teamNames(users);
-  const mine = myRoster(rosters, session.userId);
+  const nameOf = teamNames(Array.isArray(users) ? users : []);
+  const mine = myRoster(Array.isArray(rosters) ? rosters : [], session.userId);
 
   // Ownership, one lookup per player. A manager needs to know instantly whether
   // a name on this list is his, someone else's, or nobody's — those are three
   // different actions (hold, offer, claim).
   const ownerOf = new Map<string, { rosterId: number; teamName: string; mine: boolean }>();
-  for (const r of rosters as any[]) {
+  // Sleeper answers a league it does not know with `null` rather than an empty
+  // list, and an unreadable roster must cost ownership labels, not the page.
+  for (const r of (Array.isArray(rosters) ? rosters : []) as any[]) {
     const entry = {
       rosterId: r.roster_id,
       teamName: nameOf.get(r.owner_id) ?? `Roster ${r.roster_id}`,
@@ -363,6 +398,9 @@ async function handle(req: express.Request, res: express.Response) {
     limit: TAPE_LIMIT,
     inSeason: win.inSeason,
     window: win.window,
+    /** Games a player needs before he can be ranked at all. Carried so the page
+        can explain an empty week one rather than blaming the source. */
+    minGames: MIN_GAMES,
     /** Which NFL season this usage actually describes. Never implied. */
     usageSeason: market.health.usageSeason,
     leagueSeason: league.season,

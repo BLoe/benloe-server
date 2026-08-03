@@ -36,7 +36,7 @@ interface SeasonTeam {
   pointsFor: number;
   weeklyPoints: number;
   emptySlots: string[];
-  unprojected: number;
+  unprojectedStarters: number;
   odds: Odds | null;
 }
 
@@ -70,6 +70,7 @@ interface SeasonResponse {
   schedule: Game[];
   remainingGames: number;
   missingWeeks: number[];
+  partialWeeks: number[];
   leverage: Leverage[];
 }
 
@@ -89,7 +90,6 @@ export default function Season({ league }: { league: { leagueId: string } }) {
   if (!season.data) return null;
 
   const d = season.data;
-  const mine = d.teams.find((t) => t.mine) ?? null;
 
   return (
     <>
@@ -106,7 +106,10 @@ export default function Season({ league }: { league: { leagueId: string } }) {
         note={oddsNote(d)}
       >
         {d.teams.length ? (
-          <OddsTable teams={d.teams} playoffTeams={d.playoffTeams} simulated={d.runs > 0} />
+          <>
+            <OddsTable teams={d.teams} playoffTeams={d.playoffTeams} simulated={d.runs > 0} />
+            <Coverage teams={d.teams} />
+          </>
         ) : (
           <Empty
             title="No rosters came back for this league."
@@ -120,7 +123,7 @@ export default function Season({ league }: { league: { leagueId: string } }) {
         count={d.leverage.length ? `${d.leverage.length} left` : undefined}
         note={
           d.leverage.length
-            ? `Each game is forced won and forced lost, and the season replayed ${d.leverageRuns.toLocaleString()} times each way. The gap between the two is what that single result is worth to you. Fewer runs than the odds above, because this is a comparison between games rather than a headline number.`
+            ? `Each game is forced won and forced lost, and the season replayed ${d.leverageRuns.toLocaleString()} times each way. Read the gap, not the two ends: a forced game is scored as a result without points, so both figures sit a few points below the table above and only the distance between them is exact. Fewer runs than the odds above, because this is a comparison between games rather than a headline number.`
             : undefined
         }
       >
@@ -145,18 +148,66 @@ export default function Season({ league }: { league: { leagueId: string } }) {
           teams={d.teams}
           myRosterId={d.myRosterId}
           missingWeeks={d.missingWeeks}
+          partialWeeks={d.partialWeeks}
           lastWeek={d.playoffWeekStart - 1}
         />
       </Sheet>
 
-      {mine && mine.emptySlots.length > 0 && (
-        <p className="px-1" style={{ fontSize: 'var(--t-meta)', color: 'var(--faint)', maxWidth: '68ch' }}>
-          Your best available lineup leaves {mine.emptySlots.join(', ')} empty, so your expected
-          weekly score is what the roster can actually field, not what a full lineup would give you.
-        </p>
-      )}
     </>
   );
+}
+
+/**
+ * What the weekly-score column is missing.
+ *
+ * Every team's odds rest on one number — what it scores in a normal week — and
+ * that number is only as good as the projections behind it. Two things quietly
+ * pull it down: a starting slot nobody on the roster can fill, and a starter
+ * with no projection on file, who is counted as zero because there is nothing
+ * else to count him as. Both are invisible in a column of points, so they are
+ * said out loud here rather than left to be discovered.
+ */
+function Coverage({ teams }: { teams: SeasonTeam[] }) {
+  const short = teams.filter((t) => t.emptySlots.length > 0);
+  const blind = teams.filter((t) => t.unprojectedStarters > 0);
+  if (!short.length && !blind.length) return null;
+
+  return (
+    <p
+      className="px-4 py-2.5 border-t border-[var(--rule)]"
+      style={{ fontSize: 'var(--t-meta)', color: 'var(--graphite)', lineHeight: 1.5, maxWidth: '68ch' }}
+    >
+      {short.length > 0 && (
+        <>
+          {names(short)} cannot fill every starting slot ({[...new Set(short.flatMap((t) => t.emptySlots))].join(', ')}).
+          An unfilled slot scores nothing, so the weekly figure is what the roster can actually field.{' '}
+        </>
+      )}
+      {blind.length > 0 && (
+        <>
+          No projection is on file for {blindStarters(blind)} of the starters fielded by{' '}
+          {names(blind)}. A starter with no projection is counted as zero, which understates those
+          teams and, with them, their odds.
+        </>
+      )}
+    </p>
+  );
+}
+
+const blindStarters = (teams: SeasonTeam[]): string => {
+  const n = teams.reduce((sum, t) => sum + t.unprojectedStarters, 0);
+  return `${n} ${n === 1 ? 'player' : 'players'}`;
+};
+
+/** Up to three team names, then a count. Long enough to be checkable, short enough to read. */
+function names(teams: SeasonTeam[]): string {
+  const shown = teams.slice(0, 3).map((t) => t.teamName);
+  const rest = teams.length - shown.length;
+  const list =
+    shown.length === 1
+      ? shown[0]
+      : `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
+  return rest > 0 ? `${list} and ${rest} other${rest === 1 ? '' : 's'}` : list;
 }
 
 /** The one-line state of the season, in plain words. */
@@ -175,14 +226,38 @@ function oddsNote(d: SeasonResponse): string {
   if (!d.runs) {
     return 'No games are scheduled and none have been played, so there is nothing to simulate. The rosters are ranked by projected weekly score instead, which is the only signal available.';
   }
-  return `Simulated, not calculated: ${d.runs.toLocaleString()} seasons played out from a fixed seed (${d.seed}), so a refresh does not change the number. Each team scores around its best available lineup with real weekly variance, and ties break on points for, as Sleeper does. A week still being played is simulated from zero rather than from Sunday's half-finished scores. The model does not know about injuries, trades or a manager who stops setting a lineup in November.`;
+  // A gap in the fixture list changes what these odds are odds *of*, so it
+  // belongs here rather than only on the schedule panel further down the page.
+  const missing = d.missingWeeks.length
+    ? ` Sleeper returned no matchups for ${plural(d.missingWeeks, 'week')} ${list(d.missingWeeks)}, so ${d.missingWeeks.length === 1 ? 'that week was' : 'those weeks were'} left out of the simulation entirely — these are the odds over a ${d.playoffWeekStart - 1 - d.missingWeeks.length}-week season, not a ${d.playoffWeekStart - 1}-week one.`
+    : '';
+  // A week that only half paired is the more dangerous case: it looks scheduled.
+  const partial = d.partialWeeks.length
+    ? ` ${plural(d.partialWeeks, 'Week')} ${list(d.partialWeeks)} came back with fewer games than teams — a matchup this app cannot read as a head-to-head pair, which usually means median scoring or a multi-team group. Those games are not in the simulation.`
+    : '';
+  return `Simulated, not calculated: ${d.runs.toLocaleString()} seasons played out from a fixed seed (${d.seed}), so a refresh does not change the number. Each team scores around its best available lineup with real weekly variance, and ties break on points for, as Sleeper does. A week still being played is simulated from zero rather than from Sunday's half-finished scores. The model does not know about injuries, trades or a manager who stops setting a lineup in November.${missing}${partial}`;
 }
 
+const plural = (xs: unknown[], word: string) => (xs.length === 1 ? word : `${word}s`);
+const list = (weeks: number[]) => weeks.join(', ');
+
 function scheduleNote(d: SeasonResponse): string {
+  const parts: string[] = [];
   if (d.missingWeeks.length) {
-    return `Sleeper returned no matchups for ${d.missingWeeks.length === 1 ? 'week' : 'weeks'} ${d.missingWeeks.join(', ')}, so ${d.missingWeeks.length === 1 ? 'that week is' : 'those weeks are'} missing from the simulation entirely. Every other week is the league's real fixture list.`;
+    parts.push(
+      `Sleeper returned no matchups for ${plural(d.missingWeeks, 'week')} ${list(d.missingWeeks)}, so ${d.missingWeeks.length === 1 ? 'that week is' : 'those weeks are'} missing from the simulation entirely.`
+    );
   }
-  return "The league's real fixture list, straight from Sleeper. Weeks already scored are marked as played and are not simulated again.";
+  if (d.partialWeeks.length) {
+    parts.push(
+      `${plural(d.partialWeeks, 'Week')} ${list(d.partialWeeks)} ${d.partialWeeks.length === 1 ? 'is' : 'are'} short a game: a matchup group there was not a head-to-head pair, so it could not be simulated and is not drawn below.`
+    );
+  }
+  if (!parts.length) {
+    return "The league's real fixture list, straight from Sleeper. Weeks already scored are marked as played and are not simulated again.";
+  }
+  parts.push("Every other week is the league's real fixture list.");
+  return parts.join(' ');
 }
 
 /* ------------------------------------------------------------------ *
@@ -261,11 +336,7 @@ function OddsTable({
                 <td className="fig px-2 py-1.5 text-right" style={{ color: 'var(--graphite)' }}>
                   {team.odds ? odds(team.odds.lastPlace) : '—'}
                 </td>
-                <td className="fig px-2 py-1.5 text-right">
-                  {team.odds
-                    ? `${team.odds.expectedWins.toFixed(1)}-${team.odds.expectedLosses.toFixed(1)}`
-                    : `${team.wins}-${team.losses}`}
-                </td>
+                <td className="fig px-2 py-1.5 text-right">{record(team)}</td>
                 <td className="fig px-4 py-1.5 text-right">{team.weeklyPoints.toFixed(1)}</td>
               </tr>
 
@@ -294,6 +365,20 @@ function OddsTable({
       </table>
     </div>
   );
+}
+
+/**
+ * The projected final record.
+ *
+ * Ties get their own place when a team has any. The simulation has no concept of
+ * a tie, so it neither wins nor loses them; folding one into the losses would be
+ * a quiet lie about a game that was actually drawn.
+ */
+function record(team: SeasonTeam): string {
+  const head = team.odds
+    ? `${team.odds.expectedWins.toFixed(1)}-${team.odds.expectedLosses.toFixed(1)}`
+    : `${team.wins}-${team.losses}`;
+  return team.ties > 0 ? `${head}-${team.ties}` : head;
 }
 
 /**
@@ -546,12 +631,14 @@ function ScheduleTable({
   teams,
   myRosterId,
   missingWeeks,
+  partialWeeks,
   lastWeek,
 }: {
   schedule: Game[];
   teams: SeasonTeam[];
   myRosterId: number | null;
   missingWeeks: number[];
+  partialWeeks: number[];
   lastWeek: number;
 }) {
   if (!schedule.length) {
@@ -611,7 +698,16 @@ function ScheduleTable({
 
       {missingWeeks.length > 0 && (
         <p className="mt-3" style={{ fontSize: 'var(--t-meta)', color: 'var(--faint)' }}>
-          Weeks {missingWeeks.join(', ')} are missing — Sleeper returned no matchups for them.
+          {plural(missingWeeks, 'Week')} {list(missingWeeks)}{' '}
+          {missingWeeks.length === 1 ? 'is' : 'are'} missing — Sleeper returned no matchups for{' '}
+          {missingWeeks.length === 1 ? 'it' : 'them'}.
+        </p>
+      )}
+      {partialWeeks.length > 0 && (
+        <p className="mt-1" style={{ fontSize: 'var(--t-meta)', color: 'var(--faint)' }}>
+          {plural(partialWeeks, 'Week')} {list(partialWeeks)} {partialWeeks.length === 1 ? 'is' : 'are'}{' '}
+          drawn short: a matchup group there was not a head-to-head pair, so those teams have no
+          fixture here and none in the simulation.
         </p>
       )}
     </div>
