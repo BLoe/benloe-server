@@ -17,17 +17,29 @@
 import { config as loadEnv } from 'dotenv';
 import express from 'express';
 import compression from 'compression';
-import { readFile } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import * as S from '../lib/sleeper.js';
-import { cached, diskCached, TTL, stats, invalidate } from './cache.js';
+import { cached, TTL, stats, invalidate } from './cache.js';
+import {
+  DIST,
+  loadLeague,
+  loadLeagueUsers,
+  loadMarketFor,
+  loadPlayers,
+  loadProjections,
+  loadRosters,
+  loadState,
+  myRoster,
+  readFixture,
+  resetMemos,
+  sourceName,
+  teamNames,
+  useFixtures,
+} from './data.js';
 import { parseAllowList } from './loginPolicy.js';
-import { loadMarket, type Market } from './market.js';
 import { readCycle } from '../lib/analysis/cycle.js';
 import { buildFeed } from './feed.js';
 import { orientationOf } from '../lib/analysis/orientation.js';
-import { indexProjections } from '../lib/projections.js';
 import {
   COOKIE_NAME,
   cookieHeader,
@@ -43,14 +55,7 @@ import {
 loadEnv({ path: '/srv/benloe/.env' });
 loadEnv();
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const FIXTURES = join(ROOT, 'fixtures');
-export const CACHE_DIR = process.env.WAKER_CACHE_DIR || join(ROOT, '.cache');
-
 const PORT = Number(process.env.PORT || 3012);
-const SOURCE = (process.env.WAKER_SOURCE || 'live') as 'live' | 'fixtures';
-/** Which NFL season the captured fixtures describe. See scripts/capture-fixtures. */
-const FIXTURE_SEASON = '2025';
 
 /** Signs session cookies. Shared with the other apps on this box. */
 const SESSION_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || '';
@@ -67,10 +72,6 @@ const LOGIN_POLICY = {
 
 const app = express();
 app.use(compression());
-
-export const useFixtures = () => SOURCE === 'fixtures';
-const readFixture = async (name: string) =>
-  JSON.parse(await readFile(join(FIXTURES, `${name}.json`), 'utf8'));
 
 const wrap =
   (fn: express.RequestHandler): express.RequestHandler =>
@@ -155,14 +156,12 @@ app.delete('/api/session', (_req, res) => {
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, source: SOURCE, cache: stats() });
+  res.json({ ok: true, source: sourceName(), cache: stats() });
 });
 
 app.post('/api/cache/flush', (_req, res) => {
   invalidate();
-  playerMemo = null;
-  marketMemo.clear();
-  projectionMemo.clear();
+  resetMemos();
   res.json({ ok: true });
 });
 
@@ -173,7 +172,7 @@ app.get(
   wrap(async (req, res) => {
     const session: Session = (req as any).session;
     const [state, user] = await Promise.all([
-      useFixtures() ? readFixture('state') : cached('state', TTL.state, () => S.getState()),
+      loadState(),
       resolveUser(session.username),
     ]);
     const season: string = state.league_season ?? state.season;
@@ -214,121 +213,6 @@ app.get(
     });
   })
 );
-
-/* ------------------------------------------------------------------ *
- * League data
- * ------------------------------------------------------------------ */
-
-async function loadLeague(leagueId: string) {
-  if (useFixtures()) return readFixture('league');
-  return cached(`league:${leagueId}`, TTL.league, () => S.getLeague(leagueId));
-}
-
-async function loadRosters(leagueId: string) {
-  if (useFixtures()) return readFixture('rosters');
-  return cached(`rosters:${leagueId}`, TTL.rosters, () => S.getRosters(leagueId));
-}
-
-async function loadLeagueUsers(leagueId: string) {
-  if (useFixtures()) return readFixture('users');
-  return cached(`users:${leagueId}`, TTL.league, () => S.getLeagueUsers(leagueId));
-}
-
-/**
- * Slim player index. The full dump is ~14MB of mostly-inactive players; this
- * keeps the fields any Waker view actually reads.
- */
-export interface PlayerRow {
-  id: string;
-  name: string;
-  pos: string | null;
-  team: string | null;
-  age: number | null;
-  exp: number | null;
-  status: string | null;
-  bye: number | null;
-  rank: number | null;
-}
-
-let playerMemo: Record<string, PlayerRow> | null = null;
-
-async function loadPlayers(): Promise<Record<string, PlayerRow>> {
-  if (playerMemo) return playerMemo;
-  const full: Record<string, any> = useFixtures()
-    ? await readFixture('players')
-    : await diskCached(CACHE_DIR, 'players-full', TTL.players, () => S.getAllPlayers());
-
-  const slim: Record<string, PlayerRow> = {};
-  for (const [id, p] of Object.entries(full)) {
-    if (!p.active && !p.team) continue;
-    slim[id] = {
-      id,
-      name: p.full_name ?? `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim(),
-      pos: p.position ?? null,
-      team: p.team ?? null,
-      age: p.age ?? null,
-      exp: p.years_exp ?? null,
-      status: p.injury_status ?? null,
-      bye: p.bye_week ?? null,
-      rank: p.search_rank ?? null,
-    };
-  }
-  playerMemo = slim;
-  return slim;
-}
-
-/** Rotowire season projections, indexed and memoised. */
-const projectionMemo = new Map<string, Record<string, { points: number; games: number | null }>>();
-
-async function loadProjections(season: string, scoring: Record<string, number> | undefined) {
-  const key = `${season}:${scoringKey(scoring)}`;
-  const hit = projectionMemo.get(key);
-  if (hit) return hit;
-
-  const raw = useFixtures()
-    ? await readFixture('projections')
-    : await diskCached(CACHE_DIR, `projections-${season}`, 6 * 60 * 60_000, () =>
-        S.getProjections(season, null)
-      ).catch(() => []);
-
-  const index = indexProjections(raw, scoringKey(scoring));
-  projectionMemo.set(key, index);
-  return index;
-}
-
-/** Which projected-points field matches this league's scoring. */
-function scoringKey(scoring: Record<string, number> | undefined): 'pts_ppr' | 'pts_half_ppr' | 'pts_std' {
-  const rec = scoring?.rec ?? 0;
-  if (rec >= 0.75) return 'pts_ppr';
-  if (rec >= 0.25) return 'pts_half_ppr';
-  return 'pts_std';
-}
-
-/** The third-party layer for one league, memoised per league shape. */
-const marketMemo = new Map<string, Promise<Market>>();
-
-async function loadMarketFor(league: any, players: Record<string, PlayerRow>): Promise<Market> {
-  const numQbs = (league.roster_positions ?? []).filter(
-    (p: string) => p === 'QB' || p === 'SUPER_FLEX'
-  ).length;
-  const ppr = league.scoring_settings?.rec ?? 0;
-  const key = `${league.season}-${numQbs}-${league.total_rosters}-${ppr}`;
-
-  let hit = marketMemo.get(key);
-  if (!hit) {
-    hit = loadMarket(Object.values(players), league.season, {
-      cacheDir: CACHE_DIR,
-      fixtures: useFixtures(),
-      fixtureDir: FIXTURES,
-      fixtureSeason: FIXTURE_SEASON,
-      numQbs: Math.max(1, numQbs),
-      numTeams: league.total_rosters ?? 12,
-      ppr,
-    });
-    marketMemo.set(key, hit);
-  }
-  return hit;
-}
 
 /**
  * Coverage report. Not a debug route — the UI uses it to say which sources are
@@ -373,12 +257,8 @@ app.get(
       loadProjections(league.season, league.scoring_settings),
     ]);
 
-    const nameOf = new Map<string, string>(
-      users.map((u: any) => [u.user_id, u.metadata?.team_name || u.display_name || 'Unnamed'])
-    );
-    const mine = rosters.find(
-      (r: any) => r.owner_id === session.userId || r.co_owners?.includes(session.userId)
-    );
+    const nameOf = teamNames(users);
+    const mine = myRoster(rosters, session.userId);
 
     const teams = rosters.map((r: any) => {
       const taxi = new Set<string>(r.taxi ?? []);
@@ -448,12 +328,10 @@ app.get(
       loadLeague(leagueId),
       loadRosters(leagueId),
       loadPlayers(),
-      useFixtures() ? readFixture('state') : cached('state', TTL.state, () => S.getState()),
+      loadState(),
     ]);
 
-    const roster = rosters.find(
-      (r: any) => r.owner_id === session.userId || r.co_owners?.includes(session.userId)
-    );
+    const roster = myRoster(rosters, session.userId);
     if (!roster) {
       return res.status(404).json({ error: 'You do not have a roster in this league.' });
     }
@@ -512,7 +390,7 @@ app.get(
   wrap(async (req, res) => {
     const [league, state] = await Promise.all([
       loadLeague(req.params.leagueId),
-      useFixtures() ? readFixture('state') : cached('state', TTL.state, () => S.getState()),
+      loadState(),
     ]);
 
     // Trust the NFL state, not the league's own status.
@@ -570,7 +448,6 @@ function daysToKickoff(season: string, now: Date): number | null {
  * Static + errors
  * ------------------------------------------------------------------ */
 
-const DIST = join(ROOT, 'dist');
 app.use(express.static(DIST, { index: false, maxAge: '1h' }));
 app.get('*', wrap(async (_req, res) => res.sendFile(join(DIST, 'index.html'))));
 
@@ -580,5 +457,5 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 app.listen(PORT, '127.0.0.1', () => {
-  console.log(`waker listening on 127.0.0.1:${PORT} (source=${SOURCE})`);
+  console.log(`waker listening on 127.0.0.1:${PORT} (source=${sourceName()})`);
 });
