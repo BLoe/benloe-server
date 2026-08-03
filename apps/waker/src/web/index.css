@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Placeholder identity. Task 4 replaces this with the real design pass. */
+:root {
+  --font-display: Georgia, serif;
+  --font-body: system-ui, sans-serif;
+  --font-figure: ui-monospace, monospace;
+
+  --ground: #0d0f14;
+  --panel: #14171e;
+  --raised: #1a1e27;
+  --rule: #242a35;
+  --ink: #e9e6df;
+  --muted: #9aa0ab;
+  --dim: #6b7280;
+  --urgent: #f0a132;
+  --good: #4bbf83;
+  --bad: #e05252;
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
