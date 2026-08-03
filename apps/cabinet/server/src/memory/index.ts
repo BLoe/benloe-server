@@ -269,6 +269,15 @@ export class MemoryStore {
       'TUNING.md',
       'RHYTHM.md',
       'USER.md',
+      // CORRECTIONS.md sits immediately after USER.md and outranks it. It is
+      // the append-only ledger of things Ben has explicitly told Cabinet were
+      // wrong. It exists because a correction made in conversation has a shelf
+      // life of one session: the narrative files get RE-AUTHORED by later
+      // sessions working from source documents, and a re-author silently
+      // reverts whatever the last conversation fixed (2026-08-03, C-1).
+      // Append-only is the mechanism — nothing rewrites this file, so nothing
+      // can revert it.
+      'CORRECTIONS.md',
       'PLAYBOOK.md',
       'PREFERENCES.md',
       'GOALS.md',

@@ -67,7 +67,21 @@ describe('MemoryStore', () => {
     // mention rather than the block.
     const at = (f: string) => core.indexOf(`<memory file="${f}">`);
     expect(core.startsWith('<memory file="CHARTER.md">')).toBe(true);
-    const expectedOrder = ['CHARTER.md', 'VOICE.md', 'TUNING.md', 'RHYTHM.md', 'USER.md', 'PLAYBOOK.md', 'PLATFORM.md'];
+    const expectedOrder = [
+      'CHARTER.md',
+      'VOICE.md',
+      'TUNING.md',
+      'RHYTHM.md',
+      'USER.md',
+      // CORRECTIONS.md must land immediately after USER.md and before
+      // everything Cabinet inferred: it is Ben's own corrections to claims
+      // about him, and it is meant to win any conflict with a narrative file.
+      // Regression guard for 2026-08-03 — a correction Ben made in chat was
+      // reverted the next day by a routine re-author of USER.md.
+      'CORRECTIONS.md',
+      'PLAYBOOK.md',
+      'PLATFORM.md',
+    ];
     expect(expectedOrder.map(at)).toEqual([...expectedOrder.map(at)].sort((a, b) => a - b));
     expect(expectedOrder.every((f) => at(f) >= 0)).toBe(true);
     expect(at('IDENTITY.md')).toBe(-1);

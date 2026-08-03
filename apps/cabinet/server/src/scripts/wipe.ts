@@ -234,6 +234,10 @@ export const MEMORY_RESET_FILES = [
   'USER.md',
   'GOALS.md',
   'PREFERENCES.md',
+  // The corrections ledger is append-only in normal operation, but it is a
+  // record of corrections to claims about BEN — profile data. A wipe that
+  // kept it would leave Cabinet holding corrections to facts it no longer has.
+  'CORRECTIONS.md',
   // Cabinet-written, but ABOUT Ben: what works on him (PLAYBOOK), what it has
   // learned to do differently (TUNING), and the current health plan. A wipe
   // that kept these would leave Cabinet holding conclusions about a person
