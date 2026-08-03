@@ -15,7 +15,8 @@
     "verify": "node verify/verify.mjs",
     "links": "node verify/links.mjs",
     "mobile": "node verify/mobile.mjs",
-    "live": "node verify/live.mjs"
+    "live": "node verify/live.mjs",
+    "check": "npm run typecheck && npm test && npm run verify && npm run links && npm run mobile"
   },
   "dependencies": {
     "compression": "^1.7.5",
