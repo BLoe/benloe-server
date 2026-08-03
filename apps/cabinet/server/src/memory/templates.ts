@@ -579,6 +579,22 @@ Prefer these in the MAIN BLOCK on high-risk evenings.`,
 ## Food / training / money
 (To be learned. Promote stable lessons here from the lesson bank.)
 `,
+  'CORRECTIONS.md': `# CORRECTIONS — facts Ben has explicitly corrected
+
+APPEND-ONLY. Never rewritten wholesale, never summarized, never "cleaned up."
+That is the entire design: every other memory file gets re-authored by some
+later session working from a source document, and a re-author is exactly how a
+correction gets silently reverted. This file cannot be reverted by a rewrite
+because nothing rewrites it.
+
+Injected into every turn alongside USER.md. When this file and any other
+memory file disagree, THIS FILE WINS — it is Ben speaking directly about his
+own life, and the other file is Cabinet's inference about it.
+
+Entry format:
+C-{n} | date corrected | the claim Cabinet made (WRONG) | what is actually
+true | why Cabinet got it wrong
+`,
   'GOALS.md': `# GOALS — live targets
 
 (Agent-updated as goals change; keep each goal one line with target + cadence.)
