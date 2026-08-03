@@ -2,28 +2,172 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Placeholder identity. Task 4 replaces this with the real design pass. */
-:root {
-  --font-display: Georgia, serif;
-  --font-body: system-ui, sans-serif;
-  --font-figure: ui-monospace, monospace;
+/* ==================================================================
+ * Waker — the almanac
+ *
+ * The artifact this borrows from is a tide table, not a newspaper and not a
+ * dashboard. A tide table exists to answer one question: where are we in a
+ * repeating cycle, and what does that let you do right now. You cannot leave
+ * harbour at low water; you cannot set a lineup after Sunday one o'clock.
+ *
+ * Three consequences run through everything below.
+ *
+ *   It is printed, so it is paper.  Waker is light in a category that is
+ *   uniformly dark, and its sibling League Desk already owns dark navy. The
+ *   ground is not the warm cream every light interface reaches for — it is the
+ *   cool blue-grey of an Admiralty chart, with chart magenta for warnings and
+ *   depth blue for soundings. That palette exists on real instruments and
+ *   nowhere on the web.
+ *
+ *   It is ruled, not carded.  Hairlines and bands, no rounded boxes, no
+ *   shadows. An almanac entry is a row in a table with a mark in the margin.
+ *
+ *   Figures are the point.  Every number is monospaced and tabular so columns
+ *   align down the page, which is the whole reason tide tables are readable.
+ * ================================================================== */
 
-  --ground: #0d0f14;
-  --panel: #14171e;
-  --raised: #1a1e27;
-  --rule: #242a35;
-  --ink: #e9e6df;
-  --muted: #9aa0ab;
-  --dim: #6b7280;
-  --urgent: #f0a132;
-  --good: #4bbf83;
-  --bad: #e05252;
+/* Zilla Slab — flat-serif display. Chosen against the obvious grotesque: an
+   almanac's headings are cut, not set, and a slab reads as printed metal. */
+@font-face { font-family: 'Zilla Slab'; src: url('/fonts/zilla-500.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Zilla Slab'; src: url('/fonts/zilla-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Zilla Slab'; src: url('/fonts/zilla-700.woff2') format('woff2'); font-weight: 700; font-display: swap; }
+
+/* IBM Plex Sans — quiet body that does not fight the slab. */
+@font-face { font-family: 'Plex Sans'; src: url('/fonts/plexsans-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Plex Sans'; src: url('/fonts/plexsans-500.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Plex Sans'; src: url('/fonts/plexsans-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+
+/* IBM Plex Mono — the instrument readout. Every figure in the app wears it. */
+@font-face { font-family: 'Plex Mono'; src: url('/fonts/plexmono-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Plex Mono'; src: url('/fonts/plexmono-500.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Plex Mono'; src: url('/fonts/plexmono-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+
+:root {
+  --font-display: 'Zilla Slab';
+  --font-body: 'Plex Sans';
+  --font-figure: 'Plex Mono';
+
+  /* --- the chart -------------------------------------------------- */
+  /* Admiralty water: cool, pale, faintly green. Not cream. */
+  --paper: #e9eeef;
+  /* Panels sit above the chart, so they are lighter than it. */
+  --vellum: #f4f7f7;
+  /* A band for alternating table rows — the almanac's own device. */
+  --band: #e0e7e8;
+  --rule: #c3d1d2;
+  --rule-strong: #9fb3b5;
+
+  /* --- the inks ---------------------------------------------------- */
+  --ink: #14201f;      /* engraving black, green-shifted */
+  --graphite: #46585a; /* secondary */
+  --faint: #6d8385;    /* tertiary, still clears 4.5:1 on paper */
+
+  /* Chart magenta means "caution" on a real chart, which is exactly what a
+     decision that needs you today is. It is the alarm ink and nothing else
+     uses it. */
+  --alarm: #b5216b;
+  --alarm-wash: rgba(181, 33, 107, 0.09);
+
+  --gain: #2f6b4f;
+  --loss: #9a4a28;
+  --depth: #2e6e8e;    /* neutral data mark */
+
+  /* --- positions --------------------------------------------------- *
+   * Validated on the paper surface for the lightness band, chroma floor,
+   * all-pairs CVD separation and contrast. Magenta and green are separated on
+   * the lightness axis rather than by hue, because a deuteranope cannot use
+   * the hue difference at all. The one sub-3:1 contrast is carried by the
+   * position chip always showing its text label. */
+  --pos-qb: #8f1150;
+  --pos-rb: #a4650c;
+  --pos-wr: #12689e;
+  --pos-te: #4e9e61;
+  --pos-k: #6b5aa6;
+  --pos-def: #5b6f71;
+  --pos-flex: #8a6d1f;
+
+  /* --- type scale --------------------------------------------------
+   * Six steps. Tight, because an almanac page is dense and the display sizes
+   * exist for orientation, not for impact. */
+  --t-tick: 10px;   /* margin marks, axis labels */
+  --t-label: 11px;  /* small caps labels */
+  --t-meta: 12px;
+  --t-body: 14px;
+  --t-lede: 17px;   /* a decision's claim */
+  --t-figure: 26px; /* the magnitude beside it */
+  --t-title: 30px;
 }
 
-html, body, #root { height: 100%; }
+html { -webkit-text-size-adjust: 100%; }
+
 body {
-  background: var(--ground);
+  background: var(--paper);
   color: var(--ink);
-  font-family: var(--font-body);
+  font-family: var(--font-body), system-ui, sans-serif;
+  font-size: var(--t-body);
   -webkit-font-smoothing: antialiased;
+  /* Chart paper has tooth. One-pixel dots at low opacity read as stock rather
+     than as a texture effect; at any higher opacity it becomes decoration. */
+  background-image: radial-gradient(circle at 1px 1px, rgba(20, 32, 31, 0.045) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+/* Every number in the app: monospaced, tabular, so columns align. */
+.fig {
+  font-family: var(--font-figure), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.slab {
+  font-family: var(--font-display), Georgia, serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Small caps label, the almanac's column heading. */
+.label {
+  font-family: var(--font-figure), monospace;
+  font-size: var(--t-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 500;
+}
+
+/* A sheet is a ruled region, not a card: square, hairline, no shadow. */
+.sheet {
+  background: var(--vellum);
+  border: 1px solid var(--rule);
+}
+
+/* Rows alternate like a printed tide table, which is what makes a long column
+   of figures trackable across the page. */
+.banded > *:nth-child(even) { background: var(--band); }
+
+/* Links are underlined in the ink colour — an almanac has no blue hyperlinks,
+   and an underline is the only affordance that survives on paper. */
+.link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+.link:hover { text-decoration-color: var(--alarm); color: var(--alarm); }
+
+/* Keyboard focus has to be visible on paper too. */
+:where(a, button, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--alarm);
+  outline-offset: 2px;
+}
+
+::selection { background: var(--alarm-wash); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
