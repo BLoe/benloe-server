@@ -45,6 +45,13 @@ export interface LeagueInfo {
   waiverBudget: number;
   tradeDeadline: number | null;
   divisions: number;
+  /** Taxi squad capacity. 0 in a league that does not run one. */
+  taxiSlots: number;
+  /** Last week a player may be placed on the taxi squad. */
+  taxiDeadline: number | null;
+  /** How many years of NFL experience still qualify for the taxi squad. */
+  taxiYears: number | null;
+  reserveSlots: number;
 }
 
 export interface Period {
@@ -110,6 +117,8 @@ export interface Player {
   team: string | null;
   no?: number | null;
   age?: number | null;
+  /** Years of NFL experience; 0 is a rookie. What taxi eligibility is set by. */
+  exp?: number | null;
   status?: string | null;
   bye?: number | null;
 }
@@ -260,7 +269,7 @@ export const posInk = (pos: string | null | undefined) => `var(--pos-${slug(pos)
 
 /** Player detail, as returned by /api/league/:id/player/:playerId. */
 export interface PlayerDetail {
-  player: Player & { exp?: number | null; height?: string | null; weight?: string | null };
+  player: Player & { height?: string | null; weight?: string | null };
   owner: { rosterId: number; teamName: string; managerName: string; avatar: string | null } | null;
   onTaxi: boolean;
   onIr: boolean;

@@ -236,9 +236,25 @@ age is ordered, so three unrelated categorical hues would have been wrong.
 All four need projections and are simply absent without them, rather than
 rendering a page of zeroes.
 
-`buildDepthChart` still groups by position, and the depth list keeps that
+**Who is stashed?** The taxi squad and injured reserve get their own panels
+rather than grey rows among the bench. Both are capacity-limited holding areas
+with their own eligibility rules — this league runs 4 taxi slots closing after
+week 4 for players with a year or less of experience, plus 2 IR slots — so the
+panels lead with the count against the limit and name the open slots, because
+an open taxi spot before the deadline is a move you can still make. Taxi
+players carry their NFL experience, since that is what eligibility turns on.
+Neither group appears in projections, the lineup check, or the age curve.
+
+`buildDepthChart` still groups by position, and the bench list keeps that
 grouping — the question "how deep am I at running back" is still worth
 answering, it just is not the only one.
+
+The two columns flow independently rather than sharing grid rows: a bench is
+always far taller than a lineup, and a shared row left half a screen empty
+under the short one. On a phone the column wrappers become `display: contents`
+so every panel is a direct flex child and `order` can put them in reading
+order — lineup, bench, taxi, IR, then the analysis — regardless of which
+desktop column they belong to.
 
 ## Design notes
 
