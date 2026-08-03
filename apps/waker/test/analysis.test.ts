@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   findDivergence,
   percentileRank,
+  quantile,
   usageScore,
   usageTrend,
   type PlayerUsageInput,
@@ -945,5 +946,46 @@ describe('gameLeverage', () => {
 
   it('returns nothing when the roster has no games left', () => {
     expect(gameLeverage(99, teams, remaining, { playoffTeams: 4, runs: 50 })).toEqual([]);
+  });
+});
+
+describe('findDivergence: which positions it can speak about', () => {
+  const qbs = ['q1', 'q2', 'q3', 'q4', 'q5'].map((id, i) =>
+    // Every starting quarterback plays every snap. Usage does not vary, so
+    // there is no signal in it — only an artefact.
+    mk(id, 'QB', 1.0, 24 - i * 4)
+  );
+
+  it('refuses to rank quarterbacks on snap share, which does not vary', () => {
+    expect(findDivergence(qbs, 4)).toEqual([]);
+  });
+
+  it('still ranks the positions where usage carries information', () => {
+    const backs = ['r1', 'r2', 'r3', 'r4', 'r5'].map((id, i) =>
+      mk(id, 'RB', 0.9 - i * 0.15, 5 + i * 4)
+    );
+    expect(findDivergence(backs, 4).length).toBe(5);
+  });
+});
+
+describe('quantile', () => {
+  it('reads a value off the distribution at a percentile', () => {
+    expect(quantile([0, 10], 0.5)).toBe(5);
+    expect(quantile([0, 10], 0)).toBe(0);
+    expect(quantile([0, 10], 1)).toBe(10);
+  });
+
+  it('interpolates between neighbours', () => {
+    expect(quantile([0, 10, 20], 0.25)).toBeCloseTo(5, 6);
+  });
+
+  it('survives degenerate input', () => {
+    expect(quantile([], 0.5)).toBe(0);
+    expect(quantile([7], 0.9)).toBe(7);
+  });
+
+  it('clamps a percentile outside 0-1', () => {
+    expect(quantile([0, 10], 5)).toBe(10);
+    expect(quantile([0, 10], -3)).toBe(0);
   });
 });
