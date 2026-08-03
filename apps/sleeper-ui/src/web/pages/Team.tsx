@@ -171,37 +171,62 @@ export default function TeamPage({ bundle }: { bundle: LeagueBundle }) {
 
             {data.compare && data.compare.gain > 0 && <LineupCheck compare={data.compare} />}
 
-            {/* The lineup and the players who could replace it, side by side —
-                which is how the decision actually gets made. A roster is always
-                far deeper than it is wide, so the depth list runs the full
-                height of the right column and the analysis stacks under the
-                lineup rather than leaving half the page empty. DOM order keeps
-                lineup and depth adjacent, which is what a phone gets. */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
-              <LineupCard
-                className="xl:col-start-1 xl:row-start-1"
-                starters={starters}
-                projections={data.projections}
-                scope={data.projectionScope}
-                total={projectedStarters}
-                sitting={new Set(data.compare?.sitDown.map((m) => m.player.id) ?? [])}
-              />
-              <DepthPanel
-                className="xl:col-start-2 xl:row-start-1 xl:row-span-3"
-                depth={data.depth}
-                projections={data.projections}
-                promote={new Set(data.compare?.bringIn.map((m) => m.player.id) ?? [])}
-              />
-              {!!data.positions.length && (
-                <PositionalStrength
-                  className="xl:col-start-1 xl:row-start-2"
-                  rows={data.positions}
-                  teams={standings.length}
+            {/* Two columns that flow independently, because a bench is always
+                far taller than a lineup and a shared grid row leaves half a
+                screen empty under the short one.
+
+                The wrappers are display:contents on a phone, so every panel
+                becomes a direct child of the flex column and `order` can put
+                them in reading order — lineup, bench, taxi, IR, then the
+                analysis — regardless of which desktop column they live in. */}
+            <div className="flex flex-col gap-5 xl:grid xl:grid-cols-2 xl:items-start">
+              <div className="contents xl:flex xl:flex-col xl:gap-5">
+                <LineupCard
+                  className="order-1"
+                  starters={starters}
+                  projections={data.projections}
+                  scope={data.projectionScope}
+                  total={projectedStarters}
+                  sitting={new Set(data.compare?.sitDown.map((m) => m.player.id) ?? [])}
                 />
-              )}
-              {data.ages && (
-                <AgeCurve className="xl:col-start-1 xl:row-start-3" profile={data.ages} />
-              )}
+                {!!data.positions.length && (
+                  <PositionalStrength
+                    className="order-5"
+                    rows={data.positions}
+                    teams={standings.length}
+                  />
+                )}
+                {data.ages && <AgeCurve className="order-6" profile={data.ages} />}
+              </div>
+
+              <div className="contents xl:flex xl:flex-col xl:gap-5">
+                <DepthPanel
+                  className="order-2"
+                  depth={data.depth}
+                  projections={data.projections}
+                  promote={new Set(data.compare?.bringIn.map((m) => m.player.id) ?? [])}
+                />
+                {/* Taxi and IR are not bench. They have their own capacity,
+                    their own eligibility rules, and in the taxi's case a
+                    deadline — so they get their own panels rather than a grey
+                    chip in a list. */}
+                <ReservePanel
+                  className="order-3"
+                  kind="taxi"
+                  slots={data.slots}
+                  projections={data.projections}
+                  capacity={league.taxiSlots}
+                  deadline={league.taxiDeadline}
+                  years={league.taxiYears}
+                />
+                <ReservePanel
+                  className="order-4"
+                  kind="ir"
+                  slots={data.slots}
+                  projections={data.projections}
+                  capacity={league.reserveSlots}
+                />
+              </div>
             </div>
           </>
         )}
@@ -391,16 +416,17 @@ function DepthPanel({
   projections: ProjectionMap;
   promote: Set<string>;
 }) {
+  // Taxi and IR have their own panels; this is the bench.
   const groups = depth
-    .map((g) => ({ ...g, entries: g.entries.filter((e) => e.kind !== 'starter') }))
+    .map((g) => ({ ...g, entries: g.entries.filter((e) => e.kind === 'bench') }))
     .filter((g) => g.entries.length);
 
   return (
     <Panel
       className={className}
-      title="Depth"
-      action={<span className="eyebrow">not in the lineup</span>}
-      note="Bench, taxi and injured reserve, kept in position order. A green rail marks a player the projections would start."
+      title="Bench"
+      action={<span className="eyebrow">available to start</span>}
+      note="Kept in position order. A green rail marks a player the projections would start."
     >
       {!groups.length && (
         <div className="px-4 py-4 text-dim" style={{ fontSize: 'var(--t-body)' }}>
@@ -489,6 +515,133 @@ function DepthRow({
         {projection ? fmt1(projection.points) : '—'}
       </span>
     </div>
+  );
+}
+
+/**
+ * The taxi squad and injured reserve.
+ *
+ * Both are capacity-limited holding areas rather than part of the playable
+ * roster, and a dynasty manager tracks them by how full they are: four taxi
+ * slots that close in week 4 is a decision with a clock on it. Shown as its
+ * own panel with the count against the limit, rather than as more grey rows
+ * among the bench.
+ */
+function ReservePanel({
+  className,
+  kind,
+  slots,
+  projections,
+  capacity,
+  deadline,
+  years,
+}: {
+  className?: string;
+  kind: 'taxi' | 'ir';
+  slots: RosterSlot[];
+  projections: ProjectionMap;
+  capacity: number;
+  deadline?: number | null;
+  years?: number | null;
+}) {
+  // A league that does not run a taxi squad should not show an empty one.
+  if (!capacity) return null;
+
+  const entries = slots.filter((s) => s.kind === kind && s.player);
+  const title = kind === 'taxi' ? 'Taxi squad' : 'Injured reserve';
+  const full = entries.length >= capacity;
+
+  const note =
+    kind === 'taxi'
+      ? [
+          years ? `Players with ${years} year${years === 1 ? '' : 's'} or less of NFL experience.` : null,
+          deadline ? `Placements close after week ${deadline}.` : null,
+          'Taxi players cannot be started, and are not counted in projections or age.',
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : 'Injured reserve does not count against the active roster, and is excluded from projections and the age curve.';
+
+  return (
+    <Panel
+      className={className}
+      title={title}
+      action={
+        <span className="eyebrow" style={{ color: full ? 'var(--live)' : undefined }}>
+          {entries.length} of {capacity} {full ? '· full' : 'used'}
+        </span>
+      }
+      note={note}
+    >
+      {!entries.length && (
+        <div className="px-4 py-4 text-dim" style={{ fontSize: 'var(--t-body)' }}>
+          {kind === 'taxi' ? 'Nobody on the taxi squad.' : 'Nobody on injured reserve.'}
+        </div>
+      )}
+
+      {entries.map((s, i) => {
+        const p = s.player!;
+        const proj = projections[p.id];
+        return (
+          <div key={i} className="flex items-center gap-3 px-4 py-2 border-b border-line/50 last:border-b-0">
+            <span
+              className="w-[3px] self-stretch shrink-0 rounded-full"
+              style={{ background: kind === 'taxi' ? 'var(--pos-k)' : 'var(--loss)' }}
+              aria-hidden="true"
+            />
+            <span
+              className="chip shrink-0"
+              style={{
+                minWidth: 44,
+                color: posInk(p.pos),
+                background: `color-mix(in srgb, ${posColor(p.pos)} 20%, transparent)`,
+              }}
+            >
+              {p.pos ?? '?'}
+            </span>
+            <span className="min-w-0 flex-1">
+              <PlayerLink
+                id={p.id}
+                name={p.name}
+                className="block truncate leading-tight"
+                style={{ fontSize: 'var(--t-body)' }}
+              />
+              <span className="block text-dim leading-tight" style={{ fontSize: 'var(--t-meta)' }}>
+                {p.team ?? 'Free agent'}
+                {p.age ? ` · ${p.age}y` : ''}
+                {p.exp != null ? ` · ${p.exp === 0 ? 'rookie' : `${p.exp}y exp`}` : ''}
+              </span>
+            </span>
+            {p.status && (
+              <span
+                className="chip shrink-0"
+                style={{ color: 'var(--loss)', background: 'rgba(229,72,77,.14)' }}
+                title={`Injury status: ${p.status}`}
+              >
+                {p.status.slice(0, 3)}
+              </span>
+            )}
+            <span
+              className="font-display font-bold tabular-nums shrink-0 text-right"
+              style={{ fontSize: 'var(--t-h2)', width: 56, color: proj ? '#93A2B2' : '#4B5A68' }}
+              title={proj ? 'Projected if he were startable' : 'No projection'}
+            >
+              {proj ? fmt1(proj.points) : '—'}
+            </span>
+          </div>
+        );
+      })}
+
+      {/* Empty slots are the actionable part: an open taxi spot is a roster
+          move you could still make. */}
+      {entries.length < capacity && (
+        <div className="px-4 py-2 border-t border-line">
+          <span className="stat-label text-dim">
+            {capacity - entries.length} slot{capacity - entries.length === 1 ? '' : 's'} open
+          </span>
+        </div>
+      )}
+    </Panel>
   );
 }
 

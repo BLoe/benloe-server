@@ -493,6 +493,12 @@ app.get(
         waiverBudget: league.settings?.waiver_budget ?? 0,
         tradeDeadline: league.settings?.trade_deadline ?? null,
         divisions: league.settings?.divisions ?? 0,
+        // Dynasty roster rules. A taxi squad is capacity-limited and closes at
+        // a deadline, so the roster page needs the limits, not just the names.
+        taxiSlots: league.settings?.taxi_slots ?? 0,
+        taxiDeadline: league.settings?.taxi_deadline ?? null,
+        taxiYears: league.settings?.taxi_years ?? null,
+        reserveSlots: league.settings?.reserve_slots ?? 0,
         previousLeagueId: league.previous_league_id,
         scoringSettings: league.scoring_settings,
       },
