@@ -24,6 +24,7 @@ import * as S from '../lib/sleeper.js';
 import { cached, diskCached, TTL, stats, invalidate } from './cache.js';
 import { parseAllowList } from './loginPolicy.js';
 import { loadMarket, type Market } from './market.js';
+import { readCycle } from '../lib/analysis/cycle.js';
 import {
   COOKIE_NAME,
   cookieHeader,
@@ -200,6 +201,11 @@ app.get(
         season: l.season,
         status: l.status,
         totalRosters: l.total_rosters,
+        // Sleeper states it outright: 0 redraft, 1 keeper, 2 dynasty. Worth
+        // knowing because `previous_league_id` does NOT distinguish them — a
+        // redraft league that ran last year links back too, so every league
+        // looked like a dynasty league by that test.
+        kind: l.settings?.type === 2 ? 'dynasty' : l.settings?.type === 1 ? 'keeper' : 'redraft',
       })),
     });
   })
@@ -311,6 +317,72 @@ app.get(
     });
   })
 );
+
+/**
+ * Where we are in the week.
+ *
+ * Its own route because every horizon needs it and it is cheap — the clock
+ * matters more often than the data does.
+ */
+app.get(
+  '/api/league/:leagueId/cycle',
+  requireSession,
+  wrap(async (req, res) => {
+    const [league, state] = await Promise.all([
+      loadLeague(req.params.leagueId),
+      useFixtures() ? readFixture('state') : cached('state', TTL.state, () => S.getState()),
+    ]);
+
+    // Trust the NFL state, not the league's own status.
+    //
+    // Sleeper reports this dynasty league as `in_season` in August, while the
+    // state endpoint correctly says season_type 'pre' at week 0. Believing the
+    // league gives you "Week 0 · games in progress" in the middle of summer.
+    // The state's season_type is the authoritative signal for whether anyone is
+    // actually playing.
+    let week: number = state.week ?? state.display_week ?? 0;
+    let inSeason = state.season_type === 'regular' || state.season_type === 'post';
+    // Same reasoning as the pinned clock: fixtures need to render an in-season
+    // page in August, and this must never be reachable in live mode.
+    if (useFixtures() && req.query.inSeason === '1') {
+      inSeason = true;
+      week = Number(req.query.week) || 7;
+    }
+
+    // Fixture mode may pin the clock, which is the only way to screenshot a
+    // Sunday-lock page on a Tuesday. Refused in live mode: a settable "now"
+    // reachable from the internet would let anyone fake a deadline.
+    const pinned = useFixtures() && typeof req.query.now === 'string' ? new Date(req.query.now) : null;
+    const now = pinned && !Number.isNaN(pinned.getTime()) ? pinned : new Date();
+
+    res.json({
+      cycle: readCycle({
+        now,
+        gamesScheduled: inSeason,
+        periodLabel: inSeason ? `Week ${week}` : 'Preseason',
+        daysToKickoff: inSeason ? null : daysToKickoff(league.season, now),
+      }),
+      week: inSeason ? week : null,
+      season: league.season,
+      status: league.status,
+    });
+  })
+);
+
+/**
+ * Roughly when week 1 kicks off. The NFL opens the Thursday after Labor Day,
+ * which is close enough for a countdown and avoids another API call for a
+ * number nobody reads to the day.
+ */
+function daysToKickoff(season: string, now: Date): number | null {
+  const year = Number(season);
+  if (!Number.isFinite(year)) return null;
+  const sept = new Date(Date.UTC(year, 8, 1));
+  const firstMonday = 1 + ((8 - sept.getUTCDay()) % 7);
+  const kickoff = Date.UTC(year, 8, firstMonday + 3);
+  const days = Math.ceil((kickoff - now.getTime()) / 86_400_000);
+  return days > 0 ? days : null;
+}
 
 /* ------------------------------------------------------------------ *
  * Static + errors
