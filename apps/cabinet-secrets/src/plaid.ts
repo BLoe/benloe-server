@@ -234,7 +234,6 @@ export async function plaidExchangePublicToken(
 
   putCredential(deps.db, deps.key, {
     name: credentialName,
-    provider: 'plaid',
     description: `Plaid access token for item ${parsed.item_id}`,
     secret: parsed.access_token,
   });

@@ -111,7 +111,7 @@ export function renderPage(): string {
     <h2>Stored credentials</h2>
     <div id="msg"></div>
     <table>
-      <thead><tr><th>Name</th><th>Provider</th><th>Value</th><th>Rotated</th><th>Last used</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Description</th><th>Value</th><th>Rotated</th><th>Last used</th><th></th></tr></thead>
       <tbody id="creds"><tr><td colspan="6" class="muted">loading…</td></tr></tbody>
     </table>
   </div>
@@ -120,9 +120,8 @@ export function renderPage(): string {
     <h2>Add or rotate</h2>
     <div class="row">
       <div><label for="name">Name</label><input id="name" placeholder="plaid-secret" autocomplete="off"></div>
-      <div><label for="provider">Provider</label><input id="provider" placeholder="plaid" autocomplete="off"></div>
+      <div><label for="description">Description <span class="muted">(optional)</span></label><input id="description" placeholder="Plaid API secret, sandbox" autocomplete="off"></div>
     </div>
-    <div class="field"><label for="description">Description</label><input id="description" placeholder="Plaid API secret (sandbox)" autocomplete="off"></div>
     <div class="field"><label for="secret">Secret</label><textarea id="secret" rows="3" autocomplete="off" spellcheck="false"></textarea></div>
     <button id="save">Store</button>
     <p class="note">
@@ -140,7 +139,7 @@ export function renderPage(): string {
 </div>
 <script>
 // Everything server-supplied reaches the page as textContent, never as markup.
-// This page renders credential names, provider strings and audit lines, some of
+// This page renders credential names, descriptions and audit lines, some of
 // which are free text; escaping-then-innerHTML would work but would make the
 // safety of a secrets console depend on one regex being right. Building nodes
 // removes the question entirely.
@@ -187,7 +186,7 @@ async function load() {
   for (const c of s.credentials) {
     const tr = el('tr');
     tr.appendChild(el('td', 'name', c.name));
-    tr.appendChild(el('td', 'muted', c.provider || '—'));
+    tr.appendChild(el('td', 'muted', c.description || '—'));
     const sealed = el('td'); sealed.appendChild(el('span', 'sealed', 'sealed')); tr.appendChild(sealed);
     tr.appendChild(el('td', 'muted', (c.rotated_at || c.created_at || '').slice(0, 16)));
     tr.appendChild(el('td', 'muted', c.last_used_at ? c.last_used_at.slice(0, 16) : 'never'));
@@ -226,14 +225,14 @@ $('save').onclick = async () => {
   const res = await fetch('/api/credentials/' + encodeURIComponent(name), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ secret, provider: $('provider').value.trim() || null, description: $('description').value.trim() || null }),
+    body: JSON.stringify({ secret, description: $('description').value.trim() || null }),
   });
   const out = await res.json().catch(() => ({}));
   if (res.ok) {
     msg(out.created ? 'Stored ' + name : 'Rotated ' + name);
     // Clear the secret field immediately — no reason for plaintext to sit in
     // a DOM node after it has been sent.
-    $('secret').value = ''; $('name').value = ''; $('provider').value = ''; $('description').value = '';
+    $('secret').value = ''; $('name').value = ''; $('description').value = '';
   } else {
     msg(out.error || 'Failed to store', true);
   }

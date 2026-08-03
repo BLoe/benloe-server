@@ -90,7 +90,7 @@ describe('credential management', () => {
     const put = await fetch(`${base}/api/credentials/plaid-secret`, {
       method: 'PUT',
       headers: as('owner'),
-      body: JSON.stringify({ secret: SECRET_VALUE, provider: 'plaid' }),
+      body: JSON.stringify({ secret: SECRET_VALUE, description: 'Plaid API secret, sandbox' }),
     });
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({ name: 'plaid-secret', created: true });
