@@ -18,12 +18,19 @@ import { recentHealth } from '../domains/health.js';
 import { adherence, deriveHabits, deriveHabitsRange } from '../domains/adherence.js';
 import { cravingsOn } from '../domains/cravings.js';
 import { ankleLoadResponse } from '../domains/symptoms.js';
+import { capacity } from '../runtime/rateLimits.js';
 import { nextDaily, nextHeartbeat, nextWeekly, nyParts } from './clock.js';
 import type { JobSpec } from './index.js';
 
 export interface JobDeps {
   db: Database.Database;
-  runtime: Pick<AgentRuntime, 'run'>;
+  /**
+   * refreshRateLimits is optional for the same reason pushService is: test
+   * fixtures compose JobDeps by hand. Its absence degrades capacity data to
+   * the push path alone (which is the primary source anyway) — it never
+   * degrades to a fabricated number.
+   */
+  runtime: Pick<AgentRuntime, 'run'> & Partial<Pick<AgentRuntime, 'refreshRateLimits'>>;
   approvals: ApprovalQueue;
   widgetBus: EventEmitter;
   episodic: EpisodicStore;
@@ -114,40 +121,29 @@ const DAY_ANCHORS: Record<number, string[]> = {
 };
 
 /**
- * Soft usage-budget alert (v1: simple absolute threshold).
+ * Usage alerting, now measured instead of invented.
  *
- * Metric = input_tokens + output_tokens + cache_write, summed over the
- * trailing 5h window (the window Max plan rate limits actually gate on).
- * cache_read is deliberately excluded: on a cache-healthy chat it's the
- * biggest number by far (tens of thousands of tokens per turn just from
- * re-reading a stable system-prompt prefix) but reflects reused, not fresh,
- * work — folding it in would make a long, cheap, perfectly healthy chat
- * look like a runaway session and drown the signal in noise.
+ * v1 of this function compared a trailing 5h token sum against a hardcoded
+ * 500,000 and pushed a warning when it crossed. That number was never derived
+ * from Ben's plan — Anthropic does not publish Max-plan token ceilings — so it
+ * was a denominator with a plausible face, the same defect as scoring a meal
+ * against a 2200 kcal target nobody set. It has been replaced, not retuned.
  *
- * Default threshold (500k/5h) is a deliberately generous "you're really
- * leaning on it" backstop, not a measured cap — Anthropic doesn't publish
- * exact Max-plan token limits, so there's no authoritative number to encode.
- * Tune via CABINET_USAGE_ALERT_TOKENS once real 429 behavior gives a signal;
- * set to 0 to disable.
- *
- * v2 (not built here): an anomaly-relative trigger — e.g. "this 5h window
- * is Nx the 7-day-median 5h window" — would adapt automatically instead of
- * requiring a hand-tuned constant. Worth it once there's enough history to
- * compute a meaningful median.
+ * The source is now the provider's own utilization percentages, captured off
+ * the turn stream (runtime/rateLimits.ts). When there is no fresh reading the
+ * correct output is SILENCE — an alert derived from missing data is worse than
+ * no alert, because it trains Ben to ignore the channel.
  */
 const USAGE_ALERT_TOOL = 'usage-budget-alert';
 
-function checkUsageBudget(deps: JobDeps): void {
-  const threshold = Number(process.env.CABINET_USAGE_ALERT_TOKENS ?? 500_000);
-  if (!(threshold > 0)) return; // 0 or unset-to-non-positive disables the check
+/** Utilization at which Ben gets told, once per window. */
+const ALERT_AT = 80;
 
-  const row = deps.db
-    .prepare(
-      `SELECT COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0) + COALESCE(SUM(cache_write),0) AS total
-       FROM token_usage WHERE ts > datetime('now','-5 hours')`,
-    )
-    .get() as { total: number };
-  if (row.total < threshold) return;
+function checkUsageBudget(deps: JobDeps): void {
+  const cap = capacity(deps.db);
+  if (cap.unknown && !cap.warned) return; // no evidence — say nothing
+  const worst = cap.worst ?? 0;
+  if (!cap.warned && worst < ALERT_AT) return;
 
   // Debounce: fire once per rolling window, not once per heartbeat (every 30m).
   const alreadyAlerted = deps.db
@@ -158,11 +154,121 @@ function checkUsageBudget(deps: JobDeps): void {
   deps.db
     .prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES (?, 'ALERTED', 'heartbeat')")
     .run(USAGE_ALERT_TOOL);
+  const where = cap.worstWindow ? `${cap.worstWindow} window` : 'plan limits';
   push(deps, 'notice', {
     level: 'warn',
-    text: `Usage is running hot: ${row.total.toLocaleString()} tokens in the last 5h (threshold ${threshold.toLocaleString()}). Worth a look before you hit a wall.`,
+    text: cap.warned
+      ? `Anthropic is reporting a rate-limit warning state on your plan. Autonomous background work is paused until it clears.`
+      : `${where} is at ${Math.round(worst)}%. Background work is paused; your chats are unaffected.`,
     source: 'usage',
   });
+}
+
+
+/**
+ * IDLE BUILDER — Cabinet works its own backlog when nobody is driving.
+ *
+ * The economic case, measured rather than assumed: on days Ben drives the
+ * system it spends $70-87 of API-equivalent capacity; on days he does not it
+ * spends $1-2 and the rest of the subscription simply expires unused. This job
+ * spends that slack instead of wasting it.
+ *
+ * FOUR GATES, all of which must pass. Each one exists because of a specific
+ * way this could go wrong:
+ *
+ *   1. IDLE — no user turn for IDLE_MINUTES. Cabinet must never be mid-build
+ *      when Ben opens a chat and wants the whole machine to himself.
+ *   2. CAPACITY — worst window utilization below CAPACITY_CEILING, and no
+ *      warning state. The ceiling sits well under 100 on purpose: the point is
+ *      to consume slack, never to consume the headroom Ben needs at 9pm. If
+ *      utilization is UNKNOWN the job runs at most one task and then requires
+ *      a fresh reading, which the turn itself produces via rate_limit_event —
+ *      self-bootstrapping, and it cannot spin blind.
+ *   3. ELIGIBILITY — the task carries agent_eligible = 1. Opt-in, never
+ *      inferred. The task table is Ben's life list; "Book PCP" and "Haircut"
+ *      live beside the build items and must never be picked up.
+ *   4. QUIET HOURS — nothing overnight. A build that wakes the box at 3am to
+ *      push a commit is not a feature, and 03:00 already belongs to
+ *      maintenance.
+ */
+const IDLE_MINUTES = 45;
+const CAPACITY_CEILING = 50;
+/** Local hours during which autonomous building is permitted. */
+const BUILD_HOURS = { from: 9, to: 23 };
+/** Hard cap per calendar day, so a runaway loop is bounded by construction. */
+const MAX_RUNS_PER_DAY = 6;
+
+export type IdleSkip =
+  | 'busy'
+  | 'quiet-hours'
+  | 'capacity'
+  | 'warned'
+  | 'daily-cap'
+  | 'no-eligible-task'
+  | 'dirty-tree'
+  | 'unknown-capacity-and-already-ran';
+
+/**
+ * Pure precondition check — no model, no side effects, fully testable.
+ * Returns the task to work, or the reason it declined.
+ */
+export function idleBuilderDecision(
+  db: Database.Database,
+  now = new Date(),
+): { run: false; skip: IdleSkip } | { run: true; task: { id: number; title: string; notes: string | null }; utilization: number | null } {
+  const hour = nyParts(now).hh;
+  if (hour < BUILD_HOURS.from || hour >= BUILD_HOURS.to) return { run: false, skip: 'quiet-hours' };
+
+  const recentUser = db
+    .prepare(
+      `SELECT 1 FROM token_usage WHERE session_kind = 'user' AND ts > datetime('now', ?) LIMIT 1`,
+    )
+    .get(`-${IDLE_MINUTES} minutes`);
+  if (recentUser) return { run: false, skip: 'busy' };
+
+  const runsToday = db
+    .prepare(`SELECT COUNT(*) AS n FROM build_run WHERE started_at > datetime('now','-1 day')`)
+    .get() as { n: number };
+  if (runsToday.n >= MAX_RUNS_PER_DAY) return { run: false, skip: 'daily-cap' };
+
+  const cap = capacity(db, now);
+  if (cap.warned) return { run: false, skip: 'warned' };
+  if (!cap.unknown && (cap.worst ?? 0) >= CAPACITY_CEILING) return { run: false, skip: 'capacity' };
+  if (cap.unknown) {
+    // No usable reading. One run is permitted to generate one — any turn emits
+    // rate_limit_event — but a second blind run is not.
+    const blindRun = db
+      .prepare(`SELECT 1 FROM build_run WHERE utilization IS NULL AND started_at > datetime('now','-6 hours') LIMIT 1`)
+      .get();
+    if (blindRun) return { run: false, skip: 'unknown-capacity-and-already-ran' };
+  }
+
+  const task = db
+    .prepare(
+      `SELECT id, title, notes FROM task
+        WHERE status = 'open' AND agent_eligible = 1
+        ORDER BY priority ASC, COALESCE(due_on, '9999-12-31') ASC, id ASC
+        LIMIT 1`,
+    )
+    .get() as { id: number; title: string; notes: string | null } | undefined;
+  if (!task) return { run: false, skip: 'no-eligible-task' };
+
+  return { run: true, task, utilization: cap.worst };
+}
+
+/**
+ * Is /srv/benloe carrying uncommitted work right now?
+ *
+ * Fails CLOSED: if git cannot be read for any reason, the answer is "dirty",
+ * because an unknown tree state is exactly when an autonomous commit is most
+ * dangerous.
+ */
+export function repoDirty(cwd = '/srv/benloe'): boolean {
+  try {
+    return execFileSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' }).trim().length > 0;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -194,6 +300,10 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     name: 'heartbeat',
     next: (from) => nextHeartbeat(30, from),
     run: async () => {
+      // Supplemental pull first, so the gauge below reads the freshest state
+      // available. Costs no model tokens and returns false (never a zero) when
+      // no live session can answer.
+      await deps.runtime.refreshRateLimits?.().catch(() => false);
       checkUsageBudget(deps); // SQL-only, zero model cost — runs every tick regardless of findings
       const findings = heartbeatFindings(db);
       if (findings.length === 0) {
@@ -449,7 +559,96 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
     },
   };
 
-  return [heartbeat, briefing, morningNudge, checkin, weekly, maintenance, moneySync, ...rhythmPings];
+
+  /**
+   * Every 20 minutes it asks whether it may work; almost always the answer is
+   * no and the cost is four SQL reads. The cadence is deliberately finer than
+   * the heartbeat's 30m so a genuinely idle afternoon gets used rather than
+   * sampled.
+   */
+  const idleBuilder: JobSpec = {
+    name: 'idle-builder',
+    next: (from) => nextHeartbeat(20, from),
+    run: async () => {
+      const decision = idleBuilderDecision(db);
+      if (!decision.run) return { skipped: decision.skip };
+
+      // Fifth gate, and it lives here rather than in the pure decision because
+      // it reads the filesystem: never build on top of an in-flight working
+      // tree. A human (or another agent session) with uncommitted changes in
+      // /srv/benloe would otherwise have that work swept into an autonomous
+      // commit it never reviewed. Waiting 20 minutes costs nothing; an
+      // unreviewed commit of someone else's half-finished edit is expensive.
+      if (repoDirty()) return { skipped: 'dirty-tree' };
+
+      const { task, utilization } = decision;
+      const chatId = systemChat(db, 'sys-build', 'cron', 'Autonomous build');
+      const runId = db
+        .prepare(`INSERT INTO build_run (task_id, utilization, chat_id) VALUES (?,?,?)`)
+        .run(task.id, utilization, chatId).lastInsertRowid as number;
+
+      try {
+        const { text } = await runAgentCronJob(deps.runtime, db, {
+          chatId,
+          kind: 'cron',
+          // Deep route on purpose: this turn writes and commits code with
+          // nobody reviewing it in the moment. Spending idle capacity on the
+          // cheap model would be the worst of both — it still costs quota and
+          // it produces work Ben has to re-do.
+          deep: true,
+          prompt: [
+            `Autonomous build turn. You are working the backlog unattended because the system is idle and there is plan capacity to spare. Ben is not watching this turn — he will read a summary later.`,
+            ``,
+            `TASK #${task.id}: ${task.title}`,
+            task.notes ? `NOTES: ${task.notes}` : ``,
+            ``,
+            `Rules for this turn, which differ from a normal turn:`,
+            `- Work ONLY this task. Do not widen scope, do not pick up a second task.`,
+            `- Make real progress: read the code, make the change, build it, run the tests.`,
+            `- Do NOT deploy and do NOT restart the server. Commit if the work is complete and tests pass; otherwise leave the working tree clean and say what blocked you.`,
+            `- If the task turns out to need a decision only Ben can make, STOP and say exactly what the decision is. That is a successful outcome, not a failure.`,
+            `- Never touch secrets, never add a remote to the memory repo, and remember that comments, tests and commit messages are published documents.`,
+            ``,
+            `End your reply with a single line: OUTCOME: completed | progressed | blocked`,
+          ].filter(Boolean).join('\n'),
+        });
+
+        const outcome = /OUTCOME:\s*(completed|progressed|blocked)/i.exec(text)?.[1]?.toLowerCase() ?? 'progressed';
+        let commit: string | null = null;
+        try {
+          commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: '/srv/benloe', encoding: 'utf8' }).trim();
+        } catch {
+          /* not fatal — the run still happened */
+        }
+        db.prepare(
+          `UPDATE build_run SET ended_at = datetime('now'), outcome = ?, summary = ?, commit_sha = ? WHERE id = ?`,
+        ).run(outcome, text.slice(0, 4000), commit, runId);
+
+        // Only the agent's own explicit "completed" closes a task, and even
+        // then it is Ben's list — a wrong close is more expensive than a
+        // missed one, so anything else stays open for the next pass.
+        if (outcome === 'completed') {
+          db.prepare(`UPDATE task SET status = 'done' WHERE id = ?`).run(task.id);
+        }
+        push(deps, 'notice', {
+          level: 'info',
+          text: `Background build: #${task.id} ${task.title} — ${outcome}.`,
+          source: 'build',
+        });
+        return { taskId: task.id, outcome };
+      } catch (err) {
+        const message = String((err as Error).message ?? err).slice(0, 1000);
+        db.prepare(
+          `UPDATE build_run SET ended_at = datetime('now'), outcome = 'error', summary = ? WHERE id = ?`,
+        ).run(message, runId);
+        // Rethrow so the scheduler's lastError reflects it; the build_run row
+        // is the durable record either way.
+        throw err;
+      }
+    },
+  };
+
+  return [heartbeat, briefing, morningNudge, checkin, weekly, maintenance, moneySync, idleBuilder, ...rhythmPings];
 }
 
 /** 03:00 job (§11): backups, WAL checkpoint, embedding backfill, approval sweep, rotation. */

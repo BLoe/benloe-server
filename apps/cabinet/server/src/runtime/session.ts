@@ -82,6 +82,13 @@ interface Session {
   query: {
     interrupt?(): Promise<unknown>;
     getContextUsage?(): Promise<Record<string, unknown>>;
+    /**
+     * Plan rate-limit + cost snapshot. The SDK's own name for this carries an
+     * EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET suffix and it may be
+     * renamed or removed in any release, which is exactly why it is optional
+     * here and every caller feature-detects before invoking it.
+     */
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(): Promise<Record<string, unknown>>;
   };
   /** The slot hooks and canUseTool read through; swapped per turn. */
   active: ActiveTurn | null;
@@ -329,6 +336,36 @@ export class SessionPool {
 
     this.sessions.set(args.key, session);
     return session;
+  }
+
+  /**
+   * Best-effort plan-usage snapshot from any live session.
+   *
+   * Supplements the push path (`rate_limit_event` on the turn stream), which
+   * is primary. This exists to cover the gap the push path structurally
+   * cannot: windows the provider has not mentioned recently, and the state of
+   * things before the first turn of a quiet day.
+   *
+   * Returns null — never a fabricated zero — when there is no live session,
+   * when the SDK build does not expose the method, or when the call throws.
+   * "Unknown" is a legitimate and useful answer here; an invented number is
+   * not. Costs no model tokens: it is a control-plane call on a subprocess
+   * that is already running.
+   */
+  async pollUsage(): Promise<Record<string, unknown> | null> {
+    for (const s of this.sessions.values()) {
+      if (s.dead) continue;
+      const fn = s.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+      if (typeof fn !== 'function') continue;
+      try {
+        const usage = await fn.call(s.query);
+        if (usage) return usage;
+      } catch {
+        // An experimental API that moved is expected, not exceptional. Try the
+        // next session; if none answer, the caller degrades to "unknown".
+      }
+    }
+    return null;
   }
 
   /** Abort the in-flight turn on a session (does not close the session). */

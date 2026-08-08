@@ -363,80 +363,71 @@ describe('jobs', () => {
     expect(rows).toHaveLength(2); // user prompt + assistant "HEARTBEAT_OK" — persisted even when there's nothing to surface
   });
 
-  describe('usage budget alert (piggybacks on heartbeat, SQL-only)', () => {
-    const ENV_KEY = 'CABINET_USAGE_ALERT_TOKENS';
-    let prevEnv: string | undefined;
-
-    beforeEach(() => {
-      prevEnv = process.env[ENV_KEY];
-    });
-    afterEach(() => {
-      if (prevEnv === undefined) delete process.env[ENV_KEY];
-      else process.env[ENV_KEY] = prevEnv;
-    });
-
+  describe('usage alert (measured utilization, not an invented token threshold)', () => {
     function capturePushes(): { event: string; data: unknown }[] {
       const events: { event: string; data: unknown }[] = [];
       deps.widgetBus.on('push', (n: { event: string; data: unknown }) => events.push(n));
       return events;
     }
+    const usageAlerts = (events: { event: string; data: unknown }[]) =>
+      events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage');
 
-    function seedTokens(input: number, output: number, cacheWrite: number, cacheRead = 0) {
+    function seedWindow(key: string, utilization: number | null, status: string | null = null, ageMinutes = 0) {
       cabinet.db
         .prepare(
-          `INSERT INTO token_usage (ts, input_tokens, output_tokens, cache_read, cache_write, session_kind, chat_id)
-           VALUES (datetime('now'), ?, ?, ?, ?, 'user', 't1')`,
+          `INSERT INTO rate_limit_state (window_key, utilization, resets_at, status, source, observed_at)
+           VALUES (?, ?, NULL, ?, 'event', datetime('now', ?))
+           ON CONFLICT(window_key) DO UPDATE SET utilization=excluded.utilization, status=excluded.status, observed_at=excluded.observed_at`,
         )
-        .run(input, output, cacheRead, cacheWrite);
+        .run(key, utilization, status, `-${ageMinutes} minutes`);
     }
 
-    it('stays quiet below threshold', async () => {
-      process.env[ENV_KEY] = '1000';
-      seedTokens(100, 100, 100); // total 300 < 1000
+    it('stays silent when no utilization has ever been observed', async () => {
       const events = capturePushes();
       await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
-      expect(events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage')).toHaveLength(0);
+      expect(usageAlerts(events)).toHaveLength(0);
     });
 
-    it('excludes cache_read from the threshold sum (a cache-healthy chat should not trip it)', async () => {
-      process.env[ENV_KEY] = '1000';
-      seedTokens(100, 100, 100, 500_000); // huge cache_read, but input+output+cache_write = 300 < 1000
+    it('stays silent below the alert threshold', async () => {
+      seedWindow('five_hour', 42);
       const events = capturePushes();
       await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
-      expect(events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage')).toHaveLength(0);
+      expect(usageAlerts(events)).toHaveLength(0);
     });
 
-    it('fires a warn notice once threshold is crossed', async () => {
-      process.env[ENV_KEY] = '250';
-      seedTokens(100, 100, 100); // total 300 >= 250
+    it('ignores a stale reading rather than alerting on it', async () => {
+      seedWindow('five_hour', 95, null, 240); // 4h old, well past STALE_AFTER_MINUTES
       const events = capturePushes();
       await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
-      const alerts = events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage');
+      expect(usageAlerts(events)).toHaveLength(0);
+    });
+
+    it('fires a warn notice once real utilization crosses the threshold', async () => {
+      seedWindow('five_hour', 87);
+      const events = capturePushes();
+      await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
+      const alerts = usageAlerts(events);
       expect(alerts).toHaveLength(1);
       expect(alerts[0]!.data).toMatchObject({ level: 'warn' });
-      const audit = cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='usage-budget-alert'").all();
-      expect(audit).toHaveLength(1);
+      expect((alerts[0]!.data as { text: string }).text).toContain('87%');
+      expect(cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='usage-budget-alert'").all()).toHaveLength(1);
+    });
+
+    it('alerts on a provider warning state even when utilization is low', async () => {
+      seedWindow('five_hour', 12, 'allowed_warning');
+      const events = capturePushes();
+      await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
+      expect(usageAlerts(events)).toHaveLength(1);
     });
 
     it('debounces: does not re-alert on the next heartbeat tick within the same window', async () => {
-      process.env[ENV_KEY] = '250';
-      seedTokens(100, 100, 100);
+      seedWindow('five_hour', 87);
       const events = capturePushes();
       const heartbeat = buildJobs(deps).find((j) => j.name === 'heartbeat')!;
       await heartbeat.run();
-      await heartbeat.run(); // simulates the next 30-minute tick with usage still elevated
-      const alerts = events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage');
-      expect(alerts).toHaveLength(1); // fired once, not twice
-      const audit = cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='usage-budget-alert'").all();
-      expect(audit).toHaveLength(1);
-    });
-
-    it('CABINET_USAGE_ALERT_TOKENS=0 disables the check entirely', async () => {
-      process.env[ENV_KEY] = '0';
-      seedTokens(10_000_000, 0, 0); // would trip any sane default
-      const events = capturePushes();
-      await buildJobs(deps).find((j) => j.name === 'heartbeat')!.run();
-      expect(events.filter((e) => e.event === 'notice' && (e.data as { source?: string }).source === 'usage')).toHaveLength(0);
+      await heartbeat.run();
+      expect(usageAlerts(events)).toHaveLength(1);
+      expect(cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='usage-budget-alert'").all()).toHaveLength(1);
     });
   });
 
