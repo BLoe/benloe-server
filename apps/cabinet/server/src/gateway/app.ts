@@ -25,6 +25,7 @@ import { registerPlaidRoutes, registerPlaidWebhook } from './plaidRoutes.js';
 import type { PlaidClient } from '../integrations/plaid.js';
 import { credKey } from '../domains/credentials.js';
 import { createPerfRecorder, nullPerf, perfEnabled, perfRecentTurns, perfSummary } from '../runtime/perf.js';
+import { capacity, STALE_AFTER_MINUTES } from '../runtime/rateLimits.js';
 import type { PushService } from '../push/index.js';
 import { AttachmentError, ATTACHMENT_NAME_RE, mimeFromFilename, saveAttachment, type ImageMime } from './attachments.js';
 
@@ -700,7 +701,18 @@ export function buildApp(deps: GatewayDeps) {
          FROM token_usage WHERE ts > datetime('now','-30 days') GROUP BY day, model ORDER BY day DESC`,
       )
       .all();
-    res.json({ authMode: deps.runtime.authMode, byDay });
+    // Autonomous build history rides along here rather than in its own route:
+    // "what did Cabinet spend the idle capacity on" is the same question as
+    // "why did we spike", asked from the other end.
+    const builds = deps.db
+      .prepare(
+        `SELECT b.id, b.task_id, b.started_at, b.ended_at, b.outcome, b.summary, b.commit_sha,
+                b.utilization, b.chat_id, t.title
+           FROM build_run b LEFT JOIN task t ON t.id = b.task_id
+          ORDER BY b.started_at DESC LIMIT 25`,
+      )
+      .all();
+    res.json({ authMode: deps.runtime.authMode, byDay, builds });
   });
 
   // "Are we near a wall" — fixed rolling windows that map to how Max plan
@@ -737,7 +749,31 @@ export function buildApp(deps: GatewayDeps) {
       const cacheReadWriteRatio = r.cache_write > 0 ? Number((r.cache_read / r.cache_write).toFixed(2)) : null;
       return { window: id, ...r, cacheReadWriteRatio };
     });
-    res.json({ authMode: deps.runtime.authMode, windows: rows });
+    // The rows above are Cabinet's OWN spend. `plan` is the provider's view of
+    // Ben's subscription — the only figure that actually says how close a wall
+    // is, and null-shaped rather than zero-shaped when nothing fresh has been
+    // observed (runtime/rateLimits.ts).
+    const cap = capacity(deps.db);
+    res.json({
+      authMode: deps.runtime.authMode,
+      windows: rows,
+      plan: {
+        unknown: cap.unknown,
+        warned: cap.warned,
+        worstUtilization: cap.worst,
+        worstWindow: cap.worstWindow,
+        staleAfterMinutes: STALE_AFTER_MINUTES,
+        windows: cap.windows.map((w) => ({
+          window: w.windowKey,
+          utilization: w.utilization,
+          resetsAt: w.resetsAt,
+          status: w.status,
+          observedMinutesAgo: Math.round(w.ageMinutes),
+          stale: w.ageMinutes > STALE_AFTER_MINUTES,
+          source: w.source,
+        })),
+      },
+    });
   });
 
   // ---------- review screenshots ----------

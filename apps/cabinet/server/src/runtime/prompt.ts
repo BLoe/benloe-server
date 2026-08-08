@@ -24,6 +24,21 @@ export interface PromptInput {
    * interview discipline loads in the same turn the gap is surfaced.
    */
   profileGap?: string;
+  /**
+   * Account rate-limit line (runtime/rateLimits.ts's capacityLine) — per-turn
+   * context, and necessarily so: a utilization figure changes every turn, and
+   * anything that changes every turn must stay out of systemPrompt. Not just
+   * for the prompt cache — SessionSpec keys the session pool on the system
+   * prompt's hash, so a volatile value there would spawn a fresh CLI
+   * subprocess for every single turn.
+   *
+   * Populated centrally in AgentRuntime.run(), NOT by individual callers: a
+   * per-caller opt-in is how Cabinet previously shipped a fully-built lessons
+   * slot that no call site ever populated.
+   *
+   * Null on most turns by design — see INJECT_FLOOR.
+   */
+  capacity?: string;
   /** Who this turn's message is from (user turns only) — per-turn context. */
   interlocutor?: Interlocutor;
   now?: Date;
@@ -163,6 +178,11 @@ export function assemblePrompt(mem: MemoryStore, input: PromptInput): AssembledP
     `(UTC reference only, do not quote to Ben: ${now.toISOString()})`,
     `Session kind: ${input.kind}.`,
   ];
+  // Early, deliberately low-salience position: capacity is operational
+  // background, and it must not compete with TURN_DISCIPLINE for the slot
+  // immediately before Ben's message. It only appears at all when the number
+  // is high enough to matter (rateLimits.ts INJECT_FLOOR).
+  if (input.capacity) context.push(input.capacity);
   if (input.interlocutor) context.push(interlocutorLine(input.interlocutor));
   if (input.lessons?.length) {
     context.push('Recalled lessons (situational, apply with judgment):');

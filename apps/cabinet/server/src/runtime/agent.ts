@@ -10,6 +10,7 @@ import type { ImageMime } from '../gateway/attachments.js';
 import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
 import { buildGate, type GateContext } from '../tiers/gate.js';
 import { assemblePrompt, type PromptInput } from './prompt.js';
+import { capacityLine, recordRateLimitEvent, recordUsageSnapshot } from './rateLimits.js';
 import { refusalFallback, route } from './router.js';
 import { TurnQueue, type TurnKind } from './queue.js';
 import { generateTitle } from './titler.js';
@@ -323,6 +324,21 @@ export class AgentRuntime {
     return true;
   }
 
+  /**
+   * Refresh plan rate-limit state from the SDK's usage snapshot, if a live
+   * session can answer. Returns true when something was actually recorded.
+   *
+   * Deliberately best-effort: the primary ingest is the push path in
+   * handleMessage. This is the supplement that runs on the heartbeat, and a
+   * false return means "no fresh reading available", never "utilization is
+   * zero". Callers must treat those as different.
+   */
+  async refreshRateLimits(): Promise<boolean> {
+    const usage = await this.sessions.pollUsage();
+    if (!usage) return false;
+    return recordUsageSnapshot(this.opts.db, usage);
+  }
+
   /** Serialized entry point: all turns pass through the queue. */
   run(req: TurnRequest): Promise<{ stopReason: string; sessionId: string | null }> {
     // Time spent waiting behind another turn is latency Ben feels but that no
@@ -426,7 +442,14 @@ export class AgentRuntime {
     // lessons, snapshot, topic domain files) is wrapped into the message
     // instead, never glued into the system prompt.
     const stopAssemble = perf.start('prompt_assemble', { label: 'promptCore' });
-    const { systemPrompt, turnContext } = assemblePrompt(this.opts.memory, { kind: req.kind, ...req.promptInput });
+    // capacity is resolved HERE rather than by each caller: every turn in the
+    // system funnels through run(), so this is the one place that cannot be
+    // forgotten by a future call site.
+    const { systemPrompt, turnContext } = assemblePrompt(this.opts.memory, {
+      kind: req.kind,
+      ...req.promptInput,
+      capacity: capacityLine(this.opts.db) ?? undefined,
+    });
     const wrappedPrompt = `<turn-context>\n${turnContext}\n</turn-context>\n\n${req.prompt}`;
     stopAssemble({ systemPromptChars: systemPrompt.length, turnContextChars: turnContext.length });
 
@@ -674,6 +697,14 @@ export class AgentRuntime {
     this.turnCtx = { ctx, perf, chatId: req.chatId, kind: req.kind };
 
     const handleMessage = (msg: Record<string, any>): void => {
+      // Plan rate-limit telemetry rides in on turns Cabinet is already
+      // running — no extra request, and no dependency on the experimental
+      // usage control method. recordRateLimitEvent swallows its own errors:
+      // capacity accounting must never be able to kill a turn.
+      if (msg.type === 'rate_limit_event') {
+        recordRateLimitEvent(this.opts.db, msg.rate_limit_info);
+        return;
+      }
       if (msg.type === 'system' && msg.subtype === 'thinking_tokens') {
         if (!sawThinking && initAt) {
           sawThinking = true;

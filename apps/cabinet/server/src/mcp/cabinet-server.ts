@@ -29,6 +29,7 @@ import {
   netWorthTrend, recentTransactions, spendByCategory, spendByDay, upsertManualAccount,
 } from '../domains/money.js';
 import { truncateForModel } from '../runtime/toolTruncate.js';
+import { capacity, STALE_AFTER_MINUTES } from '../runtime/rateLimits.js';
 
 /**
  * The slice of PlaidClient the agent's tools are allowed to reach.
@@ -794,6 +795,34 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
       async ({ query, products }) => {
         if (!ctx.plaid?.configured()) return fail('Plaid has no API credentials stored yet.');
         return ok({ institutions: await ctx.plaid.searchInstitutions(query, products ?? []) });
+      },
+    ),
+    tool(
+      'usage_status',
+      "Where Ben's Claude subscription stands right now: utilization per rolling window (five_hour, seven_day, " +
+        'per-model), when each resets, and how old the reading is. Sourced from the provider itself, never estimated. ' +
+        'Use it when Ben asks about limits or headroom, or before committing to an unusually large piece of work — ' +
+        'NOT as a routine self-check. `unknown: true` means no fresh reading exists; report that plainly rather than ' +
+        'guessing a number, and never let an unknown become a reason to decline work.',
+      {},
+      async () => {
+        const cap = capacity(ctx.db);
+        return ok({
+          unknown: cap.unknown,
+          warned: cap.warned,
+          worst_utilization_pct: cap.worst,
+          worst_window: cap.worstWindow,
+          stale_after_minutes: STALE_AFTER_MINUTES,
+          windows: cap.windows.map((w) => ({
+            window: w.windowKey,
+            utilization_pct: w.utilization,
+            resets_at: w.resetsAt,
+            status: w.status,
+            observed_minutes_ago: Math.round(w.ageMinutes),
+            stale: w.ageMinutes > STALE_AFTER_MINUTES,
+            source: w.source,
+          })),
+        });
       },
     ),
   ];
