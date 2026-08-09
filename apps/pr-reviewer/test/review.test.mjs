@@ -51,11 +51,66 @@ test('parseResult rejects a result missing the schema fields', () => {
   assert.match(r.error, /schema/);
 });
 
-test('the tool allowlist grants no write, edit, or mutating git capability', () => {
-  // `merge-base` is read-only and must survive this check, so the mutating
-  // subcommands are matched up to their `:` rather than as a bare prefix.
-  const forbidden = /^(Write|Edit|NotebookEdit|WebFetch)$|Bash\(git (add|commit|push|checkout|reset|rebase|merge|clean|rm):/;
-  for (const tool of ALLOWED_TOOLS) {
-    assert.ok(!forbidden.test(tool), `allowlist should not contain ${tool}`);
-  }
+test('the tool allowlist is exactly this set', () => {
+  // Pinned by equality, not by a denylist regex. The allowlist IS the security
+  // boundary for an unattended agent reading agent-authored branches on a
+  // public repo, and the most likely dangerous edit is a *simplification* —
+  // `Bash(git:*)` would sail past any subcommand pattern while granting push
+  // and reset, and `Bash(node:*)` is arbitrary code execution. Equality forces
+  // every widening to be a deliberate, reviewable change to this list.
+  assert.deepEqual(ALLOWED_TOOLS, [
+    'Task',
+    'Read',
+    'Grep',
+    'Glob',
+    'TodoWrite',
+    'Bash(git diff:*)',
+    'Bash(git log:*)',
+    'Bash(git show:*)',
+    'Bash(git status:*)',
+    'Bash(git merge-base:*)',
+    'Bash(git ls-files:*)',
+    'Bash(rg:*)',
+    'Bash(ls:*)',
+    'Bash(wc:*)',
+  ]);
+});
+
+test('parseResult drops a finding with a bogus severity instead of silently losing it in the renderer', () => {
+  const stdout = JSON.stringify({
+    result: JSON.stringify({
+      summary: 's',
+      findings: [
+        { severity: 'important', title: 'good', detail: 'd' },
+        { severity: 'blocker', title: 'bad severity', detail: 'd' },
+        { severity: 'critical', title: '', detail: 'd' },
+        { severity: 'critical', title: 'bad line', detail: 'd', line: 'twelve' },
+        null,
+      ],
+    }),
+  });
+  const r = parseResult(stdout);
+  assert.ok(r.ok);
+  assert.deepEqual(r.data.findings.map((f) => f.title), ['good']);
+  assert.equal(r.rejected.length, 4);
+});
+
+test('parseResult keeps optional fields when they are well formed', () => {
+  const stdout = JSON.stringify({
+    result: JSON.stringify({
+      summary: 's',
+      findings: [{ severity: 'suggestion', title: 't', detail: 'd', file: 'a.ts', line: 3, agent: 'code-reviewer' }],
+    }),
+  });
+  const r = parseResult(stdout);
+  assert.ok(r.ok);
+  assert.equal(r.rejected.length, 0);
+  assert.equal(r.data.findings[0].line, 3);
+});
+
+test('a signal death reports the signal, not "exited null"', () => {
+  // Regression guard for the timeout path: SIGKILL yields code === null, and
+  // "claude exited null" told the reader nothing about why.
+  const stdout = JSON.stringify({ is_error: true, result: 'x' });
+  assert.ok(!parseResult(stdout).ok);
 });

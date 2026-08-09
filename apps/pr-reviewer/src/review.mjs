@@ -48,22 +48,37 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
  * checkout at /srv/benloe is what the running services are deployed from, and
  * a reviewer that moves its HEAD would be editing production to read a diff.
  */
-export function makeWorktree(repoDir, root, number, headSha) {
+export function makeWorktree(repoDir, root, number, headSha, baseRef) {
   const dir = join(root, `pr-${number}`);
   rmSync(dir, { recursive: true, force: true });
   git(repoDir, 'worktree', 'prune');
-  git(repoDir, 'fetch', 'origin', `pull/${number}/head`, '--quiet');
+  // BOTH refs, always. The base is fetched because mergeBase() resolves
+  // origin/<base>: a stale remote-tracking ref yields a merge base older than
+  // the true one, so the review diff picks up commits already merged into the
+  // base and the reviewer reports findings on code this PR never touched —
+  // exactly the cry-wolf failure the orchestrator prompt guards against.
+  git(repoDir, 'fetch', 'origin', `pull/${number}/head`, baseRef, '--quiet');
   git(repoDir, 'worktree', 'add', '--detach', dir, headSha);
   return dir;
 }
 
-export function removeWorktree(repoDir, dir) {
+export function removeWorktree(repoDir, dir, logger) {
   try {
     git(repoDir, 'worktree', 'remove', '--force', dir);
-  } catch {
+    return;
+  } catch (e) {
+    logger?.(`worktree remove failed for ${dir}, falling back to rm: ${e.message}`);
+  }
+  try {
     // A worktree that git has already forgotten still leaves a directory
     // behind; removing it directly is the whole point of the fallback.
     rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    // Called from a finally, so an unguarded throw here would REPLACE the
+    // exception that caused the cleanup and hide the real diagnostic. Leaking
+    // a stale directory is recoverable (the next run rmSync's it first); a
+    // lost stack trace is not.
+    logger?.(`could not remove worktree ${dir}: ${e.message}`);
   }
 }
 
@@ -139,12 +154,19 @@ export function runOrchestrator({ cwd, prompt, pluginDir, model, timeoutMs, logg
       clearTimeout(timer);
       resolve({ ok: false, error: `spawn failed: ${e.message}` });
     });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer);
-      if (stderr.trim()) logger?.(`claude stderr: ${stderr.trim().slice(0, 2000)}`);
-      if (code !== 0) return resolve({ ok: false, error: `claude exited ${code}` });
-      const parsed = parseResult(stdout);
-      resolve(parsed);
+      const tail = stderr.trim().slice(-1200);
+      if (tail) logger?.(`claude stderr: ${tail}`);
+      if (code !== 0) {
+        // `code` is null when the process died from a signal, so report the
+        // signal instead of the useless "exited null" — and carry the stderr
+        // into the error itself, because the failure comment posted to the PR
+        // is the only place most people will ever see it.
+        const how = signal ? `killed by ${signal}` : `exited ${code}`;
+        return resolve({ ok: false, error: `claude ${how}${tail ? `\n\n${tail}` : ''}` });
+      }
+      resolve(parseResult(stdout));
     });
   });
 }
@@ -178,7 +200,31 @@ export function parseResult(stdout) {
   if (!data || typeof data !== 'object' || typeof data.summary !== 'string' || !Array.isArray(data.findings)) {
     return { ok: false, error: 'result did not match the findings schema' };
   }
-  return { ok: true, data };
+  // Re-validate every finding rather than trusting the constrained decoder.
+  // FINDINGS_SCHEMA is enforced by the CLI, but this is the only boundary
+  // between model output and the renderer, and a finding with a bad severity
+  // renders into no section at all — it would be silently dropped while still
+  // being counted, which is the worst possible failure for a review tool.
+  const findings = [];
+  const rejected = [];
+  for (const f of data.findings) {
+    if (
+      f &&
+      typeof f === 'object' &&
+      SEVERITIES.includes(f.severity) &&
+      typeof f.title === 'string' &&
+      f.title.length > 0 &&
+      typeof f.detail === 'string' &&
+      (f.file === undefined || typeof f.file === 'string') &&
+      (f.line === undefined || Number.isInteger(f.line)) &&
+      (f.agent === undefined || typeof f.agent === 'string')
+    ) {
+      findings.push(f);
+    } else {
+      rejected.push(f);
+    }
+  }
+  return { ok: true, data: { ...data, findings }, rejected };
 }
 
 export function loadPromptTemplate(dir) {
