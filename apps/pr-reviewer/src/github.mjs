@@ -96,8 +96,22 @@ export async function installationToken({ appId, installationId, privateKeyPem }
 export const listOpenPulls = (token, repo) =>
   gh(token, `/repos/${repo}/pulls?state=open&per_page=50&sort=updated&direction=desc`);
 
-export const listPullFiles = (token, repo, number) =>
-  gh(token, `/repos/${repo}/pulls/${number}/files?per_page=300`);
+/**
+ * Every changed file, paginated. GitHub caps per_page at 100 and silently
+ * clamps anything larger, so a >100-file PR would otherwise build its
+ * addressable-line map from the first 100 only — every later finding would be
+ * demoted to the body with no signal that coverage had quietly degraded.
+ * GitHub itself stops at 3000 files; the page cap here is the same ceiling.
+ */
+export async function listPullFiles(token, repo, number) {
+  const all = [];
+  for (let page = 1; page <= 30; page += 1) {
+    const batch = await gh(token, `/repos/${repo}/pulls/${number}/files?per_page=100&page=${page}`);
+    all.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return all;
+}
 
 /**
  * Post the review. `event: 'COMMENT'` on purpose — a scheduled reviewer must

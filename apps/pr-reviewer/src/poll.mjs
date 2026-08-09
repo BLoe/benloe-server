@@ -15,9 +15,31 @@ import { addressableMap, partitionFindings } from './diff.mjs';
 import { inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
 import { installationToken, listOpenPulls, listPullFiles, postReview, readEnvKeys } from './github.mjs';
 import { loadPromptTemplate, makeWorktree, mergeBase, removeWorktree, renderPrompt, runOrchestrator } from './review.mjs';
-import { loadState, markReviewed, saveState, wasReviewed } from './state.mjs';
+import {
+  alreadyReportedFailure,
+  loadState,
+  markFailureReported,
+  markReviewed,
+  saveState,
+  wasReviewed,
+} from './state.mjs';
 
 const APP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * `??` only defaults on undefined, so `Environment=PR_REVIEWER_MAX_PER_RUN=`
+ * or any typo yields a string Number() maps to 0 or NaN with no complaint —
+ * and `slice(0, NaN)` is `[]`. The reviewer would then review nothing, exit 0,
+ * and let systemd report success indefinitely. Fail loudly instead: a
+ * misconfigured reviewer must look broken, not idle.
+ */
+function numberEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`${name} must be a positive number, got ${JSON.stringify(raw)}`);
+  return n;
+}
 
 const CONFIG = {
   repo: process.env.PR_REVIEWER_REPO ?? 'BLoe/benloe-server',
@@ -34,8 +56,8 @@ const CONFIG = {
    * account rate limit, and five PRs opened at once should not be able to
    * drain it in a single tick. Anything skipped is picked up next poll.
    */
-  maxPerRun: Number(process.env.PR_REVIEWER_MAX_PER_RUN ?? 2),
-  timeoutMs: Number(process.env.PR_REVIEWER_TIMEOUT_MS ?? 20 * 60_000),
+  maxPerRun: numberEnv('PR_REVIEWER_MAX_PER_RUN', 2),
+  timeoutMs: numberEnv('PR_REVIEWER_TIMEOUT_MS', 20 * 60_000),
   /** Draft PRs are work in progress; reviewing them is noise, not signal. */
   includeDrafts: process.env.PR_REVIEWER_INCLUDE_DRAFTS === '1',
   /**
@@ -44,11 +66,46 @@ const CONFIG = {
    * prompts/orchestrator.md without spraying revisions across a real PR.
    */
   dryRun: process.env.PR_REVIEWER_DRY_RUN === '1',
-  /** Restrict a run to one PR number. Only useful alongside a dry run. */
-  onlyPr: process.env.PR_REVIEWER_ONLY_PR ? Number(process.env.PR_REVIEWER_ONLY_PR) : null,
+  /**
+   * Restrict a run to one PR number. Independent of dryRun: on its own this
+   * performs and POSTS a real review of exactly that PR, which is the intended
+   * "review this one now" escape hatch — pair it with PR_REVIEWER_DRY_RUN=1
+   * when you only want to look.
+   */
+  onlyPr: process.env.PR_REVIEWER_ONLY_PR ? numberEnv('PR_REVIEWER_ONLY_PR', null) : null,
 };
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${msg}`);
+
+/**
+ * Report a failed review on the PR itself, once per distinct failure.
+ *
+ * Every way a review can fail funnels through here — a returned {ok:false} and
+ * any thrown error alike. Logging to a file on the VPS is not reporting: from
+ * the PR's side, a reviewer that crashed silently is indistinguishable from
+ * one that found nothing, and that is the single outcome this tool must never
+ * fake. The SHA is deliberately NOT marked reviewed, so the next poll retries.
+ */
+async function reportFailure(token, pr, head, error, state) {
+  log(`PR #${pr.number} — review failed: ${String(error).split('\n')[0]}`);
+  if (CONFIG.dryRun) {
+    console.log(renderFailureBody(String(error), head));
+    return;
+  }
+  if (alreadyReportedFailure(state, head, error)) {
+    log(`PR #${pr.number} — same failure already reported for this SHA, not reposting`);
+    return;
+  }
+  try {
+    await postReview(token, CONFIG.repo, pr.number, renderFailureBody(String(error), head), []);
+    markFailureReported(state, head, error);
+    saveState(CONFIG.stateFile, state);
+  } catch (e) {
+    // If GitHub itself is the thing that is broken there is nowhere left to
+    // report to; the log is the last resort, not the first.
+    log(`PR #${pr.number} — could not post failure comment: ${e.message}`);
+  }
+}
 
 async function reviewOne(token, pr, template, state) {
   const started = Date.now();
@@ -57,7 +114,7 @@ async function reviewOne(token, pr, template, state) {
 
   let dir;
   try {
-    dir = makeWorktree(CONFIG.repoDir, CONFIG.worktreeRoot, pr.number, head);
+    dir = makeWorktree(CONFIG.repoDir, CONFIG.worktreeRoot, pr.number, head, pr.base.ref);
     const base = mergeBase(dir, pr.base.ref, head);
     const prompt = renderPrompt(template, {
       NUMBER: pr.number,
@@ -80,13 +137,14 @@ async function reviewOne(token, pr, template, state) {
     });
 
     if (!result.ok) {
-      // Post the failure rather than staying quiet. A reviewer that fails
-      // silently is indistinguishable from one that found nothing, and the
-      // SHA is deliberately NOT marked reviewed so the next poll retries.
-      log(`PR #${pr.number} — review failed: ${result.error}`);
-      if (CONFIG.dryRun) console.log(renderFailureBody(result.error, head));
-      else await postReview(token, CONFIG.repo, pr.number, renderFailureBody(result.error, head), []);
+      await reportFailure(token, pr, head, result.error, state);
       return;
+    }
+    if (result.rejected?.length) {
+      // Not fatal — the valid findings still ship — but never silent: a
+      // malformed finding means the model drifted from the schema, and that
+      // is worth seeing in the log rather than inferring from a short review.
+      log(`PR #${pr.number} — dropped ${result.rejected.length} malformed finding(s)`);
     }
 
     const files = await listPullFiles(token, CONFIG.repo, pr.number);
@@ -112,7 +170,7 @@ async function reviewOne(token, pr, template, state) {
       `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
     );
   } finally {
-    if (dir) removeWorktree(CONFIG.repoDir, dir);
+    if (dir) removeWorktree(CONFIG.repoDir, dir, log);
   }
 }
 
@@ -153,8 +211,10 @@ async function main() {
     try {
       await reviewOne(token, pr, template, state);
     } catch (e) {
-      // One bad PR must not stop the others, and must not be silent.
+      // One bad PR must not stop the others, and must not be silent — on the
+      // PR, not just in a log nobody is watching.
       log(`PR #${pr.number} — ERROR ${e.stack ?? e.message}`);
+      await reportFailure(token, pr, pr.head.sha, e.message ?? String(e), state);
     }
   }
 }
