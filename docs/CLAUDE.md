@@ -134,6 +134,15 @@ this includes security updates, deliberately).
 - Kernel updates set the reboot-required flag; reboots are manual (Ben's call).
   PM2 and Caddy are boot-enabled, so a plain `systemctl reboot` is safe.
 
+## Per-App Context Files
+
+Some apps carry their own `CLAUDE.md` next to the code, with the operational
+detail a fresh session needs — invariants, traps, and what not to change. Read
+the app's file before working in it; this one only covers the box.
+
+- `apps/waker/CLAUDE.md` — Waker, the fantasy decision desk. Dense on the data
+  joins and on the ways Sleeper's and nflverse's data mislead.
+
 ## Technology Preferences
 
 **Choose technologies with strong representation in training data:**
