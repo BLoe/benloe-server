@@ -140,8 +140,14 @@ Some apps carry their own `CLAUDE.md` next to the code, with the operational
 detail a fresh session needs — invariants, traps, and what not to change. Read
 the app's file before working in it; this one only covers the box.
 
+- `apps/sleeper-ui/CLAUDE.md` — League Desk. Dense on the ways Sleeper's own
+  data misleads, and on the chat/token access rules, which are security-shaped.
 - `apps/waker/CLAUDE.md` — Waker, the fantasy decision desk. Dense on the data
   joins and on the ways Sleeper's and nflverse's data mislead.
+
+The two are siblings over the same league and are deliberately kept distinct:
+League Desk browses entities, Waker is organised by decision. A change that
+makes one resemble the other is the wrong change.
 
 ## Technology Preferences
 
