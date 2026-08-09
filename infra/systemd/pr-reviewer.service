@@ -1,0 +1,27 @@
+[Unit]
+Description=Review new open PRs on BLoe/benloe-server with Claude
+Documentation=file:///srv/benloe/apps/pr-reviewer/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root because the Claude CLI credentials live in /root/.claude and the
+# pr-review-toolkit plugin is installed under the same tree. The reviewer's own
+# tool allowlist (src/review.mjs ALLOWED_TOOLS) is what bounds what the agent
+# can actually do; it grants no write, edit, or mutating-git capability.
+User=root
+WorkingDirectory=/srv/benloe/apps/pr-reviewer
+ExecStart=/usr/bin/env node /srv/benloe/apps/pr-reviewer/src/poll.mjs
+# Generous: one review is several minutes of agent work and the poller may take
+# up to PR_REVIEWER_MAX_PER_RUN of them. systemd will not start a second
+# instance while this one runs, which is the concurrency guard.
+TimeoutStartSec=50min
+StandardOutput=append:/srv/benloe/logs/pr-reviewer.log
+StandardError=append:/srv/benloe/logs/pr-reviewer.log
+# The Claude CLI shells out to node from the nvm tree; keep it findable.
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/root
+
+[Install]
+WantedBy=multi-user.target
