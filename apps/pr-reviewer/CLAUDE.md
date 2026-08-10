@@ -92,6 +92,13 @@ dependency would be someone else's maintenance burden for no leverage.
   account. `PR_REVIEWER_MAX_PER_RUN` (default 2) is the cap that stops five
   PRs opened at once from draining a day's budget in one tick.
 
+- **`poll.mjs` runs `main()` only when executed directly**, so it can be
+  imported. Keep it that way: `test/wiring.test.mjs` imports every `src/`
+  module purely to prove their imports resolve. An ESM link error (a name
+  imported that was never exported) surfaces only on load — `node --check`
+  passes, every leaf-module test passes, and the service dies on the next
+  tick. That shipped on 2026-08-10 and took the reviewer down.
+
 ## Install / change
 
 Units live in `infra/systemd/` (source of truth) and are **copied** to
