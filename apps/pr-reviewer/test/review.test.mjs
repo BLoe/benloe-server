@@ -17,16 +17,19 @@ test('renderPrompt blanks an unsupplied placeholder rather than leaving the lite
 test('parseResult unwraps the doubly-encoded structured output', () => {
   const stdout = JSON.stringify({
     is_error: false,
-    result: JSON.stringify({ summary: 'ok', findings: [{ severity: 'important', title: 't', detail: 'd' }] }),
+    result: JSON.stringify({
+      summary: 'A representative summary long enough to be a real one.',
+      findings: [{ severity: 'important', title: 't', detail: 'd' }],
+    }),
   });
   const r = parseResult(stdout);
   assert.ok(r.ok);
-  assert.equal(r.data.summary, 'ok');
+  assert.match(r.data.summary, /representative summary/);
   assert.equal(r.data.findings.length, 1);
 });
 
 test('parseResult accepts an already-parsed result object', () => {
-  const stdout = JSON.stringify({ result: { summary: 'ok', findings: [] } });
+  const stdout = JSON.stringify({ result: { summary: 'A representative summary, already parsed.', findings: [] } });
   const r = parseResult(stdout);
   assert.ok(r.ok);
   assert.deepEqual(r.data.findings, []);
@@ -79,7 +82,7 @@ test('the tool allowlist is exactly this set', () => {
 test('parseResult drops a finding with a bogus severity instead of silently losing it in the renderer', () => {
   const stdout = JSON.stringify({
     result: JSON.stringify({
-      summary: 's',
+      summary: 'A representative summary long enough to be a real one.',
       findings: [
         { severity: 'important', title: 'good', detail: 'd' },
         { severity: 'blocker', title: 'bad severity', detail: 'd' },
@@ -98,7 +101,7 @@ test('parseResult drops a finding with a bogus severity instead of silently losi
 test('parseResult keeps optional fields when they are well formed', () => {
   const stdout = JSON.stringify({
     result: JSON.stringify({
-      summary: 's',
+      summary: 'A representative summary long enough to be a real one.',
       findings: [{ severity: 'suggestion', title: 't', detail: 'd', file: 'a.ts', line: 3, agent: 'code-reviewer' }],
     }),
   });
@@ -178,4 +181,21 @@ test('every git call is bounded', () => {
   // budget relationship it had no way to check, since the systemd timeout is
   // not importable from here.
   assert.ok(Number.isFinite(GIT_TIMEOUT_MS) && GIT_TIMEOUT_MS > 0);
+});
+
+test('an empty or vacuous summary is a failed run, not a clean review', () => {
+  // Schema-valid and meaningless: it would have rendered as "accepted.
+  // Nothing found." and posted an APPROVE.
+  for (const summary of ['', '   ', 'ok', 'Looks fine.']) {
+    const r = parseResult(JSON.stringify({ result: JSON.stringify({ summary, findings: [] }) }));
+    assert.ok(!r.ok, `summary ${JSON.stringify(summary)} should not be accepted`);
+    assert.match(r.error, /empty summary/);
+  }
+});
+
+test('a real summary still passes', () => {
+  const r = parseResult(
+    JSON.stringify({ result: JSON.stringify({ summary: 'This PR adds a scheduled reviewer and it looks sound.', findings: [] }) }),
+  );
+  assert.ok(r.ok);
 });

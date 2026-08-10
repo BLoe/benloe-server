@@ -11,9 +11,9 @@ subagents in parallel, and the consolidated result is posted as a review —
 inline comments where a finding can be anchored to a line in the diff, and a
 summary body with the verdict and counts.
 
-The review **approves** when it finds nothing critical or important, and posts
-a plain `COMMENT` otherwise. It never requests changes — it can accept a PR but
-cannot block one.
+The review **approves** only when it finds nothing critical or important **and
+nothing in its own output was malformed or empty**; otherwise it posts a plain
+`COMMENT`. It never requests changes — it can accept a PR but cannot block one.
 
 ## Operating it
 

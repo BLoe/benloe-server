@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { parseAllowedAuthors, selectPulls } from './authors.mjs';
 import { addressableMap, partitionFindings } from './diff.mjs';
 import { REVIEW_EVENT, inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
-import { installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
+import { gh, installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
 import {
   ensureMirror,
   escapeUntrusted,
@@ -136,7 +136,12 @@ async function reportFailure(token, pr, head, error, state) {
     return;
   }
   try {
-    await postReview(token, CONFIG.repo, pr.number, renderFailureBody(String(error), head), [], 'COMMENT', head);
+    // Deliberately UNPINNED. A failure comment is about the run, not about
+    // the code, and pinning it to a sha that no longer exists after a
+    // force-push makes GitHub reject the post — turning a reported failure
+    // into a log-only one, which is the exact outcome this function exists to
+    // prevent. The sha is named in the body instead.
+    await postReview(token, CONFIG.repo, pr.number, renderFailureBody(String(error), head), []);
     markFailureReported(state, head, error);
     saveState(CONFIG.stateFile, state);
   } catch (e) {
@@ -192,6 +197,19 @@ async function reviewOne(token, pr, template, state) {
       // malformed finding means the model drifted from the schema, and that
       // is worth seeing in the log rather than inferring from a short review.
       log(`PR #${pr.number} — dropped ${result.rejected.length} malformed finding(s)`);
+    }
+
+    // The head can move during the minutes a review takes. Everything below
+    // is about the sha we READ: the review is pinned to it, but the inline
+    // anchors come from listPullFiles, which always describes the CURRENT
+    // head — mismatched anchors make GitHub 422 the entire review, losing it.
+    // Rather than reconcile two commits, abandon: the new head is unreviewed,
+    // so the next tick picks it up five minutes later and reviews what is
+    // actually there. Nothing is lost and nothing stale is ever posted.
+    const fresh = await gh(token, `/repos/${CONFIG.repo}/pulls/${pr.number}`);
+    if (fresh.head.sha !== head) {
+      log(`PR #${pr.number} — head moved ${head.slice(0, 8)} → ${fresh.head.sha.slice(0, 8)} during review; discarding, next tick will re-review`);
+      return;
     }
 
     const files = await listPullFiles(token, CONFIG.repo, pr.number);
