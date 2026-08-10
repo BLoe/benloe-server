@@ -281,3 +281,82 @@ because the second is only measurable once the first is real:
 Both belong in their own PRs, with these numbers re-run after each. The
 re-run is the point: `p50 3070` and `19 short turns → p50 1303` are the two
 numbers a length change has to move.
+
+---
+
+# Cost of the dead desk register — 2026-08-10
+
+§1 established that `chat.register` has never been `desk`. §"v2-only" showed
+that register never reaches the prompt, so it cannot affect what Cabinet
+*says*. It does affect one thing:
+
+```ts
+// runtime/register.ts
+export function effortForRegister(register: Register, base: string): string {
+  if (register !== 'desk') return base;
+  return process.env.CABINET_DESK_EFFORT || 'medium';
+}
+```
+
+Lowering effort is the desk register's **only** mechanical function, and the
+branch has never once been taken. Every user turn since v2 has run at the
+router's base effort, which is `high`.
+
+## What that costs, from `token_usage`
+
+Since 2026-08-01:
+
+| session_kind | turns | output tokens | cache read | USD |
+|---|---|---|---|---|
+| `user` | 79 | 1,084,374 | 125,190,770 | **233.46** |
+| `cron` | 11 | 47,761 | 2,326,960 | 6.45 |
+| `heartbeat` | 265 | 298,600 | 5,345,632 | 4.96 |
+
+**$244.88 in nine days**, 95% of it on 79 user turns — **$2.96 per turn on
+average**.
+
+Per user turn:
+
+```
+cost USD       p25 0.82 · p50 1.39 · p90 8.76 · max 34.83
+output tokens  p50 4505 · p90 44469 · max 115394
+cache read     avg 1,584,693 per turn
+```
+
+Three things worth separating here:
+
+1. **The median turn is $1.39 and the p90 is $8.76** — a 6× spread. The tail
+   is where the money is, and a single turn cost $34.83.
+2. **Output per turn (p50 4,505 tokens) is far larger than the reply Ben
+   sees.** The earlier measurement — reply text p50 3,070 *characters*, about
+   750 tokens — counts only the final message. The rest is the agentic loop:
+   tool arguments, intermediate reasoning, subagents. Roughly 6× more output
+   is produced than delivered.
+3. **1.58M cache-read tokens per turn** means the ~20k-token cache-stable
+   prefix is being re-read on the order of 80 times per turn. That is the
+   agentic loop doing its job — but it makes the size of `promptCore()` a
+   multiplier on every turn, not a one-off.
+
+## What this does and does not license
+
+It does **not** license flipping effort down. Anthropic's guidance is to use
+`low`/`medium` liberally as the primary cost control *"wherever your evals
+show quality holds"* — and there are no evals yet. Cutting effort blind on
+the system that manages Ben's health and money is the wrong trade.
+
+What it does establish is that the classifier fix (§1) has a payoff that is
+now quantified rather than assumed: it is worth roughly the difference
+between `high` and `medium` on the cheap half of turns. That is a real
+number to weigh against the risk of misrouting a counsel turn to desk — which
+`register.ts` correctly calls the costly failure.
+
+It also reframes point 3 as the larger lever. `PLATFORM.md` alone is 22KB of
+engineering post-mortems injected into every turn including trivial ones, and
+at ~80 cache reads per turn its cost is multiplied, not amortised. Trimming
+the cache-stable prefix is a bigger, safer win than changing effort, and it
+does not require an eval to justify — only a judgement about which
+post-mortems still earn their slot.
+
+**Next measurement**, before either change: attribute `promptCore()` size by
+file, and check what fraction of the 1.58M cache reads is prefix versus
+conversation.
