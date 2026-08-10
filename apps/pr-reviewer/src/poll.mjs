@@ -136,6 +136,12 @@ async function reviewOne(token, pr, template, state) {
 
   let dir;
   try {
+    // Inside the try, so a clone failure is REPORTED on the PR rather than
+    // exiting main() silently. By this point the token is valid, so the
+    // reviewer is fully able to comment and simply wouldn't — the exact
+    // outcome CLAUDE.md says it must never produce. Cheap after the first
+    // call: it is an existence check.
+    ensureMirror(CONFIG.mirrorDir, CONFIG.repo, token);
     dir = makeWorktree(CONFIG.mirrorDir, CONFIG.worktreeRoot, pr.number, head, pr.base.ref, token);
     const base = mergeBase(dir, pr.base.ref, head);
     const prompt = renderPrompt(template, {
@@ -198,7 +204,6 @@ async function reviewOne(token, pr, template, state) {
 
 async function main() {
   const token = await installationToken(reviewerCredentials(CONFIG.envFile));
-  ensureMirror(CONFIG.mirrorDir, CONFIG.repo, token);
 
   const state = loadState(CONFIG.stateFile);
   const template = loadPromptTemplate(APP_DIR);

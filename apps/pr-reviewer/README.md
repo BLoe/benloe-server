@@ -42,8 +42,9 @@ All optional; the defaults are what runs in production.
 
 Authentication uses the **`benloe-pr-reviewer`** GitHub App via
 `PR_REVIEWER_{APP_ID,INSTALLATION_ID,PRIVATE_KEY_B64}` in `/srv/benloe/.env`.
-That identity holds `pull_requests:write` (which is what lets it post reviews)
-and deliberately **no `contents:write`** — so it cannot push or merge. There is deliberately no fallback to the write-capable
+That identity holds `contents:read` (to clone and fetch the diff),
+`pull_requests:write` (to post the review), and deliberately **no
+`contents:write`** — so it cannot push or merge. There is deliberately no fallback to the write-capable
 `cabinet-benloe` app; missing credentials fail loudly rather than silently
 escalating. A fresh installation token is minted on every poll, so no
 human-expiring credential is in the loop.

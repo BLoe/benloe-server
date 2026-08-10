@@ -8,7 +8,7 @@ test('the default allowlist is exactly this set', () => {
   // "the primary prompt-injection control", and the sibling control
   // (ALLOWED_TOOLS) is pinned the same way: a widening must be a deliberate,
   // reviewable edit to a test, not something an agent slips into a list.
-  assert.deepEqual(DEFAULT_ALLOWED_AUTHORS, ['BLoe', 'cabinet-benloe[bot]']);
+  assert.deepEqual(DEFAULT_ALLOWED_AUTHORS, ['BLoe', 'cabinet-benloe[bot]', 'benloe-carpenter[bot]']);
 });
 
 test('an unset allowlist falls back to the default', () => {
@@ -30,6 +30,12 @@ test('allowed authors match case-insensitively', () => {
   for (const login of ['BLoe', 'bloe', 'BLOE', 'cabinet-benloe[bot]', 'Cabinet-Benloe[bot]']) {
     assert.ok(isAllowedAuthor(login, allowed), `${login} should be allowed`);
   }
+});
+
+test('the session identity is allowed — it authors these PRs', () => {
+  assert.ok(isAllowedAuthor('benloe-carpenter[bot]', DEFAULT_ALLOWED_AUTHORS));
+  // The reviewer authors nothing and is deliberately absent.
+  assert.ok(!isAllowedAuthor('benloe-pr-reviewer[bot]', DEFAULT_ALLOWED_AUTHORS));
 });
 
 test('the [bot] suffix is significant — a bot actor and a plain account are different principals', () => {
