@@ -196,3 +196,74 @@ justifies a prompt change.
 - Findings from the pre-v2 corpus are still useful for one thing: confirming
   that a fix worked. `onboarding-pitch` appearing 3× before 2026-08-01 and 0×
   after is exactly that.
+
+---
+
+# v2-only measurements — 2026-08-10
+
+Re-extracted with the `EVAL_SINCE=2026-08-01` cutoff. 78 real Ben turns since
+v2; 60 sampled across 9 chats. This is the first set of numbers that describes
+the architecture actually running.
+
+Two of the earlier findings resolve immediately:
+
+- **`no-reply`: 0 of 60.** Both instances were pre-v2. That failure mode is
+  gone, most likely fixed by the interrupted-turn resume work.
+- **Register: `counsel` on 60 of 60.** Not merely "no desk" — every single
+  v2-era turn is counsel. §1's conclusion holds under the cutoff.
+
+## The length control is inoperative
+
+```
+Cabinet reply chars   p25 1362 · p50 3070 · p75 4578 · p90 5711 · max 14761
+Ben turn chars        p25   98 · p50  284 · p75  493 · p90 1760
+                      ratio of medians: 10.8x
+
+replies over 2000 chars:  37 of 60
+replies over 5000 chars:  12 of 60
+```
+
+The median reply is **3,070 characters** — roughly 750 tokens — against a
+median Ben turn of 284.
+
+The sharpest cut is short turns. 19 of 60 of Ben's turns are ≤160 characters,
+i.e. short enough that `DESK_MAX_CHARS` would even consider them for desk:
+
+```
+their replies:  p50 1303 · max 5017
+```
+
+**A one-line message gets a 1,300-character answer.**
+
+This is not a tone problem, it is a wiring problem. `TURN_DISCIPLINE` says:
+
+> Length: desk register stays tight — most replies are a few sentences.
+> Counsel register ... is exempt: there, the conversation IS the work and
+> length limits are suspended.
+
+Every turn is counsel (§1), so **every turn takes the exemption**. The only
+length instruction in the prompt is scoped to a register that has never once
+activated. Cabinet is not ignoring the rule; the rule does not apply to
+anything.
+
+Anthropic's Opus 5 guidance is that this model runs longer than its
+predecessors by default, that effort does not reliably change visible length,
+and that conciseness must be prompted for explicitly. Cabinet does prompt for
+it — behind a condition that is always false.
+
+## What follows
+
+The two candidate fixes are independent and should be tried in that order,
+because the second is only measurable once the first is real:
+
+1. **Give the length rule an unconditional floor.** Some length guidance must
+   apply regardless of register, or the model has none. The counsel exemption
+   can survive as a widening, not as the only clause.
+2. **Then revisit register.** With a working floor, fixing the classifier
+   (§1) becomes a tuning question rather than a load-bearing one — which is
+   the right order, since the classifier fix is the riskier change and the
+   one whose correct shape is still unclear.
+
+Both belong in their own PRs, with these numbers re-run after each. The
+re-run is the point: `p50 3070` and `19 short turns → p50 1303` are the two
+numbers a length change has to move.
