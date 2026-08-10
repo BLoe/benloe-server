@@ -25,12 +25,20 @@ NoNewPrivileges=yes
 # Everything is read-only except the two trees this service legitimately writes:
 # its own state/worktrees, and its log.
 ProtectSystem=strict
+# /srv/benloe is NOT here on purpose. It is the live production checkout, and
+# the reviewer keeps its own bare mirror under /var/lib/pr-reviewer instead —
+# see ensureMirror() in src/review.mjs. Adding it back would let a reviewer
+# mutate production git state to read a diff.
 ReadWritePaths=/var/lib/pr-reviewer /srv/benloe/logs /root/.claude /tmp
 # The secrets the reviewer must never be able to read, even though it runs as
-# root and even if the agent is talked into trying. poll.mjs reads GITHUB_APP_*
-# from /srv/benloe/.env BEFORE spawning the agent, so making it inaccessible
-# here would break auth — it is instead the one file the agent is fenced from
-# by prompt, and the mount below hides everything else.
+# root and even if the agent is talked into trying.
+#
+# /srv/benloe/.env is deliberately ABSENT from this list: poll.mjs reads
+# PR_REVIEWER_{APP_ID,INSTALLATION_ID,PRIVATE_KEY_B64} from it (via
+# reviewerCredentials in src/github.mjs) before spawning the agent, so fencing
+# it here would break auth outright. That file is instead fenced from the agent
+# by prompt only — the known residual gap — while the mounts below hide
+# everything else from it.
 InaccessiblePaths=/srv/benloe/data /var/lib/cabinet-secrets /var/lib/artanis /etc/benloe /run/cabinet-secrets /root/.ssh
 PrivateTmp=yes
 ProtectKernelTunables=yes
@@ -44,10 +52,17 @@ LockPersonality=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 
-# Generous: one review is several minutes of agent work and the poller may take
-# up to PR_REVIEWER_MAX_PER_RUN of them. systemd will not start a second
-# instance while this one runs, which is the concurrency guard.
-TimeoutStartSec=50min
+# Must exceed RUN_BUDGET_MS + 2*GIT_TIMEOUT_MS + PR_REVIEWER_TIMEOUT_MS, which
+# is the true worst case (see RUN_BUDGET_MS in src/poll.mjs): the budget is
+# checked only before STARTING a review, so the last one can begin at
+# budget-1ms and then run its full 40 minutes. With the defaults that is
+# 25 + 10 + 20 + 10 = 65min, so 90 leaves real margin.
+#
+# It matters because a SIGKILL here runs no catch and no finally: every
+# in-flight review would die without posting anything to any PR. systemd will
+# not start a second instance while this one runs, which is the concurrency
+# guard.
+TimeoutStartSec=90min
 StandardOutput=append:/srv/benloe/logs/pr-reviewer.log
 StandardError=append:/srv/benloe/logs/pr-reviewer.log
 # node and the claude CLI both resolve from these; there is deliberately no nvm

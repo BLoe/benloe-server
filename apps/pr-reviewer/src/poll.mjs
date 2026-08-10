@@ -14,8 +14,9 @@ import { fileURLToPath } from 'node:url';
 import { parseAllowedAuthors, selectPulls } from './authors.mjs';
 import { addressableMap, partitionFindings } from './diff.mjs';
 import { inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
-import { installationToken, listOpenPulls, listPullFiles, postReview, readEnvKeys } from './github.mjs';
+import { installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
 import {
+  ensureMirror,
   escapeUntrusted,
   loadPromptTemplate,
   makeWorktree,
@@ -52,7 +53,12 @@ function numberEnv(name, fallback) {
 
 const CONFIG = {
   repo: process.env.PR_REVIEWER_REPO ?? 'BLoe/benloe-server',
-  repoDir: process.env.PR_REVIEWER_REPO_DIR ?? '/srv/benloe',
+  /**
+   * The reviewer's OWN bare mirror — never /srv/benloe. That is the live
+   * production checkout; a reviewer has no business fetching into it, and the
+   * systemd sandbox makes it read-only anyway.
+   */
+  mirrorDir: process.env.PR_REVIEWER_MIRROR ?? '/var/lib/pr-reviewer/repo.git',
   envFile: process.env.PR_REVIEWER_ENV_FILE ?? '/srv/benloe/.env',
   stateFile: process.env.PR_REVIEWER_STATE ?? '/var/lib/pr-reviewer/state.json',
   worktreeRoot: process.env.PR_REVIEWER_WORKTREES ?? '/var/lib/pr-reviewer/worktrees',
@@ -91,6 +97,29 @@ const CONFIG = {
 
 /** How many declined PRs to name before collapsing to a count. */
 const DECLINE_SAMPLE = 3;
+
+/**
+ * Wall clock after which this run starts no further reviews.
+ *
+ * Precisely: this gates the decision to BEGIN another review. It does not cap
+ * a run, and two earlier versions of this comment got the arithmetic wrong.
+ *
+ * The correct bound. A single review costs at most
+ *   GIT_TIMEOUT_MS (worktree)         10min
+ * + PR_REVIEWER_TIMEOUT_MS            20min
+ * + GIT_TIMEOUT_MS (cleanup)          10min   = 40min
+ *
+ * The budget is checked only BEFORE starting a review, so the last review can
+ * begin at RUN_BUDGET_MS - 1ms:
+ *   worst-case run = RUN_BUDGET_MS + 40min = 25 + 40 = 65min
+ *
+ * That exceeds a 50-minute TimeoutStartSec, which is why the unit is set to
+ * 90min: a SIGKILL there runs no catch and no finally, so every in-flight
+ * review would die without posting anything — the one outcome this app must
+ * never produce. The invariant to preserve when tuning any of these is
+ *   RUN_BUDGET_MS + 2*GIT_TIMEOUT_MS + PR_REVIEWER_TIMEOUT_MS < TimeoutStartSec
+ */
+const RUN_BUDGET_MS = numberEnv('PR_REVIEWER_RUN_BUDGET_MS', 25 * 60_000);
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${msg}`);
 
@@ -131,7 +160,13 @@ async function reviewOne(token, pr, template, state) {
 
   let dir;
   try {
-    dir = makeWorktree(CONFIG.repoDir, CONFIG.worktreeRoot, pr.number, head, pr.base.ref);
+    // Inside the try, so a clone failure is REPORTED on the PR rather than
+    // exiting main() silently. By this point the token is valid, so the
+    // reviewer is fully able to comment and simply wouldn't — the exact
+    // outcome CLAUDE.md says it must never produce. Cheap after the first
+    // call: it is an existence check.
+    ensureMirror(CONFIG.mirrorDir, CONFIG.repo, token);
+    dir = makeWorktree(CONFIG.mirrorDir, CONFIG.worktreeRoot, pr.number, head, pr.base.ref, token);
     const base = mergeBase(dir, pr.base.ref, head);
     const prompt = renderPrompt(template, {
       NUMBER: pr.number,
@@ -189,24 +224,12 @@ async function reviewOne(token, pr, template, state) {
       `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
     );
   } finally {
-    if (dir) removeWorktree(CONFIG.repoDir, dir, log);
+    if (dir) removeWorktree(CONFIG.mirrorDir, dir, log);
   }
 }
 
 async function main() {
-  const env = readEnvKeys(CONFIG.envFile, [
-    'GITHUB_APP_ID',
-    'GITHUB_APP_INSTALLATION_ID',
-    'GITHUB_APP_PRIVATE_KEY_B64',
-  ]);
-  if (!env.GITHUB_APP_ID || !env.GITHUB_APP_INSTALLATION_ID || !env.GITHUB_APP_PRIVATE_KEY_B64) {
-    throw new Error(`GITHUB_APP_{ID,INSTALLATION_ID,PRIVATE_KEY_B64} missing from ${CONFIG.envFile}`);
-  }
-  const token = await installationToken({
-    appId: env.GITHUB_APP_ID,
-    installationId: env.GITHUB_APP_INSTALLATION_ID,
-    privateKeyPem: Buffer.from(env.GITHUB_APP_PRIVATE_KEY_B64, 'base64').toString('utf8'),
-  });
+  const token = await installationToken(reviewerCredentials(CONFIG.envFile));
 
   const state = loadState(CONFIG.stateFile);
   const template = loadPromptTemplate(APP_DIR);
@@ -259,7 +282,13 @@ async function main() {
   }
   log(`${reviewable.length} reviewable of ${pulls.length} open; reviewing up to ${CONFIG.maxPerRun}`);
 
+  const runStarted = Date.now();
   for (const pr of reviewable.slice(0, CONFIG.maxPerRun)) {
+    const elapsed = Date.now() - runStarted;
+    if (elapsed > RUN_BUDGET_MS) {
+      log(`run budget spent (${Math.round(elapsed / 60000)}m); deferring PR #${pr.number} to the next tick`);
+      break;
+    }
     try {
       await reviewOne(token, pr, template, state);
     } catch (e) {

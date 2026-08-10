@@ -3,8 +3,8 @@
  * validated findings object.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 export const FINDINGS_SCHEMA = {
   type: 'object',
@@ -63,32 +63,139 @@ export function renderPrompt(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] ?? '').toString());
 }
 
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
+/** Cap on any single git call. See the timeout rationale in git(). */
+export const GIT_TIMEOUT_MS = 10 * 60_000;
 
 /**
- * Check the PR head out into a throwaway worktree.
+ * Git, authenticated as the reviewer's own installation token.
  *
- * A worktree rather than a branch checkout in the monorepo itself: the live
- * checkout at /srv/benloe is what the running services are deployed from, and
- * a reviewer that moves its HEAD would be editing production to read a diff.
+ * The token rides in GIT_CONFIG_* env vars rather than the argv (`-c
+ * http.extraheader=...`) so it does not appear in `ps` output. It is
+ * short-lived (1 hour) and scoped to this installation. Note it is NOT
+ * read-only overall — it carries pull_requests:write, which is what posts the
+ * review; what it lacks is contents:write. HTTPS is used rather than the SSH
+ * deploy key because that key CAN push, lives in /root/.ssh, and the sandbox
+ * deliberately makes that directory inaccessible.
+ *
+ * Every call is bounded, because these are network-bound and were previously
+ * unbounded. A systemd kill runs no catch and no finally, so a hang posted
+ * nothing to any PR — the one outcome this app must never produce.
+ *
+ * NOTE this bounds a single CALL, not a run. Bounding the run is poll.mjs's
+ * job (RUN_BUDGET_MS): per-call caps alone do not compose into a run-level
+ * guarantee, and claiming otherwise was the bug in the previous version of
+ * this comment — 2 reviews x (20min orchestrator + 3 git calls x 10min) can
+ * exceed a 50-minute TimeoutStartSec on arithmetic alone.
  */
-export function makeWorktree(repoDir, root, number, headSha, baseRef) {
+/**
+ * The environment a git call runs in. Pure, and exported so the two security
+ * properties it carries are testable rather than asserted only in a comment.
+ */
+export function gitEnv(token, base = process.env) {
+  const env = { ...base };
+  // GIT_TRACE / GIT_TRACE_CURL / GIT_CURL_VERBOSE print request headers —
+  // including the Authorization header built below — to stderr, which this
+  // service carries into a failure comment on a PUBLIC PR. An ambient debug
+  // flag must not be able to leak the token.
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('GIT_TRACE') || k === 'GIT_CURL_VERBOSE') delete env[k];
+  }
+  if (token) {
+    // SCOPED to the origin host. An unscoped `http.extraheader` is attached
+    // to every HTTP request git makes, including a redirect to a different
+    // host — which would hand the installation token to whoever controls the
+    // redirect target. git's per-URL config form confines it.
+    env.GIT_CONFIG_COUNT = '1';
+    env.GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader';
+    env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
+  }
+  env.GIT_TERMINAL_PROMPT = '0';
+  return env;
+}
+
+export function gitWithTimeout(cwd, token, args, timeoutMs = GIT_TIMEOUT_MS) {
+  const env = gitEnv(token);
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      env,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: timeoutMs,
+    }).trim();
+  } catch (e) {
+    // A timeout kill surfaces as ETIMEDOUT/SIGTERM with a message naming
+    // neither the operation nor the cap, which then becomes the whole failure
+    // comment on the PR. Say which git command hit which limit.
+    if (e.killed || e.code === 'ETIMEDOUT') {
+      throw new Error(`git ${args[0]} exceeded ${Math.round(timeoutMs / 1000)}s timeout`);
+    }
+    throw e;
+  }
+}
+
+/**
+ * A bare mirror the reviewer owns outright, under /var/lib/pr-reviewer.
+ *
+ * It used to fetch into /srv/benloe and build worktrees there. That is the
+ * live production checkout every service deploys from, so the reviewer was
+ * mutating production git state (fetching, pruning, adding worktrees) just to
+ * read a diff. The sandbox added in the hardening pass then made /srv/benloe
+ * read-only and every review died with "cannot open '.git/FETCH_HEAD'" — the
+ * config caught a design mistake that was already there.
+ *
+ * Owning a mirror fixes both: production is never touched, and the sandbox can
+ * stay strict because the only writable path is one this service owns.
+ */
+/** Convenience wrapper preserving the variadic call style used below. */
+const git = (cwd, token, ...args) => gitWithTimeout(cwd, token, args);
+
+export function ensureMirror(mirrorDir, repo, token) {
+  if (existsSync(join(mirrorDir, 'HEAD'))) return mirrorDir;
+  // A mirrorDir that exists WITHOUT a HEAD is a wedged state, not a fresh
+  // start: renameSync onto a non-empty directory throws ENOTEMPTY, so every
+  // future run would fail identically until a human intervened. Clear it —
+  // there is nothing in it worth keeping, by definition.
+  rmSync(mirrorDir, { recursive: true, force: true });
+  // Clone to a scratch path and rename into place. `git clone --mirror`
+  // writes HEAD before the object transfer finishes, so a SIGKILL (the 50min
+  // TimeoutStartSec), an OOM kill, or a reboot mid-clone would otherwise
+  // leave a directory that satisfies the existence check with an incomplete
+  // object store — and every later run would take the fast path forever,
+  // needing a human with rm -rf. Rename is atomic; a partial scratch dir is
+  // just discarded next time.
+  const parent = dirname(mirrorDir);
+  const scratch = `${mirrorDir}.partial`;
+  mkdirSync(parent, { recursive: true });
+  rmSync(scratch, { recursive: true, force: true });
+  git(parent, token, 'clone', '--mirror', `https://github.com/${repo}.git`, scratch);
+  renameSync(scratch, mirrorDir);
+  return mirrorDir;
+}
+
+/**
+ * Check the PR head out into a throwaway worktree of the reviewer's own bare
+ * mirror (ensureMirror). Nothing here touches /srv/benloe — that is the live
+ * production checkout, and a reviewer that fetched or moved HEAD there would
+ * be mutating production to read a diff.
+ */
+export function makeWorktree(mirrorDir, root, number, headSha, baseRef, token) {
   const dir = join(root, `pr-${number}`);
   rmSync(dir, { recursive: true, force: true });
-  git(repoDir, 'worktree', 'prune');
+  git(mirrorDir, token, 'worktree', 'prune');
   // BOTH refs, always. The base is fetched because mergeBase() resolves
   // origin/<base>: a stale remote-tracking ref yields a merge base older than
   // the true one, so the review diff picks up commits already merged into the
   // base and the reviewer reports findings on code this PR never touched —
   // exactly the cry-wolf failure the orchestrator prompt guards against.
-  git(repoDir, 'fetch', 'origin', `pull/${number}/head`, baseRef, '--quiet');
-  git(repoDir, 'worktree', 'add', '--detach', dir, headSha);
+  git(mirrorDir, token, 'fetch', 'origin', `pull/${number}/head`, `+refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`, '--quiet');
+  git(mirrorDir, token, 'worktree', 'add', '--detach', dir, headSha);
   return dir;
 }
 
-export function removeWorktree(repoDir, dir, logger) {
+export function removeWorktree(mirrorDir, dir, logger) {
   try {
-    git(repoDir, 'worktree', 'remove', '--force', dir);
+    git(mirrorDir, null, 'worktree', 'remove', '--force', dir);
     return;
   } catch (e) {
     logger?.(`worktree remove failed for ${dir}, falling back to rm: ${e.message}`);
@@ -107,7 +214,7 @@ export function removeWorktree(repoDir, dir, logger) {
 }
 
 export function mergeBase(dir, baseRef, headSha) {
-  return git(dir, 'merge-base', `origin/${baseRef}`, headSha);
+  return git(dir, null, 'merge-base', `refs/remotes/origin/${baseRef}`, headSha);
 }
 
 /**
@@ -136,6 +243,22 @@ export const ALLOWED_TOOLS = [
 ];
 
 /**
+ * The environment the review agent runs in.
+ *
+ * git() only ever sets GIT_CONFIG_* on a per-call copy, so the token should
+ * never be on process.env in the first place — this deletes it anyway. The
+ * agent publishes to a public PR, so anything reaching its environment is one
+ * `env` away from being quoted there, and "should never" is not a control.
+ */
+export function agentEnv(base = process.env) {
+  const env = { ...base, CLAUDE_CODE_ENTRYPOINT: 'pr-reviewer' };
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('GIT_CONFIG')) delete env[k];
+  }
+  return env;
+}
+
+/**
  * @returns {Promise<{ok: true, data: object} | {ok: false, error: string}>}
  * Never throws for a review that simply went badly — a failed review must not
  * take the poller down with it, or one malformed PR blocks every later one.
@@ -162,7 +285,7 @@ export function runOrchestrator({ cwd, prompt, pluginDir, model, timeoutMs, logg
   return new Promise((resolve) => {
     const child = spawn('claude', args, {
       cwd,
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'pr-reviewer' },
+      env: agentEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
