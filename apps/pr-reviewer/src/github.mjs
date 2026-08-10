@@ -157,13 +157,17 @@ export async function listPullFiles(token, repo, number) {
 }
 
 /**
- * Post the review. `event: 'COMMENT'` on purpose — a scheduled reviewer must
- * never be able to block a merge on its own judgment. It reports; Ben decides.
+ * Post the review. `event` is APPROVE when the review found nothing blocking
+ * and COMMENT otherwise — never REQUEST_CHANGES (see REVIEW_EVENT).
+ *
+ * Approving is only possible because the reviewer is a SEPARATE identity from
+ * the author: GitHub refuses to let an account approve its own pull request,
+ * so this would have been impossible while everything ran as cabinet-benloe.
  */
-export const postReview = (token, repo, number, body, comments) =>
+export const postReview = (token, repo, number, body, comments, event = 'COMMENT') =>
   gh(token, `/repos/${repo}/pulls/${number}/reviews`, {
     method: 'POST',
-    body: JSON.stringify({ event: 'COMMENT', body, ...(comments?.length ? { comments } : {}) }),
+    body: JSON.stringify({ event, body, ...(comments?.length ? { comments } : {}) }),
   });
 
 export { gh };

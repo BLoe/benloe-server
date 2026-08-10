@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { isAllowedAuthor, parseAllowedAuthors } from './authors.mjs';
 import { addressableMap, partitionFindings } from './diff.mjs';
-import { inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
+import { REVIEW_EVENT, inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
 import { installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
 import {
   ensureMirror,
@@ -181,12 +181,12 @@ async function reviewOne(token, pr, template, state) {
       console.log(`\n===== DRY RUN: review body for PR #${pr.number} =====\n${reviewBody}`);
       for (const c of inline.map(inlineComment)) console.log(`\n--- inline ${c.path}:${c.line} ---\n${c.body}`);
     } else {
-      await postReview(token, CONFIG.repo, pr.number, reviewBody, inline.map(inlineComment));
+      await postReview(token, CONFIG.repo, pr.number, reviewBody, inline.map(inlineComment), REVIEW_EVENT(result.data.findings));
       markReviewed(state, head);
       saveState(CONFIG.stateFile, state);
     }
     log(
-      `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
+      `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} ${REVIEW_EVENT(result.data.findings)} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
     );
   } finally {
     if (dir) removeWorktree(CONFIG.mirrorDir, dir, log);
