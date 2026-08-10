@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { REVIEW_EVENT, accepts, inlineComment, renderFailureBody, renderReviewBody } from '../src/format.mjs';
+import {
+  REVIEW_EVENT,
+  accepts,
+  buildReviewPost,
+  inlineComment,
+  renderFailureBody,
+  renderReviewBody,
+} from '../src/format.mjs';
 
 const base = { summary: 'Adds a thing.', headSha: 'abcdef1234567890', durationMs: 60_000 };
 
@@ -136,4 +143,79 @@ test('REQUEST_CHANGES stays unreachable even with malformed findings', () => {
       assert.notEqual(REVIEW_EVENT(f, n), 'REQUEST_CHANGES');
     }
   }
+});
+
+/** No file is addressable, so every finding lands in the body. */
+const noAnchors = new Map();
+
+test('buildReviewPost pins every review to the sha that was read', () => {
+  // The seam that had no coverage: deleting the event and commit_id arguments
+  // at the call site left the whole suite green, because postReview defaults
+  // to an unpinned COMMENT.
+  const post = buildReviewPost({
+    summary: 'A representative summary long enough to be real.',
+    findings: [],
+    addressableLines: noAnchors,
+    headSha: 'abcdef1234567890',
+    durationMs: 1000,
+  });
+  assert.equal(post.commitId, 'abcdef1234567890');
+});
+
+test('buildReviewPost emits APPROVE only for a genuinely clean review', () => {
+  const make = (findings, rejectedCount = 0) =>
+    buildReviewPost({
+      summary: 'A representative summary long enough to be real.',
+      findings,
+      rejectedCount,
+      addressableLines: noAnchors,
+      headSha: 'abcdef1234567890',
+      durationMs: 1000,
+    });
+  assert.equal(make([]).event, 'APPROVE');
+  assert.equal(make([{ severity: 'suggestion', title: 't', detail: 'd' }]).event, 'APPROVE');
+  assert.equal(make([{ severity: 'important', title: 't', detail: 'd' }]).event, 'COMMENT');
+  assert.equal(make([{ severity: 'critical', title: 't', detail: 'd' }]).event, 'COMMENT');
+  assert.equal(make([], 1).event, 'COMMENT', 'malformed output must never approve');
+});
+
+test('buildReviewPost body and event cannot disagree', () => {
+  const post = buildReviewPost({
+    summary: 'A representative summary long enough to be real.',
+    findings: [{ severity: 'important', title: 't', detail: 'd' }],
+    addressableLines: noAnchors,
+    headSha: 'abcdef1234567890',
+    durationMs: 1000,
+  });
+  assert.equal(post.event, 'COMMENT');
+  assert.match(post.body, /not accepted/);
+});
+
+test('buildReviewPost turns anchorable findings into GitHub comment objects', () => {
+  const post = buildReviewPost({
+    summary: 'A representative summary long enough to be real.',
+    findings: [{ severity: 'critical', title: 'T', detail: 'D', file: 'a.ts', line: 4 }],
+    addressableLines: new Map([['a.ts', new Set([4])]]),
+    headSha: 'abcdef1234567890',
+    durationMs: 1000,
+  });
+  assert.equal(post.comments.length, 1);
+  assert.deepEqual(Object.keys(post.comments[0]).sort(), ['body', 'line', 'path']);
+});
+
+test('body counts always match the event, even when findings are anchorable', () => {
+  // The regression this function's own first test caught: taking findings and
+  // a pre-split {inline, body} independently let the body report 0 findings
+  // while the event was computed from a non-empty list.
+  const post = buildReviewPost({
+    summary: 'A representative summary long enough to be real.',
+    findings: [{ severity: 'important', title: 'T', detail: 'D', file: 'a.ts', line: 4 }],
+    addressableLines: new Map([['a.ts', new Set([4])]]),
+    headSha: 'abcdef1234567890',
+    durationMs: 1000,
+  });
+  assert.equal(post.event, 'COMMENT');
+  assert.match(post.body, /0 critical · 1 important/);
+  assert.match(post.body, /not accepted/);
+  assert.equal(post.comments.length, 1);
 });

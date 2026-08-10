@@ -6,6 +6,7 @@
  * that could not be anchored to a diff line still appears here in full, so a
  * finding is never lost to a citation problem (see diff.js).
  */
+import { partitionFindings } from './diff.mjs';
 import { SEVERITIES } from './review.mjs';
 
 const LABEL = {
@@ -144,4 +145,37 @@ export function renderFailureBody(error, headSha) {
     '',
     '<sub>This is a reviewer failure, not a finding about the code. The PR has not been reviewed.</sub>',
   ].join('\n');
+}
+
+/**
+ * Everything needed to post one review, decided in one place.
+ *
+ * Exists because the seam between the findings logic and the GitHub call had
+ * no coverage: deleting the event and commit_id arguments at the call site
+ * left the whole suite green, since postReview defaults to an unpinned
+ * COMMENT. The two properties this design rests on — a clean review actually
+ * reaches GitHub as APPROVE, and every review is pinned to the sha that was
+ * read — are decided here and tested directly.
+ */
+export function buildReviewPost({ summary, strengths, findings, rejectedCount = 0, addressableLines, headSha, durationMs }) {
+  // Partition HERE rather than taking a pre-split pair. Accepting both a
+  // findings list and an independent {inline, body} let the counts in the
+  // body disagree with the event computed from the findings — which is the
+  // exact drift this function exists to make impossible. Caught by its own
+  // test on the first run.
+  const { inline, body } = partitionFindings(findings, addressableLines);
+  return {
+    event: REVIEW_EVENT(findings, rejectedCount),
+    commitId: headSha,
+    body: renderReviewBody({
+      summary,
+      strengths,
+      bodyFindings: body,
+      inlineFindings: inline,
+      headSha,
+      durationMs,
+      rejectedCount,
+    }),
+    comments: inline.map(inlineComment),
+  };
 }
