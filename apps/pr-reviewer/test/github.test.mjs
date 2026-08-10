@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { appJwt, readEnvKeys, reviewerCredentials } from '../src/github.mjs';
+import { appJwt, postReview, readEnvKeys, reviewerCredentials } from '../src/github.mjs';
 
 function envFile(contents) {
   const path = join(mkdtempSync(join(tmpdir(), 'pr-reviewer-env-')), '.env');
@@ -86,4 +86,39 @@ test('reviewerCredentials accepts a real key', () => {
     ['PR_REVIEWER_APP_ID=1', 'PR_REVIEWER_INSTALLATION_ID=2', `PR_REVIEWER_PRIVATE_KEY_B64=${Buffer.from(pem).toString('base64')}`].join('\n'),
   );
   assert.equal(reviewerCredentials(path).privateKeyPem, pem);
+});
+
+test('postReview pins the review to the sha that was read', async () => {
+  // Without commit_id, GitHub attaches the review to the head at submission
+  // time — so a commit pushed during the minutes a review takes would collect
+  // an APPROVE for code nobody read. That is the merge gate, silently wrong.
+  let sent;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    await postReview('tok', 'o/r', 7, 'body', [], 'APPROVE', 'deadbeef');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(sent.commit_id, 'deadbeef');
+  assert.equal(sent.event, 'APPROVE');
+});
+
+test('postReview omits commit_id rather than sending a null one', async () => {
+  let sent;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    await postReview('tok', 'o/r', 7, 'body', []);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.ok(!('commit_id' in sent));
+  assert.equal(sent.event, 'COMMENT');
 });

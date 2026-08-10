@@ -120,7 +120,7 @@ async function reportFailure(token, pr, head, error, state) {
     return;
   }
   try {
-    await postReview(token, CONFIG.repo, pr.number, renderFailureBody(String(error), head), []);
+    await postReview(token, CONFIG.repo, pr.number, renderFailureBody(String(error), head), [], 'COMMENT', head);
     markFailureReported(state, head, error);
     saveState(CONFIG.stateFile, state);
   } catch (e) {
@@ -193,7 +193,15 @@ async function reviewOne(token, pr, template, state) {
       console.log(`\n===== DRY RUN: review body for PR #${pr.number} =====\n${reviewBody}`);
       for (const c of inline.map(inlineComment)) console.log(`\n--- inline ${c.path}:${c.line} ---\n${c.body}`);
     } else {
-      await postReview(token, CONFIG.repo, pr.number, reviewBody, inline.map(inlineComment), REVIEW_EVENT(result.data.findings));
+      await postReview(
+        token,
+        CONFIG.repo,
+        pr.number,
+        reviewBody,
+        inline.map(inlineComment),
+        REVIEW_EVENT(result.data.findings),
+        head,
+      );
       markReviewed(state, head);
       saveState(CONFIG.stateFile, state);
     }
