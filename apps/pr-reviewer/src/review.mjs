@@ -240,6 +240,24 @@ export function agentEnv(base = process.env) {
 }
 
 /**
+ * Why the orchestrator process ended, in a form worth posting to a PR.
+ *
+ * `code` is null when the process died from a signal, so the signal is named
+ * rather than reporting the useless "exited null".
+ *
+ * BOTH streams are included. The CLI reports some failures as a JSON payload
+ * on STDOUT while exiting non-zero and writing nothing to stderr — which
+ * produced a bare "claude exited 1" on a real PR on 2026-08-10, naming no
+ * cause at all. Discarding the one stream that held the answer is exactly the
+ * silent-failure shape this app exists to avoid.
+ */
+export function describeExit({ code, signal, stderr = '', stdout = '' }) {
+  const how = signal ? `killed by ${signal}` : `exited ${code}`;
+  const detail = [stderr.trim().slice(-1200), stdout.trim().slice(-1200)].filter(Boolean).join('\n\n');
+  return `claude ${how}${detail ? `\n\n${detail}` : ''}`;
+}
+
+/**
  * @returns {Promise<{ok: true, data: object} | {ok: false, error: string}>}
  * Never throws for a review that simply went badly — a failed review must not
  * take the poller down with it, or one malformed PR blocks every later one.
@@ -286,14 +304,7 @@ export function runOrchestrator({ cwd, prompt, pluginDir, model, timeoutMs, logg
       clearTimeout(timer);
       const tail = stderr.trim().slice(-1200);
       if (tail) logger?.(`claude stderr: ${tail}`);
-      if (code !== 0) {
-        // `code` is null when the process died from a signal, so report the
-        // signal instead of the useless "exited null" — and carry the stderr
-        // into the error itself, because the failure comment posted to the PR
-        // is the only place most people will ever see it.
-        const how = signal ? `killed by ${signal}` : `exited ${code}`;
-        return resolve({ ok: false, error: `claude ${how}${tail ? `\n\n${tail}` : ''}` });
-      }
+      if (code !== 0) return resolve({ ok: false, error: describeExit({ code, signal, stderr, stdout }) });
       resolve(parseResult(stdout));
     });
   });
