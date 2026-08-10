@@ -235,9 +235,9 @@ async function main() {
 
   const routine = skipped.filter((s) => s.kind === 'routine');
   if (routine.length > 0) {
-    const byReason = new Map();
-    for (const s of routine) byReason.set(s.reason.replace(/ at [0-9a-f]{8}$/, ''), (byReason.get(s.reason.replace(/ at [0-9a-f]{8}$/, '')) ?? 0) + 1);
-    log(`skipped ${routine.length}: ${[...byReason].map(([r, n]) => `${n} ${r}`).join(', ')}`);
+    const byCode = new Map();
+    for (const s of routine) byCode.set(s.code, (byCode.get(s.code) ?? 0) + 1);
+    log(`skipped ${routine.length}: ${[...byCode].map(([c, n]) => `${n} ${c}`).join(', ')}`);
   }
 
   if (reviewable.length === 0) {
@@ -250,6 +250,11 @@ async function main() {
     return;
   }
   log(`${reviewable.length} reviewable of ${pulls.length} open; reviewing up to ${CONFIG.maxPerRun}`);
+  // The allowlist is the one control whose misconfiguration cannot fail
+  // loudly: too NARROW just looks like a quiet repo, and too WIDE looks like
+  // normal operation. Printing it on every run that does work is the only
+  // artifact a later audit has.
+  log(`allowlist: ${CONFIG.allowedAuthors.join(', ')}`);
 
   for (const pr of reviewable.slice(0, CONFIG.maxPerRun)) {
     try {

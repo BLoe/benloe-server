@@ -106,19 +106,37 @@ test('a dry run ignores the ledger but never ignores the allowlist', () => {
   assert.deepEqual(declined.map((d) => d.pr.number), [2]);
 });
 
-test('every skip carries a reason, not just the allowlist one', () => {
-  // The docstring and the log both claimed all skips were reported while three
-  // of the four branches dropped silently — a PR skipped as a draft looked
-  // identical to one never seen.
+test('every skip carries a code and a reason, not just the allowlist one', () => {
+  // The earlier version returned only `declined` and left the three routine
+  // branches as bare continues, so a PR skipped as a draft looked from the
+  // outside exactly like one the reviewer never saw.
   const pulls = [pr(1, 'BLoe'), pr(2, 'stranger'), pr(3, 'BLoe', { draft: true }), pr(4, 'BLoe')];
   const { reviewable, skipped } = selectPulls(pulls, opts({ isReviewed: (s) => s === 'sha4' }));
   assert.deepEqual(reviewable.map((p) => p.number), [1]);
   assert.equal(skipped.length, 3);
-  for (const s of skipped) assert.ok(s.reason && s.kind, `#${s.pr.number} skipped without a reason`);
+  for (const s of skipped) assert.ok(s.reason && s.kind && s.code, `#${s.pr.number} skipped without a code/reason`);
   assert.deepEqual(skipped.filter((s) => s.kind === 'declined').map((s) => s.pr.number), [2]);
   assert.deepEqual(skipped.filter((s) => s.kind === 'routine').map((s) => s.pr.number), [3, 4]);
-  assert.match(skipped.find((s) => s.pr.number === 3).reason, /draft/);
-  assert.match(skipped.find((s) => s.pr.number === 4).reason, /already reviewed/);
+  assert.equal(skipped.find((s) => s.pr.number === 3).code, 'draft');
+  assert.equal(skipped.find((s) => s.pr.number === 4).code, 'already-reviewed');
+});
+
+test('skip codes are stable identifiers, not parsed out of prose', () => {
+  // poll.mjs aggregates on `code`. It used to group by the human reason,
+  // stripping a sha with a regex whose width was coupled to a slice(0, 8)
+  // here — so changing the abbreviation length would silently break counting
+  // in another file.
+  const codeFor = (pulls, over) => selectPulls(pulls, opts(over)).skipped.map((s) => s.code);
+  assert.deepEqual(codeFor([pr(1, 'stranger')], {}), ['not-allowlisted']);
+  assert.deepEqual(codeFor([pr(1, 'BLoe', { draft: true })], {}), ['draft']);
+  assert.deepEqual(codeFor([pr(1, 'BLoe')], { isReviewed: () => true }), ['already-reviewed']);
+  assert.deepEqual(codeFor([pr(1, 'BLoe')], { onlyPr: 99 }), ['only-pr']);
+  // Precedence is deliberate: the allowlist is evaluated before every routine
+  // branch, so a stranger's draft is reported as a decline, not as a draft.
+  assert.deepEqual(codeFor([pr(1, 'stranger', { draft: true })], { onlyPr: 99 }), ['not-allowlisted']);
+  for (const c of ['not-allowlisted', 'draft', 'already-reviewed', 'only-pr']) {
+    assert.doesNotMatch(c, /[0-9a-f]{8}/, 'a code must not embed a sha');
+  }
 });
 
 test('onlyPr skips are reported rather than dropped', () => {
