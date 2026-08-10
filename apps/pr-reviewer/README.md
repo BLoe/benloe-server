@@ -35,6 +35,7 @@ All optional; the defaults are what runs in production.
 | `PR_REVIEWER_MODEL` | `opus` | Model for the orchestrator and subagents |
 | `PR_REVIEWER_MAX_PER_RUN` | `2` | Reviews per poll — the rate-limit guard |
 | `PR_REVIEWER_TIMEOUT_MS` | `1200000` | Per-review wall clock (20 min) |
+| `PR_REVIEWER_ALLOWED_AUTHORS` | `BLoe,cabinet-benloe[bot]` | Logins whose PRs get reviewed — the injection control |
 | `PR_REVIEWER_INCLUDE_DRAFTS` | unset | Set `1` to review draft PRs too |
 | `PR_REVIEWER_DRY_RUN` | unset | Set `1` to print instead of post |
 | `PR_REVIEWER_ONLY_PR` | unset | Restrict a run to one PR number |
