@@ -11,7 +11,7 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isAllowedAuthor, parseAllowedAuthors } from './authors.mjs';
+import { parseAllowedAuthors, selectPulls } from './authors.mjs';
 import { addressableMap, partitionFindings } from './diff.mjs';
 import { inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
 import { installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
@@ -93,6 +93,9 @@ const CONFIG = {
    */
   onlyPr: process.env.PR_REVIEWER_ONLY_PR ? numberEnv('PR_REVIEWER_ONLY_PR', null) : null,
 };
+
+/** How many declined PRs to name before collapsing to a count. */
+const DECLINE_SAMPLE = 3;
 
 const log = (msg) => console.log(`${new Date().toISOString()} ${msg}`);
 
@@ -201,31 +204,37 @@ async function main() {
   const template = loadPromptTemplate(APP_DIR);
   const pulls = await listOpenPulls(token, CONFIG.repo);
 
-  // Declined authors are named in the log, never silently dropped: "the
-  // reviewer ignored my PR" and "the reviewer is broken" must not look the
-  // same from the outside. Logged before the ledger check so a skip is
-  // reported on every tick, not just the first.
-  const declined = pulls.filter((pr) => !isAllowedAuthor(pr.user?.login, CONFIG.allowedAuthors));
-  for (const pr of declined) {
-    log(`PR #${pr.number} — author ${pr.user?.login ?? '(none)'} not in allowlist, skipping`);
-  }
-
-  const pending = pulls.filter((pr) => {
-    if (!isAllowedAuthor(pr.user?.login, CONFIG.allowedAuthors)) return false;
-    if (CONFIG.onlyPr !== null && pr.number !== CONFIG.onlyPr) return false;
-    if (pr.draft && !CONFIG.includeDrafts) return false;
-    // A dry run deliberately ignores the ledger — the point is to re-review
-    // the same SHA repeatedly while tuning the orchestrator prompt.
-    return CONFIG.dryRun || !wasReviewed(state, pr.head.sha);
+  const { reviewable, declined } = selectPulls(pulls, {
+    allowedAuthors: CONFIG.allowedAuthors,
+    includeDrafts: CONFIG.includeDrafts,
+    onlyPr: CONFIG.onlyPr,
+    dryRun: CONFIG.dryRun,
+    isReviewed: (sha) => wasReviewed(state, sha),
   });
 
-  if (pending.length === 0) {
-    log(`no unreviewed PRs (${pulls.length} open)`);
+  // Declines are reported, never silently dropped — "the reviewer ignored my
+  // PR" and "the reviewer is broken" must not look the same. But the size of
+  // the declined set is chosen by whoever opens PRs on a public repo, and the
+  // timer fires 288 times a day into an unrotated log, so this collapses to a
+  // count plus a sample rather than one line per PR per tick.
+  if (declined.length > 0) {
+    const sample = declined.slice(0, DECLINE_SAMPLE).map((d) => `#${d.pr.number} (${d.reason})`);
+    const more = declined.length > DECLINE_SAMPLE ? `, +${declined.length - DECLINE_SAMPLE} more` : '';
+    log(`declined ${declined.length} of ${pulls.length} open: ${sample.join(', ')}${more}`);
+  }
+
+  if (reviewable.length === 0) {
+    // Name the declined count here too. Otherwise a typo'd allowlist that
+    // declines everything prints the same line as a healthy idle tick, and
+    // CLAUDE.md's rule is that a misconfigured reviewer must look broken
+    // rather than idle.
+    const why = declined.length > 0 ? `, ${declined.length} declined by allowlist` : '';
+    log(`no reviewable PRs (${pulls.length} open${why})`);
     return;
   }
-  log(`${pending.length} unreviewed of ${pulls.length} open; reviewing up to ${CONFIG.maxPerRun}`);
+  log(`${reviewable.length} reviewable of ${pulls.length} open; reviewing up to ${CONFIG.maxPerRun}`);
 
-  for (const pr of pending.slice(0, CONFIG.maxPerRun)) {
+  for (const pr of reviewable.slice(0, CONFIG.maxPerRun)) {
     try {
       await reviewOne(token, pr, template, state);
     } catch (e) {
