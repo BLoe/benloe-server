@@ -82,42 +82,22 @@ export interface AssembledPrompt {
  * CHARTER.md / VOICE.md and must keep winning any conflict.
  *
  * LENGTH, 2026-08-10. The clause used to read "desk register stays tight ...
- * counsel register is exempt".
+ * counsel register is exempt". It never applied to anything: `register` goes
+ * to effortForRegister and nowhere else, and this function takes no register
+ * parameter — so the model was never told which register it was in, and read
+ * a rule keyed on a distinction it could not observe. Replies ran roughly ten
+ * times the length of Ben's messages.
  *
- * The reason it did nothing is sharper than "every turn is counsel", which
- * was the first diagnosis and was wrong about the mechanism. `register`
- * reaches exactly one place — effortForRegister in runtime/agent.ts — and
- * THIS function takes no register parameter. chat.register never enters the
- * prompt at all. So the model was never told which register it was in: it
- * read a rule keyed on a distinction it could not observe, and guessed, every
- * turn. An inert rule fails predictably; an unobservable one fails however
- * the model guesses, and Opus 5's documented default guess is long.
+ * The rule is now unconditional, with counsel as a widening rather than an
+ * exemption. VOICE.md still says counsel's "length limits are suspended";
+ * that is reconciled inline below, but the real fix is to edit VOICE.md,
+ * which lives in the memory repo and cannot be changed by a PR.
  *
- * That also means fixing the register classifier would not have fixed length:
- * register only sets effort, and Anthropic's guidance is explicit that effort
- * "does not reliably change visible response length". Two mechanisms were
- * assumed to connect and neither does — which is why the fix here is an
- * unconditional rule rather than a better-tuned conditional one.
- *
- * (For the record, the classifier is separately broken: chat.register was
- * `counsel` on 60 of 60 sampled v2 turns and has never once been `desk`.
- * That is a real bug, just not this one's cause.)
- *
- * Measured at the same time: replies p50 3070 chars against Ben's p50 284, a
- * 10.8x ratio, and 19 of 60 turns that were themselves under 160 characters
- * still drew replies with a median of 1303. A one-line message got a
- * 1300-character answer.
- *
- * The rule is now unconditional, and counsel is a WIDENING rather than an
- * exemption. Anthropic's Opus 5 guidance is that this model runs long by
- * default, that effort does not reliably shorten visible output, and that
- * conciseness has to be prompted for explicitly — which is only true if the
- * prompt's conciseness clause can actually fire.
- *
- * The numbers to re-measure after this ships are p50 3070 and the short-turn
- * p50 1303. Fixing the register
- * classifier is deliberately NOT bundled here: it is the riskier change, and
- * with a working floor it becomes tuning rather than load-bearing.
+ * PLUMBING, 2026-08-10. Cabinet narrated its own tool failures at Ben ("MCP
+ * tools aren't loaded in this session"). Stated as consequence-not-mechanism
+ * rather than a flat prohibition, because the obvious prohibition collides
+ * with a rule this system holds harder: silent failure is worse than noisy
+ * failure.
  */
 export const TURN_DISCIPLINE = `<turn-discipline>
 Before your first tool call, say in one short line what you're about to do —
