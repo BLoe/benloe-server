@@ -136,6 +136,51 @@ export async function installationToken({ appId, installationId, privateKeyPem }
   return body.token;
 }
 
+/** The reviewer's own bot login, e.g. "benloe-pr-reviewer[bot]". */
+export async function appLogin({ appId, privateKeyPem }) {
+  const jwt = appJwt(appId, privateKeyPem, Math.floor(Date.now() / 1000));
+  const app = await gh(jwt, '/app');
+  return `${app.slug}[bot]`;
+}
+
+export const listReviews = (token, repo, number) => gh(token, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+
+/**
+ * Withdraw our own outstanding APPROVED reviews.
+ *
+ * GitHub keeps a reviewer's APPROVED state until it is dismissed or replaced
+ * by a REQUEST_CHANGES — and a later COMMENT review from the same account
+ * does NOT clear it. Since this bot never requests changes by design, an
+ * approval would otherwise be permanent: tick 1 approves sha A, the author
+ * pushes B with a critical bug, tick 2 posts a COMMENT listing it, and the PR
+ * still displays "approved these changes". Under a merge policy that reads
+ * the bot's acceptance, that is the gate reading green for rejected code.
+ *
+ * Only our own reviews, and only ones pinned to a different sha than the one
+ * being reported on now.
+ */
+export async function dismissStaleApprovals(token, repo, number, login, currentSha, logger) {
+  const reviews = await listReviews(token, repo, number);
+  const stale = reviews.filter((r) => r.state === 'APPROVED' && r.user?.login === login && r.commit_id !== currentSha);
+  for (const r of stale) {
+    try {
+      await gh(token, `/repos/${repo}/pulls/${number}/reviews/${r.id}/dismissals`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          message: `Superseded: a later review of ${currentSha.slice(0, 8)} did not accept this PR.`,
+          event: 'DISMISS',
+        }),
+      });
+      logger?.(`dismissed stale approval ${r.id} (was pinned to ${String(r.commit_id).slice(0, 8)})`);
+    } catch (e) {
+      // Non-fatal: the review we just posted still stands, and a failed
+      // dismissal is visible here rather than silently leaving a green gate.
+      logger?.(`could not dismiss stale approval ${r.id}: ${e.message}`);
+    }
+  }
+  return stale.length;
+}
+
 export const listOpenPulls = (token, repo) =>
   gh(token, `/repos/${repo}/pulls?state=open&per_page=50&sort=updated&direction=desc`);
 
