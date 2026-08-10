@@ -101,16 +101,18 @@ const DECLINE_SAMPLE = 3;
 /**
  * Wall clock after which this run starts no further reviews.
  *
- * This — not the per-call git timeout — is what keeps systemd from killing
- * the process. A SIGKILL at TimeoutStartSec runs no catch and no finally, so
- * every in-flight review dies without posting anything, which is the one
- * outcome this app must never produce. Per-call caps do not compose into a
- * run-level bound: 2 reviews x (20min orchestrator + several 10min git calls)
- * exceeds the unit's 50 minutes on arithmetic alone.
+ * Precisely: this gates the decision to BEGIN another review. It does not cap
+ * a run, and an earlier version of this comment claimed it did. A review
+ * already in flight runs to its own timeout, so the true worst case is
+ * RUN_BUDGET_MS + one full review (PR_REVIEWER_TIMEOUT_MS + its git calls) —
+ * with the defaults, 25 + 20 + ~10 = 55min against the unit's 50min
+ * TimeoutStartSec, which is still short by design margin.
  *
- * A review already started is allowed to finish; only the decision to begin
- * ANOTHER is gated. Anything not started is picked up on the next tick, which
- * is 5 minutes away.
+ * That is why TimeoutStartSec is generous rather than tight: a SIGKILL there
+ * runs no catch and no finally, so every in-flight review would die without
+ * posting anything. The budget makes that rare; it does not make it
+ * impossible, and the honest statement of the guarantee is "at most one
+ * review overruns", not "the run is bounded".
  */
 const RUN_BUDGET_MS = numberEnv('PR_REVIEWER_RUN_BUDGET_MS', 25 * 60_000);
 
