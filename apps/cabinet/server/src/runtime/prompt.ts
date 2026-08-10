@@ -115,7 +115,7 @@ export interface AssembledPrompt {
  * prompt's conciseness clause can actually fire.
  *
  * The numbers to re-measure after this ships are p50 3070 and the short-turn
- * p50 1303 (apps/cabinet/server/eval/FINDINGS.md). Fixing the register
+ * p50 1303. Fixing the register
  * classifier is deliberately NOT bundled here: it is the riskier change, and
  * with a working floor it becomes tuning rather than load-bearing.
  */
