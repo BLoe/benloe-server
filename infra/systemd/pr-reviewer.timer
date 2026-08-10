@@ -1,0 +1,16 @@
+[Unit]
+Description=Poll BLoe/benloe-server for PRs needing review
+
+[Timer]
+# Every five minutes. Fast enough that a PR opened mid-session gets reviewed
+# while the author is still looking at it; slow enough that an empty poll (one
+# GitHub API call, no agent spawn) is free.
+OnBootSec=3min
+OnUnitActiveSec=5min
+# Persistent=false on purpose: a missed poll is worthless to catch up on, since
+# the next tick finds exactly the same open PRs.
+AccuracySec=30s
+Unit=pr-reviewer.service
+
+[Install]
+WantedBy=timers.target
