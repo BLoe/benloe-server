@@ -35,6 +35,30 @@ export const FINDINGS_SCHEMA = {
 /** Ordering used everywhere findings are grouped or counted. */
 export const SEVERITIES = ['critical', 'important', 'suggestion'];
 
+/**
+ * Neutralise markup in attacker-controlled text.
+ *
+ * The orchestrator prompt wraps a PR's title, author and body in an
+ * <untrusted-pr-metadata> fence and tells the agent that everything inside it
+ * is data, not instructions. That fence is only worth anything if the
+ * attacker cannot close it: a PR body containing
+ * `</untrusted-pr-metadata>` followed by new instructions would otherwise
+ * place attacker text OUTSIDE the fence, at operator authority, in front of a
+ * root agent whose output is published to a public PR.
+ *
+ * Escaping every angle bracket — not just the fence tag — is deliberate.
+ * Blocklisting the specific tag invites the next variant (whitespace inside
+ * the tag, a nested fence, a different tag the prompt later starts using),
+ * and the model reads `&lt;` perfectly well.
+ */
+export function escapeUntrusted(text) {
+  return String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Substitute template variables. Values are inserted verbatim — callers pass
+ * attacker-controlled fields through escapeUntrusted() first (see poll.mjs).
+ */
 export function renderPrompt(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] ?? '').toString());
 }
