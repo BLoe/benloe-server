@@ -164,10 +164,21 @@ export async function listPullFiles(token, repo, number) {
  * the author: GitHub refuses to let an account approve its own pull request,
  * so this would have been impossible while everything ran as cabinet-benloe.
  */
-export const postReview = (token, repo, number, body, comments, event = 'COMMENT') =>
+export const postReview = (token, repo, number, body, comments, event = 'COMMENT', commitId) =>
   gh(token, `/repos/${repo}/pulls/${number}/reviews`, {
     method: 'POST',
-    body: JSON.stringify({ event, body, ...(comments?.length ? { comments } : {}) }),
+    body: JSON.stringify({
+      event,
+      body,
+      // Pin the review to the SHA that was actually read. Without commit_id
+      // GitHub attaches the review to whatever the PR head is at submission
+      // time — and a review takes minutes, so a commit pushed during that
+      // window would receive an APPROVE for code no one reviewed. Harmless
+      // while every review was a COMMENT; not harmless now that approval is
+      // the merge gate.
+      ...(commitId ? { commit_id: commitId } : {}),
+      ...(comments?.length ? { comments } : {}),
+    }),
   });
 
 export { gh };
