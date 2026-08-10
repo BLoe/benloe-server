@@ -37,6 +37,7 @@ All optional; the defaults are what runs in production.
 | `PR_REVIEWER_MAX_PER_RUN` | `2` | Reviews per poll — the rate-limit guard |
 | `PR_REVIEWER_TIMEOUT_MS` | `1200000` | Per-review wall clock (20 min) |
 | `PR_REVIEWER_RUN_BUDGET_MS` | `1500000` | Start no new review after this (25 min) |
+| `PR_REVIEWER_MIRROR` | `/var/lib/pr-reviewer/repo.git` | The reviewer's own bare mirror — never `/srv/benloe` |
 | `PR_REVIEWER_ALLOWED_AUTHORS` | `BLoe,cabinet-benloe[bot],benloe-carpenter[bot]` | Logins whose PRs get reviewed — the injection control |
 | `PR_REVIEWER_INCLUDE_DRAFTS` | unset | Set `1` to review draft PRs too |
 | `PR_REVIEWER_DRY_RUN` | unset | Set `1` to print instead of post |

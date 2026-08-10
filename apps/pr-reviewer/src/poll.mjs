@@ -110,16 +110,23 @@ const DECLINE_SAMPLE = 3;
 /**
  * Wall clock after which this run starts no further reviews.
  *
- * This — not the per-call git timeout — is what keeps systemd from killing
- * the process. A SIGKILL at TimeoutStartSec runs no catch and no finally, so
- * every in-flight review dies without posting anything, which is the one
- * outcome this app must never produce. Per-call caps do not compose into a
- * run-level bound: 2 reviews x (20min orchestrator + several 10min git calls)
- * exceeds the unit's 50 minutes on arithmetic alone.
+ * Precisely: this gates the decision to BEGIN another review. It does not cap
+ * a run, and two earlier versions of this comment got the arithmetic wrong.
  *
- * A review already started is allowed to finish; only the decision to begin
- * ANOTHER is gated. Anything not started is picked up on the next tick, which
- * is 5 minutes away.
+ * The correct bound. A single review costs at most
+ *   GIT_TIMEOUT_MS (worktree)         10min
+ * + PR_REVIEWER_TIMEOUT_MS            20min
+ * + GIT_TIMEOUT_MS (cleanup)          10min   = 40min
+ *
+ * The budget is checked only BEFORE starting a review, so the last review can
+ * begin at RUN_BUDGET_MS - 1ms:
+ *   worst-case run = RUN_BUDGET_MS + 40min = 25 + 40 = 65min
+ *
+ * That exceeds a 50-minute TimeoutStartSec, which is why the unit is set to
+ * 90min: a SIGKILL there runs no catch and no finally, so every in-flight
+ * review would die without posting anything — the one outcome this app must
+ * never produce. The invariant to preserve when tuning any of these is
+ *   RUN_BUDGET_MS + 2*GIT_TIMEOUT_MS + PR_REVIEWER_TIMEOUT_MS < TimeoutStartSec
  */
 const RUN_BUDGET_MS = numberEnv('PR_REVIEWER_RUN_BUDGET_MS', 25 * 60_000);
 
@@ -319,6 +326,14 @@ async function main() {
   const template = loadPromptTemplate(APP_DIR);
   const pulls = await listOpenPulls(token, CONFIG.repo);
 
+  // Logged BEFORE any early return. The allowlist is the one control whose
+  // misconfiguration cannot fail loudly — too NARROW just looks like a quiet
+  // repo, too WIDE looks like normal operation — and the narrow case exits
+  // early with nothing reviewable, which is precisely when the value matters
+  // most. An earlier version printed it after that return, so it was silent
+  // in the only situation it was added for.
+  log(`allowlist: ${CONFIG.allowedAuthors.join(', ')}`);
+
   const { reviewable, skipped, declined } = selectPulls(pulls, {
     allowedAuthors: CONFIG.allowedAuthors,
     includeDrafts: CONFIG.includeDrafts,
@@ -342,9 +357,9 @@ async function main() {
 
   const routine = skipped.filter((s) => s.kind === 'routine');
   if (routine.length > 0) {
-    const byReason = new Map();
-    for (const s of routine) byReason.set(s.reason.replace(/ at [0-9a-f]{8}$/, ''), (byReason.get(s.reason.replace(/ at [0-9a-f]{8}$/, '')) ?? 0) + 1);
-    log(`skipped ${routine.length}: ${[...byReason].map(([r, n]) => `${n} ${r}`).join(', ')}`);
+    const byCode = new Map();
+    for (const s of routine) byCode.set(s.code, (byCode.get(s.code) ?? 0) + 1);
+    log(`skipped ${routine.length}: ${[...byCode].map(([c, n]) => `${n} ${c}`).join(', ')}`);
   }
 
   if (reviewable.length === 0) {

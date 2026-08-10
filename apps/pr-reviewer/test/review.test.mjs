@@ -7,6 +7,8 @@ import {
   agentEnv,
   describeExit,
   escapeUntrusted,
+  gitEnv,
+  gitWithTimeout,
   parseResult,
   renderPrompt,
 } from '../src/review.mjs';
@@ -179,16 +181,62 @@ test('escaped metadata still renders into the prompt readably', () => {
   assert.equal(out.match(/<\/description>/g).length, 1);
 });
 
-test('every git call is bounded', () => {
-  // An unbounded network call means systemd eventually kills the process —
-  // running no catch and no finally — so nothing is ever posted to any PR.
-  // A throw, by contrast, becomes a failure comment.
+test('a git call that exceeds its cap names the operation and the limit', () => {
+  // The previous version of this test asserted only that a constant is a
+  // positive number, which is not a behaviour. What matters is that a timeout
+  // kill does not surface as a bare ETIMEDOUT — that string becomes the whole
+  // failure comment on the PR.
   //
-  // Scope note: this pins the PER-CALL cap only. The run-level guarantee is
-  // RUN_BUDGET_MS in poll.mjs; the previous version of this test asserted a
-  // budget relationship it had no way to check, since the systemd timeout is
-  // not importable from here.
-  assert.ok(Number.isFinite(GIT_TIMEOUT_MS) && GIT_TIMEOUT_MS > 0);
+  // A 1ms cap on a real git invocation is reliably killed. What is under test
+  // is the error translation, not git.
+  assert.throws(
+    () => gitWithTimeout(process.cwd(), null, ['version'], 1),
+    /git version exceeded 0s timeout/,
+  );
+  assert.ok(GIT_TIMEOUT_MS > 0 && GIT_TIMEOUT_MS < 20 * 60_000);
+});
+
+test('gitEnv scopes the credential to github.com, not to every host', () => {
+  // An unscoped http.extraheader is attached to EVERY request git makes,
+  // including a redirect to another host — which hands the installation token
+  // to whoever controls the redirect target.
+  const env = gitEnv('tok-123', { PATH: '/usr/bin' });
+  assert.equal(env.GIT_CONFIG_COUNT, '1');
+  assert.equal(env.GIT_CONFIG_KEY_0, 'http.https://github.com/.extraheader');
+  assert.ok(!/^http\.extraheader$/.test(env.GIT_CONFIG_KEY_0), 'must not be the unscoped key');
+  assert.match(env.GIT_CONFIG_VALUE_0, /^AUTHORIZATION: basic /);
+  assert.equal(
+    Buffer.from(env.GIT_CONFIG_VALUE_0.split(' ').pop(), 'base64').toString(),
+    'x-access-token:tok-123',
+  );
+});
+
+test('gitEnv strips tracing that would print the credential', () => {
+  // GIT_TRACE_CURL prints request headers to stderr, and this service carries
+  // stderr into a failure comment on a PUBLIC PR.
+  const env = gitEnv('tok-123', {
+    PATH: '/usr/bin',
+    GIT_TRACE: '1',
+    GIT_TRACE_CURL: '1',
+    GIT_TRACE_PACKET: '1',
+    GIT_CURL_VERBOSE: '1',
+  });
+  for (const k of ['GIT_TRACE', 'GIT_TRACE_CURL', 'GIT_TRACE_PACKET', 'GIT_CURL_VERBOSE']) {
+    assert.ok(!(k in env), `${k} survived`);
+  }
+  assert.equal(env.PATH, '/usr/bin');
+});
+
+test('gitEnv sets no credential at all when there is no token', () => {
+  const env = gitEnv(null, { PATH: '/usr/bin' });
+  for (const k of Object.keys(env)) assert.ok(!k.startsWith('GIT_CONFIG'), `${k} should be absent`);
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0', 'git must never block on a credential prompt');
+});
+
+test('gitEnv does not mutate the environment it was given', () => {
+  const base = { GIT_TRACE: '1' };
+  gitEnv('tok', base);
+  assert.equal(base.GIT_TRACE, '1');
 });
 
 test('an empty or vacuous summary is a failed run, not a clean review', () => {

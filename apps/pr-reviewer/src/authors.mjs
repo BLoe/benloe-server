@@ -73,12 +73,21 @@ export function isAllowedAuthor(login, allowed) {
  * Split a PR list into the ones this reviewer will look at and the ones it
  * skips, each with a reason.
  *
- * EVERY skip carries a reason, not just the allowlist one. An earlier version
- * returned only allowlist declines while the docstring and the log line both
- * claimed all skips were reported — so a PR silently dropped for being a
- * draft, or for a stale ledger entry, looked identical to one that was never
- * seen. `kind` separates the security-relevant branch from the routine ones,
- * because they deserve different log volume, not different honesty.
+ * EVERY skip carries a reason, not just the allowlist one. The earlier version
+ * returned only `declined` and left the three routine branches as bare
+ * `continue`s — its docs were correctly scoped to declines, so this is a
+ * behaviour gap rather than a doc/code mismatch. The gap still mattered: a PR
+ * dropped for being a draft, or for a stale ledger entry, looked from the
+ * outside exactly like one the reviewer never saw. `kind` separates the
+ * security-relevant branch from the routine ones because they deserve
+ * different log volume, not different honesty.
+ *
+ * Each skip carries BOTH a stable `code` and a human `reason`. The caller
+ * groups by code: grouping by the prose meant parsing a sha out of it with a
+ * regex whose width was silently coupled to a `slice(0, 8)` in this file, so
+ * changing the abbreviation length here would have quietly broken counting
+ * there. A machine-readable field is not decoration when another module has
+ * to aggregate on it.
  *
  * Pulled out of poll.mjs deliberately. The property that actually matters —
  * a stranger's PR never reaches the orchestrator — used to live inside
@@ -92,21 +101,21 @@ export function selectPulls(pulls, { allowedAuthors, includeDrafts, onlyPr, dryR
   const skipped = [];
   for (const pr of pulls) {
     if (!isAllowedAuthor(pr.user?.login, allowedAuthors)) {
-      skipped.push({ pr, kind: 'declined', reason: `author ${pr.user?.login ?? '(none)'} not in allowlist` });
+      skipped.push({ pr, kind: 'declined', code: 'not-allowlisted', reason: `author ${pr.user?.login ?? '(none)'} not in allowlist` });
       continue;
     }
     if (onlyPr !== null && onlyPr !== undefined && pr.number !== onlyPr) {
-      skipped.push({ pr, kind: 'routine', reason: `not the PR named by PR_REVIEWER_ONLY_PR (${onlyPr})` });
+      skipped.push({ pr, kind: 'routine', code: 'only-pr', reason: `not the PR named by PR_REVIEWER_ONLY_PR (${onlyPr})` });
       continue;
     }
     if (pr.draft && !includeDrafts) {
-      skipped.push({ pr, kind: 'routine', reason: 'draft' });
+      skipped.push({ pr, kind: 'routine', code: 'draft', reason: 'draft' });
       continue;
     }
     // A dry run ignores the ledger on purpose — the point is to re-review the
     // same SHA repeatedly while tuning the orchestrator prompt.
     if (!dryRun && isReviewed(pr.head.sha)) {
-      skipped.push({ pr, kind: 'routine', reason: `already reviewed at ${pr.head.sha.slice(0, 8)}` });
+      skipped.push({ pr, kind: 'routine', code: 'already-reviewed', reason: `already reviewed at ${pr.head.sha.slice(0, 8)}` });
       continue;
     }
     reviewable.push(pr);
