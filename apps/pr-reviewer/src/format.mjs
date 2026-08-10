@@ -132,16 +132,34 @@ export function renderReviewBody({ summary, strengths = [], bodyFindings, inline
   return out.join('\n');
 }
 
+/**
+ * A fence longer than the longest backtick run in `text`, so the payload
+ * cannot escape it.
+ *
+ * The failure body carries up to 1200 chars of raw orchestrator stdout, which
+ * is model prose and routinely contains fenced code blocks — and is derived
+ * from PR content the author writes. A ``` run inside a bare ``` fence
+ * terminates it early, and the remainder renders as live markdown on a public
+ * PR: headings, links and all, inside a comment whose job is to be a legible
+ * verbatim report.
+ */
+export function fenceFor(text) {
+  const longest = Math.max(0, ...[...String(text).matchAll(/`+/g)].map((m) => m[0].length));
+  return '`'.repeat(Math.max(3, longest + 1));
+}
+
 /** Body used when the review itself failed — silence would look like approval. */
 export function renderFailureBody(error, headSha) {
+  const body = error.slice(0, 1500);
+  const fence = fenceFor(body);
   return [
     '## Automated review — failed',
     '',
     `The reviewer could not complete a review of \`${headSha.slice(0, 8)}\`.`,
     '',
-    '```',
-    error.slice(0, 1500),
-    '```',
+    fence,
+    body,
+    fence,
     '',
     '<sub>This is a reviewer failure, not a finding about the code. The PR has not been reviewed.</sub>',
   ].join('\n');

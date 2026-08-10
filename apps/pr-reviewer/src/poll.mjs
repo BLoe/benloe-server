@@ -257,10 +257,20 @@ async function reviewOne(token, pr, template, state) {
       for (const c of post.comments) console.log(`\n--- inline ${c.path}:${c.line} ---\n${c.body}`);
     } else {
       await postReview(token, CONFIG.repo, pr.number, post.body, post.comments, post.event, post.commitId);
-      // Order matters: post first, then withdraw. If dismissal ran first and
-      // the post failed, the PR would be left with no verdict at all.
+      // The review is posted. Everything after this point is cleanup, and
+      // NOTHING here may throw: an exception would reach reviewOne's catch,
+      // report a successful review as a failure, and skip markReviewed — so
+      // the next tick would post the whole review a second time.
+      // dismissStaleApprovals guards each dismissal individually but its
+      // listReviews call was unguarded, which is exactly that path.
       if (post.event !== 'APPROVE' && botLogin) {
-        await dismissStaleApprovals(token, CONFIG.repo, pr.number, botLogin, head, log);
+        try {
+          await dismissStaleApprovals(token, CONFIG.repo, pr.number, botLogin, head, log);
+        } catch (e) {
+          // A surviving stale approval is visible on the PR and recoverable
+          // next tick; a duplicated review is neither.
+          log(`PR #${pr.number} — could not dismiss stale approvals: ${e.message}`);
+        }
       }
       markReviewed(state, head);
       saveState(CONFIG.stateFile, state);
