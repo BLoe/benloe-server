@@ -27,6 +27,25 @@ const DB = process.env.CABINET_DB ?? '/srv/benloe/data/cabinet/cabinet.db';
 const OUT = process.env.EVAL_OUT ?? '/srv/benloe/data/cabinet/eval/turns.jsonl';
 
 /**
+ * Only turns from the CURRENT prompt architecture, by default.
+ *
+ * The v2 persona stack landed 2026-08-01 (CHARTER/VOICE/TUNING/RHYTHM, and a
+ * profileGap rewritten to emit outcomes instead of field names). Turns before
+ * it were produced by a different system, so a failure found in them says
+ * nothing about the prompt being changed now.
+ *
+ * This is not hypothetical. The first labelling pass sampled 22 pre-v2 turns
+ * out of 40 — stratifying by chat over-weights the OLDEST chats, since they
+ * have had the longest to accumulate turns — and its headline finding turned
+ * out to describe behaviour that had already been fixed. Of that pass's six
+ * failure modes, exactly one survived the cutoff.
+ *
+ * Set EVAL_SINCE='' deliberately to study the old architecture; the default
+ * is the safe one.
+ */
+const SINCE = process.env.EVAL_SINCE ?? '2026-08-01';
+
+/**
  * Ben's own turns, identified by author.
  *
  * `author` is the only reliable discriminator. Of 466 user-role rows, most
@@ -61,11 +80,12 @@ export function partsToText(parts) {
  * is itself a finding worth keeping (an abandoned or crashed turn), so those
  * are retained with `reply: null` rather than dropped.
  */
-export function pairTurns(rows) {
+export function pairTurns(rows, since = SINCE) {
   const pairs = [];
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i];
     if (row.role !== 'user' || row.author !== BEN) continue;
+    if (since && row.created_at < since) continue;
     let reply = null;
     for (let j = i + 1; j < rows.length; j += 1) {
       if (rows[j].chat_id !== row.chat_id) continue;
@@ -150,7 +170,7 @@ async function main() {
   writeFileSync(OUT, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
   // Counts only. Never the content.
   console.log(
-    `${pairs.length} of Ben's turns in the corpus; wrote ${records.length} to ${OUT} ` +
+    `${pairs.length} of Ben's turns${SINCE ? ` since ${SINCE}` : ''}; wrote ${records.length} to ${OUT} ` +
       `(${new Set(records.map((r) => r.chat_id)).size} distinct chats, ` +
       `${records.filter((r) => r.cabinet === null).length} with no reply)`,
   );
@@ -158,4 +178,4 @@ async function main() {
 
 if (process.argv[1] && process.argv[1].endsWith('extract.mjs')) main();
 
-export { BEN, OUT, DB };
+export { BEN, OUT, DB, SINCE };

@@ -126,77 +126,73 @@ just never done the thing it was designed to do.
 
 # Labelling pass — 2026-08-10
 
-30 of the 40 sampled turns read and labelled by hand. 10 carry at least one
-label. Counts, not content; the labelled file stays in the gitignored tree.
+## Retracted, and why it matters
 
-| n | code | |
-|---|---|---|
-| 3 | `onboarding-pitch` | new code — not in the original taxonomy |
-| 3 | `plumbing-narration` | new code |
-| 2 | `overclaim` | |
-| 2 | `no-reply` | |
-| 1 | `desk-bloat` | |
-| 1 | `sycophancy-recovered` | a save, not a failure |
+**The first version of this section was wrong, and its headline finding was
+wrong twice over.** It is corrected in place rather than deleted, because the
+mistake is more instructive than the finding was.
 
-Two of the top three were **not in `TAXONOMY.md`**. That is the argument for
-open coding: a taxonomy written from the prompt files finds the failures the
-prompt files anticipate.
+It claimed `ONBOARDING.md` predicted its own top failure and failed to prevent
+it. Checking the dates:
 
-## `onboarding-pitch` — the architecture predicted this and it happened anyway
+- the failing turns are **2026-07-15**
+- the "do not enumerate raw fields" note entered `ONBOARDING.md` on
+  **2026-08-01** (`777181c`, the v2 persona release)
+- `profileGap` was rewritten the same day to emit outcomes, not field names
 
-Three separate turns on one day, including a bare "How's it going?", answered
-with an unprompted pitch about the empty profile — **enumerating the missing
-fields**.
+So it is a **post-mortem, not a prediction** — the note was written *because*
+of those turns — and the behaviour it describes was already fixed two weeks
+before I called it a live problem.
 
-`ONBOARDING.md` contains this, in writing, before any of those turns:
+The second error is worse, because it invalidates most of the pass. Splitting
+the labels by the v2 cutoff:
 
-> It should NOT enumerate raw fields in the injected line — name the outcome
-> ("no confirmed plan yet"), never the form fields, **because whatever that
-> line says, the agent will recite.**
+```
+labelled turns:      30   (18 pre-v2, 12 v2-era)
+all labels:          onboarding-pitch 3 · plumbing-narration 3 · overclaim 2
+                     no-reply 2 · desk-bloat 1 · sycophancy-recovered 1
+v2-era labels only:  plumbing-narration 2
+```
 
-The prediction was exactly right and it did not prevent the behaviour. That is
-the most important thing in this pass: *a rule stated in prose, in a file the
-model reads every turn, did not survive contact with an injected line that
-contradicted it.* The fix is not a better-worded rule. It is that `profileGap`
-must not put field names in the context at all — the model recites its input,
-and no instruction outranks the input's own shape.
+**Of six failure modes, exactly one survives the cutoff.** Everything else
+described an architecture that no longer exists.
 
-Costs beyond tone: it fires on greetings, so the first thing Ben sees after
-"hi" is a list of chores.
+The cause is in the extractor, not the labelling: stratifying by chat
+over-weights the OLDEST chats, because they have had the longest to
+accumulate turns. 22 of 40 sampled turns predated v2. `extract.mjs` now takes
+`EVAL_SINCE`, defaulting to `2026-08-01`, with a test.
 
-## `plumbing-narration` — Cabinet reporting its own infrastructure at Ben
+This is the same failure this file catalogues under `overclaim` — reporting
+something as true of the world that was only true of my own records — and I
+made it in the act of cataloguing it. Worth stating plainly, because the whole
+point of error analysis is to be corrected by data rather than to confirm a
+prior.
 
-Three turns narrate tool-layer failures to Ben: an MCP server dropping
-mid-session, tool calls being denied, a workaround performed in front of him.
-Ben asked about his life; he got an incident report about Cabinet.
+## What actually holds for the current architecture
 
-`VOICE.md` bans "helpfulness narration" and self-audit, but says nothing about
-infrastructure narration, and `CHARTER`'s prime directive is about choice
-load, which this technically doesn't add to. It is a real failure with no rule
-covering it — the gap is in the spec, not in adherence.
+One code, twice in 12 turns.
 
-## `overclaim` — twice, both the same shape
+### `plumbing-narration` — Cabinet reporting its own infrastructure at Ben
 
-Both are Cabinet reporting an absence in its own records as an absence in the
-world ("nothing is running", "this thread has no prior messages") while Ben
-was looking at the thing on screen. One was hedged with "on my end"; the other
-was not. `VOICE.md` names this failure precisely — the "Nothing on file" rule
-— so here the rule exists and adherence is partial, which is a different
-problem from `onboarding-pitch` and wants a different fix.
+Turns narrate tool-layer failures to Ben: an MCP server dropping mid-session,
+a workaround performed in front of him. He asked about his life and got an
+incident report about Cabinet.
 
-## `no-reply` — 2 of 30
+`VOICE.md` bans "helpfulness narration" and self-audit narration, but says
+nothing about infrastructure narration, and `CHARTER`'s prime directive is
+about choice load, which this does not obviously add to. **The rule does not
+exist** — this is a gap in the spec rather than a failure of adherence, which
+is what makes it worth acting on.
 
-Both are Ben pointing at UI behaviour mid-session. Not yet diagnosed;
-`perf_span` and `pending-turn.json` should say whether the turn crashed or was
-superseded.
+2 of 12 is a direction, not a rate. It needs a bigger v2-only sample before it
+justifies a prompt change.
 
-## What this changes about the redesign
+## Method notes carried forward
 
-The single highest-leverage change suggested by this pass is **not** a
-rewording of any memory file. It is that **injected per-turn context outranks
-the prose**: `profileGap` recited its field list straight through a file that
-told the model not to. Before touching `CHARTER`/`VOICE`/`PLAYBOOK` wording,
-audit what `assemblePrompt` actually injects and what shape it is in.
-
-Sample caveat: 30 turns, one labeller, one pass. These are directions to
-investigate, not measurements to optimise against.
+- Re-run the labelling pass against a v2-only sample before drawing any
+  conclusion. The current numbers are too small and were drawn wrong.
+- Check the date of any rule before claiming it failed. A file that describes
+  a failure is usually evidence the failure was already caught.
+- Findings from the pre-v2 corpus are still useful for one thing: confirming
+  that a fix worked. `onboarding-pitch` appearing 3× before 2026-08-01 and 0×
+  after is exactly that.

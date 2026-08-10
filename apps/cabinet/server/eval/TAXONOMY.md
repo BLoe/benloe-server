@@ -78,6 +78,18 @@ everywhere:
   CHARTER puts direction with him.
 - A turn that is merely bland. Aim at behaviours with consequences.
 
+## Scope every pass to one architecture
+
+`extract.mjs` defaults to turns since `2026-08-01`, the v2 persona release.
+Obey it. A failure found in a pre-v2 turn describes a system that no longer
+exists, and the first pass here drew five of its six failure modes from
+exactly that mistake — including its headline, which described behaviour fixed
+two weeks earlier.
+
+Before writing "the prompt says X and it happened anyway", check when X was
+written. A file describing a failure is usually evidence the failure was
+already caught, not that the rule was ignored.
+
 ## Known bias in this corpus
 
 Every turn was produced by the current architecture, so the sample cannot

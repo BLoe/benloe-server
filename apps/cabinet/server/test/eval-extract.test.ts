@@ -104,3 +104,33 @@ describe('stratify', () => {
     expect(stratify(pairsFor('a', 2), 1000)).toHaveLength(2);
   });
 });
+
+describe('the architecture cutoff', () => {
+  it('excludes turns from before the current prompt architecture', () => {
+    // Findings from a superseded architecture describe a system that no
+    // longer exists. The first labelling pass learned this the hard way: 22
+    // of 40 sampled turns predated the v2 stack, and its headline finding
+    // described behaviour already fixed.
+    const rows = [
+      msg({ id: 'old', created_at: '2026-07-15T00:00:00Z' }),
+      msg({ id: 'new', created_at: '2026-08-05T00:00:00Z' }),
+    ];
+    expect(pairTurns(rows, '2026-08-01').map((p) => p.prompt.id)).toEqual(['new']);
+  });
+
+  it('includes everything when the cutoff is explicitly cleared', () => {
+    const rows = [msg({ id: 'old', created_at: '2026-07-15T00:00:00Z' })];
+    expect(pairTurns(rows, '').map((p) => p.prompt.id)).toEqual(['old']);
+  });
+
+  it('does not let an excluded turn steal the reply belonging to a later one', () => {
+    const rows = [
+      msg({ id: 'old', created_at: '2026-07-15T00:00:00Z' }),
+      msg({ id: 'new', created_at: '2026-08-05T00:00:00Z' }),
+      msg({ id: 'reply', role: 'assistant', author: null, created_at: '2026-08-05T00:01:00Z' }),
+    ];
+    const pairs = pairTurns(rows, '2026-08-01');
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].reply?.id).toBe('reply');
+  });
+});
