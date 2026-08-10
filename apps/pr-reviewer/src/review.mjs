@@ -321,6 +321,13 @@ export function parseResult(stdout) {
   if (!data || typeof data !== 'object' || typeof data.summary !== 'string' || !Array.isArray(data.findings)) {
     return { ok: false, error: 'result did not match the findings schema' };
   }
+  // An empty summary with an empty findings list is schema-valid and means
+  // nothing — but it now renders as "accepted. Nothing found." and posts an
+  // APPROVE. A review that said nothing did not review anything; treat it as
+  // a failed run so it retries, rather than as a clean bill of health.
+  if (data.summary.trim().length < 20) {
+    return { ok: false, error: `orchestrator returned an empty summary (${JSON.stringify(data.summary)})` };
+  }
   // Re-validate every finding rather than trusting the constrained decoder.
   // FINDINGS_SCHEMA is enforced by the CLI, but this is the only boundary
   // between model output and the renderer, and a finding with a bad severity
