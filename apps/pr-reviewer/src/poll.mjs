@@ -345,9 +345,22 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  log(`FATAL ${e.stack ?? e.message}`);
-  process.exit(1);
-});
+/**
+ * Only run when executed directly, never on import.
+ *
+ * This module used to self-invoke unconditionally, which made it impossible
+ * to import from a test — so nothing covered the wiring here, and on
+ * 2026-08-10 a missing export in github.mjs shipped with a fully green suite
+ * and took the reviewer down until the next log was read. `node --check`
+ * cannot catch it either: the syntax is fine, the binding simply is not
+ * there. Importing the module is what proves its imports resolve.
+ */
+const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectRun) {
+  main().catch((e) => {
+    log(`FATAL ${e.stack ?? e.message}`);
+    process.exit(1);
+  });
+}
 
-export { CONFIG };
+export { CONFIG, main, reviewOne };
