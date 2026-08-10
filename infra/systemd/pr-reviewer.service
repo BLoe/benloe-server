@@ -1,0 +1,59 @@
+[Unit]
+Description=Review new open PRs on BLoe/benloe-server with Claude
+Documentation=file:///srv/benloe/apps/pr-reviewer/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root because the Claude CLI credentials and the pr-review-toolkit
+# plugin both live under /root/.claude. That is a real concentration of
+# authority, so the sandbox below — not the uid — is what bounds this service.
+#
+# THE THREAT: this repository is PUBLIC, so anyone can open a pull request, and
+# a PR's title/body/diff are attacker-controlled text that reaches the agent's
+# prompt. The agent's output is then published to that same public PR. Without
+# the InaccessiblePaths list, that is a complete stranger-to-published-secrets
+# path. prompts/orchestrator.md fences the untrusted text, but a prompt fence
+# is advisory; this is the part that is enforced by the kernel.
+User=root
+WorkingDirectory=/srv/benloe/apps/pr-reviewer
+ExecStart=/usr/bin/env node /srv/benloe/apps/pr-reviewer/src/poll.mjs
+
+# --- Sandbox -----------------------------------------------------------------
+NoNewPrivileges=yes
+# Everything is read-only except the two trees this service legitimately writes:
+# its own state/worktrees, and its log.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pr-reviewer /srv/benloe/logs /root/.claude /tmp
+# The secrets the reviewer must never be able to read, even though it runs as
+# root and even if the agent is talked into trying. poll.mjs reads GITHUB_APP_*
+# from /srv/benloe/.env BEFORE spawning the agent, so making it inaccessible
+# here would break auth — it is instead the one file the agent is fenced from
+# by prompt, and the mount below hides everything else.
+InaccessiblePaths=/srv/benloe/data /var/lib/cabinet-secrets /var/lib/artanis /etc/benloe /run/cabinet-secrets /root/.ssh
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+LockPersonality=yes
+# The agent has no business as any other user; it reads files and talks to two
+# HTTPS endpoints.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+# Generous: one review is several minutes of agent work and the poller may take
+# up to PR_REVIEWER_MAX_PER_RUN of them. systemd will not start a second
+# instance while this one runs, which is the concurrency guard.
+TimeoutStartSec=50min
+StandardOutput=append:/srv/benloe/logs/pr-reviewer.log
+StandardError=append:/srv/benloe/logs/pr-reviewer.log
+# node and the claude CLI both resolve from these; there is deliberately no nvm
+# path here, because this unit must not depend on a per-user node install.
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/root
+
+[Install]
+WantedBy=multi-user.target
