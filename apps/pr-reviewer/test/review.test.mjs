@@ -168,10 +168,14 @@ test('escaped metadata still renders into the prompt readably', () => {
   assert.equal(out.match(/<\/description>/g).length, 1);
 });
 
-test('git calls are bounded so a hung fetch cannot be killed by systemd instead', () => {
-  // An unbounded network call inside a 50-minute TimeoutStartSec means systemd
-  // kills the process — running no catch and no finally — so nothing is ever
-  // posted to any PR. A throw, by contrast, becomes a failure comment.
+test('every git call is bounded', () => {
+  // An unbounded network call means systemd eventually kills the process —
+  // running no catch and no finally — so nothing is ever posted to any PR.
+  // A throw, by contrast, becomes a failure comment.
+  //
+  // Scope note: this pins the PER-CALL cap only. The run-level guarantee is
+  // RUN_BUDGET_MS in poll.mjs; the previous version of this test asserted a
+  // budget relationship it had no way to check, since the systemd timeout is
+  // not importable from here.
   assert.ok(Number.isFinite(GIT_TIMEOUT_MS) && GIT_TIMEOUT_MS > 0);
-  assert.ok(GIT_TIMEOUT_MS < 20 * 60_000, 'must leave room inside TimeoutStartSec for two reviews');
 });

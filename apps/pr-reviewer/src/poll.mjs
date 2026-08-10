@@ -98,6 +98,22 @@ const CONFIG = {
 /** How many declined PRs to name before collapsing to a count. */
 const DECLINE_SAMPLE = 3;
 
+/**
+ * Wall clock after which this run starts no further reviews.
+ *
+ * This — not the per-call git timeout — is what keeps systemd from killing
+ * the process. A SIGKILL at TimeoutStartSec runs no catch and no finally, so
+ * every in-flight review dies without posting anything, which is the one
+ * outcome this app must never produce. Per-call caps do not compose into a
+ * run-level bound: 2 reviews x (20min orchestrator + several 10min git calls)
+ * exceeds the unit's 50 minutes on arithmetic alone.
+ *
+ * A review already started is allowed to finish; only the decision to begin
+ * ANOTHER is gated. Anything not started is picked up on the next tick, which
+ * is 5 minutes away.
+ */
+const RUN_BUDGET_MS = numberEnv('PR_REVIEWER_RUN_BUDGET_MS', 25 * 60_000);
+
 const log = (msg) => console.log(`${new Date().toISOString()} ${msg}`);
 
 /**
@@ -251,7 +267,13 @@ async function main() {
   }
   log(`${reviewable.length} reviewable of ${pulls.length} open; reviewing up to ${CONFIG.maxPerRun}`);
 
+  const runStarted = Date.now();
   for (const pr of reviewable.slice(0, CONFIG.maxPerRun)) {
+    const elapsed = Date.now() - runStarted;
+    if (elapsed > RUN_BUDGET_MS) {
+      log(`run budget spent (${Math.round(elapsed / 60000)}m); deferring PR #${pr.number} to the next tick`);
+      break;
+    }
     try {
       await reviewOne(token, pr, template, state);
     } catch (e) {
