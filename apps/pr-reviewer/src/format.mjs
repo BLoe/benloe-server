@@ -16,18 +16,49 @@ const LABEL = {
 
 const bySeverity = (a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity);
 
+/**
+ * Does this review accept the PR?
+ *
+ * Suggestions do not block: they are by definition fine to decline, and a
+ * reviewer that withholds acceptance over style would make the gate
+ * meaningless within a day. Critical and important both block — those are
+ * "this is wrong" and "this has a real defect".
+ *
+ * Note this is a REVERSAL of the original design, which posted COMMENT
+ * unconditionally on the reasoning that a scheduled reviewer must never bless
+ * a merge. Ben's call (2026-08-10): PRs go through review until the reviewer
+ * accepts, which requires acceptance to be a machine-readable state rather
+ * than something a human infers from prose. The safety property that survives
+ * is the one that matters — see REVIEW_EVENT: it can approve, and it still
+ * cannot REQUEST_CHANGES.
+ */
+export function accepts(findings) {
+  return !findings.some((f) => f.severity === 'critical' || f.severity === 'important');
+}
+
+/**
+ * APPROVE when clean, COMMENT otherwise — and REQUEST_CHANGES never.
+ *
+ * A stochastic reviewer that can request changes can wedge the queue: one
+ * confident false positive on a run nobody is watching blocks a merge until a
+ * human overrides it, and the override is itself friction. COMMENT carries the
+ * same findings without the deadlock, so the blocking direction stays advisory
+ * while the accepting direction becomes real.
+ */
+export const REVIEW_EVENT = (findings) => (accepts(findings) ? 'APPROVE' : 'COMMENT');
+
 function counts(findings) {
   const c = { critical: 0, important: 0, suggestion: 0 };
   for (const f of findings) if (f.severity in c) c[f.severity] += 1;
   return c;
 }
 
-/** The headline. Deliberately advisory — this reviewer never blocks a merge. */
+/** The headline. Must agree with REVIEW_EVENT — the two are tested together. */
 function verdictLine(c) {
-  if (c.critical > 0) return '**Verdict: needs changes before merge.**';
-  if (c.important > 0) return '**Verdict: mergeable, but there are real issues worth fixing first.**';
-  if (c.suggestion > 0) return '**Verdict: looks sound. Suggestions only.**';
-  return '**Verdict: looks sound. Nothing found.**';
+  if (c.critical > 0) return '**Verdict: not accepted — critical issues must be fixed.**';
+  if (c.important > 0) return '**Verdict: not accepted — real defects to fix first.**';
+  if (c.suggestion > 0) return '**Verdict: accepted. Suggestions only, all optional.**';
+  return '**Verdict: accepted. Nothing found.**';
 }
 
 export function inlineComment(f) {
@@ -80,7 +111,7 @@ export function renderReviewBody({ summary, strengths = [], bodyFindings, inline
   out.push(
     '',
     '---',
-    `<sub>Reviewed \`${headSha.slice(0, 8)}\` in ${Math.round(durationMs / 1000)}s · orchestrator + pr-review-toolkit subagents · advisory only, never blocks a merge.</sub>`,
+    `<sub>Reviewed \`${headSha.slice(0, 8)}\` in ${Math.round(durationMs / 1000)}s · orchestrator + pr-review-toolkit subagents · approves when clean, never requests changes.</sub>`,
   );
   return out.join('\n');
 }
