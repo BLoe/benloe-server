@@ -71,7 +71,14 @@ export function isAllowedAuthor(login, allowed) {
 
 /**
  * Split a PR list into the ones this reviewer will look at and the ones it
- * declines, with the reason.
+ * skips, each with a reason.
+ *
+ * EVERY skip carries a reason, not just the allowlist one. An earlier version
+ * returned only allowlist declines while the docstring and the log line both
+ * claimed all skips were reported — so a PR silently dropped for being a
+ * draft, or for a stale ledger entry, looked identical to one that was never
+ * seen. `kind` separates the security-relevant branch from the routine ones,
+ * because they deserve different log volume, not different honesty.
  *
  * Pulled out of poll.mjs deliberately. The property that actually matters —
  * a stranger's PR never reaches the orchestrator — used to live inside
@@ -82,18 +89,27 @@ export function isAllowedAuthor(login, allowed) {
  */
 export function selectPulls(pulls, { allowedAuthors, includeDrafts, onlyPr, dryRun, isReviewed }) {
   const reviewable = [];
-  const declined = [];
+  const skipped = [];
   for (const pr of pulls) {
     if (!isAllowedAuthor(pr.user?.login, allowedAuthors)) {
-      declined.push({ pr, reason: `author ${pr.user?.login ?? '(none)'} not in allowlist` });
+      skipped.push({ pr, kind: 'declined', reason: `author ${pr.user?.login ?? '(none)'} not in allowlist` });
       continue;
     }
-    if (onlyPr !== null && onlyPr !== undefined && pr.number !== onlyPr) continue;
-    if (pr.draft && !includeDrafts) continue;
+    if (onlyPr !== null && onlyPr !== undefined && pr.number !== onlyPr) {
+      skipped.push({ pr, kind: 'routine', reason: `not the PR named by PR_REVIEWER_ONLY_PR (${onlyPr})` });
+      continue;
+    }
+    if (pr.draft && !includeDrafts) {
+      skipped.push({ pr, kind: 'routine', reason: 'draft' });
+      continue;
+    }
     // A dry run ignores the ledger on purpose — the point is to re-review the
     // same SHA repeatedly while tuning the orchestrator prompt.
-    if (!dryRun && isReviewed(pr.head.sha)) continue;
+    if (!dryRun && isReviewed(pr.head.sha)) {
+      skipped.push({ pr, kind: 'routine', reason: `already reviewed at ${pr.head.sha.slice(0, 8)}` });
+      continue;
+    }
     reviewable.push(pr);
   }
-  return { reviewable, declined };
+  return { reviewable, skipped, declined: skipped.filter((s) => s.kind === 'declined') };
 }
