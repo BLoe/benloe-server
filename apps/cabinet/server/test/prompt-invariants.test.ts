@@ -108,6 +108,14 @@ describe('the length rule can actually fire', () => {
     expect(TURN_DISCIPLINE).toMatch(/WRONG:/);
   });
 
+  it('tells the model to report consequence rather than mechanism, without licensing silence', () => {
+    // The prohibition alone would collide with a rule this system holds
+    // harder — silent failure is worse than noisy failure — so the escape
+    // clause is load-bearing and must not be edited away as redundant.
+    expect(TURN_DISCIPLINE).toMatch(/plumbing is not news/i);
+    expect(TURN_DISCIPLINE).toMatch(/not permission to hide a failure/i);
+  });
+
   it('still contains no self-verification instruction', () => {
     // Anthropic's Opus 5 guidance is explicit that "double-check your work"
     // style instructions compound into over-verification on this model and
