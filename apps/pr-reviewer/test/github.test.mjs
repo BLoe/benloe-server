@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { appJwt, postReview, readEnvKeys, reviewerCredentials } from '../src/github.mjs';
+import { appJwt, dismissStaleApprovals, postReview, readEnvKeys, reviewerCredentials } from '../src/github.mjs';
 
 function envFile(contents) {
   const path = join(mkdtempSync(join(tmpdir(), 'pr-reviewer-env-')), '.env');
@@ -121,4 +121,52 @@ test('postReview omits commit_id rather than sending a null one', async () => {
   }
   assert.ok(!('commit_id' in sent));
   assert.equal(sent.event, 'COMMENT');
+});
+
+test('dismissStaleApprovals touches only our own approvals, at other shas', async () => {
+  // The login filter is the whole safety property: without it this would
+  // dismiss a HUMAN's approval, which the bot has no business doing.
+  const reviews = [
+    { id: 1, state: 'APPROVED', user: { login: 'benloe-pr-reviewer[bot]' }, commit_id: 'old' },
+    { id: 2, state: 'APPROVED', user: { login: 'benloe-pr-reviewer[bot]' }, commit_id: 'current' },
+    { id: 3, state: 'APPROVED', user: { login: 'BLoe' }, commit_id: 'old' },
+    { id: 4, state: 'COMMENTED', user: { login: 'benloe-pr-reviewer[bot]' }, commit_id: 'old' },
+  ];
+  const dismissed = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/reviews?per_page=100')) {
+      return { ok: true, status: 200, json: async () => reviews };
+    }
+    dismissed.push(String(url).match(/reviews\/(\d+)\/dismissals/)?.[1]);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    const n = await dismissStaleApprovals('tok', 'o/r', 7, 'benloe-pr-reviewer[bot]', 'current');
+    assert.equal(n, 1);
+    assert.deepEqual(dismissed, ['1']);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a failed dismissal does not abort the rest', async () => {
+  const reviews = [
+    { id: 1, state: 'APPROVED', user: { login: 'bot[bot]' }, commit_id: 'old' },
+    { id: 2, state: 'APPROVED', user: { login: 'bot[bot]' }, commit_id: 'older' },
+  ];
+  let calls = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/reviews?per_page=100')) return { ok: true, status: 200, json: async () => reviews };
+    calls += 1;
+    if (calls === 1) return { ok: false, status: 422, text: async () => 'nope' };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    await dismissStaleApprovals('tok', 'o/r', 7, 'bot[bot]', 'current');
+    assert.equal(calls, 2, 'the second dismissal must still be attempted');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

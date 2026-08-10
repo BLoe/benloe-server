@@ -197,7 +197,11 @@ test('an empty or vacuous summary is a failed run, not a clean review', () => {
   for (const summary of ['', '   ', 'ok', 'Looks fine.']) {
     const r = parseResult(JSON.stringify({ result: JSON.stringify({ summary, findings: [] }) }));
     assert.ok(!r.ok, `summary ${JSON.stringify(summary)} should not be accepted`);
-    assert.match(r.error, /no findings and no real summary/);
+    assert.match(r.error, /no findings and a \d+-char summary/);
+    // The model's own text must NOT be in the message: state.mjs keys failure
+    // de-duplication on the first line, so embedded model output would make
+    // every retry look like a new failure and post a comment every tick.
+    if (summary.trim()) assert.ok(!r.error.includes(summary.trim()));
   }
 });
 
@@ -221,7 +225,7 @@ test('a short summary is only fatal when the run also found nothing', () => {
 
   const vacuous = parseResult(JSON.stringify({ result: JSON.stringify({ summary: 'Test', findings: [] }) }));
   assert.ok(!vacuous.ok);
-  assert.match(vacuous.error, /no findings and no real summary/);
+  assert.match(vacuous.error, /no findings and a \d+-char summary/);
 });
 
 test('a non-zero exit carries whichever stream actually explains it', () => {

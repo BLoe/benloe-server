@@ -238,6 +238,17 @@ async function reviewOne(token, pr, template, state) {
     }
     if (fresh && fresh.head.sha !== head) {
       log(`PR #${pr.number} — head moved ${head.slice(0, 8)} → ${fresh.head.sha.slice(0, 8)} during review; discarding, next tick will re-review`);
+      // A prior APPROVE pinned to the sha we just reviewed is now stale: the
+      // head has moved past it and this run posts nothing. Leaving it means
+      // the gate reads green for code no review covers. Withdrawn on the same
+      // best-effort terms as the post-review path.
+      if (botLogin) {
+        try {
+          await dismissStaleApprovals(token, CONFIG.repo, pr.number, botLogin, fresh.head.sha, log);
+        } catch (e) {
+          log(`PR #${pr.number} — could not dismiss stale approvals after head move: ${e.message}`);
+        }
+      }
       return;
     }
 
@@ -273,7 +284,17 @@ async function reviewOne(token, pr, template, state) {
         }
       }
       markReviewed(state, head);
-      saveState(CONFIG.stateFile, state);
+      try {
+        saveState(CONFIG.stateFile, state);
+      } catch (e) {
+        // Same rule as the dismissal above, and it was left unguarded one
+        // line below the comment stating it: a throw here reports a posted
+        // review as a failure AND loses the ledger write, so the next tick
+        // posts the whole review again. An unwritten ledger entry costs one
+        // duplicate review at worst; a throw costs one guaranteed duplicate
+        // plus a false failure comment.
+        log(`PR #${pr.number} — review posted but ledger write failed: ${e.message}`);
+      }
     }
     log(
       `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} ${post.event} (${result.data.findings.length} findings, ${post.comments.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,

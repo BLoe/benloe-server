@@ -348,7 +348,12 @@ export function parseResult(stdout) {
   if (data.findings.length === 0 && data.summary.trim().length < MIN_SUMMARY_CHARS) {
     return {
       ok: false,
-      error: `orchestrator returned no findings and no real summary (${JSON.stringify(data.summary.slice(0, 60))})`,
+      // The summary is NOT in the message. state.mjs keys failure
+      // de-duplication on the error's first line, so embedding model output
+      // there makes every retry look like a NEW failure and posts a fresh
+      // comment every five minutes — the exact spam the de-dup exists to
+      // prevent. Length is enough to diagnose it.
+      error: `orchestrator returned no findings and a ${data.summary.trim().length}-char summary`,
     };
   }
   // Re-validate every finding rather than trusting the constrained decoder.
