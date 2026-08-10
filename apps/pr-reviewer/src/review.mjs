@@ -94,28 +94,51 @@ export const GIT_TIMEOUT_MS = 10 * 60_000;
  * this comment — 2 reviews x (20min orchestrator + 3 git calls x 10min) can
  * exceed a 50-minute TimeoutStartSec on arithmetic alone.
  */
-function git(cwd, token, ...args) {
-  const env = { ...process.env };
-  // GIT_TRACE / GIT_TRACE_CURL / GIT_CURL_VERBOSE print request headers,
-  // including the Authorization header built below, to stderr — which this
-  // service carries into the failure comment it posts on a PUBLIC PR. An
-  // ambient debug flag must not be able to leak the token.
+/**
+ * The environment a git call runs in. Pure, and exported so the two security
+ * properties it carries are testable rather than asserted only in a comment.
+ */
+export function gitEnv(token, base = process.env) {
+  const env = { ...base };
+  // GIT_TRACE / GIT_TRACE_CURL / GIT_CURL_VERBOSE print request headers —
+  // including the Authorization header built below — to stderr, which this
+  // service carries into a failure comment on a PUBLIC PR. An ambient debug
+  // flag must not be able to leak the token.
   for (const k of Object.keys(env)) {
     if (k.startsWith('GIT_TRACE') || k === 'GIT_CURL_VERBOSE') delete env[k];
   }
   if (token) {
+    // SCOPED to the origin host. An unscoped `http.extraheader` is attached
+    // to every HTTP request git makes, including a redirect to a different
+    // host — which would hand the installation token to whoever controls the
+    // redirect target. git's per-URL config form confines it.
     env.GIT_CONFIG_COUNT = '1';
-    env.GIT_CONFIG_KEY_0 = 'http.extraheader';
+    env.GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader';
     env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
   }
   env.GIT_TERMINAL_PROMPT = '0';
-  return execFileSync('git', args, {
-    cwd,
-    env,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: GIT_TIMEOUT_MS,
-  }).trim();
+  return env;
+}
+
+export function gitWithTimeout(cwd, token, args, timeoutMs = GIT_TIMEOUT_MS) {
+  const env = gitEnv(token);
+  try {
+    return execFileSync('git', args, {
+      cwd,
+      env,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: timeoutMs,
+    }).trim();
+  } catch (e) {
+    // A timeout kill surfaces as ETIMEDOUT/SIGTERM with a message naming
+    // neither the operation nor the cap, which then becomes the whole failure
+    // comment on the PR. Say which git command hit which limit.
+    if (e.killed || e.code === 'ETIMEDOUT') {
+      throw new Error(`git ${args[0]} exceeded ${Math.round(timeoutMs / 1000)}s timeout`);
+    }
+    throw e;
+  }
 }
 
 /**
@@ -131,6 +154,9 @@ function git(cwd, token, ...args) {
  * Owning a mirror fixes both: production is never touched, and the sandbox can
  * stay strict because the only writable path is one this service owns.
  */
+/** Convenience wrapper preserving the variadic call style used below. */
+const git = (cwd, token, ...args) => gitWithTimeout(cwd, token, args);
+
 export function ensureMirror(mirrorDir, repo, token) {
   if (existsSync(join(mirrorDir, 'HEAD'))) return mirrorDir;
   // A mirrorDir that exists WITHOUT a HEAD is a wedged state, not a fresh
