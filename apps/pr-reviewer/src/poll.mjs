@@ -212,6 +212,14 @@ async function main() {
   const template = loadPromptTemplate(APP_DIR);
   const pulls = await listOpenPulls(token, CONFIG.repo);
 
+  // Logged BEFORE any early return. The allowlist is the one control whose
+  // misconfiguration cannot fail loudly — too NARROW just looks like a quiet
+  // repo, too WIDE looks like normal operation — and the narrow case exits
+  // early with nothing reviewable, which is precisely when the value matters
+  // most. An earlier version printed it after that return, so it was silent
+  // in the only situation it was added for.
+  log(`allowlist: ${CONFIG.allowedAuthors.join(', ')}`);
+
   const { reviewable, skipped, declined } = selectPulls(pulls, {
     allowedAuthors: CONFIG.allowedAuthors,
     includeDrafts: CONFIG.includeDrafts,
@@ -250,11 +258,6 @@ async function main() {
     return;
   }
   log(`${reviewable.length} reviewable of ${pulls.length} open; reviewing up to ${CONFIG.maxPerRun}`);
-  // The allowlist is the one control whose misconfiguration cannot fail
-  // loudly: too NARROW just looks like a quiet repo, and too WIDE looks like
-  // normal operation. Printing it on every run that does work is the only
-  // artifact a later audit has.
-  log(`allowlist: ${CONFIG.allowedAuthors.join(', ')}`);
 
   for (const pr of reviewable.slice(0, CONFIG.maxPerRun)) {
     try {
