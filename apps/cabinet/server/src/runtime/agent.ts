@@ -17,6 +17,7 @@ import { generateTitle } from './titler.js';
 import { truncateForModel } from './toolTruncate.js';
 import { createPerfRecorder, nullPerf, perfEnabled, type PerfRecorder } from './perf.js';
 import { SessionPool, type ActiveTurn, type SessionSpec } from './session.js';
+import { describeTransition, readMcpStatus, type McpStatus } from './mcpHealth.js';
 import { effortForRegister, nextRegister, type Register } from './register.js';
 
 /**
@@ -219,6 +220,13 @@ export function configureAuth(env: Record<string, string | undefined>): 'subscri
   env.CLAUDE_CONFIG_DIR ??= '/home/claude-worker/.cabinet-claude';
   return mode;
 }
+
+/**
+ * Last observed MCP status, process-wide. Module scope on purpose: the
+ * transition is what matters, and TurnQueue guarantees one in-flight turn per
+ * process, so there is no interleaving to protect against.
+ */
+let lastMcpStatus: McpStatus | null = null;
 
 export class AgentRuntime {
   readonly queue = new TurnQueue();
@@ -718,6 +726,14 @@ export class AgentRuntime {
         stopSpawn({ resumed: !!chat.sdk_session_id });
         initAt = performance.now();
         stepAt = initAt;
+        // Record whether the cabinet MCP toolset actually came up for this
+        // query. Nothing else does, and on 2026-08-08 a one-turn drop left no
+        // server-side trace at all (task 58).
+        const mcp = readMcpStatus(msg as never);
+        const line = describeTransition(lastMcpStatus, mcp);
+        if (line) console.warn(`[mcp-health] chat=${req.chatId} ${line}`);
+        lastMcpStatus = mcp;
+        perf.describe({ mcpTools: mcp.toolCount, mcpHealthy: mcp.healthy });
         return;
       }
       if (msg.type === 'stream_event') {
