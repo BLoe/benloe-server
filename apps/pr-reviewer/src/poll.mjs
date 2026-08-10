@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { isAllowedAuthor, parseAllowedAuthors } from './authors.mjs';
 import { addressableMap, partitionFindings } from './diff.mjs';
 import { inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
-import { installationToken, listOpenPulls, listPullFiles, postReview, readEnvKeys } from './github.mjs';
+import { installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
 import { loadPromptTemplate, makeWorktree, mergeBase, removeWorktree, renderPrompt, runOrchestrator } from './review.mjs';
 import {
   alreadyReportedFailure,
@@ -181,19 +181,7 @@ async function reviewOne(token, pr, template, state) {
 }
 
 async function main() {
-  const env = readEnvKeys(CONFIG.envFile, [
-    'GITHUB_APP_ID',
-    'GITHUB_APP_INSTALLATION_ID',
-    'GITHUB_APP_PRIVATE_KEY_B64',
-  ]);
-  if (!env.GITHUB_APP_ID || !env.GITHUB_APP_INSTALLATION_ID || !env.GITHUB_APP_PRIVATE_KEY_B64) {
-    throw new Error(`GITHUB_APP_{ID,INSTALLATION_ID,PRIVATE_KEY_B64} missing from ${CONFIG.envFile}`);
-  }
-  const token = await installationToken({
-    appId: env.GITHUB_APP_ID,
-    installationId: env.GITHUB_APP_INSTALLATION_ID,
-    privateKeyPem: Buffer.from(env.GITHUB_APP_PRIVATE_KEY_B64, 'base64').toString('utf8'),
-  });
+  const token = await installationToken(reviewerCredentials(CONFIG.envFile));
 
   const state = loadState(CONFIG.stateFile);
   const template = loadPromptTemplate(APP_DIR);

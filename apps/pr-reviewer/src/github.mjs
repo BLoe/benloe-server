@@ -87,6 +87,40 @@ async function gh(token, path, init = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+/**
+ * The reviewer's own GitHub App credentials.
+ *
+ * Deliberately NO fallback to the cabinet-benloe app if these are missing.
+ * That app holds contents:write, so a fallback would mean a misconfigured
+ * deployment silently upgrading the reviewer from a read-only identity to one
+ * that can push to main — privilege escalation by typo, and invisible because
+ * everything would keep working. Fail closed and loudly instead.
+ *
+ * Key names match what is already in /srv/benloe/.env. Note the PR_REVIEWER_
+ * prefix is shared with this app's runtime config (PR_REVIEWER_MODEL and
+ * friends); that is a namespace collision, not two systems.
+ */
+export function reviewerCredentials(envFile) {
+  const KEYS = {
+    appId: 'PR_REVIEWER_APP_ID',
+    installationId: 'PR_REVIEWER_INSTALLATION_ID',
+    privateKey: 'PR_REVIEWER_PRIVATE_KEY_B64',
+  };
+  const env = readEnvKeys(envFile, Object.values(KEYS));
+  const missing = Object.values(KEYS).filter((k) => !env[k]);
+  if (missing.length > 0) {
+    throw new Error(
+      `missing ${missing.join(', ')} in ${envFile} — the reviewer authenticates as the benloe-pr-reviewer App ` +
+        `(contents:read) and will not fall back to a write-capable identity`,
+    );
+  }
+  return {
+    appId: env[KEYS.appId],
+    installationId: env[KEYS.installationId],
+    privateKeyPem: Buffer.from(env[KEYS.privateKey], 'base64').toString('utf8'),
+  };
+}
+
 export async function installationToken({ appId, installationId, privateKeyPem }) {
   const jwt = appJwt(appId, privateKeyPem, Math.floor(Date.now() / 1000));
   const body = await gh(jwt, `/app/installations/${installationId}/access_tokens`, { method: 'POST' });
