@@ -12,9 +12,18 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseAllowedAuthors, selectPulls } from './authors.mjs';
-import { addressableMap, partitionFindings } from './diff.mjs';
-import { REVIEW_EVENT, inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
-import { gh, installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
+import { addressableMap } from './diff.mjs';
+import { buildReviewPost, renderFailureBody } from './format.mjs';
+import {
+  appLogin,
+  dismissStaleApprovals,
+  gh,
+  installationToken,
+  listOpenPulls,
+  listPullFiles,
+  postReview,
+  reviewerCredentials,
+} from './github.mjs';
 import {
   ensureMirror,
   escapeUntrusted,
@@ -151,6 +160,9 @@ async function reportFailure(token, pr, head, error, state) {
   }
 }
 
+/** Our own bot login, resolved once per run; null if the lookup failed. */
+let botLogin = null;
+
 async function reviewOne(token, pr, template, state) {
   const started = Date.now();
   const head = pr.head.sha;
@@ -230,35 +242,31 @@ async function reviewOne(token, pr, template, state) {
     }
 
     const files = await listPullFiles(token, CONFIG.repo, pr.number);
-    const { inline, body } = partitionFindings(result.data.findings, addressableMap(files));
-    const reviewBody = renderReviewBody({
+    const post = buildReviewPost({
       summary: result.data.summary,
       strengths: result.data.strengths,
-      bodyFindings: body,
-      inlineFindings: inline,
+      findings: result.data.findings,
+      rejectedCount: result.rejected?.length ?? 0,
+      addressableLines: addressableMap(files),
       headSha: head,
       durationMs: Date.now() - started,
-      rejectedCount: result.rejected?.length ?? 0,
     });
 
     if (CONFIG.dryRun) {
-      console.log(`\n===== DRY RUN: review body for PR #${pr.number} =====\n${reviewBody}`);
-      for (const c of inline.map(inlineComment)) console.log(`\n--- inline ${c.path}:${c.line} ---\n${c.body}`);
+      console.log(`\n===== DRY RUN: would post ${post.event} for PR #${pr.number} =====\n${post.body}`);
+      for (const c of post.comments) console.log(`\n--- inline ${c.path}:${c.line} ---\n${c.body}`);
     } else {
-      await postReview(
-        token,
-        CONFIG.repo,
-        pr.number,
-        reviewBody,
-        inline.map(inlineComment),
-        REVIEW_EVENT(result.data.findings, result.rejected?.length ?? 0),
-        head,
-      );
+      await postReview(token, CONFIG.repo, pr.number, post.body, post.comments, post.event, post.commitId);
+      // Order matters: post first, then withdraw. If dismissal ran first and
+      // the post failed, the PR would be left with no verdict at all.
+      if (post.event !== 'APPROVE' && botLogin) {
+        await dismissStaleApprovals(token, CONFIG.repo, pr.number, botLogin, head, log);
+      }
       markReviewed(state, head);
       saveState(CONFIG.stateFile, state);
     }
     log(
-      `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} ${REVIEW_EVENT(result.data.findings, result.rejected?.length ?? 0)} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
+      `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} ${post.event} (${result.data.findings.length} findings, ${post.comments.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
     );
   } finally {
     if (dir) removeWorktree(CONFIG.mirrorDir, dir, log);
@@ -266,7 +274,15 @@ async function reviewOne(token, pr, template, state) {
 }
 
 async function main() {
-  const token = await installationToken(reviewerCredentials(CONFIG.envFile));
+  const creds = reviewerCredentials(CONFIG.envFile);
+  const token = await installationToken(creds);
+  try {
+    botLogin = await appLogin(creds);
+  } catch (e) {
+    // Degrades to "cannot dismiss stale approvals", which is logged at the
+    // point it matters rather than failing the whole run.
+    log(`could not resolve own bot login (${e.message}); stale approvals will not be dismissed`);
+  }
 
   const state = loadState(CONFIG.stateFile);
   const template = loadPromptTemplate(APP_DIR);
