@@ -67,12 +67,23 @@ test('reviewerCredentials names every missing key, not just the first', () => {
   assert.throws(() => reviewerCredentials(path), /PR_REVIEWER_PRIVATE_KEY_B64/);
 });
 
-test('reviewerCredentials decodes the base64 private key', () => {
+
+
+test('reviewerCredentials rejects a private key that base64-decoded to garbage', () => {
+  // Buffer.from never throws, so a line-wrapped key would otherwise pass the
+  // presence check and fail much later inside OpenSSL, naming nothing useful.
   const path = envFile(
-    ['PR_REVIEWER_APP_ID=4541497', 'PR_REVIEWER_INSTALLATION_ID=152526831', `PR_REVIEWER_PRIVATE_KEY_B64=${Buffer.from('-----BEGIN KEY-----').toString('base64')}`].join('\n'),
+    ['PR_REVIEWER_APP_ID=1', 'PR_REVIEWER_INSTALLATION_ID=2', `PR_REVIEWER_PRIVATE_KEY_B64=${Buffer.from('not a key').toString('base64')}`].join('\n'),
   );
-  const creds = reviewerCredentials(path);
-  assert.equal(creds.appId, '4541497');
-  assert.equal(creds.installationId, '152526831');
-  assert.equal(creds.privateKeyPem, '-----BEGIN KEY-----');
+  assert.throws(() => reviewerCredentials(path), /PR_REVIEWER_PRIVATE_KEY_B64/);
+  assert.throws(() => reviewerCredentials(path), /not a valid private key/);
+});
+
+test('reviewerCredentials accepts a real key', () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const path = envFile(
+    ['PR_REVIEWER_APP_ID=1', 'PR_REVIEWER_INSTALLATION_ID=2', `PR_REVIEWER_PRIVATE_KEY_B64=${Buffer.from(pem).toString('base64')}`].join('\n'),
+  );
+  assert.equal(reviewerCredentials(path).privateKeyPem, pem);
 });

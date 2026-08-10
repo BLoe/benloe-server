@@ -3,8 +3,8 @@
  * validated findings object.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 export const FINDINGS_SCHEMA = {
   type: 'object',
@@ -39,7 +39,47 @@ export function renderPrompt(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] ?? '').toString());
 }
 
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
+/**
+ * Git, authenticated as the reviewer's own installation token.
+ *
+ * The token rides in GIT_CONFIG_* env vars rather than the argv (`-c
+ * http.extraheader=...`) so it does not appear in `ps` output. It is
+ * short-lived (1 hour), read-only (contents:read), and scoped to this
+ * installation — which is why HTTPS is used here at all rather than the SSH
+ * deploy key: the key can push, lives in /root/.ssh, and the sandbox
+ * deliberately makes that directory inaccessible.
+ */
+function git(cwd, token, ...args) {
+  const env = { ...process.env };
+  if (token) {
+    env.GIT_CONFIG_COUNT = '1';
+    env.GIT_CONFIG_KEY_0 = 'http.extraheader';
+    env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
+  }
+  env.GIT_TERMINAL_PROMPT = '0';
+  return execFileSync('git', args, { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
+}
+
+/**
+ * A bare mirror the reviewer owns outright, under /var/lib/pr-reviewer.
+ *
+ * It used to fetch into /srv/benloe and build worktrees there. That is the
+ * live production checkout every service deploys from, so the reviewer was
+ * mutating production git state (fetching, pruning, adding worktrees) just to
+ * read a diff. The sandbox added in the hardening pass then made /srv/benloe
+ * read-only and every review died with "cannot open '.git/FETCH_HEAD'" — the
+ * config caught a design mistake that was already there.
+ *
+ * Owning a mirror fixes both: production is never touched, and the sandbox can
+ * stay strict because the only writable path is one this service owns.
+ */
+export function ensureMirror(mirrorDir, repo, token) {
+  if (!existsSync(join(mirrorDir, 'HEAD'))) {
+    mkdirSync(dirname(mirrorDir), { recursive: true });
+    git(dirname(mirrorDir), token, 'clone', '--mirror', `https://github.com/${repo}.git`, mirrorDir);
+  }
+  return mirrorDir;
+}
 
 /**
  * Check the PR head out into a throwaway worktree.
@@ -48,23 +88,23 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
  * checkout at /srv/benloe is what the running services are deployed from, and
  * a reviewer that moves its HEAD would be editing production to read a diff.
  */
-export function makeWorktree(repoDir, root, number, headSha, baseRef) {
+export function makeWorktree(repoDir, root, number, headSha, baseRef, token) {
   const dir = join(root, `pr-${number}`);
   rmSync(dir, { recursive: true, force: true });
-  git(repoDir, 'worktree', 'prune');
+  git(repoDir, token, 'worktree', 'prune');
   // BOTH refs, always. The base is fetched because mergeBase() resolves
   // origin/<base>: a stale remote-tracking ref yields a merge base older than
   // the true one, so the review diff picks up commits already merged into the
   // base and the reviewer reports findings on code this PR never touched —
   // exactly the cry-wolf failure the orchestrator prompt guards against.
-  git(repoDir, 'fetch', 'origin', `pull/${number}/head`, baseRef, '--quiet');
-  git(repoDir, 'worktree', 'add', '--detach', dir, headSha);
+  git(repoDir, token, 'fetch', 'origin', `pull/${number}/head`, `+refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`, '--quiet');
+  git(repoDir, token, 'worktree', 'add', '--detach', dir, headSha);
   return dir;
 }
 
 export function removeWorktree(repoDir, dir, logger) {
   try {
-    git(repoDir, 'worktree', 'remove', '--force', dir);
+    git(repoDir, null, 'worktree', 'remove', '--force', dir);
     return;
   } catch (e) {
     logger?.(`worktree remove failed for ${dir}, falling back to rm: ${e.message}`);
@@ -83,7 +123,7 @@ export function removeWorktree(repoDir, dir, logger) {
 }
 
 export function mergeBase(dir, baseRef, headSha) {
-  return git(dir, 'merge-base', `origin/${baseRef}`, headSha);
+  return git(dir, null, 'merge-base', `refs/remotes/origin/${baseRef}`, headSha);
 }
 
 /**
@@ -112,6 +152,22 @@ export const ALLOWED_TOOLS = [
 ];
 
 /**
+ * The environment the review agent runs in.
+ *
+ * git() only ever sets GIT_CONFIG_* on a per-call copy, so the token should
+ * never be on process.env in the first place — this deletes it anyway. The
+ * agent publishes to a public PR, so anything reaching its environment is one
+ * `env` away from being quoted there, and "should never" is not a control.
+ */
+export function agentEnv(base = process.env) {
+  const env = { ...base, CLAUDE_CODE_ENTRYPOINT: 'pr-reviewer' };
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('GIT_CONFIG')) delete env[k];
+  }
+  return env;
+}
+
+/**
  * @returns {Promise<{ok: true, data: object} | {ok: false, error: string}>}
  * Never throws for a review that simply went badly — a failed review must not
  * take the poller down with it, or one malformed PR blocks every later one.
@@ -138,7 +194,7 @@ export function runOrchestrator({ cwd, prompt, pluginDir, model, timeoutMs, logg
   return new Promise((resolve) => {
     const child = spawn('claude', args, {
       cwd,
-      env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'pr-reviewer' },
+      env: agentEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';

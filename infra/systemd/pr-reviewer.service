@@ -25,6 +25,10 @@ NoNewPrivileges=yes
 # Everything is read-only except the two trees this service legitimately writes:
 # its own state/worktrees, and its log.
 ProtectSystem=strict
+# /srv/benloe is NOT here on purpose. It is the live production checkout, and
+# the reviewer keeps its own bare mirror under /var/lib/pr-reviewer instead —
+# see ensureMirror() in src/review.mjs. Adding it back would let a reviewer
+# mutate production git state to read a diff.
 ReadWritePaths=/var/lib/pr-reviewer /srv/benloe/logs /root/.claude /tmp
 # The secrets the reviewer must never be able to read, even though it runs as
 # root and even if the agent is talked into trying. poll.mjs reads GITHUB_APP_*
