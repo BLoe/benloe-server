@@ -102,17 +102,22 @@ const DECLINE_SAMPLE = 3;
  * Wall clock after which this run starts no further reviews.
  *
  * Precisely: this gates the decision to BEGIN another review. It does not cap
- * a run, and an earlier version of this comment claimed it did. A review
- * already in flight runs to its own timeout, so the true worst case is
- * RUN_BUDGET_MS + one full review (PR_REVIEWER_TIMEOUT_MS + its git calls) —
- * with the defaults, 25 + 20 + ~10 = 55min against the unit's 50min
- * TimeoutStartSec, which is still short by design margin.
+ * a run, and two earlier versions of this comment got the arithmetic wrong.
  *
- * That is why TimeoutStartSec is generous rather than tight: a SIGKILL there
- * runs no catch and no finally, so every in-flight review would die without
- * posting anything. The budget makes that rare; it does not make it
- * impossible, and the honest statement of the guarantee is "at most one
- * review overruns", not "the run is bounded".
+ * The correct bound. A single review costs at most
+ *   GIT_TIMEOUT_MS (worktree)         10min
+ * + PR_REVIEWER_TIMEOUT_MS            20min
+ * + GIT_TIMEOUT_MS (cleanup)          10min   = 40min
+ *
+ * The budget is checked only BEFORE starting a review, so the last review can
+ * begin at RUN_BUDGET_MS - 1ms:
+ *   worst-case run = RUN_BUDGET_MS + 40min = 25 + 40 = 65min
+ *
+ * That exceeds a 50-minute TimeoutStartSec, which is why the unit is set to
+ * 90min: a SIGKILL there runs no catch and no finally, so every in-flight
+ * review would die without posting anything — the one outcome this app must
+ * never produce. The invariant to preserve when tuning any of these is
+ *   RUN_BUDGET_MS + 2*GIT_TIMEOUT_MS + PR_REVIEWER_TIMEOUT_MS < TimeoutStartSec
  */
 const RUN_BUDGET_MS = numberEnv('PR_REVIEWER_RUN_BUDGET_MS', 25 * 60_000);
 

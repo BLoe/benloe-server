@@ -52,10 +52,17 @@ LockPersonality=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 
-# Generous: one review is several minutes of agent work and the poller may take
-# up to PR_REVIEWER_MAX_PER_RUN of them. systemd will not start a second
-# instance while this one runs, which is the concurrency guard.
-TimeoutStartSec=50min
+# Must exceed RUN_BUDGET_MS + 2*GIT_TIMEOUT_MS + PR_REVIEWER_TIMEOUT_MS, which
+# is the true worst case (see RUN_BUDGET_MS in src/poll.mjs): the budget is
+# checked only before STARTING a review, so the last one can begin at
+# budget-1ms and then run its full 40 minutes. With the defaults that is
+# 25 + 10 + 20 + 10 = 65min, so 90 leaves real margin.
+#
+# It matters because a SIGKILL here runs no catch and no finally: every
+# in-flight review would die without posting anything to any PR. systemd will
+# not start a second instance while this one runs, which is the concurrency
+# guard.
+TimeoutStartSec=90min
 StandardOutput=append:/srv/benloe/logs/pr-reviewer.log
 StandardError=append:/srv/benloe/logs/pr-reviewer.log
 # node and the claude CLI both resolve from these; there is deliberately no nvm
