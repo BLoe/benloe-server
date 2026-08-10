@@ -1,14 +1,14 @@
 /**
  * GitHub App REST client — zero dependencies.
  *
- * Auth deliberately goes through the cabinet-benloe GitHub App rather than a
- * personal `gh` token: the App's installation token is minted fresh on every
+ * Auth deliberately goes through the benloe-pr-reviewer GitHub App rather than
+ * a personal `gh` token: the App's installation token is minted fresh on every
  * poll from credentials in /srv/benloe/.env, so an unattended timer can never
  * be blocked by a human-expired OAuth token. (The `gh` CLI token on this box
  * was already expired when this was written — exactly the failure mode a
  * scheduled reviewer must not inherit.)
  */
-import { createSign } from 'node:crypto';
+import { createPrivateKey, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const API = 'https://api.github.com';
@@ -85,6 +85,49 @@ async function gh(token, path, init = {}) {
     throw new Error(`GitHub ${init.method ?? 'GET'} ${path} → ${res.status}: ${body.slice(0, 400)}`);
   }
   return res.status === 204 ? null : res.json();
+}
+
+/**
+ * The reviewer's own GitHub App credentials.
+ *
+ * Deliberately NO fallback to the cabinet-benloe app if these are missing.
+ * That app holds contents:write, so a fallback would mean a misconfigured
+ * deployment silently upgrading the reviewer from a read-only identity to one
+ * that can push to main — privilege escalation by typo, and invisible because
+ * everything would keep working. Fail closed and loudly instead.
+ *
+ * Key names match what is already in /srv/benloe/.env. Note the PR_REVIEWER_
+ * prefix is shared with this app's runtime config (PR_REVIEWER_MODEL and
+ * friends); that is a namespace collision, not two systems.
+ */
+export function reviewerCredentials(envFile) {
+  const KEYS = {
+    appId: 'PR_REVIEWER_APP_ID',
+    installationId: 'PR_REVIEWER_INSTALLATION_ID',
+    privateKey: 'PR_REVIEWER_PRIVATE_KEY_B64',
+  };
+  const env = readEnvKeys(envFile, Object.values(KEYS));
+  const missing = Object.values(KEYS).filter((k) => !env[k]);
+  if (missing.length > 0) {
+    throw new Error(
+      `missing ${missing.join(', ')} in ${envFile} — the reviewer authenticates as the benloe-pr-reviewer App ` +
+        `(pull_requests:write, and deliberately no contents:write) and will not fall back to a write-capable identity`,
+    );
+  }
+  // Buffer.from(x, 'base64') NEVER throws — it silently discards non-alphabet
+  // characters and stops at the first padding run. So a wrapped key (GNU
+  // `base64` breaks at 76 columns, and readEnvKeys takes one line per key)
+  // passes the presence check above, decodes to a truncated DER prefix, and
+  // only surfaces much later as an OpenSSL "DECODER routines::unsupported"
+  // that names neither the variable nor the file. Validate at the chokepoint,
+  // the way integrations/githubApp.ts already does.
+  const privateKeyPem = Buffer.from(env[KEYS.privateKey], 'base64').toString('utf8');
+  try {
+    createPrivateKey(privateKeyPem);
+  } catch (e) {
+    throw new Error(`${KEYS.privateKey} in ${envFile} is not a valid private key once base64-decoded: ${e.message}`);
+  }
+  return { appId: env[KEYS.appId], installationId: env[KEYS.installationId], privateKeyPem };
 }
 
 export async function installationToken({ appId, installationId, privateKeyPem }) {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { appJwt, readEnvKeys } from '../src/github.mjs';
+import { appJwt, readEnvKeys, reviewerCredentials } from '../src/github.mjs';
 
 function envFile(contents) {
   const path = join(mkdtempSync(join(tmpdir(), 'pr-reviewer-env-')), '.env');
@@ -51,4 +51,39 @@ test('appJwt produces a verifiable RS256 token with a backdated iat', () => {
   v.update(`${h}.${p}`);
   v.end();
   assert.ok(v.verify(publicKey, Buffer.from(s, 'base64url')));
+});
+
+test('reviewerCredentials refuses to fall back to a write-capable identity', () => {
+  // The dangerous silent path: cabinet-benloe holds contents:write, so a
+  // fallback would turn a typo into a reviewer that can push to main.
+  const path = envFile(['GITHUB_APP_ID=1', 'GITHUB_APP_INSTALLATION_ID=2', 'GITHUB_APP_PRIVATE_KEY_B64=eA=='].join('\n'));
+  assert.throws(() => reviewerCredentials(path), /PR_REVIEWER_APP_ID/);
+  assert.throws(() => reviewerCredentials(path), /will not fall back/);
+});
+
+test('reviewerCredentials names every missing key, not just the first', () => {
+  const path = envFile('PR_REVIEWER_APP_ID=1');
+  assert.throws(() => reviewerCredentials(path), /PR_REVIEWER_INSTALLATION_ID/);
+  assert.throws(() => reviewerCredentials(path), /PR_REVIEWER_PRIVATE_KEY_B64/);
+});
+
+
+
+test('reviewerCredentials rejects a private key that base64-decoded to garbage', () => {
+  // Buffer.from never throws, so a line-wrapped key would otherwise pass the
+  // presence check and fail much later inside OpenSSL, naming nothing useful.
+  const path = envFile(
+    ['PR_REVIEWER_APP_ID=1', 'PR_REVIEWER_INSTALLATION_ID=2', `PR_REVIEWER_PRIVATE_KEY_B64=${Buffer.from('not a key').toString('base64')}`].join('\n'),
+  );
+  assert.throws(() => reviewerCredentials(path), /PR_REVIEWER_PRIVATE_KEY_B64/);
+  assert.throws(() => reviewerCredentials(path), /not a valid private key/);
+});
+
+test('reviewerCredentials accepts a real key', () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const path = envFile(
+    ['PR_REVIEWER_APP_ID=1', 'PR_REVIEWER_INSTALLATION_ID=2', `PR_REVIEWER_PRIVATE_KEY_B64=${Buffer.from(pem).toString('base64')}`].join('\n'),
+  );
+  assert.equal(reviewerCredentials(path).privateKeyPem, pem);
 });

@@ -17,8 +17,12 @@
  * agent that reads web pages and email.
  */
 
-/** Logins allowed by default: Ben, and Cabinet's own unattended runtime. */
-export const DEFAULT_ALLOWED_AUTHORS = ['BLoe', 'cabinet-benloe[bot]'];
+/**
+ * Logins allowed by default: Ben, Cabinet's unattended runtime, and the
+ * session identity (Claude Code working with Ben on the monorepo).
+ * benloe-pr-reviewer is deliberately absent — it authors nothing.
+ */
+export const DEFAULT_ALLOWED_AUTHORS = ['BLoe', 'cabinet-benloe[bot]', 'benloe-carpenter[bot]'];
 
 /**
  * GitHub logins are case-insensitive, so case is normalised away.
