@@ -40,6 +40,15 @@ dependency would be someone else's maintenance burden for no leverage.
   changes — a scheduled reviewer must not be able to block or bless a merge on
   its own judgment.
 
+- **Only allowlisted authors get reviewed** (`src/authors.mjs`). This is the
+  primary prompt-injection control, and it is a *capacity* limit rather than a
+  *rate* one: Opus 5 is the most injection-robust model measured (~0.13% per
+  attempt), but an unattended five-minute timer on a public repo hands an
+  attacker unlimited free retries, and a rate times unlimited attempts is a
+  certainty. Refusing to read strangers' PRs caps attempts at zero. Do not
+  remove the prompt fence or the sandbox because this exists — a trusted
+  author's diff is still written by an agent that reads web pages and email.
+
 - **The agent is read-only by allowlist** (`ALLOWED_TOOLS` in `src/review.mjs`).
   No Write, no Edit, no mutating git, no network fetch. It reviews branches
   written by agents; a denylist would be the wrong default.
