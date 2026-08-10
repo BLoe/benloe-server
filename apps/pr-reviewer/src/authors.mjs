@@ -69,12 +69,14 @@ export function isAllowedAuthor(login, allowed) {
  * Split a PR list into the ones this reviewer will look at and the ones it
  * skips, each with a reason.
  *
- * EVERY skip carries a reason, not just the allowlist one. An earlier version
- * returned only allowlist declines while the docstring and the log line both
- * claimed all skips were reported — so a PR silently dropped for being a
- * draft, or for a stale ledger entry, looked identical to one that was never
- * seen. `kind` separates the security-relevant branch from the routine ones,
- * because they deserve different log volume, not different honesty.
+ * EVERY skip carries a reason, not just the allowlist one. The earlier version
+ * returned only `declined` and left the three routine branches as bare
+ * `continue`s — its docs were correctly scoped to declines, so this is a
+ * behaviour gap rather than a doc/code mismatch. The gap still mattered: a PR
+ * dropped for being a draft, or for a stale ledger entry, looked from the
+ * outside exactly like one the reviewer never saw. `kind` separates the
+ * security-relevant branch from the routine ones because they deserve
+ * different log volume, not different honesty.
  *
  * Pulled out of poll.mjs deliberately. The property that actually matters —
  * a stranger's PR never reaches the orchestrator — used to live inside
