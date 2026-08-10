@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { hasLabels, pairTurns, partsToText, stratify } from '../eval/extract.mjs';
+import { assertSafeOutput, hasLabels, pairTurns, partsToText, stratify } from '../eval/extract.mjs';
 
 /**
  * Every fixture here is INVENTED. The real corpus is Ben's health, money and
- * mood; this repo is public. Comments, tests and fixtures are published
- * documents (docs/CLAUDE.md, "Personal data can leak through CODE") — the
- * 2026-08-02 near-miss was real lab values used as illustrative examples.
+ * mood; this repo is public, and comments, tests and fixtures are all
+ * published documents — the 2026-08-02 near-miss was real lab values used as
+ * illustrative examples. (The standing rule lives in Cabinet's PLATFORM.md,
+ * in the gitignored memory tree, so it is restated rather than cited.)
  */
 const BEN = 'below413@gmail.com';
 const msg = (over: Record<string, unknown> = {}) => ({
@@ -173,5 +174,37 @@ describe('hasLabels', () => {
       }) as never),
     ).toBe(false);
     expect(hasLabels('x', (() => 'not json') as never)).toBe(false);
+  });
+});
+
+describe('assertSafeOutput', () => {
+  it('refuses an output path inside the public repo', () => {
+    // cabinet-deploy.sh runs `git add apps/cabinet` then `git commit` on every
+    // self-deploy, so a transcript written next to this script would be
+    // published on the next deploy with no further action by anyone.
+    expect(() => assertSafeOutput('/srv/benloe/apps/cabinet/server/eval/turns.jsonl', '/srv/benloe')).toThrow(
+      /inside the public repo/,
+    );
+    expect(() => assertSafeOutput('/srv/benloe/turns.jsonl', '/srv/benloe')).toThrow(/inside the public repo/);
+  });
+
+  it('allows the gitignored data tree, which is the intended destination', () => {
+    expect(assertSafeOutput('/srv/benloe/data/cabinet/eval/turns.jsonl', '/srv/benloe')).toBe(
+      '/srv/benloe/data/cabinet/eval/turns.jsonl',
+    );
+  });
+
+  it('allows a path outside the repo entirely', () => {
+    expect(assertSafeOutput('/var/tmp/turns.jsonl', '/srv/benloe')).toBe('/var/tmp/turns.jsonl');
+  });
+
+  it('is not fooled by traversal back into the repo', () => {
+    expect(() => assertSafeOutput('/srv/benloe/data/../apps/cabinet/x.jsonl', '/srv/benloe')).toThrow(
+      /inside the public repo/,
+    );
+  });
+
+  it('does not treat a sibling directory with the same prefix as inside', () => {
+    expect(assertSafeOutput('/srv/benloe-other/x.jsonl', '/srv/benloe')).toBe('/srv/benloe-other/x.jsonl');
   });
 });

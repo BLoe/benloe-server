@@ -18,9 +18,17 @@ Not "rare" — **zero, in a month**. Every chat Ben has actually talked in is
 either `counsel` or has no register at all.
 
 This matters more than a stale column would, because register is not
-cosmetic: `runtime/register.ts` classifies, and the result drives effort and
-the length rules in `VOICE.md` and `TURN_DISCIPLINE`. The entire desk half of
-a deliberately two-register design has never run in production.
+cosmetic: `runtime/register.ts` classifies, and the result drives **effort**.
+The entire desk half of a deliberately two-register design has never run in
+production.
+
+> **Correction, added later in this file:** an earlier version of this
+> paragraph also said register drives "the length rules in VOICE.md and
+> TURN_DISCIPLINE". It does not. `register` reaches `effortForRegister` and
+> nothing else; `assemblePrompt` takes no register parameter, so the model is
+> never told which register it is in. See "the length control is inoperative"
+> below, which supersedes this. The two sections disagreed for several
+> commits and this note exists so a reader hitting §1 first is not misled.
 
 ### Diagnosed: it is the classifier, not persistence
 
