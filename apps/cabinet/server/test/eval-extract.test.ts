@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { pairTurns, partsToText, stratify } from '../eval/extract.mjs';
+import { hasLabels, pairTurns, partsToText, stratify } from '../eval/extract.mjs';
 
 /**
  * Every fixture here is INVENTED. The real corpus is Ben's health, money and
@@ -132,5 +132,46 @@ describe('the architecture cutoff', () => {
     const pairs = pairTurns(rows, '2026-08-01');
     expect(pairs).toHaveLength(1);
     expect(pairs[0].reply?.id).toBe('reply');
+  });
+});
+
+describe('reply pairing against non-Ben user rows', () => {
+  it('does not treat a peer-agent turn as Ben speaking again', () => {
+    // benji and the heartbeat both write role='user'. Treating those as "Ben
+    // spoke again" recorded an answered turn as unanswered, inventing crashed
+    // turns that never happened.
+    const rows = [
+      msg({ id: 'q' }),
+      msg({ id: 'peer', author: 'benji@agents.benloe.com' }),
+      msg({ id: 'a', role: 'assistant', author: null }),
+    ];
+    const [pair] = pairTurns(rows, '');
+    expect(pair.reply?.id).toBe('a');
+  });
+
+  it('still stops at Ben speaking again', () => {
+    const rows = [msg({ id: 'q1' }), msg({ id: 'q2' }), msg({ id: 'a', role: 'assistant', author: null })];
+    const pairs = pairTurns(rows, '');
+    expect(pairs[0].reply).toBeNull();
+    expect(pairs[1].reply?.id).toBe('a');
+  });
+});
+
+describe('hasLabels', () => {
+  it('detects labels and notes so a labelled file is never overwritten', () => {
+    const read = (content: string) => () => content;
+    expect(hasLabels('x', read('') as never)).toBe(false);
+    expect(hasLabels('x', read(JSON.stringify({ labels: [], note: '' })) as never)).toBe(false);
+    expect(hasLabels('x', read(JSON.stringify({ labels: ['overclaim'], note: '' })) as never)).toBe(true);
+    expect(hasLabels('x', read(JSON.stringify({ labels: [], note: 'a note' })) as never)).toBe(true);
+  });
+
+  it('treats an unreadable or malformed file as unlabelled rather than throwing', () => {
+    expect(
+      hasLabels('x', (() => {
+        throw new Error('ENOENT');
+      }) as never),
+    ).toBe(false);
+    expect(hasLabels('x', (() => 'not json') as never)).toBe(false);
   });
 });

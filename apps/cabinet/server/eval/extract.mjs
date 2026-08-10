@@ -16,10 +16,13 @@
  *   - do not add a --stdout mode; a transcript pasted into a terminal ends up
  *     in a scrollback, a screenshot, or a chat log
  * This is the same door the 2026-08-01 PDF and the 2026-08-02 migration
- * comments went through (docs/CLAUDE.md, "Personal data can leak through
- * CODE"). Comments, tests and fixtures are published documents.
+ * comments went through. The standing rule lives in Cabinet's own
+ * PLATFORM.md ("Personal data can leak through CODE, not just through
+ * files"), which is in the gitignored memory tree rather than in this repo —
+ * so it is restated here rather than cited: comments, tests, fixtures,
+ * commit messages and error strings are all PUBLISHED DOCUMENTS.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const DB = process.env.CABINET_DB ?? '/srv/benloe/data/cabinet/cabinet.db';
@@ -56,6 +59,27 @@ const SINCE = process.env.EVAL_SINCE ?? '2026-08-01';
  */
 const BEN = process.env.CABINET_OWNER_EMAIL ?? 'below413@gmail.com';
 
+/** Does this JSONL file already carry hand-written labels or notes? */
+export function hasLabels(path, read = readFileSync) {
+  let raw;
+  try {
+    raw = read(path, 'utf8');
+  } catch {
+    return false;
+  }
+  return raw
+    .split('\n')
+    .filter(Boolean)
+    .some((line) => {
+      try {
+        const r = JSON.parse(line);
+        return (Array.isArray(r.labels) && r.labels.length > 0) || (typeof r.note === 'string' && r.note.trim() !== '');
+      } catch {
+        return false;
+      }
+    });
+}
+
 /** Text out of the `parts` JSON blob, concatenated. */
 export function partsToText(parts) {
   let blocks;
@@ -89,7 +113,11 @@ export function pairTurns(rows, since = SINCE) {
     let reply = null;
     for (let j = i + 1; j < rows.length; j += 1) {
       if (rows[j].chat_id !== row.chat_id) continue;
-      if (rows[j].role === 'user') break; // Ben spoke again first
+      // Only BEN speaking again ends the search. A peer agent and the
+      // heartbeat also write role='user' rows, and treating those as "Ben
+      // spoke again" recorded an answered turn as unanswered — inventing
+      // crashed turns that never happened.
+      if (rows[j].role === 'user' && rows[j].author === BEN) break;
       if (rows[j].role === 'assistant') {
         reply = rows[j];
         break;
@@ -139,13 +167,16 @@ async function main() {
   // scope made this file unimportable anywhere it was not installed.
   const { default: Database } = await import('better-sqlite3');
   const db = new Database(DB, { readonly: true });
+  // rowid breaks ties. created_at is second-resolution, so a turn and its
+  // reply routinely share a timestamp — and an arbitrary order there records
+  // an answered turn as unanswered, which then reads as a crashed turn.
   const rows = db
     .prepare(
       `SELECT m.id, m.chat_id, m.role, m.author, m.parts, m.created_at,
               c.register, c.title
          FROM message m JOIN chat c ON c.id = m.chat_id
         WHERE m.role IN ('user','assistant')
-        ORDER BY m.created_at ASC`,
+        ORDER BY m.created_at ASC, m.rowid ASC`,
     )
     .all();
   db.close();
@@ -167,6 +198,15 @@ async function main() {
   }));
 
   mkdirSync(dirname(OUT), { recursive: true });
+  // Labelling is hours of reading. Overwriting a file that already carries
+  // labels would destroy it silently, and the natural workflow (extract,
+  // label, re-extract with a wider limit) walks straight into that.
+  if (existsSync(OUT) && hasLabels(OUT)) {
+    throw new Error(
+      `${OUT} already contains labelled turns — refusing to overwrite. ` +
+        `Move it aside, or set EVAL_OUT to a different path.`,
+    );
+  }
   writeFileSync(OUT, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
   // Counts only. Never the content.
   console.log(

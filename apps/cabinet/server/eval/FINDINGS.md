@@ -235,16 +235,30 @@ their replies:  p50 1303 · max 5017
 
 **A one-line message gets a 1,300-character answer.**
 
-This is not a tone problem, it is a wiring problem. `TURN_DISCIPLINE` says:
+This is not a tone problem, it is a wiring problem — though not the wiring I
+first described. `TURN_DISCIPLINE` says:
 
 > Length: desk register stays tight — most replies are a few sentences.
 > Counsel register ... is exempt: there, the conversation IS the work and
 > length limits are suspended.
 
-Every turn is counsel (§1), so **every turn takes the exemption**. The only
-length instruction in the prompt is scoped to a register that has never once
-activated. Cabinet is not ignoring the rule; the rule does not apply to
-anything.
+An earlier version of this section claimed "every turn is counsel, so every
+turn takes the exemption". **That is not how the code works.** `register`
+reaches exactly one place — `effortForRegister` in `runtime/agent.ts:419` —
+and `assemblePrompt` takes no register parameter at all. `chat.register`
+never enters the prompt.
+
+So the model is **never told which register it is in.** It reads a static
+rule keyed on a distinction it cannot observe, and has to guess which side it
+is on, every turn, with no signal. That is worse than the exemption story:
+an inert rule at least fails predictably, while an unobservable one fails
+however the model happens to guess — and Anthropic's Opus 5 guidance says the
+default guess is long.
+
+The register→length path could not have worked even if the classifier were
+fixed. Register only sets effort, and effort *"does not reliably change
+visible response length"* — Anthropic's words. Two mechanisms were assumed to
+connect and neither does.
 
 Anthropic's Opus 5 guidance is that this model runs longer than its
 predecessors by default, that effort does not reliably change visible length,
