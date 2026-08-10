@@ -32,6 +32,13 @@ export const FINDINGS_SCHEMA = {
   },
 };
 
+/**
+ * Below this, a summary carrying zero findings reads as a non-answer rather
+ * than a clean review ("Test", "ok", ""). Only consulted when the run found
+ * nothing — a short summary alongside real findings is fine.
+ */
+export const MIN_SUMMARY_CHARS = 20;
+
 /** Ordering used everywhere findings are grouped or counted. */
 export const SEVERITIES = ['critical', 'important', 'suggestion'];
 
@@ -259,6 +266,32 @@ export function agentEnv(base = process.env) {
 }
 
 /**
+ * Why the orchestrator process ended, in a form worth posting to a PR.
+ *
+ * `code` is null when the process died from a signal, so the signal is named
+ * rather than reporting the useless "exited null".
+ *
+ * BOTH streams are included. The CLI reports some failures as a JSON payload
+ * on STDOUT while exiting non-zero and writing nothing to stderr — which
+ * produced a bare "claude exited 1" on a real PR on 2026-08-10, naming no
+ * cause at all. Discarding the one stream that held the answer is exactly the
+ * silent-failure shape this app exists to avoid.
+ */
+export function describeExit({ code, signal, stderr = '', stdout = '', budget = 1200 }) {
+  const how = signal ? `killed by ${signal}` : `exited ${code}`;
+  // Each stream gets HALF the budget, and stdout comes first. Previously both
+  // took 1200 and stdout was appended second — so renderFailureBody's 1500
+  // cap truncated away exactly the stream that usually holds the cause, since
+  // the CLI reports errors as JSON on stdout while stderr stays empty or
+  // noisy. Splitting the budget means neither stream can starve the other.
+  const half = Math.floor(budget / 2);
+  const out = stdout.trim().slice(-half);
+  const err = stderr.trim().slice(-half);
+  const detail = [out && `stdout: ${out}`, err && `stderr: ${err}`].filter(Boolean).join('\n\n');
+  return `claude ${how}${detail ? `\n\n${detail}` : ''}`;
+}
+
+/**
  * @returns {Promise<{ok: true, data: object} | {ok: false, error: string}>}
  * Never throws for a review that simply went badly — a failed review must not
  * take the poller down with it, or one malformed PR blocks every later one.
@@ -305,14 +338,7 @@ export function runOrchestrator({ cwd, prompt, pluginDir, model, timeoutMs, logg
       clearTimeout(timer);
       const tail = stderr.trim().slice(-1200);
       if (tail) logger?.(`claude stderr: ${tail}`);
-      if (code !== 0) {
-        // `code` is null when the process died from a signal, so report the
-        // signal instead of the useless "exited null" — and carry the stderr
-        // into the error itself, because the failure comment posted to the PR
-        // is the only place most people will ever see it.
-        const how = signal ? `killed by ${signal}` : `exited ${code}`;
-        return resolve({ ok: false, error: `claude ${how}${tail ? `\n\n${tail}` : ''}` });
-      }
+      if (code !== 0) return resolve({ ok: false, error: describeExit({ code, signal, stderr, stdout }) });
       resolve(parseResult(stdout));
     });
   });
@@ -346,6 +372,24 @@ export function parseResult(stdout) {
   }
   if (!data || typeof data !== 'object' || typeof data.summary !== 'string' || !Array.isArray(data.findings)) {
     return { ok: false, error: 'result did not match the findings schema' };
+  }
+  // A vacuous summary is only a problem when it would produce an APPROVE.
+  // The previous version discarded ANY short-summary run — including one that
+  // found real critical findings, which is strictly worse than the bug it
+  // fixed. Guard the auto-approve path only: no findings AND nothing
+  // meaningful said means the run reviewed nothing, so retry rather than
+  // report a clean bill of health.
+  if (data.findings.length === 0 && data.summary.trim().length < MIN_SUMMARY_CHARS) {
+    return {
+      ok: false,
+      // The FIRST LINE must be byte-stable across retries: state.mjs keys
+      // failure de-duplication on it, so anything varying there posts a fresh
+      // comment every five minutes. The previous attempt at this fix put the
+      // summary's character count on the first line — which varies run to run
+      // and defeated the very de-duplication its comment cited. The varying
+      // detail goes on line two, where the key never sees it.
+      error: `orchestrator returned no findings and no usable summary\n\n(summary was ${data.summary.trim().length} chars)`,
+    };
   }
   // Re-validate every finding rather than trusting the constrained decoder.
   // FINDINGS_SCHEMA is enforced by the CLI, but this is the only boundary

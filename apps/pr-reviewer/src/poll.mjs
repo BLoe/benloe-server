@@ -12,9 +12,18 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseAllowedAuthors, selectPulls } from './authors.mjs';
-import { addressableMap, partitionFindings } from './diff.mjs';
-import { inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
-import { installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
+import { addressableMap } from './diff.mjs';
+import { buildReviewPost, renderFailureBody } from './format.mjs';
+import {
+  appLogin,
+  dismissStaleApprovals,
+  gh,
+  installationToken,
+  listOpenPulls,
+  listPullFiles,
+  postReview,
+  reviewerCredentials,
+} from './github.mjs';
 import {
   ensureMirror,
   escapeUntrusted,
@@ -143,6 +152,11 @@ async function reportFailure(token, pr, head, error, state) {
     return;
   }
   try {
+    // Deliberately UNPINNED. A failure comment is about the run, not about
+    // the code, and pinning it to a sha that no longer exists after a
+    // force-push makes GitHub reject the post — turning a reported failure
+    // into a log-only one, which is the exact outcome this function exists to
+    // prevent. The sha is named in the body instead.
     await postReview(token, CONFIG.repo, pr.number, renderFailureBody(String(error), head), []);
     markFailureReported(state, head, error);
     saveState(CONFIG.stateFile, state);
@@ -152,6 +166,9 @@ async function reportFailure(token, pr, head, error, state) {
     log(`PR #${pr.number} — could not post failure comment: ${e.message}`);
   }
 }
+
+/** Our own bot login, resolved once per run; null if the lookup failed. */
+let botLogin = null;
 
 async function reviewOne(token, pr, template, state) {
   const started = Date.now();
@@ -201,27 +218,93 @@ async function reviewOne(token, pr, template, state) {
       log(`PR #${pr.number} — dropped ${result.rejected.length} malformed finding(s)`);
     }
 
+    // The head can move during the minutes a review takes. Everything below
+    // is about the sha we READ: the review is pinned to it, but the inline
+    // anchors come from listPullFiles, which always describes the CURRENT
+    // head — mismatched anchors make GitHub 422 the entire review, losing it.
+    // Rather than reconcile two commits, abandon: the new head is unreviewed,
+    // so the next tick picks it up five minutes later and reviews what is
+    // actually there. This narrows the window rather than closing it — a push
+    // landing between this probe and the post still races — but it removes
+    // the common case at no cost.
+    // A dry run posts nothing, so there is nothing to go stale — and probing
+    // would make `PR_REVIEWER_DRY_RUN=1` unable to re-render an old sha,
+    // which is the entire point of that mode.
+    //
+    // A transient GitHub error here must not discard a completed review, so
+    // the probe fails OPEN: if we cannot tell whether the head moved, post.
+    // The worst case is the 422 this check exists to avoid, which is visible;
+    // the alternative silently throws away minutes of finished work.
+    let fresh = null;
+    if (!CONFIG.dryRun) {
+      try {
+        fresh = await gh(token, `/repos/${CONFIG.repo}/pulls/${pr.number}`);
+      } catch (e) {
+        log(`PR #${pr.number} — could not re-check head (${e.message}); posting anyway`);
+      }
+    }
+    if (fresh && fresh.head.sha !== head) {
+      log(`PR #${pr.number} — head moved ${head.slice(0, 8)} → ${fresh.head.sha.slice(0, 8)} during review; discarding, next tick will re-review`);
+      // A prior APPROVE pinned to the sha we just reviewed is now stale: the
+      // head has moved past it and this run posts nothing. Leaving it means
+      // the gate reads green for code no review covers. Withdrawn on the same
+      // best-effort terms as the post-review path.
+      if (botLogin) {
+        try {
+          await dismissStaleApprovals(token, CONFIG.repo, pr.number, botLogin, fresh.head.sha, log);
+        } catch (e) {
+          log(`PR #${pr.number} — could not dismiss stale approvals after head move: ${e.message}`);
+        }
+      }
+      return;
+    }
+
     const files = await listPullFiles(token, CONFIG.repo, pr.number);
-    const { inline, body } = partitionFindings(result.data.findings, addressableMap(files));
-    const reviewBody = renderReviewBody({
+    const post = buildReviewPost({
       summary: result.data.summary,
       strengths: result.data.strengths,
-      bodyFindings: body,
-      inlineFindings: inline,
+      findings: result.data.findings,
+      rejectedCount: result.rejected?.length ?? 0,
+      addressableLines: addressableMap(files),
       headSha: head,
       durationMs: Date.now() - started,
     });
 
     if (CONFIG.dryRun) {
-      console.log(`\n===== DRY RUN: review body for PR #${pr.number} =====\n${reviewBody}`);
-      for (const c of inline.map(inlineComment)) console.log(`\n--- inline ${c.path}:${c.line} ---\n${c.body}`);
+      console.log(`\n===== DRY RUN: would post ${post.event} for PR #${pr.number} =====\n${post.body}`);
+      for (const c of post.comments) console.log(`\n--- inline ${c.path}:${c.line} ---\n${c.body}`);
     } else {
-      await postReview(token, CONFIG.repo, pr.number, reviewBody, inline.map(inlineComment));
+      await postReview(token, CONFIG.repo, pr.number, post.body, post.comments, post.event, post.commitId);
+      // The review is posted. Everything after this point is cleanup, and
+      // NOTHING here may throw: an exception would reach reviewOne's catch,
+      // report a successful review as a failure, and skip markReviewed — so
+      // the next tick would post the whole review a second time.
+      // dismissStaleApprovals guards each dismissal individually but its
+      // listReviews call was unguarded, which is exactly that path.
+      if (post.event !== 'APPROVE' && botLogin) {
+        try {
+          await dismissStaleApprovals(token, CONFIG.repo, pr.number, botLogin, head, log);
+        } catch (e) {
+          // A surviving stale approval is visible on the PR and recoverable
+          // next tick; a duplicated review is neither.
+          log(`PR #${pr.number} — could not dismiss stale approvals: ${e.message}`);
+        }
+      }
       markReviewed(state, head);
-      saveState(CONFIG.stateFile, state);
+      try {
+        saveState(CONFIG.stateFile, state);
+      } catch (e) {
+        // Same rule as the dismissal above, and it was left unguarded one
+        // line below the comment stating it: a throw here reports a posted
+        // review as a failure AND loses the ledger write, so the next tick
+        // posts the whole review again. An unwritten ledger entry costs one
+        // duplicate review at worst; a throw costs one guaranteed duplicate
+        // plus a false failure comment.
+        log(`PR #${pr.number} — review posted but ledger write failed: ${e.message}`);
+      }
     }
     log(
-      `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
+      `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} ${post.event} (${result.data.findings.length} findings, ${post.comments.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
     );
   } finally {
     if (dir) removeWorktree(CONFIG.mirrorDir, dir, log);
@@ -229,7 +312,15 @@ async function reviewOne(token, pr, template, state) {
 }
 
 async function main() {
-  const token = await installationToken(reviewerCredentials(CONFIG.envFile));
+  const creds = reviewerCredentials(CONFIG.envFile);
+  const token = await installationToken(creds);
+  try {
+    botLogin = await appLogin(creds);
+  } catch (e) {
+    // Degrades to "cannot dismiss stale approvals", which is logged at the
+    // point it matters rather than failing the whole run.
+    log(`could not resolve own bot login (${e.message}); stale approvals will not be dismissed`);
+  }
 
   const state = loadState(CONFIG.stateFile);
   const template = loadPromptTemplate(APP_DIR);
@@ -300,9 +391,22 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  log(`FATAL ${e.stack ?? e.message}`);
-  process.exit(1);
-});
+/**
+ * Only run when executed directly, never on import.
+ *
+ * This module used to self-invoke unconditionally, which made it impossible
+ * to import from a test — so nothing covered the wiring here, and on
+ * 2026-08-10 a missing export in github.mjs shipped with a fully green suite
+ * and took the reviewer down until the next log was read. `node --check`
+ * cannot catch it either: the syntax is fine, the binding simply is not
+ * there. Importing the module is what proves its imports resolve.
+ */
+export const isDirectRun = Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectRun) {
+  main().catch((e) => {
+    log(`FATAL ${e.stack ?? e.message}`);
+    process.exit(1);
+  });
+}
 
-export { CONFIG };
+export { CONFIG, main, reviewOne };

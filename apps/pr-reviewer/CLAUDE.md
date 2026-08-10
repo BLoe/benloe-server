@@ -57,9 +57,19 @@ dependency would be someone else's maintenance burden for no leverage.
   patch, and an LLM will occasionally cite a line it read from the whole file.
   Unanchorable findings are demoted into the review body, never dropped.
 
-- **The review is `event: 'COMMENT'`.** It never approves and never requests
-  changes — a scheduled reviewer must not be able to block or bless a merge on
-  its own judgment.
+- **APPROVE when clean, COMMENT otherwise, REQUEST_CHANGES never**
+  (`REVIEW_EVENT` in `src/format.mjs`). Acceptance has to be a machine-readable
+  state because the merge policy is "PRs go through review until the reviewer
+  accepts" — a human inferring it from prose is not a gate. Suggestions do not
+  block; critical and important do.
+
+  Blocking stays impossible on purpose: a stochastic reviewer that can request
+  changes will eventually wedge the queue on one confident false positive,
+  unattended, and the human override is itself friction. COMMENT carries the
+  same findings without the deadlock.
+
+  Approving is only possible because the reviewer is a **separate identity from
+  the author** — GitHub refuses to let an account approve its own PR.
 
 - **Only allowlisted authors get reviewed** (`src/authors.mjs`). This is the
   primary prompt-injection control, and it is a *capacity* limit rather than a
@@ -81,6 +91,13 @@ dependency would be someone else's maintenance burden for no leverage.
 - **It costs rate limit.** Every review is real Opus turns against Ben's
   account. `PR_REVIEWER_MAX_PER_RUN` (default 2) is the cap that stops five
   PRs opened at once from draining a day's budget in one tick.
+
+- **`poll.mjs` runs `main()` only when executed directly**, so it can be
+  imported. Keep it that way: `test/wiring.test.mjs` imports every `src/`
+  module purely to prove their imports resolve. An ESM link error (a name
+  imported that was never exported) surfaces only on load — `node --check`
+  passes, every leaf-module test passes, and the service dies on the next
+  tick. That shipped on 2026-08-10 and took the reviewer down.
 
 ## Install / change
 
