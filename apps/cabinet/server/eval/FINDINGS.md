@@ -360,3 +360,79 @@ post-mortems still earn their slot.
 **Next measurement**, before either change: attribute `promptCore()` size by
 file, and check what fraction of the 1.58M cache reads is prefix versus
 conversation.
+
+---
+
+# What the cache-stable prefix is made of — 2026-08-10
+
+`promptCore()` is 11 files, **77,998 bytes ≈ 19,500 tokens**, on every
+interactive turn. By file:
+
+```
+ 29.0%   22482 B  ~5621 tok  PLATFORM.md
+ 25.0%   19368 B  ~4842 tok  USER.md
+  9.6%    7466 B  ~1867 tok  RHYTHM.md
+  7.7%    5977 B  ~1494 tok  PLAYBOOK.md
+  7.2%    5548 B  ~1387 tok  VOICE.md
+  5.9%    4566 B  ~1142 tok  CHARTER.md
+  5.1%    3980 B  ~ 995 tok  PREFERENCES.md
+  5.1%    3975 B  ~ 994 tok  TUNING.md
+  3.0%    2295 B  ~ 574 tok  STANDING_ORDERS.md
+  2.2%    1696 B  ~ 424 tok  CORRECTIONS.md
+  0.2%     152 B  ~  38 tok  GOALS.md
+```
+
+**Two files are 54% of it.** And per the cost section, the prefix is re-read
+on the order of 80 times per turn, so its size is a multiplier rather than a
+fixed cost.
+
+Note what the ordering says about intent: the four files that define who
+Cabinet *is* — CHARTER, VOICE, TUNING, PLAYBOOK, plus CORRECTIONS and
+STANDING_ORDERS — are **26% of the prefix combined.** Three quarters of the
+budget is reference data about Ben and about the server.
+
+## Is PLATFORM.md earning its 29%?
+
+It is engineering post-mortems about operating this box: deploy traps, a Caddy
+log-permission incident, an npm `NODE_ENV` hazard, the pending-turn race. Real
+knowledge, and expensive knowledge — but only when Cabinet is doing platform
+work.
+
+A crude keyword split of the 60 v2-era turns:
+
+```
+mention platform/engineering vocabulary : 13 (22%)
+no platform vocabulary at all           : 47 (78%)
+```
+
+So roughly **four turns in five pay ~5,600 tokens, ×80 reads, for a file they
+never touch.** The keyword test is rough in both directions and should not be
+quoted as precise — but the shape is not subtle.
+
+The mechanism to fix it already exists and is already used: `domainFiles` in
+`assemblePrompt` loads topic files per turn, and there is *already* a
+`domains/platform.md` sibling. This is exactly the progressive-disclosure
+pattern Anthropic recommends — *"For domain knowledge or workflows that are
+only relevant sometimes, use skills instead. Claude loads them on demand
+without bloating every conversation."*
+
+USER.md is a different question. It is 25% and it is *always* relevant in
+principle, since it is who Ben is — but 19KB of biography is well past the
+200-line guidance for always-loaded context, and most of it is history rather
+than anything that changes a reply.
+
+## Deliberately not changing either yet
+
+Moving PLATFORM.md out of the prefix is a real behaviour change on the system
+that operates this server, and the failure mode is asymmetric: a platform turn
+without platform memory can take a destructive action the file exists to
+prevent. Two things are needed first:
+
+1. **A better relevance signal than keyword matching.** Whatever selects
+   `domainFiles` has to be right on the 22%, not merely right on average.
+2. **Reversibility.** The prefix is one string; a bad split is one commit to
+   undo, but a wrong action taken in the meantime is not.
+
+That is its own PR, after the length change (#7) has been live long enough to
+re-measure. Sequencing them apart is the only way either number means
+anything.
