@@ -21,6 +21,9 @@ EVAL_LIMIT=80 node eval/extract.mjs
 
 Every turn is Ben's health, money, and mood. **This repo is public.** Output
 goes to `data/`, which is gitignored; nothing here may contain a real value,
-including comments, tests, and fixtures — those are published documents too
-(`docs/CLAUDE.md`, "Personal data can leak through CODE"). There is
-deliberately no mode that prints a transcript to stdout.
+including comments, tests, and fixtures — those are published documents too.
+(The standing rule lives in Cabinet's own `PLATFORM.md`, in the gitignored
+memory tree rather than in this repo, so it is restated rather than cited.)
+There is deliberately no mode that prints a transcript to stdout, and
+`assertSafeOutput` refuses any output path inside this repo —
+`cabinet-deploy.sh` runs `git add apps/cabinet` on every self-deploy.

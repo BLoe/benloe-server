@@ -23,7 +23,7 @@
  * commit messages and error strings are all PUBLISHED DOCUMENTS.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 const DB = process.env.CABINET_DB ?? '/srv/benloe/data/cabinet/cabinet.db';
 /** Inside data/, which is gitignored — see the header. */
@@ -78,6 +78,36 @@ export function hasLabels(path, read = readFileSync) {
         return false;
       }
     });
+}
+
+/** The monorepo root — nothing this script writes may land inside it. */
+const REPO_ROOT = process.env.PR_REVIEWER_REPO_DIR ?? '/srv/benloe';
+
+/**
+ * Refuse an output path inside the repository.
+ *
+ * `infra/scripts/cabinet-deploy.sh` runs `git add apps/cabinet infra/scripts`
+ * followed by `git commit` on every Cabinet self-deploy. So an EVAL_OUT
+ * pointing anywhere under apps/cabinet — the obvious place to put it, next to
+ * this script — would commit a file full of Ben's health, money and mood to a
+ * PUBLIC repository on the next deploy, with no further action by anyone.
+ *
+ * The header of this file says output goes to the gitignored data tree. This
+ * is that sentence made enforceable: a comment cannot stop a `-o` flag.
+ */
+export function assertSafeOutput(out, repoRoot = REPO_ROOT) {
+  const full = resolve(out);
+  const root = resolve(repoRoot);
+  if (full === root || full.startsWith(`${root}/`)) {
+    // data/ is gitignored, so it is the one path inside the tree that is safe.
+    if (!full.startsWith(`${root}/data/`)) {
+      throw new Error(
+        `refusing to write ${full}: it is inside the public repo at ${root}, ` +
+          `which cabinet-deploy.sh auto-commits. Write to /srv/benloe/data/... instead.`,
+      );
+    }
+  }
+  return full;
 }
 
 /** Text out of the `parts` JSON blob, concatenated. */
@@ -188,15 +218,27 @@ async function main() {
     id: p.prompt.id,
     chat_id: p.prompt.chat_id,
     chat_title: p.prompt.title,
-    register: p.prompt.register ?? null,
+    // NOTE: chat.register is mutable and this is its value NOW, not the value
+    // in force when the turn ran. settleRegister rewrites it on every user
+    // turn, so a turn from three weeks ago carries today's register. Usable
+    // for "what register is this conversation in", useless for per-turn
+    // attribution — do not draw a per-turn conclusion from it.
+    registerNow: p.prompt.register ?? null,
     at: p.prompt.created_at,
     ben: partsToText(p.prompt.parts),
-    cabinet: p.reply ? partsToText(p.reply.parts) : null,
+    // An unparseable or text-free reply is NOT the same as no reply, and not
+    // the same as an empty answer: partsToText returns '' for both a corrupt
+    // blob and a genuinely empty one. Distinguish them, or a corrupt row reads
+    // as "Cabinet answered with nothing", which is a finding that never
+    // happened.
+    cabinet: p.reply ? partsToText(p.reply.parts) || null : null,
+    replyUnreadable: p.reply ? partsToText(p.reply.parts) === '' : false,
     // Filled in by hand or by the labelling pass — see TAXONOMY.md.
     labels: [],
     note: '',
   }));
 
+  assertSafeOutput(OUT);
   mkdirSync(dirname(OUT), { recursive: true });
   // Labelling is hours of reading. Overwriting a file that already carries
   // labels would destroy it silently, and the natural workflow (extract,
