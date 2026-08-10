@@ -80,6 +80,29 @@ export interface AssembledPrompt {
  *
  * This is register discipline, not personality — the character lives in
  * CHARTER.md / VOICE.md and must keep winning any conflict.
+ *
+ * LENGTH, 2026-08-10. The length clause used to read "desk register stays
+ * tight ... counsel register is exempt". Measured over the 78 real turns
+ * since the v2 stack landed, chat.register was `counsel` on 60 of 60 sampled
+ * turns and has never once been `desk` — so every turn took the exemption and
+ * the only length instruction in the prompt applied to nothing. Cabinet was
+ * not ignoring the rule; the rule had no arm.
+ *
+ * Measured at the same time: replies p50 3070 chars against Ben's p50 284, a
+ * 10.8x ratio, and 19 of 60 turns that were themselves under 160 characters
+ * still drew replies with a median of 1303. A one-line message got a
+ * 1300-character answer.
+ *
+ * The rule is now unconditional, and counsel is a WIDENING rather than an
+ * exemption. Anthropic's Opus 5 guidance is that this model runs long by
+ * default, that effort does not reliably shorten visible output, and that
+ * conciseness has to be prompted for explicitly — which is only true if the
+ * prompt's conciseness clause can actually fire.
+ *
+ * The numbers to re-measure after this ships are p50 3070 and the short-turn
+ * p50 1303 (apps/cabinet/server/eval/FINDINGS.md). Fixing the register
+ * classifier is deliberately NOT bundled here: it is the riskier change, and
+ * with a working floor it becomes tuning rather than load-bearing.
  */
 export const TURN_DISCIPLINE = `<turn-discipline>
 Before your first tool call, say in one short line what you're about to do —
@@ -99,9 +122,19 @@ RIGHT: "Pulling the last two weeks of weigh-ins." → [tools] → "Trend's 277.1
 third week in the band. Two flat days both landed on skipped-snack days."
 WRONG: [six tool calls, no text] → a wall of results.
 
-Length: desk register stays tight — most replies are a few sentences. Counsel
-register (goals, plans, reflection, anything about what Ben should want) is
-exempt: there, the conversation IS the work and length limits are suspended.
+Length: match the reply to what was actually asked. A one-line message gets a
+short answer — a few sentences, often less. Answer the question, then stop;
+do not append the adjacent things Ben did not ask about, and do not restate
+what you just did once the outcome line has said it.
+
+Counsel turns (goals, plans, reflection, anything about what Ben should want)
+earn more room — there the conversation IS the work, and depth is the point.
+That is a widening of this rule, not an exemption from it: even in counsel,
+length has to be doing something.
+
+RIGHT: "Weight?" → "278.4. Trend 277.1, third week in the band."
+WRONG: "Weight?" → the number, plus the week's trend, plus tonight's dinner,
+plus a nudge about the 3:30 snack.
 
 Deliver what was asked, at the scope intended. Make routine judgment calls
 yourself. If the request seems mistaken or a better approach exists, say so in
