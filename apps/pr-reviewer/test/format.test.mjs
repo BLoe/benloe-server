@@ -5,6 +5,7 @@ import {
   REVIEW_EVENT,
   accepts,
   buildReviewPost,
+  fenceFor,
   inlineComment,
   renderFailureBody,
   renderReviewBody,
@@ -218,4 +219,26 @@ test('body counts always match the event, even when findings are anchorable', ()
   assert.match(post.body, /0 critical · 1 important/);
   assert.match(post.body, /not accepted/);
   assert.equal(post.comments.length, 1);
+});
+
+test('the failure fence cannot be escaped by the payload', () => {
+  // The body carries raw orchestrator stdout — model prose derived from PR
+  // content the author writes — so a ``` run inside a bare ``` fence would
+  // terminate it early and render the rest as live markdown on a public PR.
+  const evil = 'claude exited 1\n\n```json\n{"x":1}\n```\n# Injected heading\n[link](http://evil)';
+  const md = renderFailureBody(evil, 'abcdef1234567890');
+  const fence = fenceFor(evil);
+  assert.ok(fence.length > 3, 'fence must outgrow the longest backtick run in the payload');
+  assert.equal(md.split(`\n${fence}\n`).length, 3, 'exactly one opening and one closing fence');
+  // Everything the payload contained is inside the fence, not rendered.
+  const inner = md.split(`\n${fence}\n`)[1];
+  assert.ok(inner.includes('# Injected heading'));
+  assert.ok(inner.includes('```json'));
+});
+
+test('fenceFor leaves an ordinary payload on a normal fence', () => {
+  assert.equal(fenceFor('nothing special here'), '```');
+  assert.equal(fenceFor('a `code` span'), '```');
+  assert.equal(fenceFor('```'), '````');
+  assert.equal(fenceFor('`````'), '``````');
 });
