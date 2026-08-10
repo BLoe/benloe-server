@@ -21,13 +21,26 @@
 export const DEFAULT_ALLOWED_AUTHORS = ['BLoe', 'cabinet-benloe[bot]'];
 
 /**
- * GitHub logins are case-insensitive, and the `[bot]` suffix is easy to omit
- * by hand, so both are normalised away before comparison. Empty entries (a
- * trailing comma, a blank env var) are dropped rather than becoming a rule
- * that matches the empty author.
+ * GitHub logins are case-insensitive, so case is normalised away.
+ *
+ * The `[bot]` suffix is deliberately NOT stripped. An earlier version removed
+ * it from both sides of the comparison to be forgiving about a hand-typed env
+ * var — but the same leniency then applied to the incoming author, collapsing
+ * `cabinet-benloe[bot]` and `cabinet-benloe` into one match key. Those are two
+ * different GitHub principals: the first is a bot actor, the second an
+ * ordinary account. Whether the un-suffixed name is reserved is GitHub's
+ * business, not an assumption this allowlist should rest on, and this is the
+ * one check the entire injection design depends on. Write the suffix exactly.
  */
-const normalize = (login) => String(login ?? '').trim().toLowerCase().replace(/\[bot\]$/, '');
+const normalize = (login) => String(login ?? '').trim().toLowerCase();
 
+/**
+ * Three branches, stated because they are easy to get backwards:
+ * - unset or all whitespace → DEFAULT_ALLOWED_AUTHORS (a WIDER list, not an
+ *   empty one; `PR_REVIEWER_ALLOWED_AUTHORS=""` does not review nobody)
+ * - entries that trim to empty (a trailing comma) → dropped
+ * - separators only, no logins at all → throws
+ */
 export function parseAllowedAuthors(raw) {
   if (raw === undefined || raw.trim() === '') return DEFAULT_ALLOWED_AUTHORS;
   const list = raw
@@ -50,4 +63,33 @@ export function isAllowedAuthor(login, allowed) {
   const who = normalize(login);
   if (!who) return false;
   return allowed.some((a) => normalize(a) === who);
+}
+
+/**
+ * Split a PR list into the ones this reviewer will look at and the ones it
+ * declines, with the reason.
+ *
+ * Pulled out of poll.mjs deliberately. The property that actually matters —
+ * a stranger's PR never reaches the orchestrator — used to live inside
+ * main(), which self-invokes on import and so could not be imported by a
+ * test. Deleting the check left the whole suite green. It also let the
+ * allowlist predicate be written out twice, once for the log and once for the
+ * filter, which is one edit away from the two disagreeing.
+ */
+export function selectPulls(pulls, { allowedAuthors, includeDrafts, onlyPr, dryRun, isReviewed }) {
+  const reviewable = [];
+  const declined = [];
+  for (const pr of pulls) {
+    if (!isAllowedAuthor(pr.user?.login, allowedAuthors)) {
+      declined.push({ pr, reason: `author ${pr.user?.login ?? '(none)'} not in allowlist` });
+      continue;
+    }
+    if (onlyPr !== null && onlyPr !== undefined && pr.number !== onlyPr) continue;
+    if (pr.draft && !includeDrafts) continue;
+    // A dry run ignores the ledger on purpose — the point is to re-review the
+    // same SHA repeatedly while tuning the orchestrator prompt.
+    if (!dryRun && isReviewed(pr.head.sha)) continue;
+    reviewable.push(pr);
+  }
+  return { reviewable, declined };
 }
