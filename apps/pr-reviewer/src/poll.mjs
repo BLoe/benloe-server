@@ -203,6 +203,7 @@ async function reviewOne(token, pr, template, state) {
       inlineFindings: inline,
       headSha: head,
       durationMs: Date.now() - started,
+      rejectedCount: result.rejected?.length ?? 0,
     });
 
     if (CONFIG.dryRun) {
@@ -215,14 +216,14 @@ async function reviewOne(token, pr, template, state) {
         pr.number,
         reviewBody,
         inline.map(inlineComment),
-        REVIEW_EVENT(result.data.findings),
+        REVIEW_EVENT(result.data.findings, result.rejected?.length ?? 0),
         head,
       );
       markReviewed(state, head);
       saveState(CONFIG.stateFile, state);
     }
     log(
-      `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} ${REVIEW_EVENT(result.data.findings)} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
+      `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} ${REVIEW_EVENT(result.data.findings, result.rejected?.length ?? 0)} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
     );
   } finally {
     if (dir) removeWorktree(CONFIG.mirrorDir, dir, log);

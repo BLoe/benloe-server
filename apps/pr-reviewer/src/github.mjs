@@ -170,12 +170,16 @@ export const postReview = (token, repo, number, body, comments, event = 'COMMENT
     body: JSON.stringify({
       event,
       body,
-      // Pin the review to the SHA that was actually read. Without commit_id
-      // GitHub attaches the review to whatever the PR head is at submission
-      // time — and a review takes minutes, so a commit pushed during that
-      // window would receive an APPROVE for code no one reviewed. Harmless
-      // while every review was a COMMENT; not harmless now that approval is
-      // the merge gate.
+      // Record WHICH sha this verdict is about. Without commit_id GitHub
+      // attaches the review to whatever the PR head is at submission time, so
+      // a commit pushed during the several minutes a review takes would be
+      // labelled with a verdict for code no one read.
+      //
+      // Scope, precisely: this makes the mismatch VISIBLE and checkable — the
+      // review carries the sha it read, so a consumer can compare it against
+      // the current head. It does NOT prevent anyone merging a newer commit
+      // on the strength of an older approval; GitHub dismisses stale reviews
+      // only if branch protection is configured to, which it is not here.
       ...(commitId ? { commit_id: commitId } : {}),
       ...(comments?.length ? { comments } : {}),
     }),
