@@ -14,7 +14,15 @@ import { fileURLToPath } from 'node:url';
 import { addressableMap, partitionFindings } from './diff.mjs';
 import { inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
 import { installationToken, listOpenPulls, listPullFiles, postReview, readEnvKeys } from './github.mjs';
-import { loadPromptTemplate, makeWorktree, mergeBase, removeWorktree, renderPrompt, runOrchestrator } from './review.mjs';
+import {
+  escapeUntrusted,
+  loadPromptTemplate,
+  makeWorktree,
+  mergeBase,
+  removeWorktree,
+  renderPrompt,
+  runOrchestrator,
+} from './review.mjs';
 import {
   alreadyReportedFailure,
   loadState,
@@ -119,12 +127,14 @@ async function reviewOne(token, pr, template, state) {
     const prompt = renderPrompt(template, {
       NUMBER: pr.number,
       REPO: CONFIG.repo,
-      TITLE: pr.title,
-      AUTHOR: pr.user?.login ?? 'unknown',
+      // Attacker-controlled on a public repo, even with the author allowlist:
+      // these three fields are the ones a PR author writes freely.
+      TITLE: escapeUntrusted(pr.title),
+      AUTHOR: escapeUntrusted(pr.user?.login ?? 'unknown'),
       BASE: pr.base.ref,
       HEAD_SHA: head,
       MERGE_BASE: base,
-      BODY: (pr.body ?? '').slice(0, 8000) || '_(no description provided)_',
+      BODY: escapeUntrusted(pr.body ?? '').slice(0, 8000) || '_(no description provided)_',
     });
 
     const result = await runOrchestrator({
