@@ -63,15 +63,26 @@ export function renderPrompt(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] ?? '').toString());
 }
 
+/** Cap on any single git call. See the timeout rationale in git(). */
+export const GIT_TIMEOUT_MS = 10 * 60_000;
+
 /**
  * Git, authenticated as the reviewer's own installation token.
  *
  * The token rides in GIT_CONFIG_* env vars rather than the argv (`-c
  * http.extraheader=...`) so it does not appear in `ps` output. It is
- * short-lived (1 hour), read-only (contents:read), and scoped to this
- * installation — which is why HTTPS is used here at all rather than the SSH
- * deploy key: the key can push, lives in /root/.ssh, and the sandbox
+ * short-lived (1 hour) and scoped to this installation. Note it is NOT
+ * read-only overall — it carries pull_requests:write, which is what posts the
+ * review; what it lacks is contents:write. HTTPS is used rather than the SSH
+ * deploy key because that key CAN push, lives in /root/.ssh, and the sandbox
  * deliberately makes that directory inaccessible.
+ *
+ * Every call is bounded. These are network-bound and were previously
+ * unbounded: two 20-minute reviews plus a first-run full-monorepo clone sit
+ * inside a 50-minute TimeoutStartSec, and a systemd kill runs no catch and no
+ * finally — so a single hung fetch posted nothing to any PR, which is the one
+ * outcome this app must never produce. A timeout here throws, which
+ * reviewOne's try converts into a visible failure comment.
  */
 function git(cwd, token, ...args) {
   const env = { ...process.env };
@@ -88,7 +99,13 @@ function git(cwd, token, ...args) {
     env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
   }
   env.GIT_TERMINAL_PROMPT = '0';
-  return execFileSync('git', args, { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
+  return execFileSync('git', args, {
+    cwd,
+    env,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: GIT_TIMEOUT_MS,
+  }).trim();
 }
 
 /**
@@ -106,6 +123,11 @@ function git(cwd, token, ...args) {
  */
 export function ensureMirror(mirrorDir, repo, token) {
   if (existsSync(join(mirrorDir, 'HEAD'))) return mirrorDir;
+  // A mirrorDir that exists WITHOUT a HEAD is a wedged state, not a fresh
+  // start: renameSync onto a non-empty directory throws ENOTEMPTY, so every
+  // future run would fail identically until a human intervened. Clear it —
+  // there is nothing in it worth keeping, by definition.
+  rmSync(mirrorDir, { recursive: true, force: true });
   // Clone to a scratch path and rename into place. `git clone --mirror`
   // writes HEAD before the object transfer finishes, so a SIGKILL (the 50min
   // TimeoutStartSec), an OOM kill, or a reboot mid-clone would otherwise

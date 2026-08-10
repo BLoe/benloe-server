@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ALLOWED_TOOLS, agentEnv, escapeUntrusted, parseResult, renderPrompt } from '../src/review.mjs';
+import { ALLOWED_TOOLS, GIT_TIMEOUT_MS, agentEnv, escapeUntrusted, parseResult, renderPrompt } from '../src/review.mjs';
 
 test('renderPrompt substitutes every placeholder', () => {
   const out = renderPrompt('PR {{NUMBER}} in {{REPO}} by {{AUTHOR}}', { NUMBER: 7, REPO: 'a/b', AUTHOR: 'ben' });
@@ -166,4 +166,12 @@ test('escaped metadata still renders into the prompt readably', () => {
   assert.match(out, /hi &lt;b&gt;there&lt;\/b&gt;/);
   // Exactly one real description element survives — the fence is intact.
   assert.equal(out.match(/<\/description>/g).length, 1);
+});
+
+test('git calls are bounded so a hung fetch cannot be killed by systemd instead', () => {
+  // An unbounded network call inside a 50-minute TimeoutStartSec means systemd
+  // kills the process — running no catch and no finally — so nothing is ever
+  // posted to any PR. A throw, by contrast, becomes a failure comment.
+  assert.ok(Number.isFinite(GIT_TIMEOUT_MS) && GIT_TIMEOUT_MS > 0);
+  assert.ok(GIT_TIMEOUT_MS < 20 * 60_000, 'must leave room inside TimeoutStartSec for two reviews');
 });
