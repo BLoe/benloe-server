@@ -106,6 +106,27 @@ test('a dry run ignores the ledger but never ignores the allowlist', () => {
   assert.deepEqual(declined.map((d) => d.pr.number), [2]);
 });
 
+test('every skip carries a reason, not just the allowlist one', () => {
+  // The docstring and the log both claimed all skips were reported while three
+  // of the four branches dropped silently — a PR skipped as a draft looked
+  // identical to one never seen.
+  const pulls = [pr(1, 'BLoe'), pr(2, 'stranger'), pr(3, 'BLoe', { draft: true }), pr(4, 'BLoe')];
+  const { reviewable, skipped } = selectPulls(pulls, opts({ isReviewed: (s) => s === 'sha4' }));
+  assert.deepEqual(reviewable.map((p) => p.number), [1]);
+  assert.equal(skipped.length, 3);
+  for (const s of skipped) assert.ok(s.reason && s.kind, `#${s.pr.number} skipped without a reason`);
+  assert.deepEqual(skipped.filter((s) => s.kind === 'declined').map((s) => s.pr.number), [2]);
+  assert.deepEqual(skipped.filter((s) => s.kind === 'routine').map((s) => s.pr.number), [3, 4]);
+  assert.match(skipped.find((s) => s.pr.number === 3).reason, /draft/);
+  assert.match(skipped.find((s) => s.pr.number === 4).reason, /already reviewed/);
+});
+
+test('onlyPr skips are reported rather than dropped', () => {
+  const { skipped } = selectPulls([pr(1, 'BLoe'), pr(2, 'BLoe')], opts({ onlyPr: 1 }));
+  assert.equal(skipped.length, 1);
+  assert.match(skipped[0].reason, /PR_REVIEWER_ONLY_PR/);
+});
+
 test('declines are counted even when nothing is reviewable', () => {
   // Drives the summary line that must not read like a healthy idle tick.
   const { reviewable, declined } = selectPulls([pr(1, 'nope'), pr(2, 'also-nope')], opts());

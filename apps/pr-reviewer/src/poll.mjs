@@ -212,7 +212,7 @@ async function main() {
   const template = loadPromptTemplate(APP_DIR);
   const pulls = await listOpenPulls(token, CONFIG.repo);
 
-  const { reviewable, declined } = selectPulls(pulls, {
+  const { reviewable, skipped, declined } = selectPulls(pulls, {
     allowedAuthors: CONFIG.allowedAuthors,
     includeDrafts: CONFIG.includeDrafts,
     onlyPr: CONFIG.onlyPr,
@@ -220,15 +220,24 @@ async function main() {
     isReviewed: (sha) => wasReviewed(state, sha),
   });
 
-  // Declines are reported, never silently dropped — "the reviewer ignored my
-  // PR" and "the reviewer is broken" must not look the same. But the size of
-  // the declined set is chosen by whoever opens PRs on a public repo, and the
-  // timer fires 288 times a day into an unrotated log, so this collapses to a
-  // count plus a sample rather than one line per PR per tick.
+  // Allowlist declines are reported every tick — "the reviewer ignored my PR"
+  // and "the reviewer is broken" must not look the same. The size of that set
+  // is chosen by whoever opens PRs on a public repo and the timer fires 288
+  // times a day into an unrotated log, so it collapses to a count plus a
+  // sample. Routine skips (draft, onlyPr, already-reviewed) are summarised
+  // separately: they are expected, but the claim that nothing is dropped
+  // silently has to be true of them too.
   if (declined.length > 0) {
     const sample = declined.slice(0, DECLINE_SAMPLE).map((d) => `#${d.pr.number} (${d.reason})`);
     const more = declined.length > DECLINE_SAMPLE ? `, +${declined.length - DECLINE_SAMPLE} more` : '';
     log(`declined ${declined.length} of ${pulls.length} open: ${sample.join(', ')}${more}`);
+  }
+
+  const routine = skipped.filter((s) => s.kind === 'routine');
+  if (routine.length > 0) {
+    const byReason = new Map();
+    for (const s of routine) byReason.set(s.reason.replace(/ at [0-9a-f]{8}$/, ''), (byReason.get(s.reason.replace(/ at [0-9a-f]{8}$/, '')) ?? 0) + 1);
+    log(`skipped ${routine.length}: ${[...byReason].map(([r, n]) => `${n} ${r}`).join(', ')}`);
   }
 
   if (reviewable.length === 0) {
