@@ -197,7 +197,7 @@ test('an empty or vacuous summary is a failed run, not a clean review', () => {
   for (const summary of ['', '   ', 'ok', 'Looks fine.']) {
     const r = parseResult(JSON.stringify({ result: JSON.stringify({ summary, findings: [] }) }));
     assert.ok(!r.ok, `summary ${JSON.stringify(summary)} should not be accepted`);
-    assert.match(r.error, /no findings and a \d+-char summary/);
+    assert.match(r.error, /no findings and no usable summary/);
     // The model's own text must NOT be in the message: state.mjs keys failure
     // de-duplication on the first line, so embedded model output would make
     // every retry look like a new failure and post a comment every tick.
@@ -225,7 +225,7 @@ test('a short summary is only fatal when the run also found nothing', () => {
 
   const vacuous = parseResult(JSON.stringify({ result: JSON.stringify({ summary: 'Test', findings: [] }) }));
   assert.ok(!vacuous.ok);
-  assert.match(vacuous.error, /no findings and a \d+-char summary/);
+  assert.match(vacuous.error, /no findings and no usable summary/);
 });
 
 test('a non-zero exit carries whichever stream actually explains it', () => {
@@ -248,4 +248,34 @@ test('both streams are included when both have content', () => {
   const err = describeExit({ code: 2, signal: null, stderr: 'stderr-said-this', stdout: 'stdout-said-that' });
   assert.match(err, /stderr-said-this/);
   assert.match(err, /stdout-said-that/);
+});
+
+test("the vacuous-summary error's first line is byte-stable across runs", () => {
+  // state.mjs de-duplicates failure comments on the first line. Anything
+  // varying there posts a fresh comment every five minutes — and the previous
+  // attempt at this fix put a varying character count on line one, defeating
+  // the de-duplication its own comment cited.
+  const firstLine = (summary) =>
+    parseResult(JSON.stringify({ result: JSON.stringify({ summary, findings: [] }) })).error.split('\n')[0];
+  assert.equal(firstLine(''), firstLine('Test'));
+  assert.equal(firstLine('Test'), firstLine('ok then'));
+  // The varying detail still survives, just below the key.
+  assert.match(parseResult(JSON.stringify({ result: JSON.stringify({ summary: 'Test', findings: [] }) })).error, /4 chars/);
+});
+
+test('describeExit gives each stream its own budget so neither starves the other', () => {
+  // stdout usually holds the cause (the CLI reports errors as JSON there),
+  // and it used to be appended second — so a noisy stderr pushed it past
+  // renderFailureBody's 1500-char cap and truncated away the answer.
+  const err = describeExit({
+    code: 1,
+    signal: null,
+    stderr: 'E'.repeat(5000),
+    stdout: 'S'.repeat(5000),
+    budget: 100,
+  });
+  assert.match(err, /stdout: S{50}/);
+  assert.match(err, /stderr: E{50}/);
+  assert.ok(err.indexOf('stdout:') < err.indexOf('stderr:'), 'stdout must come first');
+  assert.ok(err.length < 300);
 });

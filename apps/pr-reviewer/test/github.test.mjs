@@ -123,9 +123,11 @@ test('postReview omits commit_id rather than sending a null one', async () => {
   assert.equal(sent.event, 'COMMENT');
 });
 
-test('dismissStaleApprovals touches only our own approvals, at other shas', async () => {
+test('dismissStaleApprovals touches only our own approvals, and only approvals', async () => {
   // The login filter is the whole safety property: without it this would
-  // dismiss a HUMAN's approval, which the bot has no business doing.
+  // dismiss a HUMAN's approval, which the bot has no business doing. The sha
+  // is deliberately NOT filtered on — an approval at the current sha is the
+  // one most in need of withdrawal when this run found a problem.
   const reviews = [
     { id: 1, state: 'APPROVED', user: { login: 'benloe-pr-reviewer[bot]' }, commit_id: 'old' },
     { id: 2, state: 'APPROVED', user: { login: 'benloe-pr-reviewer[bot]' }, commit_id: 'current' },
@@ -143,8 +145,10 @@ test('dismissStaleApprovals touches only our own approvals, at other shas', asyn
   };
   try {
     const n = await dismissStaleApprovals('tok', 'o/r', 7, 'benloe-pr-reviewer[bot]', 'current');
-    assert.equal(n, 1);
-    assert.deepEqual(dismissed, ['1']);
+    assert.equal(n, 2, 'both of our approvals, at any sha');
+    assert.deepEqual(dismissed, ['1', '2']);
+    assert.ok(!dismissed.includes('3'), "a human's approval is never touched");
+    assert.ok(!dismissed.includes('4'), 'a COMMENTED review is not an approval');
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -166,6 +170,26 @@ test('a failed dismissal does not abort the rest', async () => {
   try {
     await dismissStaleApprovals('tok', 'o/r', 7, 'bot[bot]', 'current');
     assert.equal(calls, 2, 'the second dismissal must still be attempted');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('dismissStaleApprovals withdraws an approval at the current sha too', async () => {
+  // The case most in need of it: re-reviewing a sha we previously approved
+  // and finding a problem this time. An earlier version exempted it, leaving
+  // the old APPROVE standing next to the new COMMENT.
+  const reviews = [{ id: 9, state: 'APPROVED', user: { login: 'bot[bot]' }, commit_id: 'current' }];
+  const dismissed = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/reviews?per_page=100')) return { ok: true, status: 200, json: async () => reviews };
+    dismissed.push(String(url).match(/reviews\/(\d+)\/dismissals/)?.[1]);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    assert.equal(await dismissStaleApprovals('tok', 'o/r', 7, 'bot[bot]', 'current'), 1);
+    assert.deepEqual(dismissed, ['9']);
   } finally {
     globalThis.fetch = realFetch;
   }
