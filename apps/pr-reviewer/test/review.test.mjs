@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ALLOWED_TOOLS, GIT_TIMEOUT_MS, agentEnv, escapeUntrusted, parseResult, renderPrompt } from '../src/review.mjs';
+import { ALLOWED_TOOLS, gitWithTimeout, GIT_TIMEOUT_MS, agentEnv, escapeUntrusted, parseResult, renderPrompt } from '../src/review.mjs';
 
 test('renderPrompt substitutes every placeholder', () => {
   const out = renderPrompt('PR {{NUMBER}} in {{REPO}} by {{AUTHOR}}', { NUMBER: 7, REPO: 'a/b', AUTHOR: 'ben' });
@@ -168,14 +168,18 @@ test('escaped metadata still renders into the prompt readably', () => {
   assert.equal(out.match(/<\/description>/g).length, 1);
 });
 
-test('every git call is bounded', () => {
-  // An unbounded network call means systemd eventually kills the process —
-  // running no catch and no finally — so nothing is ever posted to any PR.
-  // A throw, by contrast, becomes a failure comment.
+test('a git call that exceeds its cap names the operation and the limit', () => {
+  // The previous version of this test asserted only that a constant is a
+  // positive number, which is not a behaviour. What matters is that a timeout
+  // kill does not surface as a bare ETIMEDOUT — that string becomes the whole
+  // failure comment on the PR.
   //
-  // Scope note: this pins the PER-CALL cap only. The run-level guarantee is
-  // RUN_BUDGET_MS in poll.mjs; the previous version of this test asserted a
-  // budget relationship it had no way to check, since the systemd timeout is
-  // not importable from here.
-  assert.ok(Number.isFinite(GIT_TIMEOUT_MS) && GIT_TIMEOUT_MS > 0);
+  // `sleep` stands in for a hung fetch: gitWithTimeout runs any argv, and the
+  // point under test is the error translation, not git itself.
+  // A 1ms cap on a real git invocation is reliably killed.
+  assert.throws(
+    () => gitWithTimeout(process.cwd(), null, ['version'], 1),
+    /git version exceeded 0s timeout/,
+  );
+  assert.ok(GIT_TIMEOUT_MS > 0 && GIT_TIMEOUT_MS < 20 * 60_000);
 });
