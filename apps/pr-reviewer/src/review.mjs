@@ -77,12 +77,15 @@ export const GIT_TIMEOUT_MS = 10 * 60_000;
  * deploy key because that key CAN push, lives in /root/.ssh, and the sandbox
  * deliberately makes that directory inaccessible.
  *
- * Every call is bounded. These are network-bound and were previously
- * unbounded: two 20-minute reviews plus a first-run full-monorepo clone sit
- * inside a 50-minute TimeoutStartSec, and a systemd kill runs no catch and no
- * finally — so a single hung fetch posted nothing to any PR, which is the one
- * outcome this app must never produce. A timeout here throws, which
- * reviewOne's try converts into a visible failure comment.
+ * Every call is bounded, because these are network-bound and were previously
+ * unbounded. A systemd kill runs no catch and no finally, so a hang posted
+ * nothing to any PR — the one outcome this app must never produce.
+ *
+ * NOTE this bounds a single CALL, not a run. Bounding the run is poll.mjs's
+ * job (RUN_BUDGET_MS): per-call caps alone do not compose into a run-level
+ * guarantee, and claiming otherwise was the bug in the previous version of
+ * this comment — 2 reviews x (20min orchestrator + 3 git calls x 10min) can
+ * exceed a 50-minute TimeoutStartSec on arithmetic alone.
  */
 function git(cwd, token, ...args) {
   const env = { ...process.env };

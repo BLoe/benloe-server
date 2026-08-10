@@ -98,6 +98,22 @@ const CONFIG = {
 /** How many declined PRs to name before collapsing to a count. */
 const DECLINE_SAMPLE = 3;
 
+/**
+ * Wall clock after which this run starts no further reviews.
+ *
+ * This — not the per-call git timeout — is what keeps systemd from killing
+ * the process. A SIGKILL at TimeoutStartSec runs no catch and no finally, so
+ * every in-flight review dies without posting anything, which is the one
+ * outcome this app must never produce. Per-call caps do not compose into a
+ * run-level bound: 2 reviews x (20min orchestrator + several 10min git calls)
+ * exceeds the unit's 50 minutes on arithmetic alone.
+ *
+ * A review already started is allowed to finish; only the decision to begin
+ * ANOTHER is gated. Anything not started is picked up on the next tick, which
+ * is 5 minutes away.
+ */
+const RUN_BUDGET_MS = numberEnv('PR_REVIEWER_RUN_BUDGET_MS', 25 * 60_000);
+
 const log = (msg) => console.log(`${new Date().toISOString()} ${msg}`);
 
 /**
@@ -220,7 +236,7 @@ async function main() {
   const template = loadPromptTemplate(APP_DIR);
   const pulls = await listOpenPulls(token, CONFIG.repo);
 
-  const { reviewable, declined } = selectPulls(pulls, {
+  const { reviewable, skipped, declined } = selectPulls(pulls, {
     allowedAuthors: CONFIG.allowedAuthors,
     includeDrafts: CONFIG.includeDrafts,
     onlyPr: CONFIG.onlyPr,
@@ -228,15 +244,24 @@ async function main() {
     isReviewed: (sha) => wasReviewed(state, sha),
   });
 
-  // Declines are reported, never silently dropped — "the reviewer ignored my
-  // PR" and "the reviewer is broken" must not look the same. But the size of
-  // the declined set is chosen by whoever opens PRs on a public repo, and the
-  // timer fires 288 times a day into an unrotated log, so this collapses to a
-  // count plus a sample rather than one line per PR per tick.
+  // Allowlist declines are reported every tick — "the reviewer ignored my PR"
+  // and "the reviewer is broken" must not look the same. The size of that set
+  // is chosen by whoever opens PRs on a public repo and the timer fires 288
+  // times a day into an unrotated log, so it collapses to a count plus a
+  // sample. Routine skips (draft, onlyPr, already-reviewed) are summarised
+  // separately: they are expected, but the claim that nothing is dropped
+  // silently has to be true of them too.
   if (declined.length > 0) {
     const sample = declined.slice(0, DECLINE_SAMPLE).map((d) => `#${d.pr.number} (${d.reason})`);
     const more = declined.length > DECLINE_SAMPLE ? `, +${declined.length - DECLINE_SAMPLE} more` : '';
     log(`declined ${declined.length} of ${pulls.length} open: ${sample.join(', ')}${more}`);
+  }
+
+  const routine = skipped.filter((s) => s.kind === 'routine');
+  if (routine.length > 0) {
+    const byReason = new Map();
+    for (const s of routine) byReason.set(s.reason.replace(/ at [0-9a-f]{8}$/, ''), (byReason.get(s.reason.replace(/ at [0-9a-f]{8}$/, '')) ?? 0) + 1);
+    log(`skipped ${routine.length}: ${[...byReason].map(([r, n]) => `${n} ${r}`).join(', ')}`);
   }
 
   if (reviewable.length === 0) {
@@ -250,7 +275,13 @@ async function main() {
   }
   log(`${reviewable.length} reviewable of ${pulls.length} open; reviewing up to ${CONFIG.maxPerRun}`);
 
+  const runStarted = Date.now();
   for (const pr of reviewable.slice(0, CONFIG.maxPerRun)) {
+    const elapsed = Date.now() - runStarted;
+    if (elapsed > RUN_BUDGET_MS) {
+      log(`run budget spent (${Math.round(elapsed / 60000)}m); deferring PR #${pr.number} to the next tick`);
+      break;
+    }
     try {
       await reviewOne(token, pr, template, state);
     } catch (e) {
