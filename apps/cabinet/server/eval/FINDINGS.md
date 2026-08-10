@@ -22,18 +22,52 @@ cosmetic: `runtime/register.ts` classifies, and the result drives effort and
 the length rules in `VOICE.md` and `TURN_DISCIPLINE`. The entire desk half of
 a deliberately two-register design has never run in production.
 
-Two candidate causes, both in the code rather than the prompt, and the fix
-differs:
+### Diagnosed: it is the classifier, not persistence
 
-- `classifyMessage` is documented as biased toward counsel because
-  "misrouting counsel→desk is the costly failure". `COUNSEL_MARKERS` wins
-  outright at any length, and `DESK_MAX_CHARS = 160`. The bias may simply be
-  strong enough to be absolute.
-- Or the classifier returns `desk` and nothing persists it. 34 never-set
-  chats is consistent with a write that does not happen.
+`classifyMessage` and `nextRegister` are pure, so both were replayed over all
+136 of Ben's real turns.
 
-**Do not fix this by loosening the classifier until we know which.** They
-have opposite remedies, and the second would make the first change harmful.
+```
+classifyMessage over 136 turns:  desk 1 · counsel 92 · null 43
+sticky replay, final per chat:   desk 0 · counsel 18 · null 0
+chats that would EVER enter desk: 0 of 18
+```
+
+**One message in a month classified as desk-shaped.** Persistence is fine;
+`settleRegister` writes whenever the value moves. It never moves to desk
+because the classifier never says desk.
+
+Two compounding causes, and the breakdown separates them:
+
+```
+counsel because length > DESK_MAX_CHARS : 80   (59% of all turns)
+counsel because multi-sentence          :  4
+counsel because a COUNSEL_MARKER hit    :  8
+desk or ambiguous                       : 44   (43 null, 1 desk)
+
+Ben's turn length: p25 88 · p50 197 · p75 420 · p90 1085
+turns <= DESK_MAX_CHARS (160): 56 of 136
+```
+
+1. **`DESK_MAX_CHARS = 160` sits below Ben's median turn (197).** Length
+   alone routes 59% of everything he writes to counsel, before any marker or
+   shape is consulted. Only 8 turns hit an actual counsel marker — the
+   constant, not the semantics, is doing nearly all the classifying.
+
+2. **Of the 56 short turns, `DESK_PATTERNS` matched 1.** The other 43 return
+   `null` ("genuinely ambiguous, leave the register alone"). Since a chat
+   starts at `null` and entering desk requires a *streak* of desk messages,
+   `null` can never build one. Desk is unreachable, not merely rare.
+
+The asymmetry was deliberate — entering desk is expensive to get wrong — but
+the two thresholds compose into an absolute bar rather than a high one.
+
+**This still does not mean "raise the constant".** 197 median says 160 is
+mistuned, but the deeper question is whether register should be inferred from
+message SHAPE at all: Ben writing 200 characters to log a meal is not a
+request for depth, and length is a poor proxy for what he wants back. Any fix
+belongs in its own PR with this measurement attached — and should be re-run
+against these numbers afterwards.
 
 ## 2. Replies are long, and the tail is extreme
 
