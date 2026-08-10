@@ -15,7 +15,15 @@ import { isAllowedAuthor, parseAllowedAuthors } from './authors.mjs';
 import { addressableMap, partitionFindings } from './diff.mjs';
 import { inlineComment, renderFailureBody, renderReviewBody } from './format.mjs';
 import { installationToken, listOpenPulls, listPullFiles, postReview, reviewerCredentials } from './github.mjs';
-import { loadPromptTemplate, makeWorktree, mergeBase, removeWorktree, renderPrompt, runOrchestrator } from './review.mjs';
+import {
+  ensureMirror,
+  loadPromptTemplate,
+  makeWorktree,
+  mergeBase,
+  removeWorktree,
+  renderPrompt,
+  runOrchestrator,
+} from './review.mjs';
 import {
   alreadyReportedFailure,
   loadState,
@@ -44,7 +52,12 @@ function numberEnv(name, fallback) {
 
 const CONFIG = {
   repo: process.env.PR_REVIEWER_REPO ?? 'BLoe/benloe-server',
-  repoDir: process.env.PR_REVIEWER_REPO_DIR ?? '/srv/benloe',
+  /**
+   * The reviewer's OWN bare mirror — never /srv/benloe. That is the live
+   * production checkout; a reviewer has no business fetching into it, and the
+   * systemd sandbox makes it read-only anyway.
+   */
+  mirrorDir: process.env.PR_REVIEWER_MIRROR ?? '/var/lib/pr-reviewer/repo.git',
   envFile: process.env.PR_REVIEWER_ENV_FILE ?? '/srv/benloe/.env',
   stateFile: process.env.PR_REVIEWER_STATE ?? '/var/lib/pr-reviewer/state.json',
   worktreeRoot: process.env.PR_REVIEWER_WORKTREES ?? '/var/lib/pr-reviewer/worktrees',
@@ -120,7 +133,7 @@ async function reviewOne(token, pr, template, state) {
 
   let dir;
   try {
-    dir = makeWorktree(CONFIG.repoDir, CONFIG.worktreeRoot, pr.number, head, pr.base.ref);
+    dir = makeWorktree(CONFIG.mirrorDir, CONFIG.worktreeRoot, pr.number, head, pr.base.ref, token);
     const base = mergeBase(dir, pr.base.ref, head);
     const prompt = renderPrompt(template, {
       NUMBER: pr.number,
@@ -176,12 +189,13 @@ async function reviewOne(token, pr, template, state) {
       `PR #${pr.number} — ${CONFIG.dryRun ? 'dry run' : 'posted'} (${result.data.findings.length} findings, ${inline.length} inline) in ${Math.round((Date.now() - started) / 1000)}s`,
     );
   } finally {
-    if (dir) removeWorktree(CONFIG.repoDir, dir, log);
+    if (dir) removeWorktree(CONFIG.mirrorDir, dir, log);
   }
 }
 
 async function main() {
   const token = await installationToken(reviewerCredentials(CONFIG.envFile));
+  ensureMirror(CONFIG.mirrorDir, CONFIG.repo, token);
 
   const state = loadState(CONFIG.stateFile);
   const template = loadPromptTemplate(APP_DIR);
