@@ -121,3 +121,82 @@ wanted.
 The value of §1 is that it is a finding no amount of reading the prompt files
 would have produced. `register.ts` looks well designed on the page. It has
 just never done the thing it was designed to do.
+
+---
+
+# Labelling pass — 2026-08-10
+
+30 of the 40 sampled turns read and labelled by hand. 10 carry at least one
+label. Counts, not content; the labelled file stays in the gitignored tree.
+
+| n | code | |
+|---|---|---|
+| 3 | `onboarding-pitch` | new code — not in the original taxonomy |
+| 3 | `plumbing-narration` | new code |
+| 2 | `overclaim` | |
+| 2 | `no-reply` | |
+| 1 | `desk-bloat` | |
+| 1 | `sycophancy-recovered` | a save, not a failure |
+
+Two of the top three were **not in `TAXONOMY.md`**. That is the argument for
+open coding: a taxonomy written from the prompt files finds the failures the
+prompt files anticipate.
+
+## `onboarding-pitch` — the architecture predicted this and it happened anyway
+
+Three separate turns on one day, including a bare "How's it going?", answered
+with an unprompted pitch about the empty profile — **enumerating the missing
+fields**.
+
+`ONBOARDING.md` contains this, in writing, before any of those turns:
+
+> It should NOT enumerate raw fields in the injected line — name the outcome
+> ("no confirmed plan yet"), never the form fields, **because whatever that
+> line says, the agent will recite.**
+
+The prediction was exactly right and it did not prevent the behaviour. That is
+the most important thing in this pass: *a rule stated in prose, in a file the
+model reads every turn, did not survive contact with an injected line that
+contradicted it.* The fix is not a better-worded rule. It is that `profileGap`
+must not put field names in the context at all — the model recites its input,
+and no instruction outranks the input's own shape.
+
+Costs beyond tone: it fires on greetings, so the first thing Ben sees after
+"hi" is a list of chores.
+
+## `plumbing-narration` — Cabinet reporting its own infrastructure at Ben
+
+Three turns narrate tool-layer failures to Ben: an MCP server dropping
+mid-session, tool calls being denied, a workaround performed in front of him.
+Ben asked about his life; he got an incident report about Cabinet.
+
+`VOICE.md` bans "helpfulness narration" and self-audit, but says nothing about
+infrastructure narration, and `CHARTER`'s prime directive is about choice
+load, which this technically doesn't add to. It is a real failure with no rule
+covering it — the gap is in the spec, not in adherence.
+
+## `overclaim` — twice, both the same shape
+
+Both are Cabinet reporting an absence in its own records as an absence in the
+world ("nothing is running", "this thread has no prior messages") while Ben
+was looking at the thing on screen. One was hedged with "on my end"; the other
+was not. `VOICE.md` names this failure precisely — the "Nothing on file" rule
+— so here the rule exists and adherence is partial, which is a different
+problem from `onboarding-pitch` and wants a different fix.
+
+## `no-reply` — 2 of 30
+
+Both are Ben pointing at UI behaviour mid-session. Not yet diagnosed;
+`perf_span` and `pending-turn.json` should say whether the turn crashed or was
+superseded.
+
+## What this changes about the redesign
+
+The single highest-leverage change suggested by this pass is **not** a
+rewording of any memory file. It is that **injected per-turn context outranks
+the prose**: `profileGap` recited its field list straight through a file that
+told the model not to. Before touching `CHARTER`/`VOICE`/`PLAYBOOK` wording,
+audit what `assemblePrompt` actually injects and what shape it is in.
+
+Sample caveat: 30 turns, one labeller, one pass. These are directions to
+investigate, not measurements to optimise against.
