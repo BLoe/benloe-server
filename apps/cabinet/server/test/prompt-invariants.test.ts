@@ -94,7 +94,10 @@ describe('the length rule can actually fire', () => {
     // length rule must never be the only length rule again.
     const length = TURN_DISCIPLINE.slice(TURN_DISCIPLINE.indexOf('Length:'));
     const firstSentence = length.slice(0, length.indexOf('\n\n'));
-    expect(firstSentence).not.toMatch(/desk register/i);
+    // Not just "does not say desk": ANY conditional in the opening clause
+    // re-scopes the rule, and re-scoping it to some other never-true state is
+    // the same bug wearing a different name.
+    expect(firstSentence).not.toMatch(/\bregister\b|\bmode\b|\bif\b|\bwhen\b|\bunless\b|\bexcept\b|\bexempt\b/i);
     expect(firstSentence).toMatch(/short|brief|match the reply/i);
   });
 
@@ -130,15 +133,24 @@ describe('memory files a turn depends on', () => {
     expect(() => assemblePrompt(mem, { kind: 'user', domainFiles: ['domains/nope.md'] })).not.toThrow();
   });
 
-  it('keeps CORRECTIONS.md ahead of the narrative files it outranks', () => {
-    // CORRECTIONS is append-only and wins conflicts with USER.md; ordering is
-    // how that precedence is expressed to the model.
+  it('places CORRECTIONS.md immediately AFTER USER.md, which is how it outranks it', () => {
+    // The name of this test used to say "ahead of", while its assertion said
+    // the opposite — and the assertion was the correct one, so the test could
+    // not fail and actively misled a reader about the precedence rule.
+    //
+    // CORRECTIONS is append-only and wins conflicts with USER.md. It wins by
+    // coming LATER: memory/index.ts puts it immediately after USER.md so the
+    // correction is the last thing read on that subject. Adjacency is the
+    // property worth pinning, not merely relative order — an unrelated file
+    // inserted between them would break the intent while passing a
+    // less-than check.
     const mem = store();
     const dir = (mem as unknown as { dir: string }).dir;
     writeFileSync(join(dir, 'CORRECTIONS.md'), '# CORRECTIONS\nC-1 | a correction\n');
     writeFileSync(join(dir, 'USER.md'), '# USER\nsomething about Ben\n');
     const { systemPrompt } = assemblePrompt(mem, { kind: 'user' });
-    expect(systemPrompt.indexOf('CORRECTIONS.md')).toBeGreaterThan(-1);
-    expect(systemPrompt.indexOf('USER.md')).toBeLessThan(systemPrompt.indexOf('CORRECTIONS.md'));
+    const files = [...systemPrompt.matchAll(/<memory file="([^"]+)">/g)].map((m) => m[1]);
+    expect(files).toContain('CORRECTIONS.md');
+    expect(files.indexOf('CORRECTIONS.md')).toBe(files.indexOf('USER.md') + 1);
   });
 });
