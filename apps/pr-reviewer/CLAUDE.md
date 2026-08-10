@@ -17,11 +17,32 @@ dependency would be someone else's maintenance burden for no leverage.
 
 ## Things that will bite you
 
-- **Auth is the GitHub App, never `gh`.** The `gh` CLI token on this box
-  expires and needs a human to re-auth; an unattended timer cannot depend on
-  that. `src/github.mjs` mints a fresh installation token each poll from
-  `GITHUB_APP_*` in `/srv/benloe/.env`. `readEnvKeys` returns **only** the keys
-  it is asked for — keep it that way.
+- **Auth is the `benloe-pr-reviewer` GitHub App, never `gh` and never
+  `cabinet-benloe`.** The `gh` CLI token on this box expires and needs a human
+  to re-auth; an unattended timer cannot depend on that. `src/github.mjs` mints
+  a fresh installation token each poll from
+  `PR_REVIEWER_{APP_ID,INSTALLATION_ID,PRIVATE_KEY_B64}` in `/srv/benloe/.env`.
+  That identity has `contents:read` (to fetch) and `pull_requests:write` (to
+  post), and deliberately **no `contents:write`** — it cannot push or merge.
+
+  `reviewerCredentials()` has **no fallback** to `GITHUB_APP_*`. A fallback
+  would let a typo silently promote the reviewer to the write-capable
+  `cabinet-benloe` identity with everything still appearing to work.
+  `readEnvKeys` returns **only** the keys it is asked for — keep it that way.
+
+- **The git working area is the reviewer's own bare mirror**
+  (`/var/lib/pr-reviewer/repo.git`, `ensureMirror`), never `/srv/benloe`. That
+  is the live production checkout every service deploys from; fetching or
+  adding worktrees there mutates production to read a diff. The systemd
+  sandbox enforces it — `ProtectSystem=strict` with `/srv/benloe` absent from
+  `ReadWritePaths`. **Re-adding it would silently restore the old mistake.**
+  When the two first met, every review died on `cannot open '.git/FETCH_HEAD':
+  Read-only file system` and the app was down for four hours.
+
+  Fetching is over HTTPS with the installation token, not the SSH deploy key:
+  the key can push and lives in `/root/.ssh`, which the sandbox makes
+  inaccessible. The token rides in `GIT_CONFIG_*` env vars (out of `ps`), and
+  `agentEnv()` strips them before the review agent is spawned.
 
 - **Reviews are keyed on head SHA, not PR number.** New commits earn a new
   review; an untouched branch is never re-reviewed. State lives at

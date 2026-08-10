@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ALLOWED_TOOLS, parseResult, renderPrompt } from '../src/review.mjs';
+import { ALLOWED_TOOLS, agentEnv, parseResult, renderPrompt } from '../src/review.mjs';
 
 test('renderPrompt substitutes every placeholder', () => {
   const out = renderPrompt('PR {{NUMBER}} in {{REPO}} by {{AUTHOR}}', { NUMBER: 7, REPO: 'a/b', AUTHOR: 'ben' });
@@ -113,4 +113,28 @@ test('a signal death reports the signal, not "exited null"', () => {
   // "claude exited null" told the reader nothing about why.
   const stdout = JSON.stringify({ is_error: true, result: 'x' });
   assert.ok(!parseResult(stdout).ok);
+});
+
+test('agentEnv strips every GIT_CONFIG_* variable', () => {
+  // GIT_CONFIG_VALUE_0 holds "AUTHORIZATION: basic <base64 token>". The agent
+  // publishes to a public PR, so anything in its environment is one `env`
+  // away from being quoted there. Pinned for the same reason ALLOWED_TOOLS is:
+  // the dangerous edit is a simplification back to a bare {...process.env}.
+  const env = agentEnv({
+    PATH: '/usr/bin',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'http.extraheader',
+    GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic c2VjcmV0',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+  });
+  assert.equal(env.PATH, '/usr/bin');
+  assert.equal(env.CLAUDE_CODE_ENTRYPOINT, 'pr-reviewer');
+  for (const k of Object.keys(env)) assert.ok(!k.startsWith('GIT_CONFIG'), `${k} survived`);
+  assert.ok(!JSON.stringify(env).includes('c2VjcmV0'), 'token material must not survive in any form');
+});
+
+test('agentEnv does not mutate the environment it was given', () => {
+  const base = { GIT_CONFIG_COUNT: '1' };
+  agentEnv(base);
+  assert.equal(base.GIT_CONFIG_COUNT, '1');
 });
