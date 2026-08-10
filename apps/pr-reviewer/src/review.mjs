@@ -251,9 +251,17 @@ export function agentEnv(base = process.env) {
  * cause at all. Discarding the one stream that held the answer is exactly the
  * silent-failure shape this app exists to avoid.
  */
-export function describeExit({ code, signal, stderr = '', stdout = '' }) {
+export function describeExit({ code, signal, stderr = '', stdout = '', budget = 1200 }) {
   const how = signal ? `killed by ${signal}` : `exited ${code}`;
-  const detail = [stderr.trim().slice(-1200), stdout.trim().slice(-1200)].filter(Boolean).join('\n\n');
+  // Each stream gets HALF the budget, and stdout comes first. Previously both
+  // took 1200 and stdout was appended second — so renderFailureBody's 1500
+  // cap truncated away exactly the stream that usually holds the cause, since
+  // the CLI reports errors as JSON on stdout while stderr stays empty or
+  // noisy. Splitting the budget means neither stream can starve the other.
+  const half = Math.floor(budget / 2);
+  const out = stdout.trim().slice(-half);
+  const err = stderr.trim().slice(-half);
+  const detail = [out && `stdout: ${out}`, err && `stderr: ${err}`].filter(Boolean).join('\n\n');
   return `claude ${how}${detail ? `\n\n${detail}` : ''}`;
 }
 
@@ -348,12 +356,13 @@ export function parseResult(stdout) {
   if (data.findings.length === 0 && data.summary.trim().length < MIN_SUMMARY_CHARS) {
     return {
       ok: false,
-      // The summary is NOT in the message. state.mjs keys failure
-      // de-duplication on the error's first line, so embedding model output
-      // there makes every retry look like a NEW failure and posts a fresh
-      // comment every five minutes — the exact spam the de-dup exists to
-      // prevent. Length is enough to diagnose it.
-      error: `orchestrator returned no findings and a ${data.summary.trim().length}-char summary`,
+      // The FIRST LINE must be byte-stable across retries: state.mjs keys
+      // failure de-duplication on it, so anything varying there posts a fresh
+      // comment every five minutes. The previous attempt at this fix put the
+      // summary's character count on the first line — which varies run to run
+      // and defeated the very de-duplication its comment cited. The varying
+      // detail goes on line two, where the key never sees it.
+      error: `orchestrator returned no findings and no usable summary\n\n(summary was ${data.summary.trim().length} chars)`,
     };
   }
   // Re-validate every finding rather than trusting the constrained decoder.

@@ -161,7 +161,12 @@ export const listReviews = (token, repo, number) => gh(token, `/repos/${repo}/pu
  */
 export async function dismissStaleApprovals(token, repo, number, login, currentSha, logger) {
   const reviews = await listReviews(token, repo, number);
-  const stale = reviews.filter((r) => r.state === 'APPROVED' && r.user?.login === login && r.commit_id !== currentSha);
+  // EVERY approval of ours, including one pinned to the sha being reported on
+  // now. An earlier version exempted the current sha, which exempted the case
+  // most in need of it: re-reviewing a sha we previously approved and finding
+  // a problem this time left the old APPROVE standing next to the new
+  // COMMENT. This is only ever called when the new verdict is NOT an approve.
+  const stale = reviews.filter((r) => r.state === 'APPROVED' && r.user?.login === login);
   for (const r of stale) {
     try {
       await gh(token, `/repos/${repo}/pulls/${number}/reviews/${r.id}/dismissals`, {

@@ -386,7 +386,7 @@ async function main() {
  * cannot catch it either: the syntax is fine, the binding simply is not
  * there. Importing the module is what proves its imports resolve.
  */
-const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+export const isDirectRun = Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isDirectRun) {
   main().catch((e) => {
     log(`FATAL ${e.stack ?? e.message}`);

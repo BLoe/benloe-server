@@ -21,10 +21,14 @@ test('poll.mjs links — every name it imports actually exists', async () => {
 
 test('importing poll.mjs does not start a poll', async () => {
   // If it self-invoked, importing it here would hit GitHub and could post a
-  // real review from a test run.
-  const before = process.exitCode;
-  await import('../src/poll.mjs');
-  assert.equal(process.exitCode, before);
+  // real review from a test run. The previous version of this test compared
+  // process.exitCode before and after the import, which is unchanged whether
+  // or not main() ran — it could not fail. isDirectRun is the actual switch,
+  // so assert on that: under the test runner argv[1] is the runner, not
+  // poll.mjs, and this flips to true the moment someone reintroduces an
+  // unconditional main().
+  const mod = await import('../src/poll.mjs');
+  assert.equal(mod.isDirectRun, false, 'poll.mjs must not consider itself directly run under a test');
 });
 
 test('every src module links', async () => {
