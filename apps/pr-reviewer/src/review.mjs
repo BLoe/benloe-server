@@ -3,7 +3,7 @@
  * validated findings object.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export const FINDINGS_SCHEMA = {
@@ -51,6 +51,13 @@ export function renderPrompt(template, vars) {
  */
 function git(cwd, token, ...args) {
   const env = { ...process.env };
+  // GIT_TRACE / GIT_TRACE_CURL / GIT_CURL_VERBOSE print request headers,
+  // including the Authorization header built below, to stderr — which this
+  // service carries into the failure comment it posts on a PUBLIC PR. An
+  // ambient debug flag must not be able to leak the token.
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('GIT_TRACE') || k === 'GIT_CURL_VERBOSE') delete env[k];
+  }
   if (token) {
     env.GIT_CONFIG_COUNT = '1';
     env.GIT_CONFIG_KEY_0 = 'http.extraheader';
@@ -74,37 +81,46 @@ function git(cwd, token, ...args) {
  * stay strict because the only writable path is one this service owns.
  */
 export function ensureMirror(mirrorDir, repo, token) {
-  if (!existsSync(join(mirrorDir, 'HEAD'))) {
-    mkdirSync(dirname(mirrorDir), { recursive: true });
-    git(dirname(mirrorDir), token, 'clone', '--mirror', `https://github.com/${repo}.git`, mirrorDir);
-  }
+  if (existsSync(join(mirrorDir, 'HEAD'))) return mirrorDir;
+  // Clone to a scratch path and rename into place. `git clone --mirror`
+  // writes HEAD before the object transfer finishes, so a SIGKILL (the 50min
+  // TimeoutStartSec), an OOM kill, or a reboot mid-clone would otherwise
+  // leave a directory that satisfies the existence check with an incomplete
+  // object store — and every later run would take the fast path forever,
+  // needing a human with rm -rf. Rename is atomic; a partial scratch dir is
+  // just discarded next time.
+  const parent = dirname(mirrorDir);
+  const scratch = `${mirrorDir}.partial`;
+  mkdirSync(parent, { recursive: true });
+  rmSync(scratch, { recursive: true, force: true });
+  git(parent, token, 'clone', '--mirror', `https://github.com/${repo}.git`, scratch);
+  renameSync(scratch, mirrorDir);
   return mirrorDir;
 }
 
 /**
- * Check the PR head out into a throwaway worktree.
- *
- * A worktree rather than a branch checkout in the monorepo itself: the live
- * checkout at /srv/benloe is what the running services are deployed from, and
- * a reviewer that moves its HEAD would be editing production to read a diff.
+ * Check the PR head out into a throwaway worktree of the reviewer's own bare
+ * mirror (ensureMirror). Nothing here touches /srv/benloe — that is the live
+ * production checkout, and a reviewer that fetched or moved HEAD there would
+ * be mutating production to read a diff.
  */
-export function makeWorktree(repoDir, root, number, headSha, baseRef, token) {
+export function makeWorktree(mirrorDir, root, number, headSha, baseRef, token) {
   const dir = join(root, `pr-${number}`);
   rmSync(dir, { recursive: true, force: true });
-  git(repoDir, token, 'worktree', 'prune');
+  git(mirrorDir, token, 'worktree', 'prune');
   // BOTH refs, always. The base is fetched because mergeBase() resolves
   // origin/<base>: a stale remote-tracking ref yields a merge base older than
   // the true one, so the review diff picks up commits already merged into the
   // base and the reviewer reports findings on code this PR never touched —
   // exactly the cry-wolf failure the orchestrator prompt guards against.
-  git(repoDir, token, 'fetch', 'origin', `pull/${number}/head`, `+refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`, '--quiet');
-  git(repoDir, token, 'worktree', 'add', '--detach', dir, headSha);
+  git(mirrorDir, token, 'fetch', 'origin', `pull/${number}/head`, `+refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`, '--quiet');
+  git(mirrorDir, token, 'worktree', 'add', '--detach', dir, headSha);
   return dir;
 }
 
-export function removeWorktree(repoDir, dir, logger) {
+export function removeWorktree(mirrorDir, dir, logger) {
   try {
-    git(repoDir, null, 'worktree', 'remove', '--force', dir);
+    git(mirrorDir, null, 'worktree', 'remove', '--force', dir);
     return;
   } catch (e) {
     logger?.(`worktree remove failed for ${dir}, falling back to rm: ${e.message}`);
