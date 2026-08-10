@@ -32,7 +32,13 @@ const bySeverity = (a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf
  * is the one that matters — see REVIEW_EVENT: it can approve, and it still
  * cannot REQUEST_CHANGES.
  */
-export function accepts(findings) {
+export function accepts(findings, rejectedCount = 0) {
+  // A finding that failed re-validation is quarantined into result.rejected
+  // and never reaches this list — so a malformed CRITICAL would otherwise
+  // vanish and produce an APPROVE reading "accepted. Nothing found." The
+  // review's own output was malformed; what it found is unknown, and unknown
+  // is not clean. This did not matter while every review was a COMMENT.
+  if (rejectedCount > 0) return false;
   return !findings.some((f) => f.severity === 'critical' || f.severity === 'important');
 }
 
@@ -45,7 +51,8 @@ export function accepts(findings) {
  * same findings without the deadlock, so the blocking direction stays advisory
  * while the accepting direction becomes real.
  */
-export const REVIEW_EVENT = (findings) => (accepts(findings) ? 'APPROVE' : 'COMMENT');
+export const REVIEW_EVENT = (findings, rejectedCount = 0) =>
+  accepts(findings, rejectedCount) ? 'APPROVE' : 'COMMENT';
 
 function counts(findings) {
   const c = { critical: 0, important: 0, suggestion: 0 };
@@ -81,13 +88,21 @@ function renderFinding(f, { withLocation }) {
  *   title only, so the body still shows the full picture without duplicating
  *   text the reader is about to see in context.
  */
-export function renderReviewBody({ summary, strengths = [], bodyFindings, inlineFindings, headSha, durationMs }) {
+export function renderReviewBody({ summary, strengths = [], bodyFindings, inlineFindings, headSha, durationMs, rejectedCount = 0 }) {
   const all = [...bodyFindings, ...inlineFindings];
   const c = counts(all);
+  const malformed =
+    rejectedCount > 0
+      ? [
+          '',
+          `> ⚠️ ${rejectedCount} finding(s) came back malformed and were discarded. This review is **not** accepted regardless of the counts below — what those findings said is unknown.`,
+        ]
+      : [];
   const out = [
     '## Automated review',
     '',
-    verdictLine(c),
+    rejectedCount > 0 ? '**Verdict: not accepted — the review returned malformed findings.**' : verdictLine(c),
+    ...malformed,
     '',
     `${c.critical} critical · ${c.important} important · ${c.suggestion} suggestion${c.suggestion === 1 ? '' : 's'}`,
     '',

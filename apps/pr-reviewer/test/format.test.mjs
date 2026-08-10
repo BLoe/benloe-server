@@ -111,3 +111,29 @@ test('the rendered verdict never disagrees with the posted event', () => {
     assert.equal(/Verdict: accepted/.test(md), shouldAccept, `verdict text disagreed for ${JSON.stringify(findings)}`);
   }
 });
+
+test('a discarded malformed finding can never produce an APPROVE', () => {
+  // parseResult quarantines findings that fail re-validation, so a malformed
+  // CRITICAL never reaches the findings list. Approving on the survivors would
+  // mean approving a PR whose review is known to be incomplete.
+  assert.ok(!accepts([], 1));
+  assert.ok(!accepts([{ severity: 'suggestion' }], 1));
+  assert.equal(REVIEW_EVENT([], 1), 'COMMENT');
+  assert.equal(REVIEW_EVENT([], 0), 'APPROVE');
+});
+
+test('the body says why it was not accepted when findings were malformed', () => {
+  const md = renderReviewBody({ ...base, bodyFindings: [], inlineFindings: [], rejectedCount: 2 });
+  assert.match(md, /not accepted — the review returned malformed findings/);
+  assert.match(md, /2 finding\(s\) came back malformed/);
+  // The old body would have read "accepted. Nothing found." on this input.
+  assert.ok(!/Verdict: accepted/.test(md));
+});
+
+test('REQUEST_CHANGES stays unreachable even with malformed findings', () => {
+  for (const n of [0, 1, 5]) {
+    for (const f of [[], [{ severity: 'critical' }], [{ severity: 'suggestion' }]]) {
+      assert.notEqual(REVIEW_EVENT(f, n), 'REQUEST_CHANGES');
+    }
+  }
+});
