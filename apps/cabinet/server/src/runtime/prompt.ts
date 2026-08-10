@@ -81,12 +81,27 @@ export interface AssembledPrompt {
  * This is register discipline, not personality — the character lives in
  * CHARTER.md / VOICE.md and must keep winning any conflict.
  *
- * LENGTH, 2026-08-10. The length clause used to read "desk register stays
- * tight ... counsel register is exempt". Measured over the 78 real turns
- * since the v2 stack landed, chat.register was `counsel` on 60 of 60 sampled
- * turns and has never once been `desk` — so every turn took the exemption and
- * the only length instruction in the prompt applied to nothing. Cabinet was
- * not ignoring the rule; the rule had no arm.
+ * LENGTH, 2026-08-10. The clause used to read "desk register stays tight ...
+ * counsel register is exempt".
+ *
+ * The reason it did nothing is sharper than "every turn is counsel", which
+ * was the first diagnosis and was wrong about the mechanism. `register`
+ * reaches exactly one place — effortForRegister in runtime/agent.ts — and
+ * THIS function takes no register parameter. chat.register never enters the
+ * prompt at all. So the model was never told which register it was in: it
+ * read a rule keyed on a distinction it could not observe, and guessed, every
+ * turn. An inert rule fails predictably; an unobservable one fails however
+ * the model guesses, and Opus 5's documented default guess is long.
+ *
+ * That also means fixing the register classifier would not have fixed length:
+ * register only sets effort, and Anthropic's guidance is explicit that effort
+ * "does not reliably change visible response length". Two mechanisms were
+ * assumed to connect and neither does — which is why the fix here is an
+ * unconditional rule rather than a better-tuned conditional one.
+ *
+ * (For the record, the classifier is separately broken: chat.register was
+ * `counsel` on 60 of 60 sampled v2 turns and has never once been `desk`.
+ * That is a real bug, just not this one's cause.)
  *
  * Measured at the same time: replies p50 3070 chars against Ben's p50 284, a
  * 10.8x ratio, and 19 of 60 turns that were themselves under 160 characters
