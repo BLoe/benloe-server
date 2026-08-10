@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ALLOWED_TOOLS, gitEnv, gitWithTimeout, GIT_TIMEOUT_MS, agentEnv, escapeUntrusted, parseResult, renderPrompt } from '../src/review.mjs';
+import {
+  ALLOWED_TOOLS,
+  GIT_TIMEOUT_MS,
+  agentEnv,
+  describeExit,
+  escapeUntrusted,
+  gitEnv,
+  gitWithTimeout,
+  parseResult,
+  renderPrompt,
+} from '../src/review.mjs';
 
 test('renderPrompt substitutes every placeholder', () => {
   const out = renderPrompt('PR {{NUMBER}} in {{REPO}} by {{AUTHOR}}', { NUMBER: 7, REPO: 'a/b', AUTHOR: 'ben' });
@@ -17,16 +27,19 @@ test('renderPrompt blanks an unsupplied placeholder rather than leaving the lite
 test('parseResult unwraps the doubly-encoded structured output', () => {
   const stdout = JSON.stringify({
     is_error: false,
-    result: JSON.stringify({ summary: 'ok', findings: [{ severity: 'important', title: 't', detail: 'd' }] }),
+    result: JSON.stringify({
+      summary: 'A representative summary long enough to be a real one.',
+      findings: [{ severity: 'important', title: 't', detail: 'd' }],
+    }),
   });
   const r = parseResult(stdout);
   assert.ok(r.ok);
-  assert.equal(r.data.summary, 'ok');
+  assert.match(r.data.summary, /representative summary/);
   assert.equal(r.data.findings.length, 1);
 });
 
 test('parseResult accepts an already-parsed result object', () => {
-  const stdout = JSON.stringify({ result: { summary: 'ok', findings: [] } });
+  const stdout = JSON.stringify({ result: { summary: 'A representative summary, already parsed.', findings: [] } });
   const r = parseResult(stdout);
   assert.ok(r.ok);
   assert.deepEqual(r.data.findings, []);
@@ -79,7 +92,7 @@ test('the tool allowlist is exactly this set', () => {
 test('parseResult drops a finding with a bogus severity instead of silently losing it in the renderer', () => {
   const stdout = JSON.stringify({
     result: JSON.stringify({
-      summary: 's',
+      summary: 'A representative summary long enough to be a real one.',
       findings: [
         { severity: 'important', title: 'good', detail: 'd' },
         { severity: 'blocker', title: 'bad severity', detail: 'd' },
@@ -98,7 +111,7 @@ test('parseResult drops a finding with a bogus severity instead of silently losi
 test('parseResult keeps optional fields when they are well formed', () => {
   const stdout = JSON.stringify({
     result: JSON.stringify({
-      summary: 's',
+      summary: 'A representative summary long enough to be a real one.',
       findings: [{ severity: 'suggestion', title: 't', detail: 'd', file: 'a.ts', line: 3, agent: 'code-reviewer' }],
     }),
   });
@@ -224,4 +237,93 @@ test('gitEnv does not mutate the environment it was given', () => {
   const base = { GIT_TRACE: '1' };
   gitEnv('tok', base);
   assert.equal(base.GIT_TRACE, '1');
+});
+
+test('an empty or vacuous summary is a failed run, not a clean review', () => {
+  // Schema-valid and meaningless: it would have rendered as "accepted.
+  // Nothing found." and posted an APPROVE.
+  for (const summary of ['', '   ', 'ok', 'Looks fine.']) {
+    const r = parseResult(JSON.stringify({ result: JSON.stringify({ summary, findings: [] }) }));
+    assert.ok(!r.ok, `summary ${JSON.stringify(summary)} should not be accepted`);
+    assert.match(r.error, /no findings and no usable summary/);
+    // The model's own text must NOT be in the message: state.mjs keys failure
+    // de-duplication on the first line, so embedded model output would make
+    // every retry look like a new failure and post a comment every tick.
+    if (summary.trim()) assert.ok(!r.error.includes(summary.trim()));
+  }
+});
+
+test('a real summary still passes', () => {
+  const r = parseResult(
+    JSON.stringify({ result: JSON.stringify({ summary: 'This PR adds a scheduled reviewer and it looks sound.', findings: [] }) }),
+  );
+  assert.ok(r.ok);
+});
+
+test('a short summary is only fatal when the run also found nothing', () => {
+  // The first version of this guard discarded ANY short-summary run,
+  // including one carrying real critical findings — strictly worse than the
+  // vacuous-approve bug it was written to fix.
+  const withFindings = JSON.stringify({
+    result: JSON.stringify({ summary: 'Test', findings: [{ severity: 'critical', title: 'Secret in diff', detail: 'd' }] }),
+  });
+  const r = parseResult(withFindings);
+  assert.ok(r.ok, 'a run that found a critical must survive a terse summary');
+  assert.equal(r.data.findings[0].severity, 'critical');
+
+  const vacuous = parseResult(JSON.stringify({ result: JSON.stringify({ summary: 'Test', findings: [] }) }));
+  assert.ok(!vacuous.ok);
+  assert.match(vacuous.error, /no findings and no usable summary/);
+});
+
+test('a non-zero exit carries whichever stream actually explains it', () => {
+  // The CLI reports some failures as JSON on STDOUT while exiting non-zero
+  // and writing nothing to stderr. Discarding stdout produced a bare
+  // "claude exited 1" on a real PR, naming no cause at all.
+  const err = describeExit({ code: 1, signal: null, stderr: '', stdout: '{"is_error":true,"result":"Usage limit reached"}' });
+  assert.match(err, /exited 1/);
+  assert.match(err, /Usage limit reached/);
+});
+
+test('a signal death names the signal rather than "exited null"', () => {
+  const err = describeExit({ code: null, signal: 'SIGKILL', stderr: 'oom', stdout: '' });
+  assert.match(err, /killed by SIGKILL/);
+  assert.match(err, /oom/);
+  assert.doesNotMatch(err, /null/);
+});
+
+test('both streams are included when both have content', () => {
+  const err = describeExit({ code: 2, signal: null, stderr: 'stderr-said-this', stdout: 'stdout-said-that' });
+  assert.match(err, /stderr-said-this/);
+  assert.match(err, /stdout-said-that/);
+});
+
+test("the vacuous-summary error's first line is byte-stable across runs", () => {
+  // state.mjs de-duplicates failure comments on the first line. Anything
+  // varying there posts a fresh comment every five minutes — and the previous
+  // attempt at this fix put a varying character count on line one, defeating
+  // the de-duplication its own comment cited.
+  const firstLine = (summary) =>
+    parseResult(JSON.stringify({ result: JSON.stringify({ summary, findings: [] }) })).error.split('\n')[0];
+  assert.equal(firstLine(''), firstLine('Test'));
+  assert.equal(firstLine('Test'), firstLine('ok then'));
+  // The varying detail still survives, just below the key.
+  assert.match(parseResult(JSON.stringify({ result: JSON.stringify({ summary: 'Test', findings: [] }) })).error, /4 chars/);
+});
+
+test('describeExit gives each stream its own budget so neither starves the other', () => {
+  // stdout usually holds the cause (the CLI reports errors as JSON there),
+  // and it used to be appended second — so a noisy stderr pushed it past
+  // renderFailureBody's 1500-char cap and truncated away the answer.
+  const err = describeExit({
+    code: 1,
+    signal: null,
+    stderr: 'E'.repeat(5000),
+    stdout: 'S'.repeat(5000),
+    budget: 100,
+  });
+  assert.match(err, /stdout: S{50}/);
+  assert.match(err, /stderr: E{50}/);
+  assert.ok(err.indexOf('stdout:') < err.indexOf('stderr:'), 'stdout must come first');
+  assert.ok(err.length < 300);
 });

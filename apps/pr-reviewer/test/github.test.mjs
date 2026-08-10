@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { appJwt, readEnvKeys, reviewerCredentials } from '../src/github.mjs';
+import { appJwt, dismissStaleApprovals, postReview, readEnvKeys, reviewerCredentials } from '../src/github.mjs';
 
 function envFile(contents) {
   const path = join(mkdtempSync(join(tmpdir(), 'pr-reviewer-env-')), '.env');
@@ -86,4 +86,111 @@ test('reviewerCredentials accepts a real key', () => {
     ['PR_REVIEWER_APP_ID=1', 'PR_REVIEWER_INSTALLATION_ID=2', `PR_REVIEWER_PRIVATE_KEY_B64=${Buffer.from(pem).toString('base64')}`].join('\n'),
   );
   assert.equal(reviewerCredentials(path).privateKeyPem, pem);
+});
+
+test('postReview pins the review to the sha that was read', async () => {
+  // Without commit_id, GitHub attaches the review to the head at submission
+  // time — so a commit pushed during the minutes a review takes would collect
+  // an APPROVE for code nobody read. That is the merge gate, silently wrong.
+  let sent;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    await postReview('tok', 'o/r', 7, 'body', [], 'APPROVE', 'deadbeef');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(sent.commit_id, 'deadbeef');
+  assert.equal(sent.event, 'APPROVE');
+});
+
+test('postReview omits commit_id rather than sending a null one', async () => {
+  let sent;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    await postReview('tok', 'o/r', 7, 'body', []);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.ok(!('commit_id' in sent));
+  assert.equal(sent.event, 'COMMENT');
+});
+
+test('dismissStaleApprovals touches only our own approvals, and only approvals', async () => {
+  // The login filter is the whole safety property: without it this would
+  // dismiss a HUMAN's approval, which the bot has no business doing. The sha
+  // is deliberately NOT filtered on — an approval at the current sha is the
+  // one most in need of withdrawal when this run found a problem.
+  const reviews = [
+    { id: 1, state: 'APPROVED', user: { login: 'benloe-pr-reviewer[bot]' }, commit_id: 'old' },
+    { id: 2, state: 'APPROVED', user: { login: 'benloe-pr-reviewer[bot]' }, commit_id: 'current' },
+    { id: 3, state: 'APPROVED', user: { login: 'BLoe' }, commit_id: 'old' },
+    { id: 4, state: 'COMMENTED', user: { login: 'benloe-pr-reviewer[bot]' }, commit_id: 'old' },
+  ];
+  const dismissed = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/reviews?per_page=100')) {
+      return { ok: true, status: 200, json: async () => reviews };
+    }
+    dismissed.push(String(url).match(/reviews\/(\d+)\/dismissals/)?.[1]);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    const n = await dismissStaleApprovals('tok', 'o/r', 7, 'benloe-pr-reviewer[bot]', 'current');
+    assert.equal(n, 2, 'both of our approvals, at any sha');
+    assert.deepEqual(dismissed, ['1', '2']);
+    assert.ok(!dismissed.includes('3'), "a human's approval is never touched");
+    assert.ok(!dismissed.includes('4'), 'a COMMENTED review is not an approval');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a failed dismissal does not abort the rest', async () => {
+  const reviews = [
+    { id: 1, state: 'APPROVED', user: { login: 'bot[bot]' }, commit_id: 'old' },
+    { id: 2, state: 'APPROVED', user: { login: 'bot[bot]' }, commit_id: 'older' },
+  ];
+  let calls = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/reviews?per_page=100')) return { ok: true, status: 200, json: async () => reviews };
+    calls += 1;
+    if (calls === 1) return { ok: false, status: 422, text: async () => 'nope' };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    await dismissStaleApprovals('tok', 'o/r', 7, 'bot[bot]', 'current');
+    assert.equal(calls, 2, 'the second dismissal must still be attempted');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('dismissStaleApprovals withdraws an approval at the current sha too', async () => {
+  // The case most in need of it: re-reviewing a sha we previously approved
+  // and finding a problem this time. An earlier version exempted it, leaving
+  // the old APPROVE standing next to the new COMMENT.
+  const reviews = [{ id: 9, state: 'APPROVED', user: { login: 'bot[bot]' }, commit_id: 'current' }];
+  const dismissed = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/reviews?per_page=100')) return { ok: true, status: 200, json: async () => reviews };
+    dismissed.push(String(url).match(/reviews\/(\d+)\/dismissals/)?.[1]);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  try {
+    assert.equal(await dismissStaleApprovals('tok', 'o/r', 7, 'bot[bot]', 'current'), 1);
+    assert.deepEqual(dismissed, ['9']);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
