@@ -189,7 +189,7 @@ test('an empty or vacuous summary is a failed run, not a clean review', () => {
   for (const summary of ['', '   ', 'ok', 'Looks fine.']) {
     const r = parseResult(JSON.stringify({ result: JSON.stringify({ summary, findings: [] }) }));
     assert.ok(!r.ok, `summary ${JSON.stringify(summary)} should not be accepted`);
-    assert.match(r.error, /empty summary/);
+    assert.match(r.error, /no findings and no real summary/);
   }
 });
 
@@ -198,4 +198,20 @@ test('a real summary still passes', () => {
     JSON.stringify({ result: JSON.stringify({ summary: 'This PR adds a scheduled reviewer and it looks sound.', findings: [] }) }),
   );
   assert.ok(r.ok);
+});
+
+test('a short summary is only fatal when the run also found nothing', () => {
+  // The first version of this guard discarded ANY short-summary run,
+  // including one carrying real critical findings — strictly worse than the
+  // vacuous-approve bug it was written to fix.
+  const withFindings = JSON.stringify({
+    result: JSON.stringify({ summary: 'Test', findings: [{ severity: 'critical', title: 'Secret in diff', detail: 'd' }] }),
+  });
+  const r = parseResult(withFindings);
+  assert.ok(r.ok, 'a run that found a critical must survive a terse summary');
+  assert.equal(r.data.findings[0].severity, 'critical');
+
+  const vacuous = parseResult(JSON.stringify({ result: JSON.stringify({ summary: 'Test', findings: [] }) }));
+  assert.ok(!vacuous.ok);
+  assert.match(vacuous.error, /no findings and no real summary/);
 });

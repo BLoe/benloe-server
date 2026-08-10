@@ -205,9 +205,26 @@ async function reviewOne(token, pr, template, state) {
     // head — mismatched anchors make GitHub 422 the entire review, losing it.
     // Rather than reconcile two commits, abandon: the new head is unreviewed,
     // so the next tick picks it up five minutes later and reviews what is
-    // actually there. Nothing is lost and nothing stale is ever posted.
-    const fresh = await gh(token, `/repos/${CONFIG.repo}/pulls/${pr.number}`);
-    if (fresh.head.sha !== head) {
+    // actually there. This narrows the window rather than closing it — a push
+    // landing between this probe and the post still races — but it removes
+    // the common case at no cost.
+    // A dry run posts nothing, so there is nothing to go stale — and probing
+    // would make `PR_REVIEWER_DRY_RUN=1` unable to re-render an old sha,
+    // which is the entire point of that mode.
+    //
+    // A transient GitHub error here must not discard a completed review, so
+    // the probe fails OPEN: if we cannot tell whether the head moved, post.
+    // The worst case is the 422 this check exists to avoid, which is visible;
+    // the alternative silently throws away minutes of finished work.
+    let fresh = null;
+    if (!CONFIG.dryRun) {
+      try {
+        fresh = await gh(token, `/repos/${CONFIG.repo}/pulls/${pr.number}`);
+      } catch (e) {
+        log(`PR #${pr.number} — could not re-check head (${e.message}); posting anyway`);
+      }
+    }
+    if (fresh && fresh.head.sha !== head) {
       log(`PR #${pr.number} — head moved ${head.slice(0, 8)} → ${fresh.head.sha.slice(0, 8)} during review; discarding, next tick will re-review`);
       return;
     }
