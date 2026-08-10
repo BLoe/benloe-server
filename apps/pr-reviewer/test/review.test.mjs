@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ALLOWED_TOOLS, gitWithTimeout, GIT_TIMEOUT_MS, agentEnv, escapeUntrusted, parseResult, renderPrompt } from '../src/review.mjs';
+import { ALLOWED_TOOLS, gitEnv, gitWithTimeout, GIT_TIMEOUT_MS, agentEnv, escapeUntrusted, parseResult, renderPrompt } from '../src/review.mjs';
 
 test('renderPrompt substitutes every placeholder', () => {
   const out = renderPrompt('PR {{NUMBER}} in {{REPO}} by {{AUTHOR}}', { NUMBER: 7, REPO: 'a/b', AUTHOR: 'ben' });
@@ -174,12 +174,54 @@ test('a git call that exceeds its cap names the operation and the limit', () => 
   // kill does not surface as a bare ETIMEDOUT — that string becomes the whole
   // failure comment on the PR.
   //
-  // `sleep` stands in for a hung fetch: gitWithTimeout runs any argv, and the
-  // point under test is the error translation, not git itself.
-  // A 1ms cap on a real git invocation is reliably killed.
+  // A 1ms cap on a real git invocation is reliably killed. What is under test
+  // is the error translation, not git.
   assert.throws(
     () => gitWithTimeout(process.cwd(), null, ['version'], 1),
     /git version exceeded 0s timeout/,
   );
   assert.ok(GIT_TIMEOUT_MS > 0 && GIT_TIMEOUT_MS < 20 * 60_000);
+});
+
+test('gitEnv scopes the credential to github.com, not to every host', () => {
+  // An unscoped http.extraheader is attached to EVERY request git makes,
+  // including a redirect to another host — which hands the installation token
+  // to whoever controls the redirect target.
+  const env = gitEnv('tok-123', { PATH: '/usr/bin' });
+  assert.equal(env.GIT_CONFIG_COUNT, '1');
+  assert.equal(env.GIT_CONFIG_KEY_0, 'http.https://github.com/.extraheader');
+  assert.ok(!/^http\.extraheader$/.test(env.GIT_CONFIG_KEY_0), 'must not be the unscoped key');
+  assert.match(env.GIT_CONFIG_VALUE_0, /^AUTHORIZATION: basic /);
+  assert.equal(
+    Buffer.from(env.GIT_CONFIG_VALUE_0.split(' ').pop(), 'base64').toString(),
+    'x-access-token:tok-123',
+  );
+});
+
+test('gitEnv strips tracing that would print the credential', () => {
+  // GIT_TRACE_CURL prints request headers to stderr, and this service carries
+  // stderr into a failure comment on a PUBLIC PR.
+  const env = gitEnv('tok-123', {
+    PATH: '/usr/bin',
+    GIT_TRACE: '1',
+    GIT_TRACE_CURL: '1',
+    GIT_TRACE_PACKET: '1',
+    GIT_CURL_VERBOSE: '1',
+  });
+  for (const k of ['GIT_TRACE', 'GIT_TRACE_CURL', 'GIT_TRACE_PACKET', 'GIT_CURL_VERBOSE']) {
+    assert.ok(!(k in env), `${k} survived`);
+  }
+  assert.equal(env.PATH, '/usr/bin');
+});
+
+test('gitEnv sets no credential at all when there is no token', () => {
+  const env = gitEnv(null, { PATH: '/usr/bin' });
+  for (const k of Object.keys(env)) assert.ok(!k.startsWith('GIT_CONFIG'), `${k} should be absent`);
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0', 'git must never block on a credential prompt');
+});
+
+test('gitEnv does not mutate the environment it was given', () => {
+  const base = { GIT_TRACE: '1' };
+  gitEnv('tok', base);
+  assert.equal(base.GIT_TRACE, '1');
 });
