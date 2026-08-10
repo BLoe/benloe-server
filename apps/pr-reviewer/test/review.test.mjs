@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ALLOWED_TOOLS, GIT_TIMEOUT_MS, agentEnv, escapeUntrusted, parseResult, renderPrompt } from '../src/review.mjs';
+import {
+  ALLOWED_TOOLS,
+  GIT_TIMEOUT_MS,
+  agentEnv,
+  describeExit,
+  escapeUntrusted,
+  parseResult,
+  renderPrompt,
+} from '../src/review.mjs';
 
 test('renderPrompt substitutes every placeholder', () => {
   const out = renderPrompt('PR {{NUMBER}} in {{REPO}} by {{AUTHOR}}', { NUMBER: 7, REPO: 'a/b', AUTHOR: 'ben' });
@@ -214,4 +222,26 @@ test('a short summary is only fatal when the run also found nothing', () => {
   const vacuous = parseResult(JSON.stringify({ result: JSON.stringify({ summary: 'Test', findings: [] }) }));
   assert.ok(!vacuous.ok);
   assert.match(vacuous.error, /no findings and no real summary/);
+});
+
+test('a non-zero exit carries whichever stream actually explains it', () => {
+  // The CLI reports some failures as JSON on STDOUT while exiting non-zero
+  // and writing nothing to stderr. Discarding stdout produced a bare
+  // "claude exited 1" on a real PR, naming no cause at all.
+  const err = describeExit({ code: 1, signal: null, stderr: '', stdout: '{"is_error":true,"result":"Usage limit reached"}' });
+  assert.match(err, /exited 1/);
+  assert.match(err, /Usage limit reached/);
+});
+
+test('a signal death names the signal rather than "exited null"', () => {
+  const err = describeExit({ code: null, signal: 'SIGKILL', stderr: 'oom', stdout: '' });
+  assert.match(err, /killed by SIGKILL/);
+  assert.match(err, /oom/);
+  assert.doesNotMatch(err, /null/);
+});
+
+test('both streams are included when both have content', () => {
+  const err = describeExit({ code: 2, signal: null, stderr: 'stderr-said-this', stdout: 'stdout-said-that' });
+  assert.match(err, /stderr-said-this/);
+  assert.match(err, /stdout-said-that/);
 });
