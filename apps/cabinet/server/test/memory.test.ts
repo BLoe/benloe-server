@@ -80,7 +80,10 @@ describe('MemoryStore', () => {
       // reverted the next day by a routine re-author of USER.md.
       'CORRECTIONS.md',
       'PLAYBOOK.md',
-      'PLATFORM.md',
+      // PLATFORM.md left the prompt on 2026-08-11, replaced by the
+      // repo-sourced SYSTEM.md. It is still on disk and still worth reading
+      // before server work; it is no longer carried into every conversation.
+      'SYSTEM.md',
     ];
     expect(expectedOrder.map(at)).toEqual([...expectedOrder.map(at)].sort((a, b) => a - b));
     expect(expectedOrder.every((f) => at(f) >= 0)).toBe(true);
