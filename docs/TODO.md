@@ -94,7 +94,7 @@ slightly cooler than the original.
 
 ---
 
-## 3. System
+## 3. System — IN PROGRESS 2026-08-11
 
 What Cabinet can do and how this environment works. Generic, no personal data,
 in the repo.
