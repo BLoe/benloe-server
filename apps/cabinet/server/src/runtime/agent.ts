@@ -723,17 +723,22 @@ export class AgentRuntime {
       }
       if (msg.type === 'system' && msg.subtype === 'init') {
         sessionId = msg.session_id ?? sessionId;
-        stopSpawn({ resumed: !!chat.sdk_session_id });
-        initAt = performance.now();
-        stepAt = initAt;
         // Record whether the cabinet MCP toolset actually came up for this
         // query. Nothing else does, and on 2026-08-08 a one-turn drop left no
         // server-side trace at all (task 58).
+        //
+        // The counts ride on the spawn span's meta rather than perf.describe():
+        // describe() sets the three row-level columns (chatId, sessionKind,
+        // model) and silently drops anything else, so it could not carry these
+        // even if it took them. The spawn span is where they belong anyway —
+        // "what did this query launch with" is a property of the launch.
         const mcp = readMcpStatus(msg as never);
         const line = describeTransition(lastMcpStatus, mcp);
         if (line) console.warn(`[mcp-health] chat=${req.chatId} ${line}`);
         lastMcpStatus = mcp;
-        perf.describe({ mcpTools: mcp.toolCount, mcpHealthy: mcp.healthy });
+        stopSpawn({ resumed: !!chat.sdk_session_id, mcpTools: mcp.toolCount, mcpHealthy: mcp.healthy });
+        initAt = performance.now();
+        stepAt = initAt;
         return;
       }
       if (msg.type === 'stream_event') {
