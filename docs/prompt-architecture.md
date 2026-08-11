@@ -19,9 +19,9 @@ pieces of reasoning under them do not, and the working list moved to
 - Tool count is not a problem worth solving. The SDK already defers Cabinet's
   tools behind tool search — all 63 cost 631 prefix tokens, against 10,172 if
   forced in. `PRIORITIES.md` item 5 is dropped.
-- The expensive toolset is the built-in one: 17,890 tokens before Cabinet adds
-  anything. That is now the largest item on the list and it is not discussed
-  anywhere below.
+- The built-in Claude Code toolset is 17,890 prefix tokens, ~12k of which
+  Cabinet never uses. Measured, considered, and dropped: it is cached, it is
+  8.5% of the window, and trimming it would not make Cabinet more useful.
 - Guidance living in tool descriptions is not read on a normal turn, because
   deferred tools expose a name and not a description. That is a stronger
   argument for the "system" layer than the one made below, and a different one.
