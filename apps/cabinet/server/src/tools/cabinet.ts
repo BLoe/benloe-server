@@ -95,7 +95,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'log_substance',
-      "Log cannabis, alcohol, caffeine, or nicotine. Route matters — smoked/vaped/edible are different interventions and different clinical pictures, so record it whenever Ben says or implies it. Dose+unit as labelled (edibles in mg, flower in g, alcohol in standard drinks, caffeine in mg); don't convert. `context` is the timing relative to the day ('post-dinner', 'wake-up', 'darts') and is what experiment E2 actually reads. `when` backdates an ISO timestamp for something reported after the fact.",
+      "Log cannabis, alcohol, caffeine, or nicotine. Route matters — smoked/vaped/edible are different interventions and different clinical pictures, so record it whenever it is stated or implied. Dose+unit as labelled (edibles in mg, flower in g, alcohol in standard drinks, caffeine in mg); don't convert. `context` is the timing relative to the day ('post-dinner', 'wake-up', 'after the game') and is what the timing analyses read. `when` backdates an ISO timestamp for something reported after the fact.",
       {
         substance: z.enum(['cannabis', 'alcohol', 'caffeine', 'nicotine', 'other']),
         route: z.enum(['smoked', 'vaped', 'edible', 'drink', 'oral', 'other']).optional(),
@@ -111,7 +111,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'log_health_day',
-      "Write Apple Watch / Health metrics for one day. Normally the iOS Shortcut POSTs these automatically — use this when Ben reports numbers in conversation ('slept 6h42m', 'watch says 4,200 steps'). Omitted fields mean 'no news' and leave existing values intact; never send 0 for unknown. local_day defaults to today, and sleep belongs to the day Ben WOKE UP.",
+      "Write Apple Watch / Health metrics for one day. Normally the iOS Shortcut POSTs these automatically — use this when the user reports numbers in conversation ('slept 6h42m', 'watch says 4,200 steps'). Omitted fields mean 'no news' and leave existing values intact; never send 0 for unknown. local_day defaults to today, and sleep belongs to the day the user WOKE UP.",
       {
         local_day: z.string().optional(),
         steps: z.number().optional(),
@@ -127,7 +127,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'health_days',
-      'Recent daily health metrics (steps, active kcal, resting HR, sleep). Steps are the ankle-load budget — plans/health.md doses walking against the talus lesion, so read this before planning a walking-heavy day.',
+      'Recent daily health metrics (steps, active kcal, resting HR, sleep). Steps are the load budget for any weight-bearing plan — read this before planning a walking-heavy day.',
       { days: z.number().optional() },
       async ({ days }) => ok(recentHealth(ctx.db, days ?? 14)),
     ),
@@ -139,13 +139,13 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'substance_nights',
-      "The Phase 0 / TUNING E2 read: one row per day joining cannabis timing and dose, alcohol, caffeine, sleep minutes, and calories logged after 8pm. Use for weekly review. Under ~10 days of rows this is a table, not a correlation — report it as such rather than claiming a relationship.",
+      "One row per day joining cannabis timing and dose, alcohol, caffeine, sleep minutes, and calories logged after 8pm. Use for weekly review. Under ~10 days of rows this is a table, not a correlation — report it as such rather than claiming a relationship.",
       { days: z.number().optional() },
       async ({ days }) => ok(substanceNights(ctx.db, days ?? 14)),
     ),
     tool(
       'log_craving',
-      "Log a craving/urge event the moment it happens — this is the response variable for the whole evening program. `redirect` is the concrete move Cabinet offered (the stocked counter-snack, seltzer, the 15-minute delay, pivoting into tonight's block); `outcome` is what actually happened afterward. Leave outcome empty if it isn't resolved yet and close it later with resolve_craving — never guess it, a guessed outcome corrupts the redirect ranking. 'held' and 'planned_snack' are BOTH successes: an evening snack is in the budget on purpose.",
+      "Log a craving/urge event the moment it happens — this is the response variable for craving work. `redirect` is the concrete move Cabinet offered (the stocked counter-snack, seltzer, the 15-minute delay, pivoting into tonight's block); `outcome` is what actually happened afterward. Leave outcome empty if it isn't resolved yet and close it later with resolve_craving — never guess it, a guessed outcome corrupts the redirect ranking. 'held' and 'planned_snack' are BOTH successes — a planned snack is an intended outcome, not a lapse.",
       {
         intensity: z.number().optional(),
         trigger: z.string().optional(),
@@ -174,7 +174,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'craving_report',
-      "PLAYBOOK P4's ranking: which redirect actually works on Ben, by success count then rate. Read this BEFORE offering a move in a live craving moment — offer the one with the best record, not the first one that comes to mind. Also returns the TUNING E1 readout (3:30pm protein snack vs. late-evening cravings); its verdict stays null until both arms have enough days, and a null verdict means say 'not yet', not 'no effect'.",
+      "Which redirect actually works, by success count then rate. Read this BEFORE offering a move in a live craving moment — offer the one with the best record, not the first one that comes to mind. Also returns the paired-arm experiment readout; its verdict stays null until both arms have enough days, and a null verdict means say 'not yet', not 'no effect'.",
       { days: z.number().optional() },
       async ({ days }) =>
         ok({
@@ -185,7 +185,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'log_symptom',
-      "Record a symptom severity for a day (0-10). Canonical keys: 'ankle_ache_am' (morning — this is a verdict on YESTERDAY's walking load), 'ankle_ache_pm' (evening — same-day load), 'sore_throat'. One row per day+symptom; re-logging corrects rather than duplicates. The ankle readings are what make step counts mean anything, so capture them in the morning check-in and the wind-down.",
+      "Record a symptom severity for a day (0-10). Canonical keys: '<symptom>_am' (morning — a verdict on YESTERDAY's load) and '<symptom>_pm' (evening — same-day load). One row per day+symptom; re-logging corrects rather than duplicates. Paired morning and evening readings are what make an activity number mean anything, so capture both.",
       {
         symptom: z.string(),
         severity: z.number().optional(),
@@ -197,7 +197,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'symptom_days',
-      "Symptom history. With no `symptom`, returns today's readings; with one, returns its trend over `days`. Also returns the ankle load-vs-response join (morning ache paired against the PREVIOUS day's steps, because flares lag load by a day) and a first read on Ben's step ceiling.",
+      "Symptom history. With no `symptom`, returns today's readings; with one, returns its trend over `days`. Also returns the load-vs-response join (a morning reading paired against the PREVIOUS day's steps, because responses lag load by a day) and a first read on the sustainable ceiling.",
       { symptom: z.string().optional(), days: z.number().optional() },
       async ({ symptom, days }) =>
         ok(
@@ -212,14 +212,14 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'mark_habit',
-      "Mark a goal satisfied (or explicitly not) for a day. ONLY needed for goals no query can see — wind-down started, evening block started, out-of-apartment evening. Weigh-in, any-signal, trainer sessions and Phase 0 instrumentation derive themselves from logged data; marking those by hand is redundant. Idempotent per goal+day.",
+      "Mark a goal satisfied (or explicitly not) for a day. ONLY needed for goals no query can see — a routine started, an evening spent a particular way, anything with no logged trace. Goals backed by logged data (weigh-ins, sessions, any instrumented measure) derive themselves; marking those by hand is redundant. Idempotent per goal+day.",
       { goal_id: z.number(), local_day: z.string().optional(), done: z.boolean().optional() },
       async ({ goal_id, local_day, done }) =>
         ok(markHabit(ctx.db, { goalId: goal_id, localDay: local_day, done })),
     ),
     tool(
       'adherence_report',
-      "Per-goal expected-vs-actual over a trailing window, with streaks. Run derive first so logged data counts. Read `unmeasured: true` as 'nobody wrote it down', NOT as 'Ben failed' — reporting an unmeasured goal as a zero is the one error that would make Cabinet confidently wrong at Sunday review.",
+      "Per-goal expected-vs-actual over a trailing window, with streaks. Run derive first so logged data counts. Read `unmeasured: true` as 'nobody wrote it down', NOT as 'the user failed' — reporting an unmeasured goal as a zero is the one error that would make Cabinet confidently wrong at weekly review.",
       { days: z.number().optional(), derive: z.boolean().optional() },
       async ({ days, derive }) => {
         const derived = derive === false ? null : deriveHabits(ctx.db);
@@ -399,7 +399,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'upsert_manual_account',
-      'Create or update an account Plaid cannot link (e.g. a UBS wealth-management account), so its ' +
+      'Create or update an account Plaid cannot link (e.g. a wealth-management account), so its ' +
         'balance counts toward net worth alongside linked accounts. Idempotent on name.',
       {
         name: z.string(),
@@ -530,7 +530,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'upsert_goal',
-      'Set a structured, measurable goal (target_value+unit and/or cadence) — the number a Vitals dial tracks against, e.g. "protein >= 185 g/day". ' +
+      'Set a structured, measurable goal (target_value+unit and/or cadence) — the number a Vitals dial tracks against, e.g. "steps >= 8000/day". ' +
         'Matches an existing goal by (domain, title) exact match and supersedes it (old row kept, deactivated — full history preserved) rather than overwriting. ' +
         'For narrative/qualitative goals ("get back to consistent lifting after the injury"), use update_memory on GOALS.md instead — this tool is for numbers a dial can compare against, not prose.',
       {
@@ -551,10 +551,10 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     tool(
       'upsert_constraint',
       'Record a HARD planning constraint — an allergen/substance to never suggest (kind: dietary) or a movement/load to never program (kind: physical). ' +
-        'This is for machine-durable safety gates, NOT soft preferences — "dislikes cilantro" or "wants to get back to heavy lifting eventually" belongs in ' +
-        'update_memory on domains/nutrition.md or domains/health.md instead (narrative, fine to lose nuance in a rewrite). A hard constraint is not. ' +
+        'This is for machine-durable safety gates, NOT soft preferences — "dislikes a particular ingredient" or "wants to lift heavy again eventually" belongs in ' +
+        'the relevant narrative memory file via update_memory instead (narrative, fine to lose nuance in a rewrite). A hard constraint is not. ' +
         'Two ways to call this: (1) give `subject` (+ optional severity/note) to record a real constraint — matches an existing active one for the same ' +
-        '(kind, subject) and supersedes it, full history preserved. (2) pass confirmedNone: true (no subject) after explicitly asking and confirming Ben has ' +
+        '(kind, subject) and supersedes it, full history preserved. (2) pass confirmedNone: true (no subject) after explicitly asking and confirming the user has ' +
         'no constraints of that kind — idempotent, and distinguishable from never having asked at all via list_constraints.',
       {
         kind: z.enum(['dietary', 'physical']),
@@ -673,7 +673,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'update_memory',
-      'Rewrite a curated memory file (GOALS.md, PREFERENCES.md, domains/*.md, ...). Git-committed. STANDING_ORDERS.md is Ben-only.',
+      'Rewrite a curated memory file (GOALS.md, PREFERENCES.md, domains/*.md, ...). Git-committed. STANDING_ORDERS.md is owner-only.',
       { file: z.string(), content: z.string(), reason: z.string() },
       async ({ file, content, reason }) => {
         try {
@@ -703,7 +703,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'enqueue_approval',
-      'Proactively propose a Tier-2 action for Ben to approve (returns the packet id; do NOT wait).',
+      'Proactively propose an action for the owner to approve (returns the packet id; do NOT wait).',
       {
         action: z.string(),
         payload: z.string(),
@@ -744,7 +744,7 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'money_categories',
-      'Spending grouped by Plaid category over a window, largest first. Transfers between Ben\'s own accounts and ' +
+      'Spending grouped by Plaid category over a window, largest first. Transfers between the user\'s own accounts and ' +
         'credit-card payments are excluded, so these figures are consumption and do not double-count card spending.',
       { days: z.number().optional() },
       async ({ days }) => ok({ categories: spendByCategory(ctx.db, days ?? 30) }),
@@ -752,8 +752,8 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     tool(
       'money_trend',
       'Time series: net worth by day, total spend by day, and restaurant/delivery spend by day (groceries excluded). ' +
-        "The delivery series is the financial fingerprint of the 8pm-to-midnight loop — join it against craving_event, " +
-        'food logs, or evening-block completion to test PLAYBOOK P4 with money instead of memory.',
+        'The delivery series lets an evening-behaviour hypothesis be tested against spend rather than against memory — ' +
+        'join it to craving_event, food logs, or activity-plan completion.',
       { days: z.number().optional() },
       async ({ days }) => {
         const d = days ?? 90;
@@ -798,9 +798,9 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
     ),
     tool(
       'usage_status',
-      "Where Ben's Claude subscription stands right now: utilization per rolling window (five_hour, seven_day, " +
+      "Where the Claude subscription stands right now: utilization per rolling window (five_hour, seven_day, " +
         'per-model), when each resets, and how old the reading is. Sourced from the provider itself, never estimated. ' +
-        'Use it when Ben asks about limits or headroom, or before committing to an unusually large piece of work — ' +
+        'Use it when the user asks about limits or headroom, or before committing to an unusually large piece of work — ' +
         'NOT as a routine self-check. `unknown: true` means no fresh reading exists; report that plainly rather than ' +
         'guessing a number, and never let an unknown become a reason to decline work.',
       {},
