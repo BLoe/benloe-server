@@ -773,7 +773,7 @@ describe('decrypt containment', () => {
 
   /**
    * Comments must not count. All three of gateway/credentialRoutes.ts,
-   * gateway/plaidRoutes.ts and mcp/cabinet-server.ts carry header prose
+   * gateway/plaidRoutes.ts and tools/cabinet.ts carry header prose
    * ASSERTING they don't import getCredentialSecret — a plain substring scan
    * flags every one of them and the test fails on the files that are getting
    * it right. Strip comments first, then look for real code.
@@ -785,12 +785,21 @@ describe('decrypt containment', () => {
   }
   const usesDecrypt = (file: string): boolean => /\bgetCredentialSecret\b/.test(code(file));
 
-  it('no file under gateway/ or mcp/ imports or calls getCredentialSecret', () => {
-    const offenders = ['gateway', 'mcp']
+  it('no file under gateway/ or tools/ imports or calls getCredentialSecret', () => {
+    // src/mcp/ became src/tools/ on 2026-08-11. Renaming a directory out from
+    // under a glob turns this kind of test into a silent no-op — it keeps
+    // passing while checking nothing — so assert the directories exist and
+    // actually contain files before drawing any conclusion from an empty
+    // offenders list.
+    const dirs = ['gateway', 'tools'];
+    for (const sub of dirs) {
+      expect(walk(join(SRC, sub)).length, `src/${sub}/ is empty or missing — this test is checking nothing`).toBeGreaterThan(0);
+    }
+    const offenders = dirs
       .flatMap((sub) => walk(join(SRC, sub)))
       .filter(usesDecrypt)
       .map((f) => f.slice(SRC.length));
-    expect(offenders, 'a decrypt path reached the HTTP/MCP layer').toEqual([]);
+    expect(offenders, 'a decrypt path reached the HTTP/tool layer').toEqual([]);
   });
 
   it('nothing outside the domain decrypts any more — the inventory is now empty', () => {

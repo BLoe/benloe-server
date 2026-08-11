@@ -2,7 +2,7 @@
  * Step 3 (2026-07-16, token-cost work w/ benji): deterministic HEAD+TAIL
  * truncation shared by two call sites — the PostToolUse hook in agent.ts
  * (built-in Bash/Read results) and Cabinet's own MCP tool result wrapper
- * (mcp/cabinet-server.ts's `ok()`). Deliberately NOT a Haiku summary call:
+ * (tools/cabinet.ts's `ok()`). Deliberately NOT a Haiku summary call:
  * this runs synchronously in the tool-result pipeline for every tool call,
  * so it has to be cheap, deterministic, and side-effect-free.
  *
