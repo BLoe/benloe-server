@@ -306,8 +306,9 @@ describe('jobs', () => {
     const jobs = buildJobs(deps);
     await jobs.find((j) => j.name === 'heartbeat')!.run();
     expect(runtimeCalls).toEqual([]);
-    const audit = cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='heartbeat'").get() as { decision: string };
-    expect(audit.decision).toBe('HEARTBEAT_OK');
+    // The row's existence is the mark. It used to also carry
+    // decision='HEARTBEAT_OK', which said the same thing a second time.
+    expect(cabinet.db.prepare("SELECT 1 FROM action_audit WHERE tool='heartbeat'").all()).toHaveLength(1);
   });
 
   it('heartbeat with findings runs a heartbeat-kind turn', async () => {
@@ -410,7 +411,7 @@ describe('jobs', () => {
       expect(alerts).toHaveLength(1);
       expect(alerts[0]!.data).toMatchObject({ level: 'warn' });
       expect((alerts[0]!.data as { text: string }).text).toContain('87%');
-      expect(cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='usage-budget-alert'").all()).toHaveLength(1);
+      expect(cabinet.db.prepare("SELECT 1 FROM action_audit WHERE tool='usage-budget-alert'").all()).toHaveLength(1);
     });
 
     it('alerts on a provider warning state even when utilization is low', async () => {
@@ -427,7 +428,7 @@ describe('jobs', () => {
       await heartbeat.run();
       await heartbeat.run();
       expect(usageAlerts(events)).toHaveLength(1);
-      expect(cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='usage-budget-alert'").all()).toHaveLength(1);
+      expect(cabinet.db.prepare("SELECT 1 FROM action_audit WHERE tool='usage-budget-alert'").all()).toHaveLength(1);
     });
   });
 
@@ -594,7 +595,7 @@ describe('jobs', () => {
     const res = await runMaintenance({ ...deps, dataDir: emptyDir });
     expect(res.backups).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('maintenance: zero backups produced'));
-    const audit = cabinet.db.prepare("SELECT decision FROM action_audit WHERE tool='maintenance-zero-backups'").all();
+    const audit = cabinet.db.prepare("SELECT 1 FROM action_audit WHERE tool='maintenance-zero-backups'").all();
     expect(audit).toHaveLength(1); // persists past a process restart, unlike Scheduler.lastResult
     warn.mockRestore();
     rmSync(emptyDir, { recursive: true, force: true });

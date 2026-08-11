@@ -551,7 +551,7 @@ export function registerSurfaceRoutes(app: Express, deps: SurfaceDeps): void {
     const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
     const rows = db
       .prepare(
-        `SELECT id, ts, tool, tier, args, result, decision, chat_id, session_kind
+        `SELECT id, ts, tool, args, result, chat_id, session_kind
          FROM action_audit ${kind ? 'WHERE session_kind = ?' : ''} ORDER BY id DESC LIMIT 200`,
       )
       .all(...(kind ? [kind] : [])) as Array<Record<string, unknown>>;
@@ -560,10 +560,12 @@ export function registerSurfaceRoutes(app: Express, deps: SurfaceDeps): void {
       at: String(r.ts),
       tool: String(r.tool),
       action: String(r.tool),
+      // `reason` carries the note when there is one — today only a refused
+      // update_memory writes it. The tier and decision fields that used to sit
+      // here came from the classifier and are gone: every row in this feed is
+      // something that happened, so a per-row verdict had nothing to say.
       reason: String(r.result ?? ''),
-      tier: Number(r.tier ?? 4),
       kind: String(r.session_kind ?? 'user'),
-      result: String(r.decision ?? ''),
       chatId: (r.chat_id as string) ?? null,
       reversible: REVERSIBLE.test(String(r.tool)),
       reverted: false,

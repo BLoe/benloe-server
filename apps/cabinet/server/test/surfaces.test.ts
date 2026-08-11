@@ -178,8 +178,8 @@ describe('surface endpoints — frozen contract', () => {
   });
 
   it('GET /api/ops reads the real audit trail and filters by kind', async () => {
-    cabinet.db.prepare('INSERT INTO action_audit (tool, tier, decision, session_kind) VALUES (?,?,?,?)').run('Write', 3, 'autonomous', 'cron');
-    cabinet.db.prepare('INSERT INTO action_audit (tool, tier, decision, session_kind) VALUES (?,?,?,?)').run('Bash', 2, 'autonomous', 'user');
+    cabinet.db.prepare('INSERT INTO action_audit (tool, session_kind) VALUES (?,?)').run('Write', 'cron');
+    cabinet.db.prepare('INSERT INTO action_audit (tool, session_kind) VALUES (?,?)').run('Bash', 'user');
     const all = await (await owner('/api/ops')).json();
     expect(all.entries.length).toBe(2);
     expect(all.entries.find((e: { tool: string }) => e.tool === 'Write').reversible).toBe(true);
