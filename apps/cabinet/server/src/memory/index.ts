@@ -54,8 +54,16 @@ export const PROMPT_CORE: readonly PromptLayer[] = [
   // interactive turns. It survives for HEARTBEATS, whose minimal prompt is
   // IDENTITY + HEARTBEAT (runtime/prompt.ts's assemblePrompt), so IDENTITY
   // has to stand alone on that path.
-  { file: 'CHARTER.md', source: 'user' },
-  { file: 'VOICE.md', source: 'user' },
+  // First layer to move into the repo (2026-08-11). Generic by construction —
+  // it describes the relationship, not the person; who the principal IS lives
+  // in the user layer. The data/ copy is left in place, shadowed, so a revert
+  // of this line restores the old charter without needing a file restore.
+  { file: 'CHARTER.md', source: 'repo' },
+  // VOICE.md dropped from the prompt 2026-08-11: the charter above now covers
+  // how Cabinet talks, and two documents describing one voice is how they came
+  // to disagree about reply length in the first place. The file is left on
+  // disk, unloaded — its worked examples are worth mining for the user layer,
+  // and they are full of personal detail that cannot come into this repo.
   { file: 'TUNING.md', source: 'user' },
   { file: 'RHYTHM.md', source: 'user' },
   { file: 'USER.md', source: 'user' },
