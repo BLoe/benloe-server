@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -165,23 +165,41 @@ describe('the shipped prompt directory', () => {
   });
 });
 
-describe('a fresh install assembles the same prompt as before the split', () => {
-  it('produces byte-identical output to reading every layer from the data dir', () => {
-    // The whole point of landing the loader with an all-`user` manifest: this
-    // change must be invisible in the assembled prompt. Compares the real
-    // manifest against a forced all-user version of itself over the same
-    // seeded files.
+describe('moving a layer changes that layer and nothing else', () => {
+  it('assembles the same files in the same order regardless of where they load from', () => {
+    // Replaces "produces byte-identical output to an all-user manifest",
+    // which was the right assertion while nothing had moved and became
+    // impossible to satisfy the moment CHARTER.md became repo-sourced
+    // (2026-08-11). The invariant worth keeping is not that the bytes are
+    // identical — the whole point of a move is that they change — but that
+    // moving a layer cannot reorder, drop or duplicate the others.
     const dataDir = mkdtempSync(join(tmpdir(), 'cabinet-same-'));
-    const promptDir = mkdtempSync(join(tmpdir(), 'cabinet-same-p-'));
-    mkdirSync(promptDir, { recursive: true });
-    const shipped = new MemoryStore(dataDir, promptDir);
+    const shipped = new MemoryStore(dataDir, DEFAULT_PROMPT_DIR);
     shipped.ensureTemplates();
     const allUser = new MemoryStore(
       dataDir,
-      promptDir,
+      DEFAULT_PROMPT_DIR,
       PROMPT_CORE.map((l) => ({ file: l.file, source: 'user' as const })),
     );
-    expect(shipped.promptCore()).toBe(allUser.promptCore());
+
+    const tags = (core: string) => [...core.matchAll(/<memory file="([^"]+)">/g)].map((m) => m[1]);
+    expect(tags(shipped.promptCore())).toEqual(tags(allUser.promptCore()));
     expect(shipped.promptCore().length).toBeGreaterThan(0);
+  });
+
+  it('serves a repo-sourced layer from the repo, not from the seeded data dir', () => {
+    // The move actually taking effect, asserted directly rather than inferred
+    // from the absence of a difference.
+    const repoLayers = PROMPT_CORE.filter((l) => l.source === 'repo');
+    if (repoLayers.length === 0) return; // nothing has moved yet
+
+    const dataDir = mkdtempSync(join(tmpdir(), 'cabinet-moved-'));
+    const mem = new MemoryStore(dataDir, DEFAULT_PROMPT_DIR);
+    mem.ensureTemplates(); // seeds the OLD copy into data/ for every layer
+    for (const layer of repoLayers) {
+      expect(mem.read(layer.file), `${layer.file} should come from src/prompts/`).toBe(
+        readFileSync(join(DEFAULT_PROMPT_DIR, layer.file), 'utf8'),
+      );
+    }
   });
 });
