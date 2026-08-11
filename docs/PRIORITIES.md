@@ -3,7 +3,13 @@
 Written 2026-08-10 after a long session that produced more analysis than
 progress. This is the reset: one list, discrete items, ordered.
 
-**Update 2026-08-11:** items 2, 3 and 4 are superseded by
+**SUPERSEDED 2026-08-11 by [`TODO.md`](TODO.md).** Item 1 is done, items 2-4
+were answered by `prompt-architecture.md`, item 5 (reduce the tool count) was
+dropped after measurement showed the runtime already defers tools, and items
+6-8 carry over into the new list or its "not on this list" section. Kept for
+the record; do not work from it.
+
+**Earlier update:** items 2, 3 and 4 are superseded by
 [`prompt-architecture.md`](prompt-architecture.md), which answers them together rather than
 separately. Items 5–8 still stand as written.
 

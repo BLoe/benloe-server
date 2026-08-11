@@ -10,8 +10,25 @@ files. This is a different axis: how the prompt is assembled, on any version
 of the product. Version numbers here have meant three different things
 already; a name is clearer.
 
-This supersedes items 2, 3 and 4 of `PRIORITIES.md`. Items 5–8 there still
-stand on their own.
+This supersedes items 2, 3 and 4 of `PRIORITIES.md`.
+
+**Update 2026-08-11, after measuring.** The four layers below still hold. Three
+pieces of reasoning under them do not, and the working list moved to
+[`TODO.md`](TODO.md):
+
+- Tool count is not a problem worth solving. The SDK already defers Cabinet's
+  tools behind tool search — all 63 cost 631 prefix tokens, against 10,172 if
+  forced in. `PRIORITIES.md` item 5 is dropped.
+- The expensive toolset is the built-in one: 17,890 tokens before Cabinet adds
+  anything. That is now the largest item on the list and it is not discussed
+  anywhere below.
+- Guidance living in tool descriptions is not read on a normal turn, because
+  deferred tools expose a name and not a description. That is a stronger
+  argument for the "system" layer than the one made below, and a different one.
+
+The loader that layer 1 needs shipped on 2026-08-11 (`PROMPT_CORE` in
+`memory/index.ts`); every layer is still `user`-sourced, so nothing has moved
+yet.
 
 **What we're building:** Cabinet's mind, rewritten. The tools, integrations,
 database and a month of real data all stay — that's the asset. The prompt and
