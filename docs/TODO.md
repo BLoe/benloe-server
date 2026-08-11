@@ -123,6 +123,30 @@ conventions, not per-domain procedure.
 
 ---
 
+## Where this stopped, 2026-08-11
+
+Items 1 and 2 and 3 produced PRs #11, #12 and #13. All three are open and
+unreviewed, and items 4 through 7 each depend on a decision inside them:
+
+- **4 (user)** needs the charter's "the principal" framing settled — the user
+  layer is where the name and the clinical detail go, and how much of it loads
+  depends on how generic the charter stays.
+- **5 (now)** is explicitly last, once the shape of a turn is settled.
+- **6 (job selection)** wires four layers together; two of them are in review.
+- **7 (templates.ts)** removes the seed copies of CHARTER, VOICE and PLATFORM.
+  Doing that before #12 and #13 merge would leave a fresh install unable to
+  seed the files it still loads.
+
+Verified rather than assumed: #12 and #13 merge cleanly together (my claim
+that they conflict was wrong), 803 tests pass combined, and the assembled
+prompt goes 76,585 -> 56,626 bytes, a 26% cut. That verification found a test
+failure neither branch produces alone, now fixed on #12.
+
+The loop stopped here rather than opening a fourth PR. Adding review burden
+without adding value is not progress.
+
+---
+
 ## 4. User
 
 Ben's history, preferences, plans, corrections. Private, stays in `data/`.
