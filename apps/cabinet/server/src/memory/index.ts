@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { MEMORY_TEMPLATES } from './templates.js';
+import { loadValues, render } from './render.js';
 
 export class MemoryError extends Error {}
 
@@ -385,6 +386,22 @@ export class MemoryStore {
    * is an operational detail, and telling the model that some of its own
    * mind is "the reviewed part" invites it to weigh them differently.
    */
+  /**
+   * Placeholder values for repo-sourced layers, read once per store from
+   * <dataDir>/values.json. Cached because promptCore() runs on every turn and
+   * these change about as often as someone's name does.
+   */
+  private valuesCache: Record<string, string> | null = null;
+  private values(): Record<string, string> {
+    this.valuesCache ??= loadValues(this.dir);
+    return this.valuesCache;
+  }
+
+  /** Forget cached placeholder values — for tests, and after editing them. */
+  reloadValues(): void {
+    this.valuesCache = null;
+  }
+
   promptCore(): string {
     // Reads this.manifest and nothing else. It deliberately takes no override:
     // an earlier draft let a caller pass a different manifest, which meant
@@ -395,9 +412,16 @@ export class MemoryStore {
     // Resolved through pathIn rather than a bare join, so a name reaching the
     // manifest from anywhere still gets the traversal check.
     return this.manifest
-      .map(({ file, source }) => ({ file, full: this.pathIn(source === 'repo' ? this.promptDir : this.dir, file) }))
+      .map(({ file, source }) => ({ file, source, full: this.pathIn(source === 'repo' ? this.promptDir : this.dir, file) }))
       .filter(({ full }) => existsSync(full))
-      .map(({ full, file }) => `<memory file="${file}">\n${readFileSync(full, 'utf8')}\n</memory>`)
+      .map(({ full, file, source }) => {
+        const raw = readFileSync(full, 'utf8');
+        // Only repo-sourced layers are templated. A private layer is already
+        // written about the actual person and has no reason to hold a
+        // placeholder — templating it would add a failure mode for no gain.
+        const body = source === 'repo' ? render(raw, this.values(), file) : raw;
+        return `<memory file="${file}">\n${body}\n</memory>`;
+      })
       .join('\n\n');
   }
 }
