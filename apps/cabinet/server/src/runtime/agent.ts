@@ -17,6 +17,7 @@ import { generateTitle } from './titler.js';
 import { truncateForModel } from './toolTruncate.js';
 import { createPerfRecorder, nullPerf, perfEnabled, type PerfRecorder } from './perf.js';
 import { SessionPool, type ActiveTurn, type SessionSpec } from './session.js';
+import { describeTransition, readMcpStatus, type McpStatus } from './mcpHealth.js';
 import { effortForRegister, nextRegister, type Register } from './register.js';
 
 /**
@@ -219,6 +220,13 @@ export function configureAuth(env: Record<string, string | undefined>): 'subscri
   env.CLAUDE_CONFIG_DIR ??= '/home/claude-worker/.cabinet-claude';
   return mode;
 }
+
+/**
+ * Last observed MCP status, process-wide. Module scope on purpose: the
+ * transition is what matters, and TurnQueue guarantees one in-flight turn per
+ * process, so there is no interleaving to protect against.
+ */
+let lastMcpStatus: McpStatus | null = null;
 
 export class AgentRuntime {
   readonly queue = new TurnQueue();
@@ -715,7 +723,20 @@ export class AgentRuntime {
       }
       if (msg.type === 'system' && msg.subtype === 'init') {
         sessionId = msg.session_id ?? sessionId;
-        stopSpawn({ resumed: !!chat.sdk_session_id });
+        // Record whether the cabinet MCP toolset actually came up for this
+        // query. Nothing else does, and on 2026-08-08 a one-turn drop left no
+        // server-side trace at all (task 58).
+        //
+        // The counts ride on the spawn span's meta rather than perf.describe():
+        // describe() sets the three row-level columns (chatId, sessionKind,
+        // model) and silently drops anything else, so it could not carry these
+        // even if it took them. The spawn span is where they belong anyway —
+        // "what did this query launch with" is a property of the launch.
+        const mcp = readMcpStatus(msg as never);
+        const line = describeTransition(lastMcpStatus, mcp);
+        if (line) console.warn(`[mcp-health] chat=${req.chatId} ${line}`);
+        lastMcpStatus = mcp;
+        stopSpawn({ resumed: !!chat.sdk_session_id, mcpTools: mcp.toolCount, mcpHealthy: mcp.healthy });
         initAt = performance.now();
         stepAt = initAt;
         return;
