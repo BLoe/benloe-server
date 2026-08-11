@@ -1,254 +1,185 @@
-# Cabinet — the working list
+# Cabinet — rewriting the prompt
 
-Written 2026-08-11, at the end of a long session that measured a lot of things
-and disproved several of them. This replaces `PRIORITIES.md` as the list to
-work from; `prompt-architecture.md` is still the design it serves.
+Written 2026-08-11. The working list for `prompt-architecture.md`, and nothing
+else. Ordered. One at a time, finished, deployed. Do not start two.
 
-Ordered. One at a time, finished, deployed. Do not start two.
+Real defects in Cabinet's own behaviour (`log_food` cannot backdate,
+`update_pantry` duplicates rows, the weight trend is wrong four ways) live in
+Cabinet's task list where they already are. They are not here — this list is
+about the prompt.
 
 ---
 
 ## Rules for unattended runs
 
-This list is meant to be workable overnight with `/loop`. Three rules, learned
-the hard way on 2026-08-10/11:
-
 1. **PRs only, and do not merge your own.** A merge is not undoable by
-   `/rewind`. Open the PR, describe it, leave it. Ben merges.
-2. **Stop at the first thing that needs a decision.** A task that turns out to
-   need Ben's judgment is finished when the question is written down clearly —
-   that is a successful outcome, not a failure.
-3. **Verify before claiming.** Typecheck, run the suite, and for anything that
-   touches data, run it against a copy of the real database. "Tests pass" is
-   not the same as "the thing works", and this session produced three
-   changes that typechecked and were still wrong.
+   `/rewind`. Open it, describe it, leave it.
+2. **Stop at the first thing that needs a decision.** Writing the question down
+   clearly is a successful outcome, not a failure.
+3. **Verify before claiming.** Typecheck, run the suite, and for anything
+   touching the prompt, diff the assembled output against the live memory
+   directory. Three changes this session typechecked and were still wrong.
 
 ---
 
-## How the plan changed
+## What measurement changed about the plan
 
-Four things this session invalidated or added. The four-layer design in
-`prompt-architecture.md` survives; some of the reasoning under it does not.
+The four layers hold. Two pieces of reasoning under them do not.
 
-**Tool count is not the problem, and the fix was already shipped.** Measured:
-the SDK already defers Cabinet's tools behind tool search. All 63 cost **631
-tokens**; forcing them into the prompt costs **10,172**. Anthropic's "selection
-degrades past 30–50 tools" is real but the runtime already handles it.
-`PRIORITIES.md` item 5 — consolidate 63 tools down to ~30 — is **dropped**. It
-was justified by a cost that does not exist.
+**Tool count is not a problem.** The SDK already defers Cabinet's tools behind
+tool search — all 63 cost 631 prefix tokens against 10,172 if forced in.
+`PRIORITIES.md` item 5 is dropped.
 
-**The expensive toolset is the built-in one.** 17,890 tokens of prefix before
-Cabinet adds anything, from 29 built-in Claude Code tools. A heartbeat pays it
-297 times a day to do a job that needs almost none of them. This is now the
-largest single item on the list and it was not in the plan at all.
+**But guidance hidden in tool descriptions is not being read.** Deferred tools
+expose a name, not a description. So the ~13 KB of behavioural prose that was
+moved out of the system prompt and into tool descriptions is absent from a
+normal turn, appearing only if a search happens to match. This is the single
+most important finding of the session and it is what item 1 exists to fix.
 
-**Guidance hidden in tool descriptions is not being read.** Deferred tools
-expose a name, not a description. So the ~13 KB of behavioural prose living in
-tool descriptions — clinical reasoning about substance routes, PLAYBOOK
-references — is absent from a normal turn and appears only if a search happens
-to match. This is the strongest argument for domain packs, and it is a
-different argument than the one the plan makes.
-
-**The blocker on repo-sourced prompts is gone.** `src/prompts/` sits under
-`apps/cabinet/server`, which the tier policy classified Tier 0 — meaning
-Cabinet could never have edited its own charter there. That policy was deleted
-on 2026-08-11 (it had denied nothing in a month while classifying 445 actions
-as blocked and running all of them), so the path is writable and no relocation
-is needed.
+Also worth recording as a thing we chose NOT to do: the built-in Claude Code
+toolset is 17,890 prefix tokens, roughly 12k of which Cabinet never uses. It is
+cached, it is 8.5% of the window, and trimming it would not make Cabinet more
+useful. Measured, considered, dropped.
 
 ---
 
-## Part A — prompt architecture
+## 1. Read the tool descriptions as prose
 
-### A1. Cut the built-in toolset
+Nobody ever has. 63 descriptions, ~13 KB, written over months, currently
+invisible on a normal turn.
 
-**Biggest measured win on this list.** 17,890 tokens of prefix, paid on every
-turn including 297 daily heartbeats that use almost none of it.
+Separate two things in each: what the tool **is** — which stays, because it is
+how the model finds it through search — and how Cabinet should **behave** —
+which has no working home today and is the reason this whole rewrite matters.
 
-Work out which built-ins each job actually needs, and pass a narrower set.
-A heartbeat needs to read and query; it does not need `WebFetch`, `WebSearch`,
-`NotebookEdit`, or subagent spawning. A conversation needs more. Deploys need
-`Bash`.
+**Done when:** a document quotes every description carrying behavioural
+guidance and proposes where it goes. No code change.
 
-**Done when:** the probe at `scratchpad/tool-prefix-probe.mts` (re-run it)
-shows a materially smaller prefix for the heartbeat path, and heartbeats still
-do their job. Report the before/after numbers.
-
-**Autonomous:** yes, up to the point of choosing which tools each job keeps —
-write the proposed table into the PR and let Ben confirm before it deploys.
+**Why first:** every later item needs this inventory. The system layer cannot
+be written without knowing what is currently being said in the wrong place.
 
 ---
 
-### A2. Move guidance out of tool descriptions
+## 2. Charter
 
-Read all 63 descriptions as prose — nobody ever has. Separate two things:
-what the tool *is* (stays, it is how the model finds it) from how Cabinet
-should *behave* around it (moves).
+Who Cabinet is. Identity, goals, personality, how it talks. Target 1–2k tokens
+against ~20k today.
 
-The behaviour half has no home yet. That is A3. Do this first anyway, because
-until the inventory exists there is nothing to design against.
+The first layer to move into `src/prompts/` — one manifest entry in
+`PROMPT_CORE` flips from `user` to `repo`, plus a file move. The loader for
+this shipped on 2026-08-11 and every layer is still `user`, so this is the
+first real use of it.
 
-**Done when:** a document lists every description carrying behavioural
-guidance, quoting it, with a proposed destination. No code change.
+Write it against what Cabinet is now, not what V1 said. One thing carries over
+intact: Cabinet and Ben are working to make each other better.
 
-**Autonomous:** yes. This is reading and writing, and it ends in a document
-rather than a deploy.
+**Done when:** repo-sourced, prompt-invariants tests pass, and the assembled
+prompt diff shows one file's content changing and nothing else.
 
----
-
-### A3. Design the domain pack
-
-A domain today is scattered: prompt language in tool descriptions, tools in
-`tools/cabinet.ts`, logic in `domains/*.ts`, tables in the schema, narratives
-in `data/cabinet/memory/domains/*.md`. Ben's own description — "prompt
-language, tool calls, persistence with state and logging, plus integrations" —
-is a folder, not a category.
-
-Two working precedents worth reading first: `integrations/mcp.ts`, which
-already gates a server on its env var so absent credentials mean no dead tools
-in context; and Anthropic's Skills three-level loading (name always, body on
-match, resources on demand).
-
-**Done when:** `docs/domain-packs.md` specifies the folder shape, how a pack is
-selected for a turn, and what happens to the four existing homes. One worked
-example — food, the messiest — written out in full.
-
-**Autonomous:** yes, as a design document. Building it is not.
+**Ben reads it before it ships.** This is Cabinet's personality.
 
 ---
 
-### A4. Charter
+## 3. System
 
-The first layer to actually move into `src/prompts/`. Small (~1–2k tokens),
-generic, no personal data. Flipping one manifest entry in `PROMPT_CORE` from
-`user` to `repo` plus a file move.
+What Cabinet can do and how this environment works. Generic, no personal data,
+in the repo.
 
-Write it against what Cabinet actually is now, not what V1 said. The one thing
-carried over intact: Cabinet and Ben are working to make each other better.
+This is where item 1's behavioural guidance lands, and it is where the domain
+question gets answered. A domain today is scattered across four homes — prompt
+language in tool descriptions, tools in `tools/cabinet.ts`, logic in
+`domains/*.ts`, narratives in `data/cabinet/memory/domains/*.md`. Ben's own
+description of a domain ("prompt language, tool calls, persistence with state
+and logging, plus integrations") describes a folder, not a category.
 
-**Done when:** `CHARTER.md` is repo-sourced, the prompt-invariants tests pass,
-and the assembled prompt diff is readable — one file's content changing and
-nothing else.
+Two precedents worth reading before designing: `integrations/mcp.ts`, which
+already gates a server on its env var so absent credentials mean no dead tools;
+and Anthropic's Skills three-level loading — name always, body on match,
+resources on demand.
 
-**Autonomous:** draft yes, merge no. This is Cabinet's personality; Ben reads
-it before it ships.
-
----
-
-### A5. Delete `templates.ts` as a home for designed prose
-
-851 lines holding a second copy of the persona files. The live files and these
-have drifted, some by 9×. Once the charter is repo-sourced there is exactly
-one copy of it and this file should hold only empty scaffolds for user-data
-files.
-
-**Done when:** `templates.ts` contains no designed prose, `ensureTemplates()`
-still seeds a fresh install, and a fresh-install test proves it.
-
-**Autonomous:** yes, after A4.
+**Done when:** the system layer is repo-sourced and loaded by job rather than
+always. A heartbeat does not need the deploy conventions.
 
 ---
 
-## Part B — real defects, from Cabinet's own list
+## 4. User
 
-These are pure software tasks pulled from Cabinet's 52 open items. Each is
-specified well enough to build without asking. Priority order is theirs, not
-mine: two of these lose data.
+Ben's history, preferences, plans, corrections. Private, stays in `data/`.
 
-### B1. `log_food` cannot backdate — task 52
+Assembled for an **explicit user identity** even though there is one user — the
+seam costs nothing now and avoids a rewrite later. Loaded by relevance, not
+wholesale; most turns do not need the full biography.
 
-Every other logging tool takes a date (`log_workout` takes `localDay`,
-`log_symptom` takes `local_day`, `log_substance` takes `when`). `log_food`
-takes none, so a meal reported after the fact either lands on today and
-corrupts today's totals, or is dropped into a journal entry and never reaches
-`food_log`. Retrospective reporting is the most common kind there is. A week of
-intake was lost to this once already.
+Corrections merge into the facts they correct rather than being kept as a
+ledger of times Cabinet was wrong.
 
-**Fix:** optional `localDay` on the tool, threaded to the `food_log` insert.
-**Done when:** backdating works, today's totals are unaffected by it, and a
-test covers both.
-**Autonomous:** yes. Smallest and highest value on the list.
+**Done when:** `USER.md` is no longer loaded in full on every turn, and a turn
+that needs a fact still gets it.
 
 ---
 
-### B2. `update_pantry` duplicates a row on a location change — task 57
+## 5. Now
 
-The upsert keys on `(name, location)`, so moving something from freezer to
-fridge creates a second row instead of updating the first. Silent inventory
-inflation — and the pantry is what shopping lists are built from, so a wrong
-count produces confidently wrong advice in both directions.
+Time, today's plan, what has been logged, what changed since the last message.
+Regenerated every turn, never cached. Values, not prose.
 
-**Fix:** key on name alone and treat location as a mutable attribute (the
-task's own recommendation). Also clamp `quantityDelta` at zero; a negative
-delta on an empty row has already gone to −1.
-**Done when:** a move updates one row, quantities cannot go negative, and both
-are tested.
-**Autonomous:** yes.
+The layer with the highest cost of being wrong — a bad timestamp produces
+confident nonsense downstream, not a small error. Smallest and most mechanical;
+do it last, once the shape of a turn is settled.
 
 ---
 
-### B3. Today surface has dead controls — task 55
+## 6. Job selection
 
-Several elements look interactive and have no handler.
+Wire the four together. Conversation, heartbeat, weekly review, scheduled
+brief — these are not a fifth layer, they select which layers load and how
+much.
 
-**Fix:** audit the surface. Strip affordances that should not be there; wire
-the ones that obviously should. Anything needing a product decision goes in the
-PR description as a question, not a guess.
-**Done when:** nothing on Today looks clickable and isn't.
-**Autonomous:** yes for stripping, no for adding behaviour.
+| job | charter | system | user | now |
+|---|---|---|---|---|
+| conversation | full | by topic | by relevance | full |
+| heartbeat | minimal | minimal | none | full |
+| weekly review | full | none | deep | full |
+| scheduled brief | minimal | none | targeted | full |
 
----
-
-### B4. Chat is broken on mobile — task 54
-
-Reported at 390px wide. Composer and scroll container.
-
-**Fix:** reproduce with Playwright at 390px, fix the layout, keep the rail
-reachable by touch.
-**Done when:** screenshots at 390px before and after are in the PR.
-**Autonomous:** yes, with the caveat that "looks right" is a judgment — attach
-the screenshots and let Ben be the judge.
+**Done when:** a heartbeat and a conversation demonstrably assemble different
+prompts, and the difference is visible in a test rather than only in prose.
 
 ---
 
-### B5. Weight trend is wrong four ways — task 49
+## 7. Delete `templates.ts` as a home for designed prose
 
-`domains/training.ts`. The EWMA seeds so the first point equals the raw
-reading; alpha applies per row rather than per day, so uneven gaps are
-mis-weighted; `weightTrend(db, days)` is actually a row limit, and the surface
-calls it expecting a week and gets ~3 weeks; `weeklyDelta` is "7 entries ago",
-not 7 days.
+851 lines holding a second copy of the persona files, drifted from the live
+ones by as much as 9×. Once a layer is repo-sourced there is exactly one copy
+of it, and this file should hold only empty scaffolds for user-data files.
 
-**Fix:** half-life-in-days EWMA, real date-window filter, `weeklyDelta` against
-the interpolated trend 7 days back, and `trend: null` with a reason when the
-data is too thin to resolve.
-**Blocked on one decision:** the half-life. The task recommends 7 days. Build
-it parameterised, default 7, and say so in the PR.
-**Autonomous:** yes under that stated assumption.
+Housekeeping, but it has to happen or we end up with three homes instead of
+two.
+
+**Done when:** no designed prose in `templates.ts`, `ensureTemplates()` still
+seeds a fresh install, and a test proves it.
 
 ---
 
-## Not on this list, deliberately
+## What gets deleted along the way
 
-- **Task 58, durable write queue.** Part 3 (logging) shipped. Parts 1 and 2
-  change behaviour on the persistence path and the task itself says "decide
-  scope with Ben."
-- **Task 56, site IA.** The task says it needs a design conversation and is not
-  agent-eligible. It is right.
-- **Task 14, integrations page.** Deferred on purpose until Plaid is live.
-- **Task 20, GitHub support request.** Needs a human with an account.
-- **Everything in health, money, mind, food, admin, social.** 43 of the 52 open
-  items are Ben's life, not the platform. They are the product, and they are
-  not autonomous work.
+Named here so each is a decision rather than an omission.
+
+- **The desk/counsel register.** Never once activated in a month of real use.
+  Two things were built on it — a cheaper effort setting and reply-length
+  rules — and neither has ever run.
+- **`PLATFORM.md` as prompt content.** 22 KB of engineering post-mortems in
+  every conversation, including ones about dinner. Durable facts move to
+  `docs/`; the incident narrative goes.
+- **Prohibition lists.** `VOICE.md`'s "Never" section mostly restates rules the
+  same file already gives positively a few paragraphs earlier.
 
 ---
 
-## How we will know any of it worked
+## How we know it worked
 
-The honest test has not changed and is still one question: **is Cabinet more
-useful?**
+One question after a week of use: **is Cabinet more useful?**
 
-One correction to how `prompt-architecture.md` proposed measuring it. It said
-watch the 52-item task list go down. But 9 of those items are platform work
-that this list will close directly, which makes the number partly a measure of
-my own output rather than Cabinet's usefulness. Watch the other 43.
+The honest number is Cabinet's own task list — but watch the 43 items that are
+Ben's life, not the 9 platform items, which any of this work closes directly
+and which would otherwise measure my output rather than Cabinet's usefulness.
