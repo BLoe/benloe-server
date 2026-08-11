@@ -146,8 +146,8 @@
 │   │     <span class="c">mealplan 225 · settings 213 · substances 174 · activity 168</span>
 │   │     <span class="c">units 167 · food · health · profile · symptoms · training</span>
 │   │
-│   ├── <b>runtime/</b> <span class="n">2,900</span>  <span class="c">the agent loop</span>
-│   │     <span class="c">agent 1040 · session · queue · prompt · register · router</span>
+│   ├── <b>runtime/</b> <span class="n">2,700</span>  <span class="c">the agent loop</span>
+│   │     <span class="c">agent 1030 · session · queue · prompt · register · router</span>
 │   │     <span class="c">titler · rateLimits · perf · toolTruncate · mcpHealth</span>
 │   │
 │   ├── <b>gateway/</b> <span class="n">2,800</span>  <span class="c">HTTP + live event stream</span>
@@ -158,7 +158,7 @@
 │   ├── <b>memory/</b> <span class="n">1,500</span>  <span class="c">prompt files, templates, lessons</span>
 │   ├── <b>scheduler/</b> <span class="n">950</span>  <span class="c">11 cron jobs</span>
 │   ├── <b>scripts/</b> <span class="n">790</span>  <span class="c">backfill-titles, wipe</span>
-│   ├── <b>tiers/</b> <span class="n">520</span>  <span class="c">what the agent is allowed to do</span>
+│   ├── <b>tiers/</b> <span class="n">190</span>  <span class="c">the approval queue (classifier deleted 08-11)</span>
 │   ├── <b>integrations/</b> <span class="n">1,400</span>  <span class="c">plaid · githubApp · secrets broker</span>
 │   ├── <b>episodic/</b> <span class="n">360</span>  <span class="c">search over past conversations</span>
 │   ├── <b>push/</b> <span class="n">380</span>  <span class="c">phone notifications</span>
@@ -240,8 +240,8 @@
       <td><span class="tag infra">INFRASTRUCTURE</span></td>
     </tr>
     <tr>
-      <td><code>tiers/</code></td><td class="num">520</td>
-      <td>A policy deciding which files and commands the agent may touch, with approval queues for the rest.</td>
+      <td><code>tiers/</code></td><td class="num">190</td>
+      <td>The approval queue — how Cabinet hands Ben a decision. The tier classifier that used to live here was deleted on 2026-08-11: it graded every tool call and nothing read the grade.</td>
       <td><span class="tag machinery">MACHINERY</span></td>
     </tr>
     <tr>
@@ -264,10 +264,11 @@
 </div>
 
 <div class="note">
-  <b>Roughly 2,200–3,000 lines are machinery</b> — code whose only job is supervising the
-  agent. It is also where the recent dead ends came from: a permissions policy that blocks
-  the directory the prompt was going to move into, and edit-guards that a different tool
-  bypasses anyway.
+  <b>Was roughly 2,200–3,000 lines of machinery</b> — code whose only job was supervising
+  the agent. About 430 lines of it went on 2026-08-11 along with the tier classifier, which
+  had denied nothing in a month while classifying 445 actions as Tier 0 ("blocked") and
+  running all of them. What still stops anything: a hardcoded deny list in the SDK, and
+  unix permissions.
 </div>
 
 <h2>How a tool call works</h2>
@@ -503,7 +504,7 @@ model receives: { id: 3312, totals: { kcal: 1840, protein_g: 141, ... } }
     </tr>
     <tr>
       <td><b>Machinery</b></td>
-      <td><code>action_audit</code> <code>approval</code> <code>perf_span</code> <code>token_usage</code> <code>rate_limit_sample</code> <code>rate_limit_state</code> <code>retrieval_log</code> <code>build_run</code> <code>schema_migration</code> <code>app_setting</code> <code>credential</code> <code>push_subscription</code> <code>push_delivery</code></td>
+      <td><code>action_audit</code> <code>approval</code> <code>perf_turn</code> <code>token_usage</code> <code>rate_limit_sample</code> <code>rate_limit_state</code> <code>retrieval_log</code> <code>build_run</code> <code>schema_migration</code> <code>app_setting</code> <code>credential</code> <code>push_subscription</code> <code>push_delivery</code></td>
       <td class="num">13</td>
     </tr>
   </tbody>
@@ -512,8 +513,10 @@ model receives: { id: 3312, totals: { kcal: 1840, protein_g: 141, ... } }
 
 <div class="note">
   <b>13 of the 53 tables exist to supervise the agent</b>, not to hold anything about Ben —
-  audit trails, performance spans, token accounting, rate-limit samples, retrieval logs.
-  Two of them are by far the largest tables in the database by row count.
+  audit trails, timings, token accounting, rate-limit samples, retrieval logs. They were
+  also by far the largest tables in the database, so on 2026-08-11 the per-turn timing table
+  went from ~39 rows per turn to one, the audit log lost its duplicate writer, and both
+  gained a 90-day expiry. Nothing in the life domains expires.
 </div>
 
 <h2>Data — outside the repo</h2>
@@ -537,7 +540,7 @@ model receives: { id: 3312, totals: { kcal: 1840, protein_g: 141, ... } }
 </div>
 
 <footer>
-  Generated 2026-08-11 from commit <code>b6a2688</code>. Line counts are approximate and
+  Generated 2026-08-11 from commit <code>ad23757</code>. Line counts are approximate and
   will drift — the code is the source of truth. Longer version in
   <code>docs/ARCHITECTURE.md</code>.
 </footer>
