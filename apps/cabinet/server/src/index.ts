@@ -47,7 +47,6 @@ import { openDb } from './db/index.js';
 import { Embedder } from './embeddings/index.js';
 import { EpisodicStore } from './episodic/index.js';
 import { MemoryStore } from './memory/index.js';
-import { applyRelease, V2_PERSONA_RELEASE } from './memory/release.js';
 import { ApprovalQueue } from './tiers/approvals.js';
 import { AgentRuntime } from './runtime/agent.js';
 import { buildCabinetMcpServer, cabinetAllowedTools } from './mcp/cabinet-server.js';
@@ -93,21 +92,11 @@ const buildInfo = readBuildInfo();
 const cabinet = openDb(join(DATA_DIR, 'cabinet.db'));
 const episodic = new EpisodicStore(join(DATA_DIR, 'episodic.db'));
 const embedder = new Embedder();
+// Two roots: the private memory directory, and the repo-sourced prompt layers
+// shipped beside the code (src/prompts, copied to dist/prompts at build).
+// MemoryStore.PROMPT_CORE declares which layer comes from which.
 const memory = new MemoryStore(join(DATA_DIR, 'memory'));
 memory.ensureTemplates();
-// Template releases: ensureTemplates() only creates files that are missing, so
-// a shipped change to an EXISTING memory file would otherwise never reach the
-// deployed agent's mind. Idempotent and recorded — see memory/release.ts.
-{
-  const r = applyRelease(memory, V2_PERSONA_RELEASE);
-  if (r.applied) {
-    console.log(
-      `memory release ${r.id}: +${r.added.length} added, ${r.replaced.length} replaced, ` +
-        `${r.removed.length} removed, ${r.staged.length} staged for review`,
-    );
-    for (const s of r.staged) console.warn(`  STAGED ${s.file}: ${s.reason} → ${s.stagedPath}`);
-  }
-}
 seedInsurancePlan(cabinet.db);
 schedulePendingDeployConfirmationWatch(cabinet.db, DATA_DIR, buildInfo.sha);
 
