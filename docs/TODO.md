@@ -12,13 +12,26 @@ about the prompt.
 
 ## Rules for unattended runs
 
-1. **PRs only, and do not merge your own.** A merge is not undoable by
-   `/rewind`. Open it, describe it, leave it.
-2. **Stop at the first thing that needs a decision.** Writing the question down
-   clearly is a successful outcome, not a failure.
+Revised 2026-08-11. The first version of this list said "PRs only, and do not
+merge your own" — an over-correction written after one accidental merge, and
+the exact move this project exists to stop making: one incident, no evidence of
+ongoing harm, a procedural rule that taxes everything afterwards. The actual
+failure there was merging while Ben was mid-sentence about whether to, which is
+a timing problem that a rule about merging does not fix.
+
+1. **Ship what is verified and reversible.** Every prompt layer is one manifest
+   line, every superseded file is left on disk shadowed, and a merge is one
+   command to revert. Reversibility is the safety model, not asking.
+2. **Stop for the things only Ben can judge, and say which they are.** Taste,
+   direction, and anything whose cost is not recoverable. "This needs a
+   decision" is a real outcome; "this needs approval" usually is not.
 3. **Verify before claiming.** Typecheck, run the suite, and for anything
    touching the prompt, diff the assembled output against the live memory
-   directory. Three changes this session typechecked and were still wrong.
+   directory. Several changes this session typechecked and were still wrong —
+   and one test failure appeared only when two branches were merged together,
+   so verify the combination too.
+4. **Merging is currently blocked at the harness level**, so in practice an
+   unattended run ends at an open PR whether or not that is the right cadence.
 
 ---
 
