@@ -94,7 +94,7 @@ slightly cooler than the original.
 
 ---
 
-## 3. System — IN PROGRESS 2026-08-11
+## 3. System — PR #13 OPEN, AWAITING BEN
 
 What Cabinet can do and how this environment works. Generic, no personal data,
 in the repo.
@@ -113,6 +113,13 @@ resources on demand.
 
 **Done when:** the system layer is repo-sourced and loaded by job rather than
 always. A heartbeat does not need the deploy conventions.
+
+Drafted 2026-08-11 as PR #13: `SYSTEM.md` is repo-sourced and replaces
+`PLATFORM.md` in the prompt (76,585 -> 60,710 bytes). The "loaded by job" half
+is NOT done — heartbeats already skip the core prompt entirely, so nothing was
+required there, but topic-based loading for conversations belongs with item 6.
+The domain-pack design is also still open: this file carries generic
+conventions, not per-domain procedure.
 
 ---
 
