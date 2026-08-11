@@ -8,7 +8,6 @@ import type { SDKUserMessage, AgentDefinition } from '@anthropic-ai/claude-agent
 import type { MemoryStore } from '../memory/index.js';
 import type { ImageMime } from '../gateway/attachments.js';
 import type { ApprovalQueue, ApprovalPacket } from '../tiers/approvals.js';
-import { buildGate, type GateContext } from '../tiers/gate.js';
 import { assemblePrompt, type PromptInput } from './prompt.js';
 import { capacityLine, recordRateLimitEvent, recordUsageSnapshot } from './rateLimits.js';
 import { refusalFallback, route } from './router.js';
@@ -117,6 +116,17 @@ export type TurnEvent =
   | { type: 'error'; message: string; retryable: boolean };
 
 export type QueryFn = typeof sdkQuery;
+
+/**
+ * What the audit hook needs to attribute a tool call. Was GateContext, and
+ * carried a third field — the text of STANDING_ORDERS.md — read fresh on every
+ * turn so the tier classifier could parse autonomy promotions out of it. With
+ * the classifier gone nothing reads that text, so nothing reads the file.
+ */
+export interface TurnContext {
+  chatId: string | null;
+  sessionKind: string;
+}
 
 export interface RuntimeOptions {
   db: Database.Database;
@@ -232,7 +242,6 @@ export class AgentRuntime {
   readonly queue = new TurnQueue();
   readonly authMode: 'subscription' | 'api';
   private queryFn: QueryFn;
-  private gate;
   readonly sessions: SessionPool;
   /**
    * Whether a chat's CLI subprocess is kept alive between turns. On by
@@ -246,7 +255,7 @@ export class AgentRuntime {
   private currentAbort: AbortController | null = null;
   private currentChatId: string | null = null;
   /** Per-turn state the pooled session's hooks and gate read through. */
-  private turnCtx: { ctx: GateContext; perf: PerfRecorder; chatId: string; kind: TurnKind } | null = null;
+  private turnCtx: { ctx: TurnContext; perf: PerfRecorder; chatId: string; kind: TurnKind } | null = null;
   /** In-flight diagnostic appends, awaited by close(). */
   private pendingWrites = new Set<Promise<unknown>>();
 
@@ -260,18 +269,6 @@ export class AgentRuntime {
         this.diagLog({ kind: 'session-spawn', chatId: key, reason, live: this.sessions.size }),
     });
     this.authMode = configureAuth(process.env);
-    this.gate = buildGate({
-      db: opts.db,
-      approvals: opts.approvals,
-      // Autonomous by default (Ben's directive): execute + audit, no approval
-      // friction. Set CABINET_AUTONOMY=tiered to restore the 5-tier gate.
-      autonomy: process.env.CABINET_AUTONOMY === 'tiered' ? 'tiered' : 'full',
-      events: {
-        onNotify: (toolName, c) =>
-          this.currentOnEvent?.({ type: 'notice', level: 'info', text: `Tier 3 — ${toolName}: ${c.reason}` }),
-        onApprovalRequested: (packet) => this.currentOnEvent?.({ type: 'approval', packet }),
-      },
-    });
     opts.widgetBus?.on('widget', (w: { widgetType: string; data: unknown }) =>
       this.currentOnEvent?.({ type: 'widget', widgetType: w.widgetType, data: w.data }),
     );
@@ -284,10 +281,10 @@ export class AgentRuntime {
    * subprocess acted outside any turn at all — audit it under a sentinel
    * rather than crash the hook and let the tool call proceed unrecorded.
    */
-  private get turn(): { ctx: GateContext; perf: PerfRecorder; chatId: string; kind: TurnKind } {
+  private get turn(): { ctx: TurnContext; perf: PerfRecorder; chatId: string; kind: TurnKind } {
     return (
       this.turnCtx ?? {
-        ctx: { chatId: null, sessionKind: 'cron', standingOrders: '' },
+        ctx: { chatId: null, sessionKind: 'cron' },
         perf: nullPerf(),
         chatId: 'orphan',
         kind: 'cron',
@@ -435,10 +432,7 @@ export class AgentRuntime {
     perf.describe({ model });
     const turnClock = perf.start('turn_total');
 
-    const stopRead = perf.start('prompt_assemble', { label: 'STANDING_ORDERS.md' });
-    const standingOrders = this.safeRead('STANDING_ORDERS.md');
-    stopRead();
-    const ctx: GateContext = { chatId: req.chatId, sessionKind: req.kind, standingOrders };
+    const ctx: TurnContext = { chatId: req.chatId, sessionKind: req.kind };
     const abort = req.abort ?? new AbortController();
     this.currentOnEvent = req.onEvent;
     this.currentAbort = abort;
@@ -556,41 +550,45 @@ export class AgentRuntime {
           // AUTO_COMPACT_WINDOW above). Shallow-merges into the flag
           // settings layer — does not touch permissions or anything else.
           settings: { autoCompactWindow: AUTO_COMPACT_WINDOW },
-          // Appendix B: gated tools must NOT be listed here — bare entries
-          // auto-approve before canUseTool. Only ungated cabinet tools appear.
           allowedTools: this.opts.allowedTools ?? [],
+          // The only hard floor, and now the only one there has ever really
+          // been: the tier gate that used to sit in canUseTool ran in
+          // autonomy:'full', where it classified, audited, and allowed
+          // unconditionally. In a month it denied nothing — including 445
+          // actions it labelled Tier 0, the tier that means "blocked". A
+          // verdict nothing enforces reads like a control and is not one, so
+          // it is gone. What remains is real: this list, and unix permissions.
           disallowedTools: HARD_DENIES,
           mcpServers: this.opts.mcpServers as never,
-          canUseTool: async (toolName: string, input: Record<string, unknown>) => {
-            // The gate sits in the critical path of EVERY non-pre-approved
-            // tool call; if classification or the audit insert ever gets
-            // expensive, this is where it shows up.
-            const stop = this.turn.perf.start('gate', { label: toolName });
-            const r = await this.gate(toolName, input, this.turn.ctx);
-            stop({ behavior: r.behavior });
-            return r.behavior === 'allow'
-              ? { behavior: 'allow' as const, updatedInput: r.updatedInput }
-              : { behavior: 'deny' as const, message: r.message };
-          },
           hooks: {
             PreToolUse: [
               {
                 hooks: [
                   async (hookInput: { tool_name?: string; tool_input?: unknown }) => {
                     const stop = this.turn.perf.start('hook_pre', { label: hookInput.tool_name ?? 'unknown' });
-                    // Audit-only hook: covers the narrow auto-approved class
-                    // that never reaches canUseTool (Appendix B).
-                    this.opts.db
-                      .prepare(
-                        'INSERT INTO action_audit (tool, args, decision, chat_id, session_kind) VALUES (?,?,?,?,?)',
-                      )
-                      .run(
-                        `pre:${hookInput.tool_name ?? 'unknown'}`,
-                        JSON.stringify(hookInput.tool_input ?? {}).slice(0, 2000),
-                        'observed',
-                        this.turn.chatId,
-                        this.turn.kind,
-                      );
+                    // The audit trail, and now its only writer. This hook
+                    // fires for EVERY tool call; the gate that also wrote here
+                    // saw only the calls that were not pre-approved, so its
+                    // rows were a subset of these under a 'pre:' prefix that
+                    // existed purely to tell the two writers apart. One writer,
+                    // one row per call, no prefix.
+                    //
+                    // Recoverability is the safety story here (Ben's framing):
+                    // knowing what was done, so it can be undone. Not
+                    // permission to do it.
+                    try {
+                      this.opts.db
+                        .prepare('INSERT INTO action_audit (tool, args, chat_id, session_kind) VALUES (?,?,?,?)')
+                        .run(
+                          hookInput.tool_name ?? 'unknown',
+                          JSON.stringify(hookInput.tool_input ?? {}).slice(0, 2000),
+                          this.turn.chatId,
+                          this.turn.kind,
+                        );
+                    } catch {
+                      // A failed audit insert must not break the tool call.
+                      // Previously this was unguarded inside the hook.
+                    }
                     stop();
                     return {};
                   },

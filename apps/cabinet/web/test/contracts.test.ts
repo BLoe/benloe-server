@@ -29,7 +29,7 @@ describe('mock CabinetApi — contract validity', () => {
   it('ops() returns typed entries and honors the kind filter', async () => {
     const all = await mockApi.ops();
     expect(all.entries.length).toBeGreaterThan(0);
-    expect(all.entries.every((e) => typeof e.reversible === 'boolean' && typeof e.tier === 'number')).toBe(true);
+    expect(all.entries.every((e) => typeof e.reversible === 'boolean' && typeof e.kind === 'string')).toBe(true);
     const cron = await mockApi.ops({ kind: 'cron' });
     expect(cron.entries.every((e) => e.kind === 'cron')).toBe(true);
   });

@@ -305,7 +305,11 @@ describe('AgentRuntime.run (fake SDK)', () => {
     // Appendix B invariants baked into the options:
     expect(seenOptions.allowedTools).toEqual([]); // no gated tools bare-listed
     expect(seenOptions.settingSources).toEqual([]);
-    expect(typeof seenOptions.canUseTool).toBe('function');
+    // No canUseTool at all: the tier gate that lived there is gone. Pinned as
+    // an absence on purpose — reintroducing a permission hook is a decision,
+    // not a refactor, and should have to change this line.
+    expect(seenOptions.canUseTool).toBeUndefined();
+    expect(seenOptions.disallowedTools).toContain('Bash(sudo su*)');
     expect(seenOptions.hooks.PreToolUse).toBeTruthy();
     // Track 3.1: subagents are wired in, and design-reviewer is read-only.
     expect(seenOptions.agents).toBe(AGENTS);

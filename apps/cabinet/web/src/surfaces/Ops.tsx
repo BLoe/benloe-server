@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/cabinet.js';
-import type { OpsEntry, OpsKind, UsageDay, UsageWindow, InstrumentSpec, PerfView, PerfPhaseSummary } from '../lib/cabinet.js';
+import type { OpsEntry, OpsKind, UsageDay, UsageWindow, InstrumentSpec, PerfView, PerfSpread } from '../lib/cabinet.js';
 import { Instrument, SectionLabel } from '../components/instruments/index.js';
 import { disablePush, enablePush, pushState, testPush, type PushState } from '../lib/push.js';
 import './ops.css';
@@ -114,73 +114,30 @@ function buildUsageSpecs(byDay: UsageDay[], windows: UsageWindow[]): { specs: In
   return { specs, costLine };
 }
 
-/**
- * What each phase means in plain language. The raw keys are the queryable
- * vocabulary (runtime/perf.ts); this is what a human reads at 11pm trying to
- * work out why a turn felt slow.
- */
-const PHASE_COPY: Record<string, string> = {
-  request_total: 'whole request, end to end',
-  queue_wait: 'waiting behind another turn',
-  recall: 'lesson recall (embedding + search)',
-  profile_gap: 'profile completeness check',
-  prompt_assemble: 'reading memory, building the prompt',
-  sdk_spawn: 'SDK subprocess start — paid every turn',
-  ttf_thinking: 'model, first thought',
-  ttf_text: 'model, first word out loud',
-  ttf_tool: 'model, first tool call',
-  step: 'one model round trip',
-  tool: 'tool calls',
-  gate: 'permission gate',
-  hook_pre: 'pre-tool hook',
-  hook_post: 'post-tool hook (truncation)',
-  turn_total: 'agent turn, spawn to result',
-};
-
 function ms(n: number): string {
   return n >= 10_000 ? `${(n / 1000).toFixed(1)}s` : n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${Math.round(n)}ms`;
 }
 
-function PhaseTable({
-  rows,
-  caption,
-  nameOf,
-}: {
-  rows: PerfPhaseSummary[];
-  caption: string;
-  nameOf?: (r: PerfPhaseSummary) => string;
-}) {
+/**
+ * Two numbers with a spread each, which is all perf_turn stores.
+ *
+ * This replaced a per-phase breakdown (queue wait vs. recall vs. subprocess
+ * spawn vs. each tool). That view answered the question it was built for and
+ * then cost ~39 database rows per turn forever; the phases are still timeable
+ * in code when something needs investigating, they just are not kept.
+ */
+function LatencyRow({ label, gloss, spread }: { label: string; gloss: string; spread: PerfSpread | null }) {
+  if (!spread) return null;
   return (
-    <div className="ops-perf-table" role="group" aria-label={caption}>
-      <p className="ops-perf-caption data">{caption}</p>
-      <table className="ops-perf-grid">
-        <thead>
-          <tr>
-            <th scope="col">phase</th>
-            <th scope="col">n</th>
-            <th scope="col">p50</th>
-            <th scope="col">p95</th>
-            <th scope="col">max</th>
-            <th scope="col">total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={`${r.phase}:${r.label ?? ''}`}>
-              <th scope="row">
-                <span className="ops-perf-name data">{nameOf ? nameOf(r) : r.phase}</span>
-                {!nameOf && PHASE_COPY[r.phase] && <span className="ops-perf-gloss">{PHASE_COPY[r.phase]}</span>}
-              </th>
-              <td className="data">{r.n}</td>
-              <td className="data">{ms(r.p50Ms)}</td>
-              <td className="data">{ms(r.p95Ms)}</td>
-              <td className="data">{ms(r.maxMs)}</td>
-              <td className="data">{ms(r.totalMs)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <tr>
+      <th scope="row">
+        <span className="ops-perf-name data">{label}</span>
+        <span className="ops-perf-gloss">{gloss}</span>
+      </th>
+      <td className="data">{ms(spread.p50)}</td>
+      <td className="data">{ms(spread.p95)}</td>
+      <td className="data">{ms(spread.max)}</td>
+    </tr>
   );
 }
 
@@ -391,10 +348,25 @@ export function Ops() {
         <section className="ops-perf" aria-label="Latency">
           <SectionLabel>Latency</SectionLabel>
           <p className="ops-perf-lede data">
-            {perf.turns} turn{perf.turns === 1 ? '' : 's'} over {perf.window} — where the wall clock went.
+            {perf.turns} turn{perf.turns === 1 ? '' : 's'} over {perf.window} — {perf.avgSteps} steps and{' '}
+            {perf.avgToolCalls} tool calls per turn on average.
           </p>
-          <PhaseTable rows={perf.byPhase} caption="By phase" />
-          {perf.byTool.length > 0 && <PhaseTable rows={perf.byTool} caption="By tool" nameOf={(r) => r.label ?? '—'} />}
+          <div className="ops-perf-table" role="group" aria-label="Latency">
+            <table className="ops-perf-grid">
+              <thead>
+                <tr>
+                  <th scope="col">phase</th>
+                  <th scope="col">p50</th>
+                  <th scope="col">p95</th>
+                  <th scope="col">max</th>
+                </tr>
+              </thead>
+              <tbody>
+                <LatencyRow label="turn_total" gloss="agent turn, spawn to result" spread={perf.totalMs} />
+                <LatencyRow label="ttf_text" gloss="model, first word out loud" spread={perf.ttfTextMs} />
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 
@@ -423,15 +395,11 @@ export function Ops() {
                       {e.diff}
                     </pre>
                   )}
-                  <p className="ops-result data">{e.result}</p>
                 </div>
 
                 <div className="ops-side">
                   <div className="ops-chips">
                     <span className={`ops-chip kind ${e.kind}`}>{e.kind}</span>
-                    <span className="ops-chip tier" title={`Tier ${e.tier}`}>
-                      T{e.tier}
-                    </span>
                   </div>
                   {e.reversible &&
                     (e.reverted ? (
