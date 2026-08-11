@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cabinet — system map</title>
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --fg: #1c1a17;
+    --dim: #6b655c;
+    --rule: #e0dcd4;
+    --card: #ffffff;
+    --accent: #8a5a2b;
+    --product: #2f6b4f;
+    --infra: #4a5c7a;
+    --machinery: #9a4a3a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16150f;
+      --fg: #e8e4dc;
+      --dim: #948d80;
+      --rule: #2e2b24;
+      --card: #1d1c16;
+      --accent: #d8a05c;
+      --product: #7fbf9a;
+      --infra: #93aad0;
+      --machinery: #d98a76;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16150f; --fg: #e8e4dc; --dim: #948d80; --rule: #2e2b24;
+    --card: #1d1c16; --accent: #d8a05c; --product: #7fbf9a;
+    --infra: #93aad0; --machinery: #d98a76;
+  }
+  :root[data-theme="light"] {
+    --bg: #fbfaf8; --fg: #1c1a17; --dim: #6b655c; --rule: #e0dcd4;
+    --card: #ffffff; --accent: #8a5a2b; --product: #2f6b4f;
+    --infra: #4a5c7a; --machinery: #9a4a3a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+
+  header { border-bottom: 1px solid var(--rule); padding-bottom: 1.5rem; margin-bottom: 2.5rem; }
+  h1 { font-size: 1.75rem; margin: 0 0 .4rem; letter-spacing: -.01em; }
+  .sub { color: var(--dim); font-size: .95rem; margin: 0; }
+  .totals { margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 1.5rem; font-size: .9rem; }
+  .totals b { font-variant-numeric: tabular-nums; font-size: 1.15rem; display: block; font-weight: 600; }
+  .totals span { color: var(--dim); }
+
+  h2 {
+    font-size: 1.05rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--accent); margin: 3rem 0 1rem; font-weight: 600;
+  }
+  h2:first-of-type { margin-top: 0; }
+  p { margin: 0 0 1rem; max-width: 60ch; }
+  .lede { color: var(--dim); }
+
+  pre.tree {
+    background: var(--card); border: 1px solid var(--rule); border-radius: 6px;
+    padding: 1.25rem; overflow-x: auto; font-size: .82rem; line-height: 1.65;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    margin: 0 0 1rem;
+  }
+  pre.tree b { color: var(--fg); font-weight: 600; }
+  pre.tree .n { color: var(--dim); }
+  pre.tree .c { color: var(--dim); font-style: italic; }
+
+  .scroll { overflow-x: auto; margin-bottom: 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; min-width: 40rem; }
+  th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); font-weight: 600; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--dim); }
+  td code { font-size: .85rem; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: color-mix(in srgb, var(--fg) 7%, transparent);
+    padding: .1em .35em; border-radius: 3px; font-size: .88em;
+  }
+
+  .tag { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; white-space: nowrap; }
+  .tag.product { color: var(--product); }
+  .tag.infra { color: var(--infra); }
+  .tag.machinery { color: var(--machinery); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 1.25rem; font-size: .85rem; color: var(--dim); margin-bottom: 1.25rem; }
+  .legend b { font-weight: 600; }
+
+  .note {
+    border-left: 3px solid var(--accent); padding: .75rem 0 .75rem 1rem;
+    margin: 1.5rem 0; color: var(--dim); font-size: .92rem;
+  }
+  .note b { color: var(--fg); }
+
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--rule); color: var(--dim); font-size: .82rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Cabinet — system map</h1>
+  <p class="sub">What lives where, and roughly how big each piece is.</p>
+  <div class="totals">
+    <div><b>17,500</b><span>server source</span></div>
+    <div><b>12,300</b><span>server tests</span></div>
+    <div><b>7,300</b><span>web source</span></div>
+    <div><b>3,800</b><span>CSS</span></div>
+    <div><b>~41,000</b><span>total lines</span></div>
+  </div>
+</header>
+
+<h2>How it runs</h2>
+<p>
+  Two programs. <b>cabinet-api</b> is a Node process started by PM2 with
+  <code>node dist/index.js</code>; it opens port 3008 and stays up. <b>The web client</b>
+  is a React app built to static files that Caddy serves at cabinet.benloe.com.
+</p>
+<p>
+  <code>index.ts</code> is a script that runs once at startup — it opens the databases,
+  creates the objects, connects them to each other, and opens the port. After that
+  it's finished; the process only wakes when an HTTP request arrives or a cron timer fires.
+</p>
+
+<h2>Directory tree</h2>
+<pre class="tree">
+<b>apps/cabinet/</b>
+│
+├── <b>server/src/</b> <span class="n">17,500</span>
+│   │
+│   ├── index.ts <span class="n">250</span>  <span class="c">startup: create everything, open the port</span>
+│   │
+│   ├── <b>domains/</b> <span class="n">4,400</span>  <span class="c">18 files — one per life area</span>
+│   │     <span class="c">money 1074 · credentials 299 · cravings 270 · healthcare 266</span>
+│   │     <span class="c">credentialCatalog 249 · adherence 235 · shopping 231 · misc 229</span>
+│   │     <span class="c">mealplan 225 · settings 213 · substances 174 · activity 168</span>
+│   │     <span class="c">units 167 · food · health · profile · symptoms · training</span>
+│   │
+│   ├── <b>runtime/</b> <span class="n">2,900</span>  <span class="c">the agent loop</span>
+│   │     <span class="c">agent 1040 · session · queue · prompt · register · router</span>
+│   │     <span class="c">titler · rateLimits · perf · toolTruncate · mcpHealth</span>
+│   │
+│   ├── <b>gateway/</b> <span class="n">2,800</span>  <span class="c">HTTP + live event stream</span>
+│   │     <span class="c">app 878 · attachments · credentialRoutes · plaidRoutes</span>
+│   │     <span class="c">settingsRoutes · surfaces · fold · sse · transcript · pendingTurn</span>
+│   │
+│   ├── <b>mcp/</b> <span class="n">880</span>  <span class="c">the 63 tools the model can call</span>
+│   ├── <b>memory/</b> <span class="n">1,500</span>  <span class="c">prompt files, templates, lessons</span>
+│   ├── <b>scheduler/</b> <span class="n">950</span>  <span class="c">11 cron jobs</span>
+│   ├── <b>scripts/</b> <span class="n">790</span>  <span class="c">backfill-titles, wipe</span>
+│   ├── <b>tiers/</b> <span class="n">520</span>  <span class="c">what the agent is allowed to do</span>
+│   ├── <b>integrations/</b> <span class="n">1,400</span>  <span class="c">plaid · githubApp · secrets broker</span>
+│   ├── <b>episodic/</b> <span class="n">360</span>  <span class="c">search over past conversations</span>
+│   ├── <b>push/</b> <span class="n">380</span>  <span class="c">phone notifications</span>
+│   ├── <b>deploy/</b> <span class="n">220</span>  <span class="c">Cabinet redeploying itself</span>
+│   ├── <b>embeddings/</b> <span class="n">150</span>
+│   └── <b>db/</b> <span class="n">110</span>  <span class="c">+ 22 migrations, ~50 tables</span>
+│
+├── <b>server/test/</b> <span class="n">12,300</span>  <span class="c">53 files</span>
+│
+└── <b>web/src/</b> <span class="n">7,300 + 3,800 css</span>
+    ├── <b>surfaces/</b> <span class="n">4,400</span>  <span class="c">7 screens</span>
+    │     <span class="c">Chat · Today · Brain · Money · Domains · Ops · Credentials</span>
+    ├── <b>lib/</b> <span class="n">1,700</span>  <span class="c">API client, contracts, drafts</span>
+    └── <b>components/</b> <span class="n">820</span>  <span class="c">shell (5) + instruments (7)</span>
+</pre>
+
+<h2>What each part is for</h2>
+
+<div class="legend">
+  <span><b class="tag product">PRODUCT</b> — the reason Cabinet exists</span>
+  <span><b class="tag infra">INFRASTRUCTURE</b> — needed to run at all</span>
+  <span><b class="tag machinery">MACHINERY</b> — exists to supervise the agent</span>
+</div>
+
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Module</th><th class="num">Lines</th><th>Plain English</th><th>Kind</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>domains/</code></td><td class="num">4,400</td>
+      <td>The actual logic for food, weight, money, medications, meal plans, workouts, symptoms. This is what makes Cabinet different from a chat window.</td>
+      <td><span class="tag product">PRODUCT</span></td>
+    </tr>
+    <tr>
+      <td><code>mcp/</code></td><td class="num">880</td>
+      <td>Defines the 63 tools the model can call. Thin — nearly every tool just validates its arguments and calls into <code>domains/</code>.</td>
+      <td><span class="tag product">PRODUCT</span></td>
+    </tr>
+    <tr>
+      <td><code>memory/</code></td><td class="num">1,500</td>
+      <td>Loads the markdown files that make up the prompt. About 850 of those lines are <code>templates.ts</code>, a second copy of those files used to seed a fresh install.</td>
+      <td><span class="tag product">PRODUCT</span></td>
+    </tr>
+    <tr>
+      <td><code>web/surfaces/</code></td><td class="num">4,400</td>
+      <td>The seven screens in the browser.</td>
+      <td><span class="tag product">PRODUCT</span></td>
+    </tr>
+    <tr>
+      <td><code>runtime/</code></td><td class="num">2,900</td>
+      <td>Runs a turn: builds the prompt, starts the model, streams its output back. <code>agent.ts</code> alone is 1,040 lines.</td>
+      <td><span class="tag infra">INFRASTRUCTURE</span></td>
+    </tr>
+    <tr>
+      <td><code>gateway/</code></td><td class="num">2,800</td>
+      <td>The web server. ~50 HTTP routes plus the live stream the UI listens on.</td>
+      <td><span class="tag infra">INFRASTRUCTURE</span></td>
+    </tr>
+    <tr>
+      <td><code>integrations/</code></td><td class="num">1,400</td>
+      <td>Banking (Plaid), GitHub tokens, and reading secrets from a separate service.</td>
+      <td><span class="tag infra">INFRASTRUCTURE</span></td>
+    </tr>
+    <tr>
+      <td><code>scheduler/</code></td><td class="num">950</td>
+      <td>11 cron jobs: heartbeat, morning briefing, evening check-in, weekly review, money sync, and one called <code>idle-builder</code> that has Cabinet build things unprompted.</td>
+      <td><span class="tag infra">INFRASTRUCTURE</span></td>
+    </tr>
+    <tr>
+      <td><code>episodic/</code>, <code>embeddings/</code></td><td class="num">510</td>
+      <td>Search over past conversations and documents.</td>
+      <td><span class="tag infra">INFRASTRUCTURE</span></td>
+    </tr>
+    <tr>
+      <td><code>db/</code>, <code>push/</code></td><td class="num">490</td>
+      <td>Database setup and phone notifications.</td>
+      <td><span class="tag infra">INFRASTRUCTURE</span></td>
+    </tr>
+    <tr>
+      <td><code>tiers/</code></td><td class="num">520</td>
+      <td>A policy deciding which files and commands the agent may touch, with approval queues for the rest.</td>
+      <td><span class="tag machinery">MACHINERY</span></td>
+    </tr>
+    <tr>
+      <td><code>scripts/</code></td><td class="num">790</td>
+      <td><code>wipe.ts</code> (reset the system) and a one-off backfill.</td>
+      <td><span class="tag machinery">MACHINERY</span></td>
+    </tr>
+    <tr>
+      <td><code>deploy/</code></td><td class="num">220</td>
+      <td>Tracking whether Cabinet's self-redeploy actually landed.</td>
+      <td><span class="tag machinery">MACHINERY</span></td>
+    </tr>
+    <tr>
+      <td><code>runtime/</code> odds and ends</td><td class="num">~700</td>
+      <td><code>register</code>, <code>rateLimits</code>, <code>toolTruncate</code>, <code>perf</code>, <code>mcpHealth</code> — measuring and constraining the agent rather than doing anything for you.</td>
+      <td><span class="tag machinery">MACHINERY</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <b>Roughly 2,200–3,000 lines are machinery</b> — code whose only job is supervising the
+  agent. It is also where the recent dead ends came from: a permissions policy that blocks
+  the directory the prompt was going to move into, and edit-guards that a different tool
+  bypasses anyway.
+</div>
+
+<h2>Data — outside the repo</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>Path</th><th class="num">Size</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr><td><code>data/cabinet/cabinet.db</code></td><td class="num">22 MB</td><td>Everything logged — ~50 tables.</td></tr>
+    <tr><td><code>data/cabinet/episodic.db</code></td><td class="num">4 MB</td><td>Searchable history.</td></tr>
+    <tr><td><code>data/cabinet/memory/</code></td><td class="num">81 KB</td><td>11 markdown files that become the prompt. Its own git repo, no remote, nothing reviews it.</td></tr>
+    <tr><td><code>data/cabinet/documents/</code>, <code>chat-images/</code>, <code>backups/</code></td><td class="num">—</td><td>Uploads and backups.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <b>The prompt is ~20,000 tokens.</b> About 500 of them live in the repo and go through
+  review. The other 19,500 come from that <code>memory/</code> folder. On top of that sit
+  the 63 tool descriptions — several thousand more tokens that are also prompt, also read
+  on every turn, and have never been read as prose.
+</div>
+
+<footer>
+  Generated 2026-08-11 from commit <code>b6a2688</code>. Line counts are approximate and
+  will drift — the code is the source of truth. Longer version in
+  <code>docs/ARCHITECTURE.md</code>.
+</footer>
+
+</div>
+</body>
+</html>
