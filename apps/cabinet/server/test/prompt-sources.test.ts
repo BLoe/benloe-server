@@ -166,25 +166,35 @@ describe('the shipped prompt directory', () => {
 });
 
 describe('moving a layer changes that layer and nothing else', () => {
-  it('assembles the same files in the same order regardless of where they load from', () => {
-    // Replaces "produces byte-identical output to an all-user manifest",
-    // which was the right assertion while nothing had moved and became
-    // impossible to satisfy the moment CHARTER.md became repo-sourced
-    // (2026-08-11). The invariant worth keeping is not that the bytes are
-    // identical — the whole point of a move is that they change — but that
-    // moving a layer cannot reorder, drop or duplicate the others.
-    const dataDir = mkdtempSync(join(tmpdir(), 'cabinet-same-'));
-    const shipped = new MemoryStore(dataDir, DEFAULT_PROMPT_DIR);
-    shipped.ensureTemplates();
-    const allUser = new MemoryStore(
-      dataDir,
-      DEFAULT_PROMPT_DIR,
-      PROMPT_CORE.map((l) => ({ file: l.file, source: 'user' as const })),
-    );
+  it('assembles exactly the manifest, in manifest order, whichever root each layer came from', () => {
+    // Replaces two earlier versions of this assertion, both of which encoded
+    // an assumption that stopped being true:
+    //
+    //   v1 "byte-identical to an all-user manifest" — correct while nothing
+    //   had moved, impossible once CHARTER.md became repo-sourced.
+    //
+    //   v2 "same tags as an all-user manifest" — correct while every layer
+    //   ALSO existed in data/, and wrong the moment a repo-only layer landed.
+    //   SYSTEM.md has no data/ counterpart, so the all-user comparison simply
+    //   could not find it. That failure appeared only when the charter and
+    //   system changes were combined, which is why it is worth merging
+    //   branches locally and running the suite before merging them for real.
+    //
+    // The invariant that does not rot: the assembled prompt is the manifest,
+    // in manifest order, minus any layer whose file is absent from the root
+    // it declares. It holds for a user-only layer, a repo-only layer, and one
+    // that exists in both.
+    const dataDir = mkdtempSync(join(tmpdir(), 'cabinet-manifest-'));
+    const mem = new MemoryStore(dataDir, DEFAULT_PROMPT_DIR);
+    mem.ensureTemplates();
 
-    const tags = (core: string) => [...core.matchAll(/<memory file="([^"]+)">/g)].map((m) => m[1]);
-    expect(tags(shipped.promptCore())).toEqual(tags(allUser.promptCore()));
-    expect(shipped.promptCore().length).toBeGreaterThan(0);
+    const present = PROMPT_CORE.filter(({ file, source }) =>
+      existsSync(join(source === 'repo' ? DEFAULT_PROMPT_DIR : dataDir, file)),
+    ).map((l) => l.file);
+    const assembled = [...mem.promptCore().matchAll(/<memory file="([^"]+)">/g)].map((m) => m[1]);
+
+    expect(assembled).toEqual(present);
+    expect(assembled.length).toBeGreaterThan(0);
   });
 
   it('serves a repo-sourced layer from the repo, not from the seeded data dir', () => {
