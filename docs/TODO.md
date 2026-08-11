@@ -43,7 +43,7 @@ useful. Measured, considered, dropped.
 
 ---
 
-## 1. Read the tool descriptions as prose
+## 1. Read the tool descriptions as prose — IN PROGRESS 2026-08-11
 
 Nobody ever has. 63 descriptions, ~13 KB, written over months, currently
 invisible on a normal turn.
