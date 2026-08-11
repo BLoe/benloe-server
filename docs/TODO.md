@@ -43,20 +43,27 @@ useful. Measured, considered, dropped.
 
 ---
 
-## 1. Read the tool descriptions as prose — IN PROGRESS 2026-08-11
+## 1. Read the tool descriptions as prose — DONE 2026-08-11
 
-Nobody ever has. 63 descriptions, ~13 KB, written over months, currently
-invisible on a normal turn.
+Result: [`tool-description-audit.md`](tool-description-audit.md).
 
-Separate two things in each: what the tool **is** — which stays, because it is
-how the model finds it through search — and how Cabinet should **behave** —
-which has no working home today and is the reason this whole rewrite matters.
+All 63 read in full (12,760 bytes). 38 are pure API and stay. 19 carry
+behavioural guidance with no working home. 6 carry personal detail about Ben —
+including a named medical condition — in a file tracked in the **public** repo.
 
-**Done when:** a document quotes every description carrying behavioural
-guidance and proposes where it goes. No code change.
+Two things came out of it that change later items:
 
-**Why first:** every later item needs this inventory. The system layer cannot
-be written without knowing what is currently being said in the wrong place.
+- Six of the behavioural quotes are the same instruction in six costumes: say
+  what you do not know, and never let a gap render as a fact. That is one
+  charter clause, not six tool descriptions (item 2).
+- A description loads at *discovery* time, which is too late to govern the
+  decision that led to the discovery. `craving_report` literally says "read
+  this BEFORE offering a move". Procedures must live in the pack, not the tool
+  (item 3).
+
+**Open, and Ben's call:** the personal detail in public source. Leave it,
+generalise the wording, or move the clinical framing to the user layer. Nothing
+else is blocked on it.
 
 ---
 
