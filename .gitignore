@@ -5,8 +5,11 @@
 .env.test
 *.env
 
-# Dependencies
-node_modules/
+# Dependencies. No trailing slash on purpose: that form matches directories
+# only, and a git worktree of this repo needs apps/cabinet/node_modules to be a
+# SYMLINK into the real install (docs/ARCHITECTURE.md) — which sailed straight
+# past the old pattern and got committed.
+node_modules
 npm-debug.log*
 
 # Database files
