@@ -62,6 +62,7 @@
     color: var(--accent); margin: 3rem 0 1rem; font-weight: 600;
   }
   h2:first-of-type { margin-top: 0; }
+  h3 { font-size: .95rem; margin: 2rem 0 .75rem; font-weight: 600; }
   p { margin: 0 0 1rem; max-width: 60ch; }
   .lede { color: var(--dim); }
 
@@ -163,7 +164,7 @@
 │   ├── <b>push/</b> <span class="n">380</span>  <span class="c">phone notifications</span>
 │   ├── <b>deploy/</b> <span class="n">220</span>  <span class="c">Cabinet redeploying itself</span>
 │   ├── <b>embeddings/</b> <span class="n">150</span>
-│   └── <b>db/</b> <span class="n">110</span>  <span class="c">+ 22 migrations, ~50 tables</span>
+│   └── <b>db/</b> <span class="n">110</span>  <span class="c">+ 22 migrations, 53 tables</span>
 │
 ├── <b>server/test/</b> <span class="n">12,300</span>  <span class="c">53 files</span>
 │
@@ -404,6 +405,115 @@ model receives: { id: 3312, totals: { kcal: 1840, protein_g: 141, ... } }
   The obvious consolidations: the five <code>*_activity_*</code> and five <code>*_plan_entry</code>
   tools are the same four verbs twice over, and five of the seven <code>money_*</code> tools are
   read queries that <code>query_db</code> could already answer.
+</div>
+
+<h2>The database</h2>
+<p>
+  One SQLite file, <code>cabinet.db</code>, built up over 22 migrations. <b>53 tables.</b>
+  Only 14 foreign keys are declared — the schema is far flatter than the table count suggests.
+</p>
+
+<h3>Declared relationships</h3>
+<pre class="tree">
+<span class="c">MONEY</span>
+  plaid_item ──&lt; financial_account ──&lt; financial_transaction
+                         └──────────&lt; holding &gt;── security
+  net_worth_snapshot     budget                <span class="c">(standalone)</span>
+
+<span class="c">FOOD</span>
+  recipe ──&lt; recipe_ingredient
+     ├─────&lt; food_log
+     └─────&lt; meal_plan_entry
+  pantry_item     grocery_list_item            <span class="c">(standalone)</span>
+
+<span class="c">TRAINING</span>
+  workout ──&lt; workout_set
+     ^────── activity_plan_entry
+
+<span class="c">HEALTHCARE</span>
+  insurance_plan ──&lt; claim
+  document ──&lt; lab_result
+  medication     prior_auth     hsa_contribution   <span class="c">(standalone)</span>
+
+<span class="c">GOALS</span>
+  goal ──&lt; habit_event
+
+<span class="c">CONVERSATION</span>
+  chat ──&lt; message
+
+<span class="c">SYSTEM</span>
+  task ──&lt; build_run
+</pre>
+<p class="lede"><code>──&lt;</code> means one-to-many. Everything not shown above has no declared key to anything.</p>
+
+<h3>The real spine is a date</h3>
+<p>
+  Thirteen tables carry a <code>local_day</code> column and are joined on it rather than by
+  key: <code>food_log</code>, <code>body_metric</code>, <code>health_daily</code>,
+  <code>substance_log</code>, <code>craving_event</code>, <code>symptom_log</code>,
+  <code>mood_log</code>, <code>journal_entry</code>, <code>habit_event</code>,
+  <code>workout</code>, <code>meal_plan_entry</code>, <code>activity_plan_entry</code>,
+  <code>net_worth_snapshot</code>.
+</p>
+<p>
+  That is what makes "how did last Tuesday go" answerable in one query, and it is the
+  reason most of these tables need no foreign keys at all. It is also the seam that will
+  need a <code>user_id</code> if Cabinet ever has a second user.
+</p>
+
+<h3>All 53 tables</h3>
+<div class="scroll">
+<table>
+  <thead><tr><th>Group</th><th>Tables</th><th class="num">Count</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Food &amp; kitchen</b></td>
+      <td><code>food_log</code> <code>recipe</code> <code>recipe_ingredient</code> <code>pantry_item</code> <code>meal_plan_entry</code> <code>grocery_list_item</code></td>
+      <td class="num">6</td>
+    </tr>
+    <tr>
+      <td><b>Body &amp; training</b></td>
+      <td><code>body_metric</code> <code>health_daily</code> <code>workout</code> <code>workout_set</code> <code>activity_plan_entry</code></td>
+      <td class="num">5</td>
+    </tr>
+    <tr>
+      <td><b>Health tracking</b></td>
+      <td><code>substance_log</code> <code>craving_event</code> <code>symptom_log</code> <code>mood_log</code> <code>journal_entry</code></td>
+      <td class="num">5</td>
+    </tr>
+    <tr>
+      <td><b>Healthcare</b></td>
+      <td><code>insurance_plan</code> <code>claim</code> <code>lab_result</code> <code>medication</code> <code>prior_auth</code> <code>hsa_contribution</code></td>
+      <td class="num">6</td>
+    </tr>
+    <tr>
+      <td><b>Money</b></td>
+      <td><code>financial_account</code> <code>financial_transaction</code> <code>holding</code> <code>security</code> <code>plaid_item</code> <code>net_worth_snapshot</code> <code>budget</code> <code>subscription</code></td>
+      <td class="num">8</td>
+    </tr>
+    <tr>
+      <td><b>Planning</b></td>
+      <td><code>task</code> <code>goal</code> <code>habit_event</code> <code>hard_constraint</code> <code>contact</code> <code>price_watch</code> <code>reading_item</code></td>
+      <td class="num">7</td>
+    </tr>
+    <tr>
+      <td><b>Conversation</b></td>
+      <td><code>chat</code> <code>message</code> <code>document</code></td>
+      <td class="num">3</td>
+    </tr>
+    <tr>
+      <td><b>Machinery</b></td>
+      <td><code>action_audit</code> <code>approval</code> <code>perf_span</code> <code>token_usage</code> <code>rate_limit_sample</code> <code>rate_limit_state</code> <code>retrieval_log</code> <code>build_run</code> <code>schema_migration</code> <code>app_setting</code> <code>credential</code> <code>push_subscription</code> <code>push_delivery</code></td>
+      <td class="num">13</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <b>13 of the 53 tables exist to supervise the agent</b>, not to hold anything about Ben —
+  audit trails, performance spans, token accounting, rate-limit samples, retrieval logs.
+  Two of them are by far the largest tables in the database by row count.
 </div>
 
 <h2>Data — outside the repo</h2>
