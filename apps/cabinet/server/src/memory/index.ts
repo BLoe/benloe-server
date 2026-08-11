@@ -6,6 +6,76 @@ import { MEMORY_TEMPLATES } from './templates.js';
 export class MemoryError extends Error {}
 
 /**
+ * Where repo-sourced prompt layers live. Resolved from this module's own
+ * location so the same expression works under `tsx` (src/memory → src/prompts)
+ * and in production (dist/memory → dist/prompts); `npm run build` copies the
+ * directory across, the same way it does db/migrations.
+ */
+export const DEFAULT_PROMPT_DIR = join(import.meta.dirname, '../prompts');
+
+/**
+ * Which of the two roots a prompt layer is read from.
+ *
+ * - `repo` — generic, reviewable, changed by PR. Lives in src/prompts/.
+ * - `user` — personal, private, changed by Cabinet as it learns. Lives in the
+ *   memory directory under data/, which is its own git repo with no remote.
+ *
+ * The distinction is privacy, not authority. A `repo` layer is not more
+ * trusted than a `user` one; it is merely one that can be published.
+ */
+export type PromptSource = 'repo' | 'user';
+
+export interface PromptLayer {
+  file: string;
+  source: PromptSource;
+}
+
+/**
+ * The system prompt, as an ordered manifest.
+ *
+ * This replaced a bare list of filenames that were all implicitly read from
+ * the memory directory. Naming the source per layer is what lets a file move
+ * into the repo as a one-line change here, rather than as a change to how the
+ * loader works.
+ *
+ * Order is load-bearing and later wins — see CORRECTIONS.md below.
+ *
+ * Everything is `user` today. That is the honest starting state, not an
+ * oversight: the loader shipped before any content moved, so that the first
+ * move is a diff you can read. See docs/prompt-architecture.md.
+ */
+export const PROMPT_CORE: readonly PromptLayer[] = [
+  // CHARTER is the constitution and leads: everything below operates inside
+  // it. Then the register (VOICE), how Cabinet is currently tuning itself
+  // (TUNING), the default shape of a day (RHYTHM), who Ben is (USER), what
+  // works on him (PLAYBOOK), and finally the operational layers.
+  //
+  // IDENTITY.md deliberately drops out here — CHARTER supersedes it for
+  // interactive turns. It survives for HEARTBEATS, whose minimal prompt is
+  // IDENTITY + HEARTBEAT (runtime/prompt.ts's assemblePrompt), so IDENTITY
+  // has to stand alone on that path.
+  { file: 'CHARTER.md', source: 'user' },
+  { file: 'VOICE.md', source: 'user' },
+  { file: 'TUNING.md', source: 'user' },
+  { file: 'RHYTHM.md', source: 'user' },
+  { file: 'USER.md', source: 'user' },
+  // CORRECTIONS.md sits immediately after USER.md and outranks it. It is the
+  // append-only ledger of things Ben has explicitly told Cabinet were wrong.
+  // It exists because a correction made in conversation has a shelf life of
+  // one session: the narrative files get RE-AUTHORED by later sessions working
+  // from source documents, and a re-author silently reverts whatever the last
+  // conversation fixed (2026-08-03, C-1). Append-only is the mechanism —
+  // nothing rewrites this file, so nothing can revert it.
+  { file: 'CORRECTIONS.md', source: 'user' },
+  { file: 'PLAYBOOK.md', source: 'user' },
+  { file: 'PREFERENCES.md', source: 'user' },
+  { file: 'GOALS.md', source: 'user' },
+  { file: 'STANDING_ORDERS.md', source: 'user' },
+  { file: 'PLATFORM.md', source: 'user' },
+];
+
+
+/**
  * Two nested namespaces, not one:
  * - domains/*.md are rolling NARRATIVES — what happened, rewritten at weekly
  *   review, deliberately capped and disposable.
@@ -82,7 +152,24 @@ function shrinkCheck(before: string, after: string): string | null {
  * promotions must come from Ben, never from the agent.
  */
 export class MemoryStore {
-  constructor(readonly dir: string) {
+  /** Files this store serves from promptDir. Derived from the manifest. */
+  private readonly repoSourced: Set<string>;
+
+  /**
+   * @param dir        the private memory directory (its own git repo)
+   * @param promptDir  the repo-sourced prompt layers. Defaults to the copy
+   *                   shipped beside this module; overridable for tests.
+   * @param manifest   which layers load, in what order, from which root.
+   *                   A parameter rather than a module constant so the
+   *                   two-root behaviour is testable without shipping a
+   *                   repo-sourced layer to make it so.
+   */
+  constructor(
+    readonly dir: string,
+    readonly promptDir: string = DEFAULT_PROMPT_DIR,
+    readonly manifest: readonly PromptLayer[] = PROMPT_CORE,
+  ) {
+    this.repoSourced = new Set(manifest.filter((l) => l.source === 'repo').map((l) => l.file));
     for (const sub of SUBDIRS) mkdirSync(join(dir, sub), { recursive: true });
     this.git('init', '--quiet');
     // Local identity so commits work regardless of the host git config.
@@ -98,16 +185,41 @@ export class MemoryStore {
     return execFileSync('git', ['-C', this.dir, ...args], { encoding: 'utf8' });
   }
 
-  /** Resolve and validate a memory file name; refuses traversal and unknown shapes. */
-  private safePath(file: string): string {
+  /**
+   * Resolve and validate a memory file name against a given root; refuses
+   * traversal and unknown shapes. Both roots go through this — a repo-sourced
+   * layer is still attacker-adjacent input if a name ever reaches it from a
+   * tool argument, and the traversal check is the reason `read()` cannot be
+   * pointed at anything outside the two directories.
+   */
+  private pathIn(root: string, file: string): string {
     if (!FILE_PATTERN.test(file)) {
       throw new MemoryError(`invalid memory file name: ${file}`);
     }
-    const full = resolve(this.dir, file);
-    if (full !== join(this.dir, file) || !full.startsWith(this.dir + '/')) {
+    const full = resolve(root, file);
+    if (full !== join(root, file) || !full.startsWith(root + '/')) {
       throw new MemoryError(`path escapes memory dir: ${file}`);
     }
     return full;
+  }
+
+  /** Resolve a name in the private memory directory. */
+  private safePath(file: string): string {
+    return this.pathIn(this.dir, file);
+  }
+
+  /**
+   * Which root a file is read from. Only layers the manifest declares `repo`
+   * come from the repo; everything else — domain narratives, plans, anything
+   * not in PROMPT_CORE at all — stays in the private directory.
+   */
+  private rootFor(file: string): string {
+    return this.repoSourced.has(file) ? this.promptDir : this.dir;
+  }
+
+  /** True when this file is served from the repo and is not writable here. */
+  isRepoSourced(file: string): boolean {
+    return this.repoSourced.has(file);
   }
 
   /** Create any missing files from templates. Returns the names created. */
@@ -138,7 +250,7 @@ export class MemoryStore {
   }
 
   read(file: string): string {
-    const full = this.safePath(file);
+    const full = this.pathIn(this.rootFor(file), file);
     if (!existsSync(full)) throw new MemoryError(`no such memory file: ${file}`);
     return readFileSync(full, 'utf8');
   }
@@ -154,6 +266,17 @@ export class MemoryStore {
    * and is responsible for audit-logging a thrown refusal.
    */
   update(file: string, content: string, reason: string): void {
+    if (this.repoSourced.has(file)) {
+      // Not a policy gate — a fact about where the bytes are. This file is
+      // served from the repo, so a write here would land in the private
+      // directory and be shadowed by the repo copy on the very next read: the
+      // edit would appear to succeed and change nothing, which is the worst
+      // available outcome. Editing it means editing the repo and deploying.
+      throw new MemoryError(
+        `${file} is served from the repo (${this.promptDir}), not from the memory directory. ` +
+          `Edit apps/cabinet/server/src/prompts/${file} and open a PR — a write here would be silently ignored.`,
+      );
+    }
     if (file === 'STANDING_ORDERS.md') {
       throw new MemoryError('STANDING_ORDERS.md can only be changed by Ben (approval-gated).');
     }
@@ -191,16 +314,6 @@ export class MemoryStore {
       const out = `${(err as { stdout?: string }).stdout ?? ''} ${(err as Error).message}`;
       if (!out.includes('nothing to commit')) throw err;
     }
-  }
-
-  /**
-   * Commit whatever is currently on disk. The escape hatch for writers that
-   * legitimately bypass update() — today that's the template-release
-   * applier (memory/release.ts), which does its own safety check and would be
-   * wrongly blocked by the catastrophic-shrink guard.
-   */
-  commitAll(message: string): void {
-    this.commit(message);
   }
 
   commitCount(): number {
@@ -251,42 +364,32 @@ export class MemoryStore {
     return entries;
   }
 
-  /** The stable prompt layers, in cache-friendly order (§9.3 layers 1+3). */
+  /**
+   * The stable prompt layers, in cache-friendly order (§9.3 layers 1+3).
+   *
+   * Reads PROMPT_CORE, resolving each layer against its declared root. A
+   * missing file is skipped rather than fatal — the same tolerance the old
+   * existsSync filter had, and the reason a manifest entry can be added
+   * before its file exists.
+   *
+   * The `<memory file="...">` wrapper carries the bare filename with no hint
+   * of which root it came from. That is deliberate: where a layer is stored
+   * is an operational detail, and telling the model that some of its own
+   * mind is "the reviewed part" invites it to weigh them differently.
+   */
   promptCore(): string {
-    // v2 persona stack (2026-08-01). CHARTER is the constitution and leads:
-    // everything below operates inside it. Then the register (VOICE), how
-    // Cabinet is currently tuning itself (TUNING), the default shape of a day
-    // (RHYTHM), who Ben is (USER), what works on him (PLAYBOOK), and finally
-    // the operational layers.
+    // Reads this.manifest and nothing else. It deliberately takes no override:
+    // an earlier draft let a caller pass a different manifest, which meant
+    // promptCore() could serve a file from the repo while read() — keyed on
+    // the constructor's manifest — served the data-dir copy of the same name.
+    // One manifest per store is what makes those two agree.
     //
-    // IDENTITY.md deliberately drops out here — CHARTER supersedes it for
-    // interactive turns. It survives for HEARTBEATS, whose minimal prompt is
-    // IDENTITY + HEARTBEAT (runtime/prompt.ts's assemblePrompt), so IDENTITY
-    // has to stand alone on that path. SOUL.md is gone; CHARTER replaced it.
-    const order = [
-      'CHARTER.md',
-      'VOICE.md',
-      'TUNING.md',
-      'RHYTHM.md',
-      'USER.md',
-      // CORRECTIONS.md sits immediately after USER.md and outranks it. It is
-      // the append-only ledger of things Ben has explicitly told Cabinet were
-      // wrong. It exists because a correction made in conversation has a shelf
-      // life of one session: the narrative files get RE-AUTHORED by later
-      // sessions working from source documents, and a re-author silently
-      // reverts whatever the last conversation fixed (2026-08-03, C-1).
-      // Append-only is the mechanism — nothing rewrites this file, so nothing
-      // can revert it.
-      'CORRECTIONS.md',
-      'PLAYBOOK.md',
-      'PREFERENCES.md',
-      'GOALS.md',
-      'STANDING_ORDERS.md',
-      'PLATFORM.md',
-    ];
-    return order
-      .filter((f) => existsSync(join(this.dir, f)))
-      .map((f) => `<memory file="${f}">\n${this.read(f)}\n</memory>`)
+    // Resolved through pathIn rather than a bare join, so a name reaching the
+    // manifest from anywhere still gets the traversal check.
+    return this.manifest
+      .map(({ file, source }) => ({ file, full: this.pathIn(source === 'repo' ? this.promptDir : this.dir, file) }))
+      .filter(({ full }) => existsSync(full))
+      .map(({ full, file }) => `<memory file="${file}">\n${readFileSync(full, 'utf8')}\n</memory>`)
       .join('\n\n');
   }
 }
