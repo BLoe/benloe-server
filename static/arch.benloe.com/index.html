@@ -154,12 +154,12 @@
 │   │     <span class="c">app 878 · attachments · credentialRoutes · plaidRoutes</span>
 │   │     <span class="c">settingsRoutes · surfaces · fold · sse · transcript · pendingTurn</span>
 │   │
-│   ├── <b>mcp/</b> <span class="n">880</span>  <span class="c">the 63 tools the model can call</span>
+│   ├── <b>tools/</b> <span class="n">840</span>  <span class="c">the 63 tools the model can call</span>
 │   ├── <b>memory/</b> <span class="n">1,500</span>  <span class="c">prompt files, templates, lessons</span>
 │   ├── <b>scheduler/</b> <span class="n">950</span>  <span class="c">11 cron jobs</span>
 │   ├── <b>scripts/</b> <span class="n">790</span>  <span class="c">backfill-titles, wipe</span>
 │   ├── <b>tiers/</b> <span class="n">190</span>  <span class="c">the approval queue (classifier deleted 08-11)</span>
-│   ├── <b>integrations/</b> <span class="n">1,400</span>  <span class="c">plaid · githubApp · secrets broker</span>
+│   ├── <b>integrations/</b> <span class="n">1,440</span>  <span class="c">plaid · githubApp · secrets · remote MCP</span>
 │   ├── <b>episodic/</b> <span class="n">360</span>  <span class="c">search over past conversations</span>
 │   ├── <b>push/</b> <span class="n">380</span>  <span class="c">phone notifications</span>
 │   ├── <b>deploy/</b> <span class="n">220</span>  <span class="c">Cabinet redeploying itself</span>
@@ -195,8 +195,8 @@
       <td><span class="tag product">PRODUCT</span></td>
     </tr>
     <tr>
-      <td><code>mcp/</code></td><td class="num">880</td>
-      <td>Defines the 63 tools the model can call. Thin — nearly every tool just validates its arguments and calls into <code>domains/</code>.</td>
+      <td><code>tools/</code></td><td class="num">840</td>
+      <td>Defines the 63 tools the model can call. Thin — nearly every tool just validates its arguments and calls into <code>domains/</code>. Named <code>mcp/</code> until 2026-08-11, which described the transport rather than the contents.</td>
       <td><span class="tag product">PRODUCT</span></td>
     </tr>
     <tr>
@@ -221,7 +221,7 @@
     </tr>
     <tr>
       <td><code>integrations/</code></td><td class="num">1,400</td>
-      <td>Banking (Plaid), GitHub tokens, and reading secrets from a separate service.</td>
+      <td>Banking (Plaid), GitHub tokens, reading secrets from a separate service, and registering remote MCP servers. Everything that reaches outside this process.</td>
       <td><span class="tag infra">INFRASTRUCTURE</span></td>
     </tr>
     <tr>
@@ -279,7 +279,7 @@
 <pre class="tree">
 model says:   <b>log_food</b>{ description: "chicken bowl", kcal: 640, protein_g: 52 }
                     │
-<b>mcp/</b>                │   check the arguments match the declared shape
+<b>tools/</b>              │   check the arguments match the declared shape
                     ▼
 <b>domains/food.ts</b>     <b>logFood()</b> — INSERT a row, return the day's totals
                     │
@@ -287,14 +287,16 @@ model says:   <b>log_food</b>{ description: "chicken bowl", kcal: 640, protein_g
 model receives: { id: 3312, totals: { kcal: 1840, protein_g: 141, ... } }
 </pre>
 <p>
-  <code>mcp/</code> is a switchboard. Each of the 63 entries declares a name, a description,
+  <code>tools/</code> is a switchboard. Each of the 63 entries declares a name, a description,
   and the shape of its arguments — then calls one function in <code>domains/</code> and hands
   back the result. Almost every tool is a few lines long.
 </p>
 <p class="lede">
-  <b>The descriptions are prompt.</b> Roughly 13 KB of them are sent to the model on every
-  single turn, before any argument schemas. That is more text than the charter will be, and
-  unlike the memory files nobody has ever read it end to end.
+  <b>The descriptions are mostly NOT in context.</b> Measured 2026-08-11: the SDK defers
+  these tools behind tool search, so all 63 cost about 631 tokens — names in a list, no
+  descriptions. Forcing them in costs 10,172. Guidance that was moved out of the system
+  prompt and into tool descriptions is therefore not read on a normal turn; it appears only
+  after a search happens to match that tool.
 </p>
 
 <h2>All 63 tools</h2>
@@ -402,10 +404,11 @@ model receives: { id: 3312, totals: { kcal: 1840, protein_g: 141, ... } }
 </div>
 
 <div class="note">
-  <b>Anthropic's guidance is that tool selection degrades past 30–50 tools.</b> There are 63.
-  The obvious consolidations: the five <code>*_activity_*</code> and five <code>*_plan_entry</code>
-  tools are the same four verbs twice over, and five of the seven <code>money_*</code> tools are
-  read queries that <code>query_db</code> could already answer.
+  <b>Anthropic's guidance is that tool selection degrades past 30–50 tools.</b> There are 63 —
+  but the runtime already defers them, so the count costs far less than it looks like it should.
+  Measured on 2026-08-11: the built-in Claude Code toolset is 17,890 tokens of prefix before
+  Cabinet adds anything, against 631 for all 63 Cabinet tools. The built-ins are the expensive
+  list, not this one.
 </div>
 
 <h2>The database</h2>

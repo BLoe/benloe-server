@@ -8,8 +8,8 @@ import { EpisodicStore } from '../src/episodic/index.js';
 import { Embedder } from '../src/embeddings/index.js';
 import { MemoryStore } from '../src/memory/index.js';
 import { ApprovalQueue } from '../src/tiers/approvals.js';
-import { buildCabinetTools, cabinetAllowedTools, type CabinetToolContext } from '../src/mcp/cabinet-server.js';
-import { buildExternalMcpServers } from '../src/mcp/external.js';
+import { buildCabinetTools, cabinetAllowedTools, type CabinetToolContext } from '../src/tools/cabinet.js';
+import { buildExternalMcpServers } from '../src/integrations/mcp.js';
 
 const MODEL_TIMEOUT = 300_000;
 
