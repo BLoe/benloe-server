@@ -75,7 +75,23 @@ case "$cmd" in
     ;;
   caddy-reload)
     log "caddy-reload"
-    /usr/bin/caddy validate --config /etc/caddy/Caddyfile >&2
+    # Validate AS THE SERVICE ACCOUNT, not as root (2026-08-04).
+    #
+    # `caddy validate` does not merely parse — it instantiates every log writer,
+    # which OPENS (and therefore CREATES) each site's access-log file. Run as
+    # root, a brand-new log file is created root:root 0600; the daemon then runs
+    # as User=caddy, cannot open its own log, and the reload fails — after this
+    # script has already printed "Valid configuration". The orphaned root-owned
+    # file makes the failure permanent, and nothing short of real root can clear
+    # it, so the trap re-arms on every retry.
+    #
+    # Dropping to caddy fixes the cause rather than the symptom, and is strictly
+    # more faithful besides: validation now exercises the same uid/gid that has
+    # to serve the config, so a path the daemon could not read fails here
+    # instead of at reload time. `set -e` means a failed validate exits before
+    # the reload — this stays fail-closed, and the running config is untouched.
+    setpriv --reuid=caddy --regid=caddy --clear-groups \
+      /usr/bin/caddy validate --config /etc/caddy/Caddyfile >&2
     exec /usr/bin/systemctl reload caddy
     ;;
   redeploy)
