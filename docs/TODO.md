@@ -67,7 +67,7 @@ else is blocked on it.
 
 ---
 
-## 2. Charter — IN PROGRESS 2026-08-11
+## 2. Charter — PR #12 OPEN, AWAITING BEN
 
 Who Cabinet is. Identity, goals, personality, how it talks. Target 1–2k tokens
 against ~20k today.
@@ -84,6 +84,13 @@ intact: Cabinet and Ben are working to make each other better.
 prompt diff shows one file's content changing and nothing else.
 
 **Ben reads it before it ships.** This is Cabinet's personality.
+
+Drafted 2026-08-11 as PR #12. Two things went beyond the item as written and
+want a look: `VOICE.md` also leaves the prompt (the charter absorbed it, and
+two documents describing one voice is how they came to disagree about reply
+length), and the charter is written about "the principal" rather than by name,
+which makes it publishable and puts the multi-user seam in for free but reads
+slightly cooler than the original.
 
 ---
 
