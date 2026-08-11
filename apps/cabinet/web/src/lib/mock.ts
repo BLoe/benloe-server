@@ -97,9 +97,9 @@ const DOMAIN_DATA: Record<DomainId, DomainView> = {
 
 const ops: OpsFeed = {
   entries: [
-    { id: 'o1', at: '2026-07-08T05:41:00-04:00', tool: 'backup', action: 'snapshot databases', reason: 'nightly maintenance', tier: 3, kind: 'cron', result: 'cabinet.db + episodic.db · integrity ok', chatId: null, reversible: false },
-    { id: 'o2', at: '2026-07-08T05:41:20-04:00', tool: 'mcp__cabinet__search_episodic', action: 'index 2 journal entries', reason: 'embedding backfill', tier: 4, kind: 'cron', result: '2 indexed', chatId: null, reversible: false },
-    { id: 'o3', at: '2026-07-08T02:14:00-04:00', tool: 'Write', action: 'title chat', reason: 'auto-title untitled chat', tier: 4, kind: 'heartbeat', result: '"Cabinet Systems Status Report"', chatId: 't-5dd8', reversible: true, diff: 'title: null → "Cabinet Systems Status Report"' },
+    { id: 'o1', at: '2026-07-08T05:41:00-04:00', tool: 'backup', action: 'snapshot databases', reason: 'nightly maintenance', kind: 'cron', chatId: null, reversible: false },
+    { id: 'o2', at: '2026-07-08T05:41:20-04:00', tool: 'mcp__cabinet__search_episodic', action: 'index 2 journal entries', reason: 'embedding backfill', kind: 'cron', chatId: null, reversible: false },
+    { id: 'o3', at: '2026-07-08T02:14:00-04:00', tool: 'Write', action: 'title chat', reason: 'auto-title untitled chat', kind: 'heartbeat', chatId: 't-5dd8', reversible: true, diff: 'title: null → "Cabinet Systems Status Report"' },
   ],
 };
 
@@ -136,24 +136,14 @@ const perf: PerfView = {
   enabled: true,
   window: '168h',
   turns: 42,
-  byPhase: [
-    { phase: 'tool', label: null, n: 214, totalMs: 486000, avgMs: 2271, p50Ms: 900, p95Ms: 9800, maxMs: 41200 },
-    { phase: 'step', label: null, n: 268, totalMs: 402000, avgMs: 1500, p50Ms: 1100, p95Ms: 4200, maxMs: 18000 },
-    { phase: 'sdk_spawn', label: null, n: 42, totalMs: 63000, avgMs: 1500, p50Ms: 1430, p95Ms: 2600, maxMs: 4100 },
-    { phase: 'ttf_thinking', label: null, n: 42, totalMs: 37800, avgMs: 900, p50Ms: 820, p95Ms: 1900, maxMs: 3000 },
-    { phase: 'recall', label: null, n: 42, totalMs: 12600, avgMs: 300, p50Ms: 280, p95Ms: 600, maxMs: 950 },
-    { phase: 'profile_gap', label: null, n: 42, totalMs: 420, avgMs: 10, p50Ms: 8, p95Ms: 22, maxMs: 40 },
-  ],
-  byTool: [
-    { phase: 'tool', label: 'Bash', n: 61, totalMs: 302000, avgMs: 4951, p50Ms: 2100, p95Ms: 18000, maxMs: 41200 },
-    { phase: 'tool', label: 'mcp__cabinet__query_db', n: 88, totalMs: 61600, avgMs: 700, p50Ms: 540, p95Ms: 1800, maxMs: 3200 },
-    { phase: 'tool', label: 'Read', n: 65, totalMs: 32500, avgMs: 500, p50Ms: 410, p95Ms: 1200, maxMs: 2400 },
-  ],
+  totalMs: { p50: 24800, p95: 61200, max: 98400 },
+  ttfTextMs: { p50: 3100, p95: 9400, max: 21000 },
+  avgSteps: 6.4,
+  avgToolCalls: 5.1,
   recent: [
     {
       turnId: 'mock-turn-1', chatId: 'c1', sessionKind: 'user', model: 'claude-opus-5',
-      startedAt: '2026-08-01T14:02:11-04:00', totalMs: 38400,
-      phases: { request_total: 38400, sdk_spawn: 1480, ttf_thinking: 860, tool: 21400, step: 12900, recall: 310 },
+      startedAt: '2026-08-01T14:02:11-04:00', totalMs: 38400, ttfTextMs: 4200, steps: 9, toolCalls: 7,
     },
   ],
 };

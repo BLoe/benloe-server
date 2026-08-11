@@ -29,9 +29,7 @@ const ENTRIES: OpsEntry[] = [
     tool: 'backup',
     action: 'snapshot databases',
     reason: 'nightly maintenance',
-    tier: 3,
     kind: 'cron',
-    result: 'integrity ok',
     chatId: null,
     reversible: false,
   },
@@ -41,9 +39,7 @@ const ENTRIES: OpsEntry[] = [
     tool: 'Write',
     action: 'title chat',
     reason: 'auto-title untitled chat',
-    tier: 4,
     kind: 'heartbeat',
-    result: '"Cabinet Systems Status Report"',
     chatId: 't-5dd8',
     reversible: true,
     diff: 'title: null → "Cabinet Systems Status Report"',
@@ -67,7 +63,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Ops surface', () => {
-  it('renders the feed reverse-chronological with reason, chips, diff, result', async () => {
+  it('renders the feed reverse-chronological with reason, chips, and diff', async () => {
     render(<Ops />);
     await waitFor(() => expect(opsMock).toHaveBeenCalledWith(undefined));
 
@@ -79,7 +75,10 @@ describe('Ops surface', () => {
     // kind + tier chips
     expect(screen.getByText('cron')).toBeTruthy();
     expect(screen.getByText('heartbeat')).toBeTruthy();
-    expect(screen.getByText('T4')).toBeTruthy();
+    // No tier chip: the classifier that produced the number is gone, and every
+    // row in this feed is something that happened, so there was no verdict to
+    // show. The kind chip above is what distinguishes rows now.
+    expect(screen.queryByText('T4')).toBeNull();
 
     // reverse-chron: 05:41 row before 02:14 row in DOM order
     const rows = document.querySelectorAll('.ops-row');

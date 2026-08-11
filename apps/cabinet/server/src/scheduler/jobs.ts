@@ -152,7 +152,7 @@ function checkUsageBudget(deps: JobDeps): void {
   if (alreadyAlerted) return;
 
   deps.db
-    .prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES (?, 'ALERTED', 'heartbeat')")
+    .prepare("INSERT INTO action_audit (tool, session_kind) VALUES (?, 'heartbeat')")
     .run(USAGE_ALERT_TOOL);
   const where = cap.worstWindow ? `${cap.worstWindow} window` : 'plan limits';
   push(deps, 'notice', {
@@ -195,6 +195,14 @@ const IDLE_MINUTES = 45;
 const CAPACITY_CEILING = 50;
 /** Local hours during which autonomous building is permitted. */
 const BUILD_HOURS = { from: 9, to: 23 };
+
+/**
+ * How long the two self-observation tables keep rows. Ninety days is chosen to
+ * be obviously longer than any window either is read over (the perf surface
+ * defaults to a week, and nobody has ever queried the audit log beyond "what
+ * did it just do") while still bounding growth.
+ */
+const AUDIT_RETENTION_DAYS = 90;
 /** Hard cap per calendar day, so a runaway loop is bounded by construction. */
 const MAX_RUNS_PER_DAY = 6;
 
@@ -307,7 +315,10 @@ export function buildJobs(deps: JobDeps): JobSpec[] {
       checkUsageBudget(deps); // SQL-only, zero model cost — runs every tick regardless of findings
       const findings = heartbeatFindings(db);
       if (findings.length === 0) {
-        db.prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES ('heartbeat','HEARTBEAT_OK','heartbeat')").run();
+        // The row's existence IS the "heartbeat ran, found nothing" mark;
+        // it used to also carry decision='HEARTBEAT_OK', which said the same
+        // thing twice.
+        db.prepare("INSERT INTO action_audit (tool, session_kind) VALUES ('heartbeat','heartbeat')").run();
         return; // zero model cost
       }
       const chatId = systemChat(db, 'sys-heartbeat', 'heartbeat', 'Heartbeat');
@@ -688,7 +699,26 @@ export async function runMaintenance(deps: JobDeps): Promise<{ backups: string[]
   // immediate paper trail, same pattern as the backfill catch below.
   if (backups.length === 0) {
     console.warn(`maintenance: zero backups produced (dataDir=${dataDir})`);
-    db.prepare("INSERT INTO action_audit (tool, decision, session_kind) VALUES ('maintenance-zero-backups','WARNED','cron')").run();
+    db.prepare("INSERT INTO action_audit (tool, session_kind) VALUES ('maintenance-zero-backups','cron')").run();
+  }
+
+  // Retention. Both of these tables record what the system did, not anything
+  // about Ben, and neither had any expiry: action_audit had been growing since
+  // 2026-07-12 with 2 KB of tool arguments per row, and the span table it
+  // replaced was the largest in the database. Ninety days is well past any
+  // window either is ever queried over.
+  //
+  // Deliberately NOT applied to anything in the life domains — a food log from
+  // last year is still Ben's, and deleting it to save a megabyte would be
+  // trading the product for the machinery.
+  const pruned = {
+    audit: db.prepare(`DELETE FROM action_audit WHERE ts < datetime('now', '-${AUDIT_RETENTION_DAYS} days')`).run()
+      .changes,
+    perf: db.prepare(`DELETE FROM perf_turn WHERE started_at < datetime('now', '-${AUDIT_RETENTION_DAYS} days')`).run()
+      .changes,
+  };
+  if (pruned.audit || pruned.perf) {
+    console.log(`maintenance: pruned ${pruned.audit} audit rows, ${pruned.perf} perf rows`);
   }
 
   // Re-derive habit marks across the trailing fortnight.

@@ -1,32 +1,40 @@
 import type Database from 'better-sqlite3';
 
 /**
- * Turn-latency instrumentation (2026-08-01).
+ * Turn-latency instrumentation.
  *
- * The complaint this exists to answer: Cabinet feels slow next to a bare
- * Messages-API agent, and nothing in the system could say why. token_usage
- * records what a turn COST; nothing recorded where its wall clock went. This
- * records spans — named, timed, ordered intervals — for every phase of a turn
- * so the answer is a query rather than an argument.
+ * Written 2026-08-01 to answer "Cabinet feels slow and nothing can say why",
+ * as a span recorder: one row per named interval, ~39 rows a turn. It answered
+ * the question, the answer was acted on, and then it kept writing — 15,118
+ * rows over ten days, the largest table in the database, read by nobody.
  *
- * Design constraints:
- * - Never slow down or break the thing it measures. Spans buffer in memory and
- *   flush in ONE transaction at turn end; every DB touch is wrapped so an
- *   instrumentation failure degrades to "no metrics", never to a failed turn.
- * - performance.now(), not Date.now(): monotonic, unaffected by clock steps,
- *   and sub-millisecond. Wall-clock start time is stamped once per span from
- *   the real clock for the started_at column.
+ * Cut back 2026-08-11 to one row per turn. The per-phase breakdown is what you
+ * want while investigating a specific slow turn; it is not worth keeping
+ * permanently for every turn. What survives is the four numbers that answer
+ * "was that turn slow, and roughly where did it go":
+ *
+ *   total_ms · ttf_text_ms · steps · tool_calls
+ *
+ * The recorder's API is unchanged on purpose — call sites still say
+ * perf.start('step') and perf.time('recall', ...). Those calls now feed
+ * counters instead of appending rows, so the instrumentation vocabulary stays
+ * available for ad-hoc work without any of it reaching the database.
+ *
+ * Design constraints, unchanged:
+ * - Never slow down or break the thing it measures. Nothing touches the DB
+ *   until flush(), and flush() swallows its own errors.
+ * - performance.now(), not Date.now(): monotonic, unaffected by clock steps.
  * - Zero-cost when disabled (CABINET_PERF=off) — the recorder becomes a set of
  *   no-ops rather than a conditional at every call site.
  */
 
 /**
- * Open vocabulary — new probes should just use a new string rather than
- * migrate an enum. Documented here so the Ops surface and any ad-hoc query
- * have one place to read the intended meaning.
+ * Open vocabulary. Only the four phases marked PERSISTED reach the database;
+ * the rest are still timeable and still useful in an ad-hoc session, they just
+ * do not accumulate rows forever.
  */
 export type PerfPhase =
-  /** POST /api/chat entry → response finished. The number Ben actually feels. */
+  /** POST /api/chat entry → response finished. */
   | 'request_total'
   /** Time the turn sat in TurnQueue behind another turn. */
   | 'queue_wait'
@@ -36,41 +44,37 @@ export type PerfPhase =
   | 'profile_gap'
   /** assemblePrompt(): memory file reads + string assembly. */
   | 'prompt_assemble'
-  /** query() called → first system/init message. This is the CLI subprocess
-   *  spawn + MCP server handshake, and it is paid on EVERY turn because we
-   *  open a fresh query() and resume by session id. */
+  /** query() called → first system/init message: CLI subprocess spawn + MCP
+   *  handshake, paid on every turn. */
   | 'sdk_spawn'
-  /** init → first thinking delta. Model queue + prefill. */
+  /** init → first thinking delta. */
   | 'ttf_thinking'
-  /** init → first visible text delta. What "it's alive" looks like to Ben. */
+  /** PERSISTED. init → first visible text delta. What "it's alive" looks like. */
   | 'ttf_text'
-  /** init → first tool_use block. Pairs with ttf_text to show whether the
-   *  model narrated before acting or dove straight into tools. */
+  /** init → first tool_use block. */
   | 'ttf_tool'
-  /** One assistant message (one API round trip within the agentic loop). */
+  /** PERSISTED (counted). One assistant message = one API round trip. */
   | 'step'
-  /** tool_use emitted → matching tool_result observed. Labelled with the tool. */
+  /** PERSISTED (counted). tool_use emitted → matching tool_result observed. */
   | 'tool'
-  /** canUseTool gate: classification + audit insert (+ approval wait, if any). */
-  | 'gate'
   /** PreToolUse hook body. */
   | 'hook_pre'
   /** PostToolUse hook body (includes truncation work). */
   | 'hook_post'
-  /** Whole agent turn, spawn through result. */
+  /** PERSISTED. Whole agent turn, spawn through result. */
   | 'turn_total';
 
-export interface PerfSpanRow {
+/** One row of perf_turn. */
+export interface PerfTurnRow {
   turnId: string;
   chatId: string | null;
   sessionKind: string | null;
   model: string | null;
-  phase: string;
-  label: string | null;
-  ms: number;
-  seq: number;
+  totalMs: number | null;
+  ttfTextMs: number | null;
+  steps: number;
+  toolCalls: number;
   startedAt: string;
-  meta: Record<string, unknown> | null;
 }
 
 export interface PerfRecorder {
@@ -81,24 +85,36 @@ export interface PerfRecorder {
   /** Time a promise, recording the span whether it resolves or rejects. */
   time<T>(phase: PerfPhase | string, fn: () => Promise<T>, opts?: { label?: string }): Promise<T>;
   /** Fill in fields not known when the recorder was created (model, kind). */
-  describe(fields: Partial<Pick<PerfSpanRow, 'chatId' | 'sessionKind' | 'model'>>): void;
-  /** Write everything buffered. Safe to call more than once; drains the buffer. */
+  describe(fields: Partial<Pick<PerfTurnRow, 'chatId' | 'sessionKind' | 'model'>>): void;
+  /** Write the turn's row. Safe to call more than once; the second is a no-op. */
   flush(): void;
-  /** Spans buffered but not yet flushed — for tests. */
-  readonly pending: PerfSpanRow[];
+  /** The row as it currently stands — for tests. */
+  readonly pending: PerfTurnRow;
 }
 
-const NOOP_STOP = () => {};
-
-/** A recorder that measures nothing — used when instrumentation is disabled. */
 export function nullPerf(): PerfRecorder {
+  const empty: PerfTurnRow = {
+    turnId: '',
+    chatId: null,
+    sessionKind: null,
+    model: null,
+    totalMs: null,
+    ttfTextMs: null,
+    steps: 0,
+    toolCalls: 0,
+    startedAt: '',
+  };
   return {
     mark() {},
-    start: () => NOOP_STOP,
-    time: (_phase, fn) => fn(),
+    start() {
+      return () => {};
+    },
+    async time(_phase, fn) {
+      return fn();
+    },
     describe() {},
     flush() {},
-    pending: [],
+    pending: empty,
   };
 }
 
@@ -108,8 +124,7 @@ export function perfEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /**
  * One recorder per turn. Not thread-safe and not meant to be shared across
- * concurrent turns — `seq` is a per-recorder counter, which is exactly the
- * per-turn ordering the table wants.
+ * concurrent turns.
  */
 export function createPerfRecorder(opts: {
   db: Database.Database;
@@ -121,123 +136,124 @@ export function createPerfRecorder(opts: {
   now?: () => number;
 }): PerfRecorder {
   const now = opts.now ?? (() => performance.now());
-  let seq = 0;
-  const buffer: PerfSpanRow[] = [];
-  let chatId = opts.chatId ?? null;
-  let sessionKind = opts.sessionKind ?? null;
-  let model = opts.model ?? null;
+  let written = false;
 
-  const push = (phase: string, ms: number, label: string | null, meta: Record<string, unknown> | null) => {
-    buffer.push({
-      turnId: opts.turnId,
-      chatId,
-      sessionKind,
-      model,
-      phase,
-      label,
-      // Guard against a negative/NaN clock reading poisoning aggregates.
-      ms: Number.isFinite(ms) && ms >= 0 ? Math.round(ms * 1000) / 1000 : 0,
-      seq: seq++,
-      startedAt: new Date().toISOString(),
-      meta,
-    });
+  const row: PerfTurnRow = {
+    turnId: opts.turnId,
+    chatId: opts.chatId ?? null,
+    sessionKind: opts.sessionKind ?? null,
+    model: opts.model ?? null,
+    totalMs: null,
+    ttfTextMs: null,
+    steps: 0,
+    toolCalls: 0,
+    startedAt: new Date().toISOString(),
+  };
+
+  // The whole of what persistence costs now: four assignments, no allocation.
+  const record = (phase: string, ms: number) => {
+    const clean = Number.isFinite(ms) && ms >= 0 ? Math.round(ms) : 0;
+    if (phase === 'turn_total') row.totalMs = clean;
+    else if (phase === 'ttf_text') row.ttfTextMs = clean;
+    else if (phase === 'step') row.steps += 1;
+    else if (phase === 'tool') row.toolCalls += 1;
+    // Every other phase is timeable and deliberately not stored.
   };
 
   return {
     get pending() {
-      return buffer;
+      return row;
     },
     describe(fields) {
-      if (fields.chatId !== undefined) chatId = fields.chatId;
-      if (fields.sessionKind !== undefined) sessionKind = fields.sessionKind;
-      if (fields.model !== undefined) model = fields.model;
+      if (fields.chatId !== undefined) row.chatId = fields.chatId;
+      if (fields.sessionKind !== undefined) row.sessionKind = fields.sessionKind;
+      if (fields.model !== undefined) row.model = fields.model;
     },
-    mark(phase, ms, o) {
-      push(phase, ms, o?.label ?? null, o?.meta ?? null);
+    mark(phase, ms) {
+      record(phase, ms);
     },
-    start(phase, o) {
+    start(phase) {
       const t0 = now();
       let done = false;
-      return (meta?: Record<string, unknown>) => {
+      return () => {
         if (done) return;
         done = true;
-        push(phase, now() - t0, o?.label ?? null, meta ?? null);
+        record(phase, now() - t0);
       };
     },
-    async time(phase, fn, o) {
-      const stop = this.start(phase, o);
+    async time(phase, fn) {
+      const stop = this.start(phase);
       try {
         const out = await fn();
         stop();
         return out;
       } catch (err) {
-        stop({ error: String((err as Error)?.message ?? err).slice(0, 200) });
+        stop();
         throw err;
       }
     },
     flush() {
-      if (buffer.length === 0) return;
-      const rows = buffer.splice(0, buffer.length);
+      if (written) return;
+      written = true;
       try {
-        const insert = opts.db.prepare(
-          `INSERT INTO perf_span (turn_id, chat_id, session_kind, model, phase, label, ms, seq, started_at, meta)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        );
-        opts.db.transaction(() => {
-          for (const r of rows) {
-            insert.run(
-              r.turnId,
-              r.chatId,
-              r.sessionKind,
-              r.model,
-              r.phase,
-              r.label,
-              r.ms,
-              r.seq,
-              r.startedAt,
-              r.meta ? JSON.stringify(r.meta).slice(0, 2000) : null,
-            );
-          }
-        })();
+        opts.db
+          .prepare(
+            `INSERT INTO perf_turn (turn_id, chat_id, session_kind, model, total_ms, ttf_text_ms, steps, tool_calls, started_at)
+             VALUES (?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(turn_id) DO UPDATE SET
+               chat_id=excluded.chat_id, session_kind=excluded.session_kind, model=excluded.model,
+               total_ms=excluded.total_ms, ttf_text_ms=excluded.ttf_text_ms,
+               steps=excluded.steps, tool_calls=excluded.tool_calls`,
+          )
+          .run(
+            row.turnId,
+            row.chatId,
+            row.sessionKind,
+            row.model,
+            row.totalMs,
+            row.ttfTextMs,
+            row.steps,
+            row.toolCalls,
+            row.startedAt,
+          );
       } catch {
-        // Metrics are never worth failing a turn over. Dropping the batch is
-        // the correct degradation: the turn already succeeded.
+        // Metrics are never worth failing a turn over. Dropping the row is the
+        // correct degradation: the turn already succeeded.
       }
     },
   };
 }
 
-export interface PerfPhaseSummary {
-  phase: string;
-  label: string | null;
-  n: number;
-  totalMs: number;
-  avgMs: number;
-  p50Ms: number;
-  p95Ms: number;
-  maxMs: number;
+export interface PerfSummary {
+  window: string;
+  turns: number;
+  /** Median and 95th percentile across the window, in ms. */
+  totalMs: { p50: number; p95: number; max: number } | null;
+  ttfTextMs: { p50: number; p95: number; max: number } | null;
+  avgSteps: number;
+  avgToolCalls: number;
 }
 
-/**
- * Percentiles are computed in SQL-free JS on purpose: SQLite has no
- * percentile aggregate without an extension, and these row counts are small
- * (a few thousand spans over the window). Nearest-rank method.
- */
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
-  const rank = Math.ceil((p / 100) * sorted.length);
-  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))] ?? 0;
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[i]!;
 }
 
-/**
- * Latency breakdown over a window, grouped by phase (and by label for the
- * per-tool 'tool' phase, which is the interesting one). Powers GET /api/perf
- * and the Ops surface.
- */
+function spread(values: number[]): { p50: number; p95: number; max: number } | null {
+  const sorted = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  return {
+    p50: Math.round(percentile(sorted, 50)),
+    p95: Math.round(percentile(sorted, 95)),
+    max: Math.round(sorted[sorted.length - 1]!),
+  };
+}
+
 export function perfSummary(
   db: Database.Database,
-  opts: { sinceHours?: number; sessionKind?: string | null; limitLabels?: number } = {},
-): { window: string; byPhase: PerfPhaseSummary[]; byTool: PerfPhaseSummary[]; turns: number } {
+  opts: { sinceHours?: number; sessionKind?: string | null } = {},
+): PerfSummary {
   const sinceHours = opts.sinceHours ?? 24 * 7;
   const since = new Date(Date.now() - sinceHours * 3600_000).toISOString();
   const params: unknown[] = [since];
@@ -247,85 +263,47 @@ export function perfSummary(
     params.push(opts.sessionKind);
   }
   const rows = db
-    .prepare(`SELECT phase, label, ms FROM perf_span WHERE ${where}`)
-    .all(...params) as { phase: string; label: string | null; ms: number }[];
-  const turns = (
-    db.prepare(`SELECT COUNT(DISTINCT turn_id) AS n FROM perf_span WHERE ${where}`).get(...params) as { n: number }
-  ).n;
+    .prepare(`SELECT total_ms, ttf_text_ms, steps, tool_calls FROM perf_turn WHERE ${where}`)
+    .all(...params) as { total_ms: number | null; ttf_text_ms: number | null; steps: number; tool_calls: number }[];
 
-  const group = (keyOf: (r: (typeof rows)[number]) => string | null, filter?: (r: (typeof rows)[number]) => boolean) => {
-    const buckets = new Map<string, { phase: string; label: string | null; ms: number[] }>();
-    for (const r of rows) {
-      if (filter && !filter(r)) continue;
-      const key = keyOf(r);
-      if (key === null) continue;
-      let b = buckets.get(key);
-      if (!b) {
-        b = { phase: r.phase, label: filter ? r.label : null, ms: [] };
-        buckets.set(key, b);
-      }
-      b.ms.push(r.ms);
-    }
-    const out: PerfPhaseSummary[] = [];
-    for (const b of buckets.values()) {
-      const sorted = [...b.ms].sort((x, y) => x - y);
-      const total = sorted.reduce((a, x) => a + x, 0);
-      out.push({
-        phase: b.phase,
-        label: b.label,
-        n: sorted.length,
-        totalMs: Math.round(total),
-        avgMs: Math.round(total / sorted.length),
-        p50Ms: Math.round(percentile(sorted, 50)),
-        p95Ms: Math.round(percentile(sorted, 95)),
-        maxMs: Math.round(sorted[sorted.length - 1] ?? 0),
-      });
-    }
-    return out.sort((a, b) => b.totalMs - a.totalMs);
-  };
-
+  const n = rows.length || 1;
   return {
     window: `${sinceHours}h`,
-    turns,
-    byPhase: group((r) => r.phase),
-    byTool: group((r) => `${r.phase}:${r.label ?? ''}`, (r) => r.phase === 'tool').slice(0, opts.limitLabels ?? 25),
+    turns: rows.length,
+    totalMs: spread(rows.map((r) => r.total_ms).filter((v): v is number => v != null)),
+    ttfTextMs: spread(rows.map((r) => r.ttf_text_ms).filter((v): v is number => v != null)),
+    avgSteps: Math.round((rows.reduce((a, r) => a + r.steps, 0) / n) * 10) / 10,
+    avgToolCalls: Math.round((rows.reduce((a, r) => a + r.tool_calls, 0) / n) * 10) / 10,
   };
 }
 
-/** Per-turn roll-up, newest first — "which turns were slow, and why". */
-export function perfRecentTurns(db: Database.Database, limit = 25): {
-  turnId: string;
-  chatId: string | null;
-  sessionKind: string | null;
-  model: string | null;
-  startedAt: string;
-  totalMs: number;
-  phases: Record<string, number>;
-}[] {
-  const turns = db
+/** Recent turns, newest first — "which turns were slow". */
+export function perfRecentTurns(db: Database.Database, limit = 25): PerfTurnRow[] {
+  const rows = db
     .prepare(
-      `SELECT turn_id, MIN(started_at) AS started_at
-         FROM perf_span
-        GROUP BY turn_id
-        ORDER BY started_at DESC
-        LIMIT ?`,
+      `SELECT turn_id, chat_id, session_kind, model, total_ms, ttf_text_ms, steps, tool_calls, started_at
+       FROM perf_turn ORDER BY started_at DESC LIMIT ?`,
     )
-    .all(limit) as { turn_id: string; started_at: string }[];
-  return turns.map((t) => {
-    const spans = db
-      .prepare('SELECT chat_id, session_kind, model, phase, ms FROM perf_span WHERE turn_id = ?')
-      .all(t.turn_id) as { chat_id: string | null; session_kind: string | null; model: string | null; phase: string; ms: number }[];
-    const phases: Record<string, number> = {};
-    for (const s of spans) phases[s.phase] = Math.round((phases[s.phase] ?? 0) + s.ms);
-    const head = spans.find((s) => s.model) ?? spans[0];
-    return {
-      turnId: t.turn_id,
-      chatId: head?.chat_id ?? null,
-      sessionKind: head?.session_kind ?? null,
-      model: head?.model ?? null,
-      startedAt: t.started_at,
-      totalMs: phases.request_total ?? phases.turn_total ?? 0,
-      phases,
-    };
-  });
+    .all(limit) as {
+    turn_id: string;
+    chat_id: string | null;
+    session_kind: string | null;
+    model: string | null;
+    total_ms: number | null;
+    ttf_text_ms: number | null;
+    steps: number;
+    tool_calls: number;
+    started_at: string;
+  }[];
+  return rows.map((r) => ({
+    turnId: r.turn_id,
+    chatId: r.chat_id,
+    sessionKind: r.session_kind,
+    model: r.model,
+    totalMs: r.total_ms,
+    ttfTextMs: r.ttf_text_ms,
+    steps: r.steps,
+    toolCalls: r.tool_calls,
+    startedAt: r.started_at,
+  }));
 }

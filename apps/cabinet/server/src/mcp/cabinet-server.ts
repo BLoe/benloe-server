@@ -682,12 +682,11 @@ export function buildCabinetTools(ctx: CabinetToolContext) {
         } catch (err) {
           // Every refusal (STANDING_ORDERS, path traversal, the drift guard)
           // is worth a paper trail — this is the only place that learns
-          // update_memory was called AND failed. The tier-gate's own audit
-          // row (tiers/gate.ts) only records that the call was allowed to
-          // run at Tier 4, not what happened once it did.
+          // update_memory was called AND failed. The PreToolUse hook's row
+          // records only that the call happened, not how it ended.
           const message = (err as Error).message;
           ctx.db
-            .prepare("INSERT INTO action_audit (tool, decision, args, result) VALUES ('update_memory', 'REFUSED', ?, ?)")
+            .prepare("INSERT INTO action_audit (tool, args, result) VALUES ('update_memory:refused', ?, ?)")
             .run(JSON.stringify({ file }).slice(0, 4000), message.slice(0, 4000));
           return fail(message);
         }
