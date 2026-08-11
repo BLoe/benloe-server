@@ -92,7 +92,7 @@ export interface DomainView {
 export type OpsKind = 'user' | 'heartbeat' | 'cron';
 export interface OpsEntry {
   id: string; at: string; tool: string; action: string; reason: string;
-  tier: number; kind: OpsKind; result: string; chatId: string | null;
+  kind: OpsKind; chatId: string | null;
   reversible: boolean; diff?: string;
   reverted?: boolean;
 }
@@ -409,36 +409,33 @@ export interface UsageWindow {
 }
 export interface UsageRollingView { authMode: string; windows: UsageWindow[]; }
 
-/* ---------- latency (Ops surface: "where does the wall clock actually go") ----------
-   Mirrors runtime/perf.ts. `byPhase` is the breakdown: queue wait vs. lesson
-   recall vs. SDK subprocess spawn vs. model time-to-first-token vs. the tool
-   calls themselves. `byTool` ranks individual tools within the 'tool' phase.
-   All times are milliseconds. */
-export interface PerfPhaseSummary {
-  phase: string;
-  label: string | null;
-  n: number;
-  totalMs: number;
-  avgMs: number;
-  p50Ms: number;
-  p95Ms: number;
-  maxMs: number;
-}
+/* ---------- latency (Ops surface: "was that turn slow") ----------
+   Mirrors runtime/perf.ts, which was cut back on 2026-08-11 from a per-phase
+   span table (~39 rows a turn, 15k rows in ten days, read by nobody) to one
+   row per turn. The per-phase breakdown was the right tool for the
+   investigation that prompted it and the wrong thing to keep forever; what
+   survives is the four numbers that say whether a turn was slow and roughly
+   where it went. All times are milliseconds. */
+export interface PerfSpread { p50: number; p95: number; max: number; }
 export interface PerfTurnSummary {
   turnId: string;
   chatId: string | null;
   sessionKind: string | null;
   model: string | null;
   startedAt: string;
-  totalMs: number;
-  phases: Record<string, number>;
+  totalMs: number | null;
+  ttfTextMs: number | null;
+  steps: number;
+  toolCalls: number;
 }
 export interface PerfView {
   enabled: boolean;
   window: string;
   turns: number;
-  byPhase: PerfPhaseSummary[];
-  byTool: PerfPhaseSummary[];
+  totalMs: PerfSpread | null;
+  ttfTextMs: PerfSpread | null;
+  avgSteps: number;
+  avgToolCalls: number;
   recent: PerfTurnSummary[];
 }
 

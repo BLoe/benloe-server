@@ -169,7 +169,7 @@ export const CABINET_CLEAR_TABLES = [
   // it behind would strand spans pointing at conversations that no longer
   // exist, and the measurements are only meaningful against the build that
   // produced them anyway.
-  'perf_span',
+  'perf_turn',
   'price_watch',
   'prior_auth',
   'reading_item',

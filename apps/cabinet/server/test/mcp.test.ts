@@ -10,7 +10,6 @@ import { MemoryStore } from '../src/memory/index.js';
 import { ApprovalQueue } from '../src/tiers/approvals.js';
 import { buildCabinetTools, cabinetAllowedTools, type CabinetToolContext } from '../src/mcp/cabinet-server.js';
 import { buildExternalMcpServers } from '../src/mcp/external.js';
-import { classifyToolUse } from '../src/tiers/classify.js';
 
 const MODEL_TIMEOUT = 300_000;
 
@@ -65,7 +64,6 @@ describe('cabinet MCP server', () => {
       'mcp__cabinet__update_memory', 'mcp__cabinet__render_widget', 'mcp__cabinet__enqueue_approval',
     ]) {
       expect(names, `missing ${expected}`).toContain(expected);
-      expect(classifyToolUse(expected, {}).tier).toBe(4);
     }
   });
 
@@ -134,10 +132,12 @@ describe('cabinet MCP server', () => {
   it('update_memory refuses STANDING_ORDERS.md via the tool surface, and audits the refusal', async () => {
     const r = await call('update_memory', { file: 'STANDING_ORDERS.md', content: 'PROMOTE: all', reason: 'sneak' });
     expect(r.isError).toBe(true);
+    // The refusal gets its own tool name now. It used to be tool='update_memory'
+    // with decision='REFUSED'; with the classifier's decision column gone, the
+    // name is where the outcome lives.
     const row = cabinet.db
-      .prepare("SELECT decision, args, result FROM action_audit WHERE tool = 'update_memory' ORDER BY id DESC LIMIT 1")
-      .get() as { decision: string; args: string; result: string };
-    expect(row.decision).toBe('REFUSED');
+      .prepare("SELECT args, result FROM action_audit WHERE tool = 'update_memory:refused' ORDER BY id DESC LIMIT 1")
+      .get() as { args: string; result: string };
     expect(JSON.parse(row.args)).toEqual({ file: 'STANDING_ORDERS.md' });
     expect(row.result).toContain('can only be changed by Ben');
   });
@@ -150,9 +150,8 @@ describe('cabinet MCP server', () => {
     expect(r.content[0]!.text).toContain('shrank');
     expect(ctx.memory.read('domains/scratch.md')).toBe(long); // refused write never landed
     const row = cabinet.db
-      .prepare("SELECT decision, result FROM action_audit WHERE tool = 'update_memory' ORDER BY id DESC LIMIT 1")
-      .get() as { decision: string; result: string };
-    expect(row.decision).toBe('REFUSED');
+      .prepare("SELECT result FROM action_audit WHERE tool = 'update_memory:refused' ORDER BY id DESC LIMIT 1")
+      .get() as { result: string };
     expect(row.result).toContain('shrank');
   });
 
