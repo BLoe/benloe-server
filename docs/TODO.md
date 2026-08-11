@@ -67,7 +67,7 @@ else is blocked on it.
 
 ---
 
-## 2. Charter
+## 2. Charter — IN PROGRESS 2026-08-11
 
 Who Cabinet is. Identity, goals, personality, how it talks. Target 1–2k tokens
 against ~20k today.
