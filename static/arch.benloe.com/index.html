@@ -269,6 +269,143 @@
   bypasses anyway.
 </div>
 
+<h2>How a tool call works</h2>
+<p>
+  The model cannot touch the database. It can only ask, in words, for one of 63 named
+  tools to run. Everything Cabinet knows or records goes through this list.
+</p>
+<pre class="tree">
+model says:   <b>log_food</b>{ description: "chicken bowl", kcal: 640, protein_g: 52 }
+                    │
+<b>mcp/</b>                │   check the arguments match the declared shape
+                    ▼
+<b>domains/food.ts</b>     <b>logFood()</b> — INSERT a row, return the day's totals
+                    │
+                    ▼
+model receives: { id: 3312, totals: { kcal: 1840, protein_g: 141, ... } }
+</pre>
+<p>
+  <code>mcp/</code> is a switchboard. Each of the 63 entries declares a name, a description,
+  and the shape of its arguments — then calls one function in <code>domains/</code> and hands
+  back the result. Almost every tool is a few lines long.
+</p>
+<p class="lede">
+  <b>The descriptions are prompt.</b> Roughly 13 KB of them are sent to the model on every
+  single turn, before any argument schemas. That is more text than the charter will be, and
+  unlike the memory files nobody has ever read it end to end.
+</p>
+
+<h2>All 63 tools</h2>
+<p class="lede">
+  Grouped by the <code>domains/</code> file each one calls. 49 map to a domain; the last 14
+  are infrastructure and belong to no life area.
+</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td colspan="2"><b>domains/food.ts</b> — 4</td></tr>
+    <tr><td><code>log_food</code></td><td>Log a meal with macros; returns running daily totals.</td></tr>
+    <tr><td><code>update_pantry</code></td><td>Add or adjust a pantry item.</td></tr>
+    <tr><td><code>decrement_pantry_for</code></td><td>Subtract a quantity from pantry stock, converting units.</td></tr>
+    <tr><td><code>add_recipe</code></td><td>Save a recipe with per-serving macros and ingredients.</td></tr>
+
+    <tr><td colspan="2"><b>domains/mealplan.ts</b> — 5</td></tr>
+    <tr><td><code>plan_meal</code></td><td>Put a planned meal on a day.</td></tr>
+    <tr><td><code>list_meal_plan</code></td><td>List planned meals over a date range.</td></tr>
+    <tr><td><code>update_plan_entry</code></td><td>Mark eaten/skipped, change servings or slot.</td></tr>
+    <tr><td><code>remove_plan_entry</code></td><td>Delete a planned meal.</td></tr>
+    <tr><td><code>consume_plan_entry</code></td><td>Eat a planned meal: log the food and decrement pantry in one step.</td></tr>
+
+    <tr><td colspan="2"><b>domains/shopping.ts</b> — 2</td></tr>
+    <tr><td><code>generate_shopping_list</code></td><td>Meal-plan ingredients minus what's in the pantry.</td></tr>
+    <tr><td><code>list_grocery_list</code></td><td>The full grocery list: plan-derived, staples, and manual rows.</td></tr>
+
+    <tr><td colspan="2"><b>domains/health.ts</b> — 2</td></tr>
+    <tr><td><code>log_health_day</code></td><td>Write a day of Apple Watch metrics (normally the iOS Shortcut does this).</td></tr>
+    <tr><td><code>health_days</code></td><td>Recent steps, active kcal, resting HR, sleep.</td></tr>
+
+    <tr><td colspan="2"><b>domains/training.ts</b> — 2</td></tr>
+    <tr><td><code>log_workout</code></td><td>Log a workout with sets; flags personal records.</td></tr>
+    <tr><td><code>log_body_metric</code></td><td>Log weight or body fat; weight returns the smoothed trend.</td></tr>
+
+    <tr><td colspan="2"><b>domains/activity.ts</b> — 5</td></tr>
+    <tr><td><code>plan_activity</code></td><td>Add a planned activity to the calendar.</td></tr>
+    <tr><td><code>list_activity_plan</code></td><td>List planned activity over a date range.</td></tr>
+    <tr><td><code>update_activity_entry</code></td><td>Mark done/skipped, attach the logged workout.</td></tr>
+    <tr><td><code>remove_activity_entry</code></td><td>Delete a planned activity.</td></tr>
+    <tr><td><code>seed_trainer_anchors</code></td><td>Top up the fixed Tue/Thu trainer sessions.</td></tr>
+
+    <tr><td colspan="2"><b>domains/adherence.ts</b> — 2</td></tr>
+    <tr><td><code>mark_habit</code></td><td>Mark a goal met or missed for a day, when no query can see it.</td></tr>
+    <tr><td><code>adherence_report</code></td><td>Expected vs actual per goal, with streaks.</td></tr>
+
+    <tr><td colspan="2"><b>domains/substances.ts</b> — 3</td></tr>
+    <tr><td><code>log_substance</code></td><td>Log cannabis, alcohol, caffeine or nicotine with dose and route.</td></tr>
+    <tr><td><code>substance_day</code></td><td>Every substance event for one day, in order.</td></tr>
+    <tr><td><code>substance_nights</code></td><td>One row per day joining substance timing against sleep.</td></tr>
+
+    <tr><td colspan="2"><b>domains/cravings.ts</b> — 3</td></tr>
+    <tr><td><code>log_craving</code></td><td>Log a craving the moment it happens.</td></tr>
+    <tr><td><code>resolve_craving</code></td><td>Close it out once you know how it ended.</td></tr>
+    <tr><td><code>craving_report</code></td><td>Which redirect actually works, ranked by success rate.</td></tr>
+
+    <tr><td colspan="2"><b>domains/symptoms.ts</b> — 2</td></tr>
+    <tr><td><code>log_symptom</code></td><td>Record a symptom severity 0–10 for a day.</td></tr>
+    <tr><td><code>symptom_days</code></td><td>Today's readings, or one symptom's trend.</td></tr>
+
+    <tr><td colspan="2"><b>domains/healthcare.ts</b> — 4</td></tr>
+    <tr><td><code>log_claim</code></td><td>Log an insurance claim; returns deductible and out-of-pocket totals.</td></tr>
+    <tr><td><code>log_lab</code></td><td>Log a lab result and flag out-of-range values.</td></tr>
+    <tr><td><code>log_medication</code></td><td>Add a medication with schedule and supply, for refill nudges.</td></tr>
+    <tr><td><code>log_hsa_contribution</code></td><td>Record an HSA contribution; returns headroom against the IRS limit.</td></tr>
+
+    <tr><td colspan="2"><b>domains/money.ts</b> — 7</td></tr>
+    <tr><td><code>money_summary</code></td><td>Accounts, net worth, spending by category. The starting point for money questions.</td></tr>
+    <tr><td><code>money_transactions</code></td><td>Recent transactions, newest first.</td></tr>
+    <tr><td><code>money_categories</code></td><td>Spending grouped by category, largest first.</td></tr>
+    <tr><td><code>money_trend</code></td><td>Net worth, total spend, and restaurant spend by day.</td></tr>
+    <tr><td><code>money_holdings</code></td><td>Investment positions across linked accounts.</td></tr>
+    <tr><td><code>import_transactions_csv</code></td><td>Import transactions from CSV when a bank won't link.</td></tr>
+    <tr><td><code>upsert_manual_account</code></td><td>Track an account Plaid cannot reach.</td></tr>
+
+    <tr><td colspan="2"><b>domains/misc.ts</b> — 8</td></tr>
+    <tr><td><code>log_mood</code></td><td>Log a 1–5 mood, energy and stress check-in.</td></tr>
+    <tr><td><code>add_journal</code></td><td>Append a free-form journal entry, indexed for later recall.</td></tr>
+    <tr><td><code>upsert_task</code></td><td>Create or update a task or reminder.</td></tr>
+    <tr><td><code>upsert_contact</code></td><td>Create or update a contact.</td></tr>
+    <tr><td><code>upsert_goal</code></td><td>Set a measurable goal — the number a dial on the dashboard points at.</td></tr>
+    <tr><td><code>upsert_constraint</code></td><td>Record a hard constraint a plan must never violate.</td></tr>
+    <tr><td><code>list_constraints</code></td><td>List the active hard constraints.</td></tr>
+    <tr><td><code>add_price_watch</code></td><td>Watch an item or URL for a target price.</td></tr>
+
+    <tr><td colspan="2"><b>No domain — infrastructure</b> — 14</td></tr>
+    <tr><td><code>query_db</code></td><td>Run a read-only SQL SELECT against the whole database. The workhorse.</td></tr>
+    <tr><td><code>search_episodic</code></td><td>Semantic search over past conversations and journals.</td></tr>
+    <tr><td><code>search_documents</code></td><td>Search uploaded PDFs — insurance, lease, tax documents.</td></tr>
+    <tr><td><code>recall_lessons</code></td><td>Recall relevant stored lessons for the current context.</td></tr>
+    <tr><td><code>add_lesson</code></td><td>Store a lesson, with evidence and a confidence score.</td></tr>
+    <tr><td><code>retire_lesson</code></td><td>Retire a lesson that proved wrong or stale.</td></tr>
+    <tr><td><code>list_promotable_lessons</code></td><td>List lessons durable enough to graduate into permanent memory.</td></tr>
+    <tr><td><code>promote_lesson</code></td><td>Mark a lesson graduated after writing it into a memory file.</td></tr>
+    <tr><td><code>update_memory</code></td><td>Rewrite one of the markdown memory files. Git-committed.</td></tr>
+    <tr><td><code>render_widget</code></td><td>Render a rich card inline in the chat.</td></tr>
+    <tr><td><code>enqueue_approval</code></td><td>Propose an action that needs approval.</td></tr>
+    <tr><td><code>money_sync</code></td><td>Pull fresh balances and transactions from every linked bank now.</td></tr>
+    <tr><td><code>plaid_institution_search</code></td><td>Check whether a given bank can be linked at all.</td></tr>
+    <tr><td><code>usage_status</code></td><td>Where the Claude subscription stands right now.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <b>Anthropic's guidance is that tool selection degrades past 30–50 tools.</b> There are 63.
+  The obvious consolidations: the five <code>*_activity_*</code> and five <code>*_plan_entry</code>
+  tools are the same four verbs twice over, and five of the seven <code>money_*</code> tools are
+  read queries that <code>query_db</code> could already answer.
+</div>
+
 <h2>Data — outside the repo</h2>
 <div class="scroll">
 <table>
