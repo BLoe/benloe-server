@@ -1,0 +1,127 @@
+#!/usr/bin/env node
+/**
+ * Print a GitHub installation token for the benloe-carpenter App.
+ *
+ * benloe-carpenter is the identity a Claude Code session on this box acts as —
+ * distinct from Cabinet's App and from benloe-pr-reviewer's, so an action on the
+ * repo is attributable to which system took it. Credentials come from the
+ * `carpenter` set in benloe-secrets, rendered to /run/benloe-secrets/carpenter.env
+ * (mode 0400, benloe-secrets uid). Root can read it; claude-worker — the uid
+ * Cabinet's agent shells run as — cannot, which is the boundary that matters.
+ *
+ * WHY THIS EXISTS AT ALL. `gh` stores a long-lived token in ~/.gh/hosts.yml and
+ * both of the ones there had silently expired, so the first repo question of a
+ * session failed with "Bad credentials" and got worked around instead of fixed.
+ * An App installation token lasts an hour, which makes a stored copy the wrong
+ * shape: it should be minted on demand and cached only until it expires.
+ *
+ * Cached in /run (tmpfs) so it never reaches a disk and is gone after a reboot.
+ * Reused while more than ten minutes remain, which keeps a long session down to
+ * a couple of mints while never handing out a token about to die mid-command.
+ *
+ * Prints the token on stdout and nothing else, so it can be used inline:
+ *   GH_TOKEN=$(carpenter-token) gh pr list
+ */
+import { createPrivateKey, sign } from 'node:crypto';
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+
+const ENV_FILE = process.env.CARPENTER_ENV_FILE ?? '/run/benloe-secrets/carpenter.env';
+const CACHE_DIR = '/run/benloe-carpenter';
+const CACHE = `${CACHE_DIR}/token.json`;
+/** Refuse to serve a token with less than this left, so a command that takes a
+ *  while does not have it expire underneath it. */
+const MIN_REMAINING_MS = 10 * 60 * 1000;
+
+function die(msg) {
+  process.stderr.write(`carpenter-token: ${msg}\n`);
+  process.exit(1);
+}
+
+function cached() {
+  try {
+    const { token, expires_at } = JSON.parse(readFileSync(CACHE, 'utf8'));
+    if (!token || !expires_at) return null;
+    if (Date.parse(expires_at) - Date.now() < MIN_REMAINING_MS) return null;
+    return token;
+  } catch {
+    return null; // absent, unreadable, or corrupt — mint a new one
+  }
+}
+
+function readEnv(path) {
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    die(
+      `cannot read ${path} (${err.code}). The carpenter set is rendered by benloe-secrets; ` +
+        `check that service is running and that this shell is root.`,
+    );
+  }
+  const out = {};
+  for (const line of text.split('\n')) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (m) out[m[1]] = m[2];
+  }
+  return out;
+}
+
+const b64 = (s) => Buffer.from(s).toString('base64url');
+
+/** RS256 app JWT, good for 9 minutes (GitHub caps at 10; 60s clock-drift
+ *  backdate per their docs). No JWT dependency — node:crypto suffices. */
+function appJwt(appId, key) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const payload = b64(JSON.stringify({ iat: now - 60, exp: now + 9 * 60, iss: appId }));
+  const signature = sign('RSA-SHA256', Buffer.from(`${header}.${payload}`), key).toString('base64url');
+  return `${header}.${payload}.${signature}`;
+}
+
+const hit = cached();
+if (hit) {
+  process.stdout.write(hit);
+  process.exit(0);
+}
+
+const env = readEnv(ENV_FILE);
+for (const name of ['CARPENTER_APP_ID', 'CARPENTER_APP_INSTALLATION_ID', 'CARPENTER_APP_PRIVATE_KEY_B64']) {
+  if (!env[name]) die(`${name} missing from ${ENV_FILE} — check the carpenter set at https://secrets.benloe.com`);
+}
+
+let key;
+try {
+  key = createPrivateKey(Buffer.from(env.CARPENTER_APP_PRIVATE_KEY_B64, 'base64'));
+} catch (err) {
+  // Buffer.from(x,'base64') never throws — it discards non-alphabet characters
+  // silently — so a line-wrapped key decodes to a truncated DER prefix and only
+  // fails here. Say which variable, since the OpenSSL message names nothing.
+  die(`CARPENTER_APP_PRIVATE_KEY_B64 did not decode to a private key: ${err.message}`);
+}
+
+const res = await fetch(`https://api.github.com/app/installations/${env.CARPENTER_APP_INSTALLATION_ID}/access_tokens`, {
+  method: 'POST',
+  headers: {
+    authorization: `Bearer ${appJwt(env.CARPENTER_APP_ID, key)}`,
+    accept: 'application/vnd.github+json',
+    'x-github-api-version': '2022-11-28',
+    'user-agent': 'benloe-carpenter',
+  },
+});
+if (!res.ok) die(`mint failed ${res.status}: ${(await res.text()).slice(0, 200)}`);
+
+const body = await res.json();
+if (!body.token) die('mint response carried no token');
+
+try {
+  mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+  // Write-then-rename so a concurrent reader never sees a half-written cache.
+  const tmp = `${CACHE}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ token: body.token, expires_at: body.expires_at }), { mode: 0o600 });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, CACHE);
+} catch {
+  // A cache we could not write is a performance problem, not a failure.
+}
+
+process.stdout.write(body.token);
