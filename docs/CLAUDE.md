@@ -122,6 +122,14 @@ require('dotenv').config({ path: '/run/benloe-secrets/kickball.env' });
 - Scoping is the shape of the data. kickball cannot read the Mailgun key because
   that key is in the `cabinet` set. There is no scope list and no key-prefix
   matching to keep in sync.
+- **`gh` already works, as `benloe-carpenter`** — the GitHub App identity for a
+  Claude Code session here, separate from Cabinet's App and from
+  benloe-pr-reviewer's so an action on the repo is attributable to which system
+  took it. `/usr/local/bin/gh` mints an installation token from the `carpenter`
+  set and hands it to the real CLI; `carpenter-token` prints one directly if
+  something else needs it. Do not run `gh auth login`: installation tokens expire
+  hourly, which is exactly how the stored ones in `hosts.yml` went stale
+  unnoticed and made the first repo question of a session fail.
 - The `shared` set is merged under every other set (the app's own value wins on a
   collision) and is **empty on purpose**. It reaches all thirteen sets, so
   JWT_SECRET in it would have put the session-signing key into `pr-reviewer.env`,
