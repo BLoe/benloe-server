@@ -108,22 +108,38 @@ const ALLOCATION: Record<string, string[]> = {
   waker: ['SLEEPER_LOGIN_ALLOW', 'SLEEPER_LOGIN_ENABLED', 'JWT_SECRET'],
   'weights-api': [],
   'yahoo-fantasy-mcp': ['MCP_TOKEN_ENCRYPTION_KEY', 'MCP_TOKEN_SECRET', 'YAHOO_CLIENT_ID', 'YAHOO_CLIENT_SECRET'],
-  // Keys no app references. They are kept — dropping a secret nobody can find a
-  // caller for is how a service breaks four days later — but they are kept OUT
-  // of everyone's reach. No app reads unassigned.env; it exists so the values
-  // survive in the store and stay visible in the dashboard until someone can say
-  // whether they are dead. Moving one into an app's set is a browser edit.
-  unassigned: ['CARPENTER_APP_ID', 'CARPENTER_APP_INSTALLATION_ID', 'CARPENTER_APP_PRIVATE_KEY_B64', 'FITNESS_DATABASE_URL'],
+  // benloe-carpenter is the GitHub App a CLAUDE CODE SESSION on this box
+  // authenticates as — deliberately a third identity, separate from Cabinet's
+  // and from the PR reviewer's, so an action taken by a human-driven session is
+  // attributable to one and carries its own permissions (contents:write, which
+  // the reviewer pointedly does not have).
+  //
+  // No app's source references these, and the first pass therefore filed them as
+  // orphans. That inference was wrong: the consumer is not an app. Worth naming,
+  // because the same reasoning had already misread the in-progress Plaid broker
+  // as dead code — "nothing references it" distinguishes unreferenced from
+  // unfinished not at all.
+  //
+  // A Claude Code session runs as root and can read the renders; the Cabinet
+  // agent runs as claude-worker and cannot. So a set of its own is both the
+  // right home and the right boundary.
+  carpenter: ['CARPENTER_APP_ID', 'CARPENTER_APP_INSTALLATION_ID', 'CARPENTER_APP_PRIVATE_KEY_B64'],
+  // Genuinely unattributed. Kept — dropping a secret nobody can find a caller
+  // for is how a service breaks four days later — but reachable by nobody: no
+  // app reads unassigned.env. It exists so the value survives in the store and
+  // stays visible in the dashboard until someone can say whether it is dead.
+  // Moving one into a set is a browser edit.
+  unassigned: ['FITNESS_DATABASE_URL'],
 };
 
 /**
  * Keys no app's source mentions. They go to the `unassigned` set — carried
  * forward so nothing is silently lost, but reachable by nobody until someone
- * decides where they belong. CARPENTER_* looks like a retired GitHub App and
- * FITNESS_DATABASE_URL like a superseded connection string, but "looks like" is
- * not evidence, so they are kept and announced rather than deleted.
+ * decides where they belong. FITNESS_DATABASE_URL looks like a superseded
+ * connection string \u2014 fitness reads WEIGHTS_API_URL instead \u2014 but "looks like"
+ * is not evidence, so it is kept and announced rather than deleted.
  */
-const ORPHANS = ['CARPENTER_APP_ID', 'CARPENTER_APP_INSTALLATION_ID', 'CARPENTER_APP_PRIVATE_KEY_B64', 'FITNESS_DATABASE_URL'];
+const ORPHANS = ['FITNESS_DATABASE_URL'];
 
 const ALGO = 'aes-256-gcm';
 
