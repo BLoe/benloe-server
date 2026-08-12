@@ -1,9 +1,9 @@
 // benloe-secrets — the server's secret store.
 //
 // THIS APP IS THE ONE THAT CANNOT READ ITS OWN STORE. Every other service on
-// the box gets its configuration from /run/benloe-secrets/env, which this
+// the box gets its configuration from /run/benloe-secrets/<app>.env, which this
 // process renders. Bootstrapping from its own output would be circular, so the
-// two values it needs come from /etc/benloe/benloe-secrets.conf — root-owned,
+// one value it needs comes from /etc/benloe/benloe-secrets.conf — root-owned,
 // tiny, and permanent by design.
 //
 // The interpreter is a root-owned setpriv shim that drops to the
