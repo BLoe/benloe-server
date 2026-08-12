@@ -34,15 +34,9 @@ running as root.
 looking — what a PR does, whether it is safe, what is still open, what a diff
 touches, why CI is red — you go and find out and tell him in conversation.
 Never answer a question about repo state by suggesting he go look. Never hand
-him a link as an explanation.
-
-**Discuss freely, in as much detail as he wants.** This constraint is about
-GitHub, not about depth. Ben is an experienced developer and wants to talk
-through architecture, tradeoffs, mechanism and risk at whatever level the
-question deserves. Explain in prose what the code does. Quote a few lines in
-chat when they carry the point. The line is the GitHub UI and the expectation
-that he review changes there — not technical conversation, which is the whole
-substance of the collaboration.
+him a link as an explanation. The constraint is the GitHub UI, not technical
+depth: discuss architecture, mechanism and tradeoffs at whatever level he asks
+for.
 
 **Human review is not available as a verification step, so stop designing
 around it.** "Ben should look this over before we merge" is not a plan; it is
@@ -51,7 +45,8 @@ the plan failing. What replaces it:
 - *Empirical verification.* Run the typecheck, run the suite, and exercise the
   real thing — the migration against a copy of the live database, the assembled
   prompt diffed against the live directory, the endpoint actually called. Tests
-  passing is not the same as the change being correct.
+  passing is not the same as the change being correct. Report what you checked,
+  not just what you changed.
 - *Agentic review.* Another agent reads the diff adversarially. See
   `apps/pr-reviewer/`.
 - *Reversibility as the safety model.* Every change is on a branch, every merge
@@ -62,37 +57,11 @@ the plan failing. What replaces it:
   Cabinet gets less useful, that is the signal — and it arrives in days, not at
   review time.
 
-**Escalate outcomes, never diffs.** Real reasons to stop and ask: taste,
-product direction, something whose cost is not recoverable, a decision about
-his own life or data. Describe those in plain language and in terms of what he
-would experience. "Cabinet's personality currently reads cooler and more formal
-than V1 — do you want that?" is a decision he can make. "Please review PR #12"
-is not, and asking it wastes the turn.
-
-**Decide and ship.** Do the work, verify it, merge it, deploy it, then report
-what changed and what you checked. Do not open a PR and stop; do not stack up
-work waiting for a gate that is never going to open. A branch that sits
-unreviewed is not caution, it is unfinished work — and a pile of them is the
-specific failure mode this project keeps hitting.
-
-### Failure modes this project keeps hitting
-
-Named so they are recognizable, because each one has already cost a session:
-
-- **PR paralysis.** Sessions end at "three PRs are open and awaiting Ben."
-  Since Ben is never going to read them, they accumulate, and every new session
-  spends its budget re-deriving their status instead of merging them.
-- **Doc archaeology.** Superseding a document instead of replacing it. `docs/`
-  accumulates versioned plans that each open by explaining their relationship
-  to the last one. Replace and delete; git holds the history.
-- **Narrating instead of doing.** Long confessional passages about a surprising
-  failure, a rule that was wrongly invented, or an error made three steps back.
-  Fix it, say what changed in a sentence, and move on. Ben has been explicit
-  that this is the single most corrosive pattern in these sessions.
-- **Procedural rules bred from single incidents.** One bad merge produces a
-  standing rule that taxes every future action. Prefer a mechanical guard — a
-  gitignore line, a check in code — or accept the risk. Instructions compete;
-  each rule added weakens every rule already there.
+**Escalate outcomes, not diffs.** Stopping is right for taste, product
+direction, an unrecoverable cost, or a decision about Ben's life or data. Say
+what changed and what it affects, then let him judge it — "the file that sets
+Cabinet's personality was rewritten; talk to it for a day and tell me if it's
+off" — never ask him to look at the change itself.
 
 ## System Architecture
 
