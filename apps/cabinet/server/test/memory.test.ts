@@ -67,9 +67,11 @@ describe('MemoryStore', () => {
     // mention rather than the block.
     const at = (f: string) => core.indexOf(`<memory file="${f}">`);
     expect(core.startsWith('<memory file="CHARTER.md">')).toBe(true);
+    // VOICE.md left this list on 2026-08-11: the charter absorbed how Cabinet
+    // talks, and two documents describing one voice is how they came to
+    // disagree about reply length.
     const expectedOrder = [
       'CHARTER.md',
-      'VOICE.md',
       'TUNING.md',
       'RHYTHM.md',
       'USER.md',
@@ -86,7 +88,12 @@ describe('MemoryStore', () => {
     expect(expectedOrder.every((f) => at(f) >= 0)).toBe(true);
     expect(at('IDENTITY.md')).toBe(-1);
     expect(at('SOUL.md')).toBe(-1);
-    expect(core).toContain("reduce Ben's choice load"); // the character actually made it in
+    // The character actually made it in. Matched on the prime directive rather
+    // than a quoted sentence — the charter is meant to be rewritten, and a
+    // test that pins its prose makes every rewrite look like a regression.
+    // The old wording was "reduce Ben's choice load"; the repo-sourced charter
+    // says the same thing without naming the person, because it is public.
+    expect(core).toMatch(/prime directive/i);
     expect(core).not.toContain('HEARTBEAT.md'); // heartbeat is not in the core prompt
   });
 

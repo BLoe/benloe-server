@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -165,23 +165,51 @@ describe('the shipped prompt directory', () => {
   });
 });
 
-describe('a fresh install assembles the same prompt as before the split', () => {
-  it('produces byte-identical output to reading every layer from the data dir', () => {
-    // The whole point of landing the loader with an all-`user` manifest: this
-    // change must be invisible in the assembled prompt. Compares the real
-    // manifest against a forced all-user version of itself over the same
-    // seeded files.
-    const dataDir = mkdtempSync(join(tmpdir(), 'cabinet-same-'));
-    const promptDir = mkdtempSync(join(tmpdir(), 'cabinet-same-p-'));
-    mkdirSync(promptDir, { recursive: true });
-    const shipped = new MemoryStore(dataDir, promptDir);
-    shipped.ensureTemplates();
-    const allUser = new MemoryStore(
-      dataDir,
-      promptDir,
-      PROMPT_CORE.map((l) => ({ file: l.file, source: 'user' as const })),
-    );
-    expect(shipped.promptCore()).toBe(allUser.promptCore());
-    expect(shipped.promptCore().length).toBeGreaterThan(0);
+describe('moving a layer changes that layer and nothing else', () => {
+  it('assembles exactly the manifest, in manifest order, whichever root each layer came from', () => {
+    // Replaces two earlier versions of this assertion, both of which encoded
+    // an assumption that stopped being true:
+    //
+    //   v1 "byte-identical to an all-user manifest" — correct while nothing
+    //   had moved, impossible once CHARTER.md became repo-sourced.
+    //
+    //   v2 "same tags as an all-user manifest" — correct while every layer
+    //   ALSO existed in data/, and wrong the moment a repo-only layer landed.
+    //   SYSTEM.md has no data/ counterpart, so the all-user comparison simply
+    //   could not find it. That failure appeared only when the charter and
+    //   system changes were combined, which is why it is worth merging
+    //   branches locally and running the suite before merging them for real.
+    //
+    // The invariant that does not rot: the assembled prompt is the manifest,
+    // in manifest order, minus any layer whose file is absent from the root
+    // it declares. It holds for a user-only layer, a repo-only layer, and one
+    // that exists in both.
+    const dataDir = mkdtempSync(join(tmpdir(), 'cabinet-manifest-'));
+    const mem = new MemoryStore(dataDir, DEFAULT_PROMPT_DIR);
+    mem.ensureTemplates();
+
+    const present = PROMPT_CORE.filter(({ file, source }) =>
+      existsSync(join(source === 'repo' ? DEFAULT_PROMPT_DIR : dataDir, file)),
+    ).map((l) => l.file);
+    const assembled = [...mem.promptCore().matchAll(/<memory file="([^"]+)">/g)].map((m) => m[1]);
+
+    expect(assembled).toEqual(present);
+    expect(assembled.length).toBeGreaterThan(0);
+  });
+
+  it('serves a repo-sourced layer from the repo, not from the seeded data dir', () => {
+    // The move actually taking effect, asserted directly rather than inferred
+    // from the absence of a difference.
+    const repoLayers = PROMPT_CORE.filter((l) => l.source === 'repo');
+    if (repoLayers.length === 0) return; // nothing has moved yet
+
+    const dataDir = mkdtempSync(join(tmpdir(), 'cabinet-moved-'));
+    const mem = new MemoryStore(dataDir, DEFAULT_PROMPT_DIR);
+    mem.ensureTemplates(); // seeds the OLD copy into data/ for every layer
+    for (const layer of repoLayers) {
+      expect(mem.read(layer.file), `${layer.file} should come from src/prompts/`).toBe(
+        readFileSync(join(DEFAULT_PROMPT_DIR, layer.file), 'utf8'),
+      );
+    }
   });
 });
