@@ -101,36 +101,50 @@ All applications are managed in a single monorepo at `/srv/benloe/` connected to
 
 /etc/caddy/Caddyfile.d/          # Symlink → /srv/benloe/infra/caddy/
 /root/CLAUDE.md                   # Symlink → /srv/benloe/docs/CLAUDE.md
-/run/benloe-secrets/env           # Rendered secrets, tmpfs, 0400 (see Secrets Management)
+/run/benloe-secrets/<app>.env     # Rendered secrets, one per app, tmpfs, 0400
 ```
 
 ## Secrets Management
 
-**All secrets live in the `benloe-secrets` service**, encrypted at rest, and are
-rendered to tmpfs for services to read. There is no `.env` in the repo.
+**All secrets live in the `benloe-secrets` service**, encrypted at rest as one
+named set per app, and rendered to tmpfs for services to read. There is no `.env`
+in the repo — `/srv/benloe/.env` is deleted.
 
-Apps load secrets via:
+Each app reads **only its own file**, named for its directory under `apps/`:
 ```javascript
-require('dotenv').config({ path: '/run/benloe-secrets/env' });
+require('dotenv').config({ path: '/run/benloe-secrets/kickball.env' });
 // Then reference: process.env.JWT_SECRET, etc.
 ```
 
-- Edit them at `https://secrets.benloe.com` — one textarea, owner-only via
-  artanis, with version history and restore.
-- Saving re-renders `/run/benloe-secrets/env` (0400). At boot,
-  `benloe-secrets-render.service` does the same before PM2 starts, because `/run`
-  is tmpfs and the file does not survive a reboot.
-- A consumer that needs isolation gets its own scoped file — currently
-  `/run/benloe-secrets/pr-reviewer.env`, with the full env fenced off from that
-  unit via `InaccessiblePaths`.
-- **Restarting a service is what picks up a change.** Editing the document alone
-  changes nothing for a running process.
+- Edit them at `https://secrets.benloe.com` — one textarea per set, owner-only
+  via artanis, with per-set version history and restore. The dashboard also shows
+  each app's *effective* keys, which is where over-share becomes visible.
+- Scoping is the shape of the data. kickball cannot read the Mailgun key because
+  that key is in the `cabinet` set. There is no scope list and no key-prefix
+  matching to keep in sync.
+- The `shared` set is merged under every other set (the app's own value wins on a
+  collision) and is **empty on purpose**. It reaches all thirteen sets, so
+  JWT_SECRET in it would have put the session-signing key into `pr-reviewer.env`,
+  where an injection from a public PR could forge an owner session into the
+  secrets dashboard itself. JWT_SECRET is duplicated into the six services that
+  verify sessions instead.
+- Saving re-renders every file (0400, owned by `benloe-secrets`, directory 0700).
+  At boot, `benloe-secrets-render.service` does the same before PM2 starts,
+  because `/run` is tmpfs and the files do not survive a reboot.
+- `pr-reviewer` gets its file through systemd `LoadCredential=` rather than by
+  reading `/run`: its unit is root with an empty `CapabilityBoundingSet`, so it
+  has no CAP_DAC_OVERRIDE and cannot open a 0400 file owned by another uid. The
+  whole render directory is in that unit's `InaccessiblePaths`.
+- **Restarting a service is what picks up a change.** Editing a set alone changes
+  nothing for a running process.
+- PM2 starts apps from root-owned configs in `/etc/benloe/ecosystem/`, not the
+  copies in the repo.
 - `/etc/benloe/benloe-secrets.conf` is the only bootstrap file left: it holds the
   owner email, which the secrets service cannot look up in its own store.
 
 Read `docs/SECRETS.md` before changing any of this — including what it is honest
 about *not* buying (most consumers run as root; this is not confidentiality from
-root).
+root, and nothing stops a process allowed to use a secret from exercising it).
 
 ## Git Monorepo
 
@@ -140,8 +154,10 @@ root).
 
 1. Create directory: `mkdir /srv/benloe/apps/my-new-app`
 2. Add code and `ecosystem.config.js`
-3. If it needs secrets, add them at `https://secrets.benloe.com` and read
-   `/run/benloe-secrets/env`
+3. If it needs secrets, create a set named `my-new-app` at
+   `https://secrets.benloe.com`, put its keys in that set, and read
+   `/run/benloe-secrets/my-new-app.env`. Never add a key to `shared` — that set
+   reaches every app; duplicate the value into each set that needs it.
 4. Commit: `cd /srv/benloe && git add apps/my-new-app && git commit`
 5. Push: `git push origin main`
 

@@ -71,11 +71,12 @@ pm2 logs <app-name>
 
 ## Secrets Management
 
-Secrets live in the `benloe-secrets` service as a single env document, AES-256-GCM encrypted at rest. Nothing here is stored in plaintext on disk and nothing is committed to git.
+Secrets live in the `benloe-secrets` service as one named set per app, AES-256-GCM encrypted at rest. Nothing here is stored in plaintext on disk and nothing is committed to git; there is no `.env` in this repo.
 
-- Edit them at [secrets.benloe.com](https://secrets.benloe.com) — owner-only, with version history and restore.
-- On save, and at boot before PM2 starts, the document renders to `/run/benloe-secrets/env` (tmpfs, mode 0400), plus a scoped file per consumer that needs isolation.
-- Apps read that path with `dotenv`, directly or via `ecosystem.config.js`.
+- Edit them at [secrets.benloe.com](https://secrets.benloe.com) — owner-only, per-set version history and restore.
+- On save, and at boot before PM2 starts, each set renders to `/run/benloe-secrets/<app>.env` (tmpfs, mode 0400) — that set merged over the `shared` set, with the app's own value winning on a collision.
+- Each app reads **only its own file** with `dotenv`, directly or via its config in `/etc/benloe/ecosystem/`. An app cannot read another app's keys because they are in another set.
+- The `shared` set is empty on purpose: it reaches every app, so a value used by two apps is duplicated into those two sets.
 - A running process only picks up a change when it is restarted.
 
 See `docs/SECRETS.md` for the design, the operational commands, and an honest account of what this does and does not protect against.
@@ -84,7 +85,7 @@ See `docs/SECRETS.md` for the design, the operational commands, and an honest ac
 
 1. Create directory: `mkdir /srv/benloe/apps/my-new-app`
 2. Add code and `ecosystem.config.js`
-3. If it needs secrets, add them at [secrets.benloe.com](https://secrets.benloe.com) and read `/run/benloe-secrets/env`
+3. If it needs secrets, create a set named `my-new-app` at [secrets.benloe.com](https://secrets.benloe.com), put its keys there, and read `/run/benloe-secrets/my-new-app.env`
 4. Add workspaces entry to root `package.json` if using npm dependencies
 5. Commit and push
 
