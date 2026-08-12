@@ -21,9 +21,19 @@ dependency would be someone else's maintenance burden for no leverage.
   `cabinet-benloe`.** The `gh` CLI token on this box expires and needs a human
   to re-auth; an unattended timer cannot depend on that. `src/github.mjs` mints
   a fresh installation token each poll from
-  `PR_REVIEWER_{APP_ID,INSTALLATION_ID,PRIVATE_KEY_B64}` in `/srv/benloe/.env`.
-  That identity has `contents:read` (to fetch) and `pull_requests:write` (to
-  post), and deliberately **no `contents:write`** — it cannot push or merge.
+  `PR_REVIEWER_{APP_ID,INSTALLATION_ID,PRIVATE_KEY_B64}` in
+  `/run/benloe-secrets/pr-reviewer.env`. That identity has `contents:read` (to
+  fetch) and `pull_requests:write` (to post), and deliberately **no
+  `contents:write`** — it cannot push or merge.
+
+  **The reviewer gets its own secret set on purpose** — benloe-secrets renders
+  one file per app, and the `pr-reviewer` set holds those three keys and nothing
+  else. The other apps' renders under `/run/benloe-secrets` are in the unit's
+  `InaccessiblePaths`, so a review that is talked into reading every secret on
+  the box gets ENOENT from the kernel rather than a file. Scoping is now the
+  shape of the data — the reviewer cannot reach the Mailgun key because that key
+  is in the `cabinet` set, not because anything here refuses to read it. Keep
+  `PR_REVIEWER_ENV_FILE` pointed at this app's own render.
 
   `reviewerCredentials()` has **no fallback** to `GITHUB_APP_*`. A fallback
   would let a typo silently promote the reviewer to the write-capable

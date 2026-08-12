@@ -14,7 +14,7 @@ import { milestoneRoutes } from './routes/milestones';
 import { chatRoutes } from './routes/chat';
 import { weightsProxyRoutes } from './routes/weights-proxy';
 
-dotenv.config({ path: '/srv/benloe/.env' });
+dotenv.config({ path: '/run/benloe-secrets/fitness.env' });
 
 const app = express();
 const PORT = process.env.PORT || 3007;

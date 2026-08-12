@@ -4,12 +4,12 @@
  * Usage:
  *   ANTHROPIC_API_KEY=sk-ant-... npx tsx scripts/test-claude-api.ts
  *
- * Or set the key in .env and run:
+ * Or set the key in the secrets file and run:
  *   npx tsx scripts/test-claude-api.ts
  */
 
 import dotenv from 'dotenv';
-dotenv.config({ path: '/srv/benloe/.env' });
+dotenv.config({ path: '/run/benloe-secrets/artanis.env' });
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const API_URL = 'https://api.anthropic.com/v1/messages';

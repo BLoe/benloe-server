@@ -113,8 +113,10 @@ Every one of these has already cost real time here.
   `loadEnv` before its own use.
 - **Feature routers must be mounted above the `app.get('*')` SPA fallback**,
   or the fallback swallows the request.
-- **Secrets live in `/srv/benloe/.env`**, not this app's directory. `index.ts`
-  calls `loadEnv({ path: '/srv/benloe/.env' })` explicitly.
+- **Secrets live in `/run/benloe-secrets/waker.env`**, the tmpfs file benloe-secrets
+  renders for this app — its own set merged over `shared` — not this app's
+  directory. `index.ts` calls `loadEnv({ path: '/run/benloe-secrets/waker.env' })`
+  explicitly.
 
 ### Sleeper's data lies in specific ways
 
@@ -323,9 +325,10 @@ Caddy serves `dist/` directly and proxies `/api/*`. **Rebuild before restarting*
 — PM2 only runs the server; the browser bundle is a separate artifact and a
 restart alone will serve the old one.
 
-Env comes from `/srv/benloe/.env` via `ecosystem.config.cjs`, which reads it by
-hand because PM2 has no access to the app's `node_modules`. Waker needs only
-`JWT_SECRET` and the `SLEEPER_LOGIN_*` pair.
+Env comes from `/run/benloe-secrets/waker.env` via `ecosystem.config.cjs`, which
+reads it by hand because PM2 has no access to the app's `node_modules`. Waker
+needs only `JWT_SECRET` (shared set) and the `SLEEPER_LOGIN_*` pair (waker set);
+a key that is in neither set is not in the file and cannot be read here.
 
 ---
 
@@ -339,7 +342,9 @@ hand because PM2 has no access to the app's `node_modules`. Waker needs only
   publishes publicly.
 - **`SLEEPER_LOGIN_ALLOW` gates who may sign in at all**, not just who may write —
   the twelve dynasty managers. This is a public hostname.
-- **Secrets never in git.** `/srv/benloe/.env` only; `.env.example` documents shape.
+- **Secrets never in git.** Encrypted in benloe-secrets, rendered to
+  `/run/benloe-secrets/waker.env` — this app's set only, so a compromise here
+  reaches no other app's credentials. `.env.example` documents shape.
 
 ---
 

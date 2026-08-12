@@ -13,7 +13,7 @@ import type { Server } from 'node:http';
 import Database from 'better-sqlite3';
 import { buildBrokerApp } from '../src/broker.js';
 import { createAuditLog } from '../src/audit.js';
-import { migrate, putCredential } from '../src/store.js';
+import { migrate, putCredential } from '../src/credentials.js';
 import { CLIENT_ID_CRED, SECRET_CRED } from '../src/plaid.js';
 
 const KEY = Buffer.alloc(32, 7);

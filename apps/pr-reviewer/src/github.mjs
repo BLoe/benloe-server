@@ -3,8 +3,8 @@
  *
  * Auth deliberately goes through the benloe-pr-reviewer GitHub App rather than
  * a personal `gh` token: the App's installation token is minted fresh on every
- * poll from credentials in /srv/benloe/.env, so an unattended timer can never
- * be blocked by a human-expired OAuth token. (The `gh` CLI token on this box
+ * poll from credentials in /run/benloe-secrets/pr-reviewer.env, so an
+ * unattended timer can never be blocked by a human-expired OAuth token. (The `gh` CLI token on this box
  * was already expired when this was written — exactly the failure mode a
  * scheduled reviewer must not inherit.)
  */
@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 const API = 'https://api.github.com';
 
 /**
- * Parse the subset of /srv/benloe/.env this service needs.
+ * Parse the subset of the rendered env file this service needs.
  *
  * Deliberately narrow: it returns ONLY the requested keys, so a bug here can
  * never widen into "the whole secrets file is now in a variable someone logs".
@@ -96,9 +96,11 @@ async function gh(token, path, init = {}) {
  * that can push to main — privilege escalation by typo, and invisible because
  * everything would keep working. Fail closed and loudly instead.
  *
- * Key names match what is already in /srv/benloe/.env. Note the PR_REVIEWER_
- * prefix is shared with this app's runtime config (PR_REVIEWER_MODEL and
- * friends); that is a namespace collision, not two systems.
+ * Key names match what benloe-secrets renders into
+ * /run/benloe-secrets/pr-reviewer.env — the reviewer's own secret set, which
+ * holds these three keys and nothing else. Note the PR_REVIEWER_ prefix is shared with
+ * this app's runtime config (PR_REVIEWER_MODEL and friends); that is a
+ * namespace collision, not two systems.
  */
 export function reviewerCredentials(envFile) {
   const KEYS = {

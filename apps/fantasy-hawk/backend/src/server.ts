@@ -7,8 +7,10 @@ import { initDatabase } from './services/database';
 import { oauthRoutes } from './routes/oauth';
 import { fantasyRoutes } from './routes/fantasy';
 
-// Load secrets from monorepo root
-dotenv.config({ path: '/srv/benloe/.env' });
+// benloe-secrets renders one tmpfs file per app: fantasy-hawk's own secret set
+// merged over 'shared'. Reading any other app's file is not a rule we enforce
+// here — the Yahoo keys are simply the only credentials in this one.
+dotenv.config({ path: '/run/benloe-secrets/fantasy-hawk.env' });
 
 const app = express();
 const PORT = process.env.PORT || 3005;

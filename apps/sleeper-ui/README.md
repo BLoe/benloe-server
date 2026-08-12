@@ -197,8 +197,9 @@ a canned brief and never calls the API** — the verification harness opens play
 pages on every pass, and live calls there would be both a charge and a
 non-deterministic screenshot.
 
-Set `ANTHROPIC_API_KEY` in `/srv/benloe/.env`. Without it the news desk still
-works and the brief panel says it is unavailable.
+Set `ANTHROPIC_API_KEY` in the `sleeper-ui` secret set in benloe-secrets
+(rendered to `/run/benloe-secrets/sleeper-ui.env`). Without it the news desk
+still works and the brief panel says it is unavailable.
 
 ## Rosters
 

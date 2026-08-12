@@ -10,6 +10,7 @@ This monorepo contains all the applications, infrastructure configs, and shared 
 /srv/benloe/
 ├── apps/                    # Application code
 │   ├── artanis/             # Authentication service (port 3002)
+│   ├── benloe-secrets/      # Encrypted secret store (port 3011)
 │   ├── dada-api/            # Dada image API (port 3004)
 │   ├── fantasy-hawk/        # Fantasy sports analytics (port 3005)
 │   ├── gamenight/           # Game night app (ports 3000, 3001)
@@ -38,6 +39,7 @@ This monorepo contains all the applications, infrastructure configs, and shared 
 | weights-api | 3003 | weights.benloe.com/api | Weight room tracking API |
 | dada-api | 3004 | dada.benloe.com/api | Dada image generation API |
 | fantasy-hawk-api | 3005 | fantasyhawk.benloe.com | Fantasy sports analytics |
+| benloe-secrets | 3011 | secrets.benloe.com | Encrypted secret store (owner-only) |
 
 ## Quick Start
 
@@ -69,15 +71,20 @@ pm2 logs <app-name>
 
 ## Secrets Management
 
-All secrets are stored in `/srv/benloe/.env` (never committed to git).
+Secrets live in the `benloe-secrets` service as a single env document, AES-256-GCM encrypted at rest. Nothing here is stored in plaintext on disk and nothing is committed to git.
 
-Apps load secrets via ecosystem.config.js which parses the .env file. See `.env.example` for required variables.
+- Edit them at [secrets.benloe.com](https://secrets.benloe.com) — owner-only, with version history and restore.
+- On save, and at boot before PM2 starts, the document renders to `/run/benloe-secrets/env` (tmpfs, mode 0400), plus a scoped file per consumer that needs isolation.
+- Apps read that path with `dotenv`, directly or via `ecosystem.config.js`.
+- A running process only picks up a change when it is restarted.
+
+See `docs/SECRETS.md` for the design, the operational commands, and an honest account of what this does and does not protect against.
 
 ## Adding a New App
 
 1. Create directory: `mkdir /srv/benloe/apps/my-new-app`
 2. Add code and `ecosystem.config.js`
-3. If needs secrets, add to `/srv/benloe/.env` and `.env.example`
+3. If it needs secrets, add them at [secrets.benloe.com](https://secrets.benloe.com) and read `/run/benloe-secrets/env`
 4. Add workspaces entry to root `package.json` if using npm dependencies
 5. Commit and push
 

@@ -38,13 +38,18 @@ All optional; the defaults are what runs in production.
 | `PR_REVIEWER_TIMEOUT_MS` | `1200000` | Per-review wall clock (20 min) |
 | `PR_REVIEWER_RUN_BUDGET_MS` | `1500000` | Start no new review after this (25 min) |
 | `PR_REVIEWER_MIRROR` | `/var/lib/pr-reviewer/repo.git` | The reviewer's own bare mirror — never `/srv/benloe` |
+| `PR_REVIEWER_ENV_FILE` | `/run/benloe-secrets/pr-reviewer.env` | The reviewer's own secret set — never another app's render |
 | `PR_REVIEWER_ALLOWED_AUTHORS` | `BLoe,cabinet-benloe[bot],benloe-carpenter[bot]` | Logins whose PRs get reviewed — the injection control |
 | `PR_REVIEWER_INCLUDE_DRAFTS` | unset | Set `1` to review draft PRs too |
 | `PR_REVIEWER_DRY_RUN` | unset | Set `1` to print instead of post |
 | `PR_REVIEWER_ONLY_PR` | unset | Restrict a run to one PR number |
 
 Authentication uses the **`benloe-pr-reviewer`** GitHub App via
-`PR_REVIEWER_{APP_ID,INSTALLATION_ID,PRIVATE_KEY_B64}` in `/srv/benloe/.env`.
+`PR_REVIEWER_{APP_ID,INSTALLATION_ID,PRIVATE_KEY_B64}` in
+`/run/benloe-secrets/pr-reviewer.env` — the reviewer's own secret set, holding
+those three keys and nothing else. benloe-secrets renders one such file per app
+and the other apps' renders are in the unit's `InaccessiblePaths`, so this
+service cannot read any other secret on the box.
 That identity holds `contents:read` (to clone and fetch the diff),
 `pull_requests:write` (to post the review), and deliberately **no
 `contents:write`** — so it cannot push or merge. There is deliberately no fallback to the write-capable

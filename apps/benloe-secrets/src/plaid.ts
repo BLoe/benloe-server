@@ -27,7 +27,7 @@
  */
 import type Database from 'better-sqlite3';
 import type { AuditFn } from './audit.js';
-import { decryptSecret, putCredential } from './store.js';
+import { decryptSecret, putCredential } from './credentials.js';
 
 export const CLIENT_ID_CRED = 'plaid-client-id';
 export const SECRET_CRED = 'plaid-secret';

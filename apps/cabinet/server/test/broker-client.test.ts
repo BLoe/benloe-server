@@ -257,7 +257,7 @@ describe('SecretsBrokerClient — the four failure modes are distinguishable', (
 
 describe('SecretsBrokerClient — the contract with the real broker', () => {
   it('defaults to the socket path documented in docs/SECRETS.md', () => {
-    expect(DEFAULT_BROKER_SOCKET).toBe('/run/cabinet-secrets/broker.sock');
+    expect(DEFAULT_BROKER_SOCKET).toBe('/run/benloe-secrets-broker/broker.sock');
     expect(new SecretsBrokerClient().endpoint).toBe(DEFAULT_BROKER_SOCKET);
   });
 

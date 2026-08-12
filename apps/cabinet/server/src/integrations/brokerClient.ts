@@ -34,8 +34,8 @@
    ========================================================================== */
 import { request as httpRequest } from 'node:http';
 
-/** Default socket path — 0660 cabinet-secrets:claude-worker, per docs/SECRETS.md. */
-export const DEFAULT_BROKER_SOCKET = '/run/cabinet-secrets/broker.sock';
+/** Default socket path — 0660 benloe-secrets:claude-worker, per docs/SECRETS.md. */
+export const DEFAULT_BROKER_SOCKET = '/run/benloe-secrets-broker/broker.sock';
 
 export type BrokerFailureKind =
   /** No socket at that path — the broker service is not running. */

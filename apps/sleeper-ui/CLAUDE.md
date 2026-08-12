@@ -113,10 +113,12 @@ Every one of these has already cost real time here.
 
 ### Server
 
-- **`dotenv/config` reads this app's directory, not the monorepo root.** Secrets
-  live in `/srv/benloe/.env`. `index.ts` calls `loadEnv({ path: '/srv/benloe/.env' })`
-  explicitly. Getting this wrong meant `JWT_SECRET` never loaded and sign-in
-  failed everywhere.
+- **`dotenv/config` reads this app's directory, not the rendered secrets file.**
+  Secrets live in `/run/benloe-secrets/sleeper-ui.env`, the tmpfs file benloe-secrets
+  writes for this app — its own secret set merged over `shared`. `index.ts` calls
+  `loadEnv({ path: '/run/benloe-secrets/sleeper-ui.env' })` explicitly.
+  Getting this wrong meant `JWT_SECRET` never loaded and sign-in failed
+  everywhere.
 - **The projection index must be memoised.** The raw payload is ~8MB of 9,400
   rows; re-parsing per request was most of the player page's response time
   (0.4s → 0.09s).
@@ -286,8 +288,11 @@ Caddy serves `dist/` directly and proxies `/api/*`. **Rebuild before restarting*
 PM2 only runs the server; the bundle is a separate artifact and a restart alone
 serves the old one.
 
-Env is read by `ecosystem.config.cjs`, which parses `/srv/benloe/.env` by hand
-because PM2 has no access to this app's `node_modules`.
+Env is read by `ecosystem.config.cjs`, which parses
+`/run/benloe-secrets/sleeper-ui.env` by hand because PM2 has no access to this
+app's `node_modules`. Adding a key means adding it to the `sleeper-ui` set (or
+`shared`, if another app must agree on the value) — nothing here can pull a key
+that is not rendered into that file.
 
 `max_memory_restart: 600M` — the player index is ~14MB of JSON held in memory.
 
@@ -306,7 +311,9 @@ and is owned by `caddy:caddy`. A missing log file fails the whole config.
   dynasty managers. This is a public hostname asking for a Sleeper password, so
   it should be easy to narrow or close (`SLEEPER_LOGIN_ENABLED=false`).
 - **Chat is served only to the account a token belongs to.** See `chatAccess.ts`.
-- **Secrets never in git.** `/srv/benloe/.env` only; `.env.example` documents shape.
+- **Secrets never in git.** Encrypted in benloe-secrets, rendered to
+  `/run/benloe-secrets/sleeper-ui.env` — this app's set only, so a compromise here
+  reaches no other app's credentials. `.env.example` documents shape.
 - `ANTHROPIC_API_KEY` is optional — without it the news desk still works and the
   brief panel says it is unavailable.
 
