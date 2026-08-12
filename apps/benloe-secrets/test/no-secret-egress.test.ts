@@ -30,7 +30,7 @@ const code = (f: string) =>
 describe('secret egress', () => {
   it('only src/plaid.ts may use the decrypt path', () => {
     const offenders = readdirSync(SRC)
-      .filter((f) => f.endsWith('.ts') && f !== 'store.ts' && f !== 'plaid.ts')
+      .filter((f) => f.endsWith('.ts') && f !== 'credentials.ts' && f !== 'plaid.ts')
       .filter((f) => /\bdecryptSecret\b/.test(code(f)));
     expect(offenders, 'these modules use decryptSecret and must not').toEqual([]);
   });

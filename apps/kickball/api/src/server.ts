@@ -9,7 +9,7 @@ import { requireManager } from './middleware/auth';
 import { publicRoutes } from './routes/public';
 import { adminRoutes } from './routes/admin';
 
-dotenv.config({ path: '/srv/benloe/.env' });
+dotenv.config({ path: '/run/benloe-secrets/kickball.env' });
 
 const PORT = Number(process.env.PORT || 3009);
 const DB_PATH = process.env.KICKBALL_DB || '/srv/benloe/data/kickball.db';

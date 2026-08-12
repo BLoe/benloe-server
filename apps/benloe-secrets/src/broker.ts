@@ -17,7 +17,7 @@
 import express, { type Request, type Response } from 'express';
 import type Database from 'better-sqlite3';
 import type { AuditFn } from './audit.js';
-import { listCredentials } from './store.js';
+import { listCredentials } from './credentials.js';
 import {
   plaidConfigured,
   plaidExchangePublicToken,
@@ -26,7 +26,7 @@ import {
   PlaidPathRefusedError,
   type PlaidProxyDeps,
 } from './plaid.js';
-import { CREDENTIAL_NAME_RE } from './store.js';
+import { CREDENTIAL_NAME_RE } from './credentials.js';
 
 export interface BrokerDeps {
   db: Database.Database;

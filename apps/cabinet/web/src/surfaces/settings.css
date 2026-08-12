@@ -1,0 +1,316 @@
+/* ============================================================================
+   SETTINGS surface — the configuration Ben can change from here.
+
+   Everything on this page is plaintext by nature, so status carries no colour
+   except in the one place it earns it: a stored value beating a live
+   environment variable. Keys read as code (they are literal strings), prose in
+   the system's voice.
+   Tokens only; no shared selectors.
+   ========================================================================== */
+
+/* width + centering come from the shared .surface > * rule in shell.css */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-6);
+  width: 100%;
+}
+
+/* ---- header ---- */
+.settings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.settings-lede {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-lede);
+  color: var(--linen-dim);
+  max-width: 66ch;
+}
+
+/* ---- controls ---- */
+.set-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font: inherit;
+  font-size: var(--fs-cap);
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-1);
+  border: 1px solid var(--brass);
+  background: transparent;
+  color: var(--brass);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease);
+}
+.set-btn:hover:not(:disabled) {
+  background: var(--brass);
+  color: var(--ground);
+}
+.set-btn:focus-visible {
+  outline: 2px solid var(--brass-hi);
+  outline-offset: 2px;
+}
+.set-btn.subtle {
+  border-color: var(--rule);
+  color: var(--linen-dim);
+}
+.set-btn.subtle:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--linen);
+  border-color: var(--brass-dim);
+}
+.set-btn.tiny {
+  padding: 2px var(--sp-2);
+  letter-spacing: 0.04em;
+}
+.set-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---- source pill: which of DB / env / default won ---- */
+.set-pill {
+  font-family: var(--mono);
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  border-radius: var(--r-pill);
+  padding: 1px var(--sp-3);
+  border: 1px solid;
+  white-space: nowrap;
+  flex: none;
+}
+.set-pill.ok {
+  color: var(--patina);
+  border-color: var(--patina-dim);
+  background: transparent;
+}
+/* Warning tone, not alarm: an override is a state the page exists to point
+   at, not a failure. */
+.set-pill.warn {
+  color: var(--brass-hi);
+  border-color: var(--brass-dim);
+  background: #c99b5314;
+}
+.set-pill.dim {
+  color: var(--linen-faint);
+  border-color: var(--rule);
+}
+
+/* ---- notices ---- */
+.set-error {
+  font-size: var(--fs-fine);
+  color: var(--vermilion);
+  max-width: 88ch;
+}
+.set-loading {
+  color: var(--linen-faint);
+  font-size: var(--fs-fine);
+  padding: var(--sp-7) 0;
+}
+
+.set-section-lede {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--linen-dim);
+  max-width: 84ch;
+  margin-bottom: var(--sp-3);
+}
+
+/* A setting key is a literal — it has to be typed exactly in a config file,
+   so it reads as code rather than as a label. */
+.set-name {
+  font-size: var(--fs-fine);
+  color: var(--brass-hi);
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-1);
+  padding: 1px var(--sp-2);
+}
+
+/* ---- settings, grouped by integration ---- */
+.set-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.set-group {
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r-3);
+  background: var(--panel);
+  overflow: hidden;
+}
+.set-group-name {
+  font-family: var(--serif);
+  font-size: var(--fs-read);
+  color: var(--linen);
+  /* sp-3 / sp-4 — the same row rhythm as .money-group-head and .money-acct,
+     so the sibling surfaces sit at one horizontal density. */
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--rule-soft);
+  background: var(--panel-2);
+}
+.set-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.set {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--rule-soft);
+  position: relative;
+}
+.set:last-child {
+  border-bottom: none;
+}
+/* A brass edge on the row whose value is not what the environment says it is.
+   The eye should find it before any label is read. */
+.set.is-overriding::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--rail);
+  background: linear-gradient(180deg, var(--brass), var(--brass-dim));
+}
+.set-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.set-label {
+  font-family: var(--serif);
+  font-size: var(--fs-body);
+  color: var(--linen);
+}
+.set-control {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+.set-form {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  align-items: center;
+  flex: 1 1 auto;
+}
+/* Same well as .set-input — a field you type into and a field you choose from
+   should not look like different kinds of thing. */
+.set-select {
+  font-size: var(--fs-sm);
+  color: var(--linen);
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-1);
+  padding: var(--sp-2) var(--sp-3);
+  min-width: 14rem;
+}
+.set-select:focus-visible {
+  outline: none;
+  border-color: var(--brass-dim);
+  box-shadow: 0 0 0 1px var(--brass-deep);
+}
+.set-input {
+  flex: 1 1 22rem;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--linen);
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-1);
+  padding: var(--sp-2) var(--sp-3);
+}
+.set-input:focus-visible {
+  outline: none;
+  border-color: var(--brass-dim);
+  box-shadow: 0 0 0 1px var(--brass-deep);
+}
+.set-select:disabled,
+.set-input:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.set-busy {
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  color: var(--brass);
+}
+
+/* The precedence line. Quiet by default — "this came from the default" is
+   information, not an event — and brass when a stored value is beating a live
+   environment variable, which is the one case that can catch someone out. */
+.set-note {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--linen-dim);
+  max-width: 84ch;
+}
+/* Flex only here, and only because this variant has exactly two children (the
+   mark and a wrapping span). The quiet variants are inline prose with <code>
+   in the run of it, which flex would tear into separate items. */
+.set-note.override {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  color: var(--linen);
+  border: 1px solid var(--brass-dim);
+  background: #c99b5314;
+  border-radius: var(--r-2);
+  padding: var(--sp-3);
+}
+.set-mark {
+  color: var(--brass-hi);
+  flex: none;
+}
+.set-desc {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--linen-dim);
+  max-width: 84ch;
+}
+.set-when {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+  font-size: var(--fs-fine);
+  color: var(--linen-faint);
+}
+.set-when-k {
+  font-size: var(--fs-cap);
+  letter-spacing: var(--tracking-cap);
+  text-transform: uppercase;
+  color: var(--linen-faint);
+  opacity: 0.75;
+}
+/* Linen, not patina: patina means "handled / settled / positive". A config
+   string like "sandbox" or an origin URL is a value, not a good outcome. */
+.set-env-val {
+  font-family: var(--mono);
+  color: var(--linen);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-1);
+  padding: 1px var(--sp-2);
+}

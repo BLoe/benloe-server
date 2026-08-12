@@ -1,7 +1,8 @@
 import { config as dotenvConfig } from 'dotenv';
 
-// Load from monorepo .env
-dotenvConfig({ path: '/srv/benloe/.env' });
+// benloe-secrets renders one tmpfs file per app; this is this service's own
+// secret set merged over 'shared', and holds nothing another app owns.
+dotenvConfig({ path: '/run/benloe-secrets/yahoo-fantasy-mcp.env' });
 
 function requireEnv(name: string): string {
   const value = process.env[name];

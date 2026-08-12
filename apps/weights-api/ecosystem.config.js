@@ -1,6 +1,7 @@
-// Load .env file manually (PM2 doesn't have access to app's node_modules)
+// Read the rendered env by hand — PM2 has no access to the app's node_modules.
+// The file is weights-api's OWN set merged over 'shared'.
 const fs = require('fs');
-const envFile = fs.readFileSync('/srv/benloe/.env', 'utf8');
+const envFile = fs.readFileSync('/run/benloe-secrets/weights-api.env', 'utf8');
 const env = {};
 envFile.split('\n').forEach(line => {
   const match = line.match(/^([^#=]+)=(.*)$/);

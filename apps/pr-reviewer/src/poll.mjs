@@ -68,7 +68,27 @@ const CONFIG = {
    * systemd sandbox makes it read-only anyway.
    */
   mirrorDir: process.env.PR_REVIEWER_MIRROR ?? '/var/lib/pr-reviewer/repo.git',
-  envFile: process.env.PR_REVIEWER_ENV_FILE ?? '/srv/benloe/.env',
+  /**
+   * benloe-secrets renders one file per app; this is the reviewer's, and its set
+   * holds only the three PR_REVIEWER_* keys.
+   *
+   * DELIVERED BY SYSTEMD, not read out of /run directly. This unit runs as root
+   * with an EMPTY CapabilityBoundingSet, so it has no CAP_DAC_OVERRIDE and
+   * cannot open a 0400 file owned by the benloe-secrets uid — being root is not
+   * enough once that capability is gone. LoadCredential= has PID 1 read the file
+   * during unit setup, before the sandbox exists, and place a private copy in
+   * $CREDENTIALS_DIRECTORY.
+   *
+   * Better than handing the capability back: the whole of /run/benloe-secrets is
+   * then in InaccessiblePaths, so the reviewer cannot even observe that the
+   * other twelve apps' renders exist. It receives exactly one file, named by a
+   * unit file it has no way to edit.
+   */
+  envFile:
+    process.env.PR_REVIEWER_ENV_FILE ??
+    (process.env.CREDENTIALS_DIRECTORY
+      ? resolve(process.env.CREDENTIALS_DIRECTORY, 'reviewer-env')
+      : '/run/benloe-secrets/pr-reviewer.env'),
   stateFile: process.env.PR_REVIEWER_STATE ?? '/var/lib/pr-reviewer/state.json',
   worktreeRoot: process.env.PR_REVIEWER_WORKTREES ?? '/var/lib/pr-reviewer/worktrees',
   pluginDir:

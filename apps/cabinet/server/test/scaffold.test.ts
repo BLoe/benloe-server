@@ -29,9 +29,14 @@ describe('scaffold', () => {
     expect(st.mode & 0o022).toBe(0); // no group/other write
   });
 
-  it('secrets file is root-only', () => {
-    const st = statSync('/srv/benloe/.env');
-    expect(st.uid).toBe(0);
+  // Cabinet reads only its own rendered set. The uid check is the load-bearing
+  // half: the render is owned by the renderer, NOT by claude-worker, so the mode
+  // bits below mean Cabinet's own uid cannot open the file it is configured
+  // from. Everything Cabinet gets, root's PM2 daemon hands it (ecosystem.config.js).
+  it("cabinet's rendered secret set is readable only by the renderer", () => {
+    const rendererUid = Number(execFileSync('id', ['-u', 'benloe-secrets'], { encoding: 'utf8' }).trim());
+    const st = statSync('/run/benloe-secrets/cabinet.env');
+    expect(st.uid).toBe(rendererUid);
     expect(st.mode & 0o077).toBe(0); // no group/other access at all
   });
 });

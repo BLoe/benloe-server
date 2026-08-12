@@ -3,7 +3,7 @@
  */
 
 import dotenv from 'dotenv';
-dotenv.config({ path: '/srv/benloe/.env' });
+dotenv.config({ path: '/run/benloe-secrets/artanis.env' });
 
 import { PrismaClient } from '@prisma/client';
 import { getEncryptionService, EncryptionService } from '../src/services/encryption';

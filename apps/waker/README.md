@@ -246,8 +246,10 @@ npm run check      # typecheck, tests, verify, links, mobile
 ```
 
 Deployed by PM2 (`waker-api`) behind Caddy. Secrets come from
-`/srv/benloe/.env` — Waker needs only `JWT_SECRET` for session cookies and the
-`SLEEPER_LOGIN_*` pair for the twelve-manager allow-list. No third-party source
+`/run/benloe-secrets/waker.env`, the per-app render from benloe-secrets — Waker
+needs only `JWT_SECRET` for session cookies (from the shared set, since other
+apps must agree on it) and the `SLEEPER_LOGIN_*` pair for the twelve-manager
+allow-list. No third-party source
 requires a key, which is why they were chosen.
 
 Waker is **read-only against every upstream**. It has no write path at all.

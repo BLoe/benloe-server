@@ -52,7 +52,9 @@ api/    Express + TypeScript on port 3009, better-sqlite3, hand-written SQL migr
 web/    React 19 + Vite + Tailwind v4
 ```
 
-Database at `/srv/benloe/data/kickball.db`. Secrets come from `/srv/benloe/.env`.
+Database at `/srv/benloe/data/kickball.db`. Secrets come from
+`/run/benloe-secrets/kickball.env` — kickball's own secret set merged over the
+shared one, so keys other apps hold are not in the file at all.
 
 ## Working on it
 

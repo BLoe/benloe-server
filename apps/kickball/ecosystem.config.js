@@ -6,7 +6,7 @@
 // PM2 loads this from /etc/benloe/ecosystem/, never from here; promote changes
 // with `cabinet-privops install-ecosystem kickball` as real root.
 const fs = require('fs');
-const envFile = fs.readFileSync('/srv/benloe/.env', 'utf8');
+const envFile = fs.readFileSync('/run/benloe-secrets/kickball.env', 'utf8');
 const env = {};
 envFile.split('\n').forEach((line) => {
   const match = line.match(/^([^#=]+)=(.*)$/);

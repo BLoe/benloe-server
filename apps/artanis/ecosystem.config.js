@@ -1,6 +1,8 @@
-// Load .env file manually (PM2 doesn't have access to app's node_modules)
+// Read the rendered secrets by hand — PM2 has no access to the app's node_modules.
+// The file is artanis's OWN set merged over 'shared'; nothing another app
+// keeps is in it, so a typo here cannot reach a secret artanis has no claim to.
 const fs = require('fs');
-const envFile = fs.readFileSync('/srv/benloe/.env', 'utf8');
+const envFile = fs.readFileSync('/run/benloe-secrets/artanis.env', 'utf8');
 const env = {};
 envFile.split('\n').forEach(line => {
   const match = line.match(/^([^#=]+)=(.*)$/);

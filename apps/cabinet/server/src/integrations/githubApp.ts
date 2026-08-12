@@ -3,7 +3,7 @@
 // seeing the app's private key.
 //
 // Privilege design (mirrors §13.2's spirit): the root PM2 daemon injects
-// GITHUB_APP_PRIVATE_KEY_B64 from /srv/benloe/.env into THIS process's env
+// GITHUB_APP_PRIVATE_KEY_B64 from /run/benloe-secrets/cabinet.env into THIS process's env
 // (see ecosystem.config.js). The Claude Agent SDK's bash tool snapshots
 // process.env verbatim for every agent shell, so the very first thing this
 // module does — configured or not — is delete the key from process.env and

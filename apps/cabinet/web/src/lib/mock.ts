@@ -313,7 +313,7 @@ const credentialEnv: EnvVarReport[] = [
       'cannot encrypt or decrypt anything.',
     reason:
       'This is the bootstrap secret — the one value that cannot be stored in the store it unlocks. It lives in ' +
-      '/srv/benloe/.env, which is root-owned and which Cabinet can neither read nor write by design.',
+      '/run/benloe-secrets/cabinet.env, which is owned by the renderer and which Cabinet can neither read nor write by design.',
     set: true, required: true, scrubbed: true, value: null, supersededBy: null,
   },
   {

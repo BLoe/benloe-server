@@ -13,8 +13,8 @@ Type=oneshot
 # THE THREAT: this repository is PUBLIC, so anyone can open a pull request, and
 # a PR's title/body/diff are attacker-controlled text that reaches the agent's
 # prompt. The agent's output is then published to that same public PR. Without
-# the InaccessiblePaths list, that is a complete stranger-to-published-secrets
-# path. prompts/orchestrator.md fences the untrusted text, but a prompt fence
+# the mount-namespace fencing below, that is a complete
+# stranger-to-published-secrets path. prompts/orchestrator.md fences the untrusted text, but a prompt fence
 # is advisory; this is the part that is enforced by the kernel.
 User=root
 WorkingDirectory=/srv/benloe/apps/pr-reviewer
@@ -33,13 +33,57 @@ ReadWritePaths=/var/lib/pr-reviewer /srv/benloe/logs /root/.claude /tmp
 # The secrets the reviewer must never be able to read, even though it runs as
 # root and even if the agent is talked into trying.
 #
-# /srv/benloe/.env is deliberately ABSENT from this list: poll.mjs reads
-# PR_REVIEWER_{APP_ID,INSTALLATION_ID,PRIVATE_KEY_B64} from it (via
-# reviewerCredentials in src/github.mjs) before spawning the agent, so fencing
-# it here would break auth outright. That file is instead fenced from the agent
-# by prompt only — the known residual gap — while the mounts below hide
-# everything else from it.
-InaccessiblePaths=/srv/benloe/data /var/lib/cabinet-secrets /var/lib/artanis /etc/benloe /run/cabinet-secrets /root/.ssh
+# File modes are not the control here and cannot be: 0400 benloe-secrets stops
+# every other uid on this box and stops a root unit not at all. The mount
+# namespace is what actually binds this service.
+#
+# /run/benloe-secrets holds ONE RENDER PER APP, and the reviewer legitimately
+# needs one of them — its own.
+#
+# Binding that one file in read-only was the first attempt and it FAILS, for a
+# reason worth recording: the render is 0400 and owned by the benloe-secrets
+# uid, and CapabilityBoundingSet= below is empty, so this unit is root WITHOUT
+# CAP_DAC_OVERRIDE. Being uid 0 does not open a file the mode bits refuse once
+# that capability is gone. The old /srv/benloe/.env happened to work only
+# because it was owned by root.
+#
+# LoadCredential= is the mechanism that fits: PID 1 opens the file during unit
+# setup, in the host context, before any of this sandbox exists, and leaves a
+# private 0400 copy in $CREDENTIALS_DIRECTORY owned by this service. The whole
+# render directory can then be made inaccessible, so the reviewer cannot even
+# observe that the other twelve apps' renders exist — and that holds BY DEFAULT
+# for an app added tomorrow, with no edit to this unit. A deny-list would have
+# to be maintained, and forgetting an entry fails silently open.
+LoadCredential=reviewer-env:/run/benloe-secrets/pr-reviewer.env
+#
+# So poll.mjs authenticates with the three PR_REVIEWER_* keys in its own set and
+# nothing else — the worst a successful injection can publish to a public PR is
+# a credential that already only holds pull_requests:write on this one repo.
+# This is the enforcement; the fence in prompts/orchestrator.md is advisory and
+# rides on top of it.
+#
+# No leading `-` on the LoadCredential source: without the render the reviewer
+# cannot authenticate at all, and failing at unit start beats a run that reaches
+# a PR before it discovers it has no credentials.
+#
+# The remaining denials, and why each one is not already covered above:
+#   /run/benloe-secrets      every OTHER app's render. The reviewer's own copy
+#                            arrives via LoadCredential, so it needs nothing from
+#                            this directory and is denied all of it.
+#   /var/lib/benloe-secrets  the store the renders come FROM (secrets.db + audit
+#                            log). Reading it defeats every per-app scope at once.
+#   /run/benloe-secrets-broker  the broker socket. It hands out no key, but it
+#                            will make authenticated calls on behalf of whoever
+#                            can connect, which is a capability, not a file.
+#   /srv/benloe/data, /var/lib/artanis  application databases — sessions and
+#                            tokens live there, not only in the secret store.
+#   /etc/benloe, /root/.ssh  the ecosystem configs that name what gets injected,
+#                            and the deploy key.
+#
+# The `-` prefixes mark paths that legitimately may not exist: /srv/benloe/.env
+# is deleted once every service reads its render, and the broker socket dir only
+# appears while the broker runs. Without them, absence would stop the unit.
+InaccessiblePaths=/run/benloe-secrets /srv/benloe/data /var/lib/benloe-secrets /var/lib/artanis /etc/benloe /root/.ssh -/run/benloe-secrets-broker -/srv/benloe/.env
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

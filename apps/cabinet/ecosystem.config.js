@@ -1,8 +1,12 @@
 // Cabinet gateway — runs as claude-worker (privilege separation, §13.2).
-// The root PM2 daemon reads /srv/benloe/.env (root-only) and injects exactly
-// the env Cabinet needs; the process itself can never read the secrets file.
+// The root PM2 daemon reads /run/benloe-secrets/cabinet.env and injects exactly
+// the env Cabinet needs; the process itself can never read the file. That file
+// is the 'cabinet' secret set merged over 'shared' — so the keys Cabinet has no
+// business with are not merely un-injected below, they were never rendered into
+// anything this host process could open. The hand-picked list is the second
+// fence, not the only one.
 const fs = require('fs');
-const envFile = fs.readFileSync('/srv/benloe/.env', 'utf8');
+const envFile = fs.readFileSync('/run/benloe-secrets/cabinet.env', 'utf8');
 const env = {};
 envFile.split('\n').forEach((line) => {
   const match = line.match(/^([^#=]+)=(.*)$/);
@@ -33,7 +37,7 @@ module.exports = {
         // Web push (VAPID). The public key is handed to the browser; the
         // private key signs the JWT that identifies this server to the push
         // service. Rotating the pair invalidates every existing subscription,
-        // so it lives in .env and is never regenerated on deploy.
+        // so it lives in the secrets store and is never regenerated on deploy.
         CABINET_VAPID_PUBLIC_KEY: env.CABINET_VAPID_PUBLIC_KEY,
         CABINET_VAPID_PRIVATE_KEY: env.CABINET_VAPID_PRIVATE_KEY,
         CABINET_VAPID_SUBJECT: env.CABINET_VAPID_SUBJECT,
@@ -43,32 +47,22 @@ module.exports = {
         GITHUB_APP_ID: env.GITHUB_APP_ID,
         GITHUB_APP_INSTALLATION_ID: env.GITHUB_APP_INSTALLATION_ID,
         GITHUB_APP_PRIVATE_KEY_B64: env.GITHUB_APP_PRIVATE_KEY_B64,
-        // Master key for the encrypted credential store (migration 016). This
-        // is the ONLY secret the money integration needs in .env — Plaid's
-        // client_id, API secret and per-bank access tokens are all AES-256-GCM
-        // rows in cabinet.db sealed under this key, so they can be added and
-        // rotated from the UI without a root shell.
+        // LEGACY FALLBACK as of migration 019: this is now a setting in the
+        // app_setting table, editable from /settings, and a DB row outranks the
+        // variable. It stays wired for continuity — a value already in the
+        // store keeps working — but this is not the place to change it.
         //
-        // Its absence is a supported (degraded) state, not a crash: the store
-        // still answers "what is configured?" and refuses every decrypt. That
-        // is exactly the state this deployment was silently in until
-        // 2026-08-02, because this line did not exist — every credential write
-        // would have 503'd and every Plaid call would have found no keys.
-        // Generate with: openssl rand -base64 32
-        CABINET_CRED_KEY: env.CABINET_CRED_KEY,
-        // The next two are LEGACY FALLBACKS as of migration 019. Both are now
-        // settings in the app_setting table, editable from /credentials, and a
-        // DB row outranks the variable. They stay wired for continuity — a
-        // value already in .env keeps working — but neither should be the place
-        // these get changed any more.
+        // Deliberately NO `|| 'default'`. A hardcoded fallback here would make
+        // the settings page report source: 'env' when nothing is actually
+        // configured, which is precisely the failure the source field exists to
+        // prevent: an unconfigured value wearing the costume of a deliberate
+        // one. Undefined is the honest signal, and the settings catalog owns
+        // the default.
         //
-        // Deliberately NO `|| 'default'` on either one. A hardcoded fallback
-        // here would make the settings page report source: 'env' when nothing
-        // is actually configured, which is precisely the failure the source
-        // field exists to prevent: an unconfigured value wearing the costume of
-        // a deliberate one. Undefined is the honest signal, and the settings
-        // catalog owns the default.
-        PLAID_ENV: env.PLAID_ENV,
+        // CABINET_CRED_KEY and PLAID_ENV were injected here until 2026-08-12.
+        // Both are gone: the local credential store and the Plaid integration
+        // that used it were removed, so nothing in this process reads either
+        // one. Secrets now live in benloe-secrets.
         CABINET_PUBLIC_ORIGIN: env.CABINET_PUBLIC_ORIGIN,
         // claude-worker's own nvm-managed node (v24.12.0) is the only place a
         // working, correctly-permissioned npm/npx/corepack actually lives on

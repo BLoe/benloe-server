@@ -1,12 +1,12 @@
 // One-shot title backfill — same privilege model and env injection as the
-// service (ecosystem.config.js). PM2 (root) reads /srv/benloe/.env here and
-// injects exactly what the SDK needs; the forked process self-drops to
+// service (ecosystem.config.js). PM2 (root) reads /run/benloe-secrets/cabinet.env
+// and injects exactly what the SDK needs; the forked process self-drops to
 // claude-worker and never sees the secrets file. Run once, then delete:
 //
 //   pm2 start backfill.config.cjs && pm2 logs cabinet-backfill --lines 100
 //   pm2 delete cabinet-backfill
 const fs = require('fs');
-const envFile = fs.readFileSync('/srv/benloe/.env', 'utf8');
+const envFile = fs.readFileSync('/run/benloe-secrets/cabinet.env', 'utf8');
 const env = {};
 envFile.split('\n').forEach((line) => {
   const match = line.match(/^([^#=]+)=(.*)$/);

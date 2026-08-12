@@ -10,7 +10,7 @@
  * the SHA-256 hash.
  */
 import dotenv from 'dotenv';
-dotenv.config({ path: '/srv/benloe/.env' });
+dotenv.config({ path: '/run/benloe-secrets/artanis.env' });
 
 import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';

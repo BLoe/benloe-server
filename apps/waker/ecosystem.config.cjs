@@ -1,8 +1,10 @@
-// PM2 does not have access to the app's node_modules, so read .env by hand.
+// PM2 does not have access to the app's node_modules, so read the env by hand.
+// benloe-secrets renders one tmpfs file per app: waker's own secret set merged
+// over 'shared'. Scoping is the shape of the file, not a rule in here.
 const fs = require('fs');
 
 const env = {};
-for (const line of fs.readFileSync('/srv/benloe/.env', 'utf8').split('\n')) {
+for (const line of fs.readFileSync('/run/benloe-secrets/waker.env', 'utf8').split('\n')) {
   const match = line.match(/^([^#=]+)=(.*)$/);
   if (match) env[match[1].trim()] = match[2].trim();
 }

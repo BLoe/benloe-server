@@ -1,8 +1,11 @@
-// PM2 does not have access to the app's node_modules, so read .env by hand.
+// PM2 does not have access to the app's node_modules, so read the env by hand.
+// benloe-secrets renders one tmpfs file per app: sleeper-ui's own secret set
+// merged over 'shared'. Scoping is the shape of the file, not a rule in here —
+// this config cannot reach a key that is not in sleeper-ui's set.
 const fs = require('fs');
 
 const env = {};
-for (const line of fs.readFileSync('/srv/benloe/.env', 'utf8').split('\n')) {
+for (const line of fs.readFileSync('/run/benloe-secrets/sleeper-ui.env', 'utf8').split('\n')) {
   const match = line.match(/^([^#=]+)=(.*)$/);
   if (match) env[match[1].trim()] = match[2].trim();
 }
@@ -26,7 +29,7 @@ module.exports = {
         SLEEPER_CACHE_DIR: '/srv/benloe/data/sleeper-ui-cache',
         // League chat. Absent token simply disables the Chat section.
         SLEEPER_TOKEN: env.SLEEPER_TOKEN || '',
-        // Posting writes to a real league; it stays off unless .env says otherwise.
+        // Posting writes to a real league; it stays off unless the env says otherwise.
         SLEEPER_ALLOW_POSTING: env.SLEEPER_ALLOW_POSTING || 'false',
         // Signs the per-visitor session cookie and encrypts stored Sleeper tokens.
         JWT_SECRET: env.JWT_SECRET,

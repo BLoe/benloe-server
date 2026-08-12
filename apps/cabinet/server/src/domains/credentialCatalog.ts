@@ -136,15 +136,16 @@ export const ENV_CATALOG: EnvVarSpec[] = [
       'the intended state, not a misconfiguration.',
     required: false,
     scrubbedAtBoot: true,
-    // The previous text claimed Cabinet "can neither read nor write" /srv/benloe/.env "by design", and half of
-    // that was wrong. Reading is genuinely blocked (root:root 0600, kernel-enforced). Writing is NOT: the agent
-    // owns /srv/benloe, and unlink permission comes from the directory rather than the file, so it can replace
-    // the file wholesale without ever reading it. Stating the enforced half and the unenforced half separately
-    // is the point — an overstated boundary is worse than a documented gap, because nobody goes to fix it.
+    // 2026-08-12: /srv/benloe/.env is gone. The note it carried — that Cabinet could not READ that file but
+    // could REPLACE it, since unlink permission comes from the parent directory the agent owns — no longer
+    // describes anything. The successor boundary is stronger and worth stating precisely, because an
+    // overstated boundary is worse than a documented gap: nobody goes to fix what they think is already shut.
     reason:
-      'Retired. Secrets now live in cabinet-secrets, reached over a unix socket, with no endpoint that returns ' +
-      'a value. Cabinet cannot read /srv/benloe/.env (root:root 0600, kernel-enforced); it CAN replace that ' +
-      'file, because it owns the parent directory, so treat it as a read barrier and not an integrity one.',
+      'Retired. Secrets live in benloe-secrets, which renders one file per app under /run/benloe-secrets. ' +
+      'Cabinet is injected only from cabinet.env — its own set — so the other apps\' credentials are not ' +
+      'merely unread, they are absent from anything this process can reach. That directory is mode 0700 and ' +
+      'owned by the benloe-secrets uid, which claude-worker is not, so the barrier is the kernel rather than ' +
+      'a convention. Editing any of it means the owner, in a browser, at secrets.benloe.com.',
   },
   {
     name: 'PLAID_ENV',
@@ -174,7 +175,7 @@ export const ENV_CATALOG: EnvVarSpec[] = [
     label: 'Web-push public key',
     description: 'Without it, push notifications silently do nothing — no error, just no pings.',
     publicValue: true,
-    reason: 'Public half of a keypair whose private half is in /srv/benloe/.env.',
+    reason: 'Public half of a keypair whose private half is in the cabinet set in benloe-secrets.',
   },
   {
     name: 'CABINET_VAPID_PRIVATE_KEY',
@@ -187,7 +188,7 @@ export const ENV_CATALOG: EnvVarSpec[] = [
     label: 'GitHub App ID',
     description: 'Lets Cabinet open PRs and read issues on the server repo.',
     publicValue: true,
-    reason: 'Injected by root PM2 from /srv/benloe/.env alongside the private key.',
+    reason: 'Injected by root PM2 from /run/benloe-secrets/cabinet.env alongside the private key.',
   },
   {
     name: 'GITHUB_APP_PRIVATE_KEY_B64',

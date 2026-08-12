@@ -53,8 +53,10 @@ import {
   type PlayerIndex,
 } from '../lib/derive.js';
 
-// Secrets live in the monorepo root, not this app's directory.
-loadEnv({ path: '/srv/benloe/.env' });
+// Secrets live in the tmpfs file benloe-secrets renders for THIS app — sleeper-ui's
+// own set merged over 'shared' — not in this app's directory. What the process can
+// see is decided by what is in that set, not by anything in this file.
+loadEnv({ path: '/run/benloe-secrets/sleeper-ui.env' });
 loadEnv();
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -1086,7 +1088,7 @@ app.get(
   wrap(async (req, res) => {
     if (!briefs) {
       return res.status(503).json({
-        error: 'AI briefs need ANTHROPIC_API_KEY in /srv/benloe/.env.',
+        error: 'AI briefs need ANTHROPIC_API_KEY in /run/benloe-secrets/sleeper-ui.env.',
         unavailable: true,
       });
     }

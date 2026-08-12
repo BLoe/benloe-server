@@ -78,10 +78,9 @@ All applications are managed in a single monorepo at `/srv/benloe/` connected to
 
 ```
 /srv/benloe/                      # Monorepo root (benloe-server on GitHub)
-├── .env                          # All secrets (NEVER committed)
-├── .env.example                  # Template showing required vars
 ├── apps/                         # Application code
 │   ├── artanis/                  # Auth service (port 3002)
+│   ├── benloe-secrets/           # Encrypted secret store (port 3011)
 │   ├── weights-api/              # Weight tracking API (port 3003)
 │   ├── dada-api/                 # Dada image API (port 3004)
 │   ├── fantasy-hawk/             # Fantasy sports (port 3005)
@@ -102,22 +101,36 @@ All applications are managed in a single monorepo at `/srv/benloe/` connected to
 
 /etc/caddy/Caddyfile.d/          # Symlink → /srv/benloe/infra/caddy/
 /root/CLAUDE.md                   # Symlink → /srv/benloe/docs/CLAUDE.md
+/run/benloe-secrets/env           # Rendered secrets, tmpfs, 0400 (see Secrets Management)
 ```
 
 ## Secrets Management
 
-**All secrets are stored in `/srv/benloe/.env`** (never committed to git).
+**All secrets live in the `benloe-secrets` service**, encrypted at rest, and are
+rendered to tmpfs for services to read. There is no `.env` in the repo.
 
 Apps load secrets via:
 ```javascript
-require('dotenv').config({ path: '/srv/benloe/.env' });
+require('dotenv').config({ path: '/run/benloe-secrets/env' });
 // Then reference: process.env.JWT_SECRET, etc.
 ```
 
-Current secrets:
-- `JWT_SECRET` - Shared across artanis, gamenight, fantasy-hawk, weights-api
-- `MAILGUN_API_KEY` - Used by artanis for email
-- `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET` - Used by fantasy-hawk
+- Edit them at `https://secrets.benloe.com` — one textarea, owner-only via
+  artanis, with version history and restore.
+- Saving re-renders `/run/benloe-secrets/env` (0400). At boot,
+  `benloe-secrets-render.service` does the same before PM2 starts, because `/run`
+  is tmpfs and the file does not survive a reboot.
+- A consumer that needs isolation gets its own scoped file — currently
+  `/run/benloe-secrets/pr-reviewer.env`, with the full env fenced off from that
+  unit via `InaccessiblePaths`.
+- **Restarting a service is what picks up a change.** Editing the document alone
+  changes nothing for a running process.
+- `/etc/benloe/benloe-secrets.conf` is the only bootstrap file left: it holds the
+  owner email, which the secrets service cannot look up in its own store.
+
+Read `docs/SECRETS.md` before changing any of this — including what it is honest
+about *not* buying (most consumers run as root; this is not confidentiality from
+root).
 
 ## Git Monorepo
 
@@ -127,13 +140,14 @@ Current secrets:
 
 1. Create directory: `mkdir /srv/benloe/apps/my-new-app`
 2. Add code and `ecosystem.config.js`
-3. If needs secrets, add to `/srv/benloe/.env` and `.env.example`
+3. If it needs secrets, add them at `https://secrets.benloe.com` and read
+   `/run/benloe-secrets/env`
 4. Commit: `cd /srv/benloe && git add apps/my-new-app && git commit`
 5. Push: `git push origin main`
 
 ### What's NOT Committed
 
-- `.env` (secrets)
+- secrets of any kind (they live in benloe-secrets, never in a file here)
 - `data/` (databases)
 - `logs/` (application logs)
 - `node_modules/` and `dist/` (build artifacts)
@@ -153,7 +167,7 @@ Current secrets:
 | cabinet-api | 3008 | apps/cabinet | Cabinet personal agent |
 | kickball-api | 3009 | apps/kickball | Kickball lineups |
 | sleeper-ui | 3010 | apps/sleeper-ui | Sleeper League Desk |
-| cabinet-secrets | 3011 | apps/cabinet | Cabinet secrets service |
+| benloe-secrets | 3011 | apps/benloe-secrets | Server-wide encrypted secret store |
 | waker-api | 3012 | apps/waker | Waker — fantasy decision desk (next free port: 3013) |
 
 Check services: `pm2 list`
@@ -214,7 +228,7 @@ makes one resemble the other is the wrong change.
 1. **Working code over perfect code**
 2. **Single files are valid solutions**
 3. **Boring technology with good documentation**
-4. **Secrets NEVER in git** - always use .env
+4. **Secrets NEVER in git** - always use benloe-secrets
 5. **Experiments can fail and be abandoned**
 6. **Learning and fun are primary goals**
 

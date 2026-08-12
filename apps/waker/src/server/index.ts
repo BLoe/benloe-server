@@ -55,8 +55,9 @@ import {
   type Session,
 } from './session.js';
 
-// Secrets live in the monorepo root, not this app's directory.
-loadEnv({ path: '/srv/benloe/.env' });
+// Secrets live in the tmpfs file benloe-secrets renders for THIS app — waker's own
+// set merged over 'shared' — not in this app's directory.
+loadEnv({ path: '/run/benloe-secrets/waker.env' });
 loadEnv();
 
 const PORT = Number(process.env.PORT || 3012);
