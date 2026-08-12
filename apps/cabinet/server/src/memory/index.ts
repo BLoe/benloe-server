@@ -80,7 +80,16 @@ export const PROMPT_CORE: readonly PromptLayer[] = [
   { file: 'PREFERENCES.md', source: 'user' },
   { file: 'GOALS.md', source: 'user' },
   { file: 'STANDING_ORDERS.md', source: 'user' },
-  { file: 'PLATFORM.md', source: 'user' },
+  // SYSTEM.md replaced PLATFORM.md in the prompt on 2026-08-11. PLATFORM was
+  // 21.6 KB — roughly a third of the assembled prompt — and about a third of
+  // THAT was dated incident narrative: what broke, when, and which fix was
+  // wrong before the right one. Useful when doing server work, dead weight in
+  // a conversation about dinner.
+  //
+  // SYSTEM.md is the ~5 KB an ordinary turn needs, written as conventions
+  // rather than post-mortems. PLATFORM.md stays on disk, unloaded, and is
+  // worth reading with the Read tool before real work on the server.
+  { file: 'SYSTEM.md', source: 'repo' },
 ];
 
 
