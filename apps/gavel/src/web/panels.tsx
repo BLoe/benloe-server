@@ -362,11 +362,16 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 /**
- * Managers: who they are, which one is yours, and what keepers cost them.
+ * Managers: who is in the league, which one is yours, and what keepers cost.
  *
  * A dialog rather than a panel, because it is set up once before a draft and
- * never touched during one — and rival budgets are the draft room's job, not
- * Gavel's.
+ * never touched during one.
+ *
+ * Every control here is labelled in the interface itself, not only to a screen
+ * reader. The first version had a bare middot for "this is my team" and two
+ * unlabelled number boxes for the keeper fields, which is unusable however
+ * correct the tooltips are. The keeper columns are also hidden by default:
+ * most leagues have no keepers, and two columns of zeroes is noise.
  */
 export function ManagersDialog({
   league,
@@ -380,90 +385,149 @@ export function ManagersDialog({
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState<TeamMeta[]>(league.teams.map((t) => ({ ...t })));
+  // Shown automatically if any keeper money is already recorded, so a league
+  // that uses them never hides them after the first save.
+  const [showKeepers, setShowKeepers] = useState(
+    league.teams.some((t) => (t.committed ?? 0) > 0 || (t.keeperSlots ?? 0) > 0)
+  );
+
+  const update = (i: number, patch: Partial<TeamMeta>) => {
+    const next = [...draft];
+    next[i] = { ...next[i], ...patch };
+    setDraft(next);
+  };
 
   const save = () => {
     onSaveTeams(draft);
     onClose();
   };
 
+  const num = (v: string) => Number(v.replace(/[^0-9]/g, '')) || 0;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center"
-      style={{ background: 'rgba(10,8,6,0.72)', paddingTop: '8vh' }}
+      style={{ background: 'rgba(10,8,6,0.72)', paddingTop: '7vh' }}
       onMouseDown={onClose}
     >
       <div
         className="sheet"
-        style={{ width: 520, borderColor: 'var(--brass)' }}
+        style={{ width: 620, borderColor: 'var(--brass)' }}
         onMouseDown={(e) => e.stopPropagation()}
         data-testid="managers-dialog"
         role="dialog"
         aria-label="Managers"
         onKeyDown={(e) => e.key === 'Escape' && onClose()}
       >
-        <div className="rule-b px-3 py-2 flex items-center" style={{ background: 'var(--raised)' }}>
-          <span className="slab" style={{ fontSize: 18 }}>
-            Managers
-          </span>
-          <span className="label ml-3">name · keeper $ · keeper slots</span>
-          <button onClick={save} className="ml-auto px-3 py-1" style={{ background: 'var(--brass)', color: '#14110e', fontWeight: 600 }}>
-            Save
-          </button>
+        <div className="rule-b px-4 py-3" style={{ background: 'var(--raised)' }}>
+          <div className="flex items-center">
+            <span className="slab" style={{ fontSize: 20 }}>
+              Managers
+            </span>
+            <button
+              onClick={save}
+              className="ml-auto px-4 py-1"
+              style={{ background: 'var(--brass)', color: '#14110e', fontWeight: 600 }}
+            >
+              Save
+            </button>
+          </div>
+          <p style={{ color: 'var(--muted)', marginTop: 4 }}>
+            These names are what you type against when assigning a purchase. Pick your own team to
+            track your budget and open slots.
+          </p>
+          <label className="flex items-center gap-2 mt-2" style={{ color: 'var(--muted)' }}>
+            <input
+              type="checkbox"
+              checked={showKeepers}
+              onChange={(e) => setShowKeepers(e.target.checked)}
+              style={{ width: 13, height: 13, padding: 0 }}
+            />
+            This league has keepers
+          </label>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto">
+
+        {/* Column headings, so no field in this dialog is an unexplained box. */}
+        <div
+          className="label flex items-center gap-2 px-3 py-1 rule-b"
+          style={{ color: 'var(--dim)' }}
+        >
+          <span style={{ width: 74 }}>Your team</span>
+          <span className="flex-1">Manager</span>
+          {showKeepers && (
+            <>
+              <span style={{ width: 64 }} className="text-right">
+                Keeper $
+              </span>
+              <span style={{ width: 52 }} className="text-right">
+                Slots
+              </span>
+            </>
+          )}
+        </div>
+
+        <div className="max-h-[56vh] overflow-y-auto">
           {draft.map((t, i) => {
             const mine = t.teamId === league.myTeamId;
             return (
-              <div key={t.teamId} className="flex gap-1 px-2 py-[3px] items-center">
-                <button
-                  onClick={() => onSetMyTeam(t.teamId)}
-                  title="Mark as your team"
-                  className="w-6 text-center"
-                  style={{ color: mine ? 'var(--brass)' : 'var(--dim)' }}
+              <div key={t.teamId} className="flex gap-2 px-3 py-1 items-center">
+                <label
+                  className="flex items-center gap-1 shrink-0 cursor-pointer"
+                  style={{ width: 74, color: mine ? 'var(--brass)' : 'var(--dim)' }}
                 >
-                  {mine ? '▸' : '·'}
-                </button>
+                  <input
+                    type="radio"
+                    name="my-team"
+                    checked={mine}
+                    onChange={() => onSetMyTeam(t.teamId)}
+                    aria-label={`Mark ${t.name} as your team`}
+                    style={{ width: 13, height: 13, padding: 0 }}
+                  />
+                  <span style={{ fontSize: 11 }}>{mine ? 'Mine' : 'Mine?'}</span>
+                </label>
+
                 <input
                   aria-label={`Team ${i + 1} name`}
                   value={t.name}
-                  onChange={(e) => {
-                    const next = [...draft];
-                    next[i] = { ...t, name: e.target.value };
-                    setDraft(next);
-                  }}
+                  onChange={(e) => update(i, { name: e.target.value })}
                   className="flex-1 min-w-0"
-                  style={{ padding: '2px 6px' }}
+                  style={{ padding: '3px 6px' }}
                 />
-                <input
-                  aria-label={`Team ${i + 1} keeper dollars`}
-                  value={t.committed ?? 0}
-                  inputMode="numeric"
-                  title="Dollars already committed to keepers"
-                  onChange={(e) => {
-                    const next = [...draft];
-                    next[i] = { ...t, committed: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 };
-                    setDraft(next);
-                  }}
-                  className="fig w-12"
-                  style={{ padding: '2px 6px' }}
-                />
-                <input
-                  aria-label={`Team ${i + 1} keeper slots`}
-                  value={t.keeperSlots ?? 0}
-                  inputMode="numeric"
-                  title="Roster spots already used by keepers"
-                  onChange={(e) => {
-                    const next = [...draft];
-                    next[i] = { ...t, keeperSlots: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 };
-                    setDraft(next);
-                  }}
-                  className="fig w-10"
-                  style={{ padding: '2px 6px' }}
-                />
+
+                {showKeepers && (
+                  <>
+                    <input
+                      aria-label={`Team ${i + 1} keeper dollars`}
+                      value={t.committed ?? 0}
+                      inputMode="numeric"
+                      title="Total auction salary of this team's keepers"
+                      onChange={(e) => update(i, { committed: num(e.target.value) })}
+                      className="fig text-right"
+                      style={{ padding: '3px 6px', width: 64 }}
+                    />
+                    <input
+                      aria-label={`Team ${i + 1} keeper slots`}
+                      value={t.keeperSlots ?? 0}
+                      inputMode="numeric"
+                      title="Roster spots those keepers already fill"
+                      onChange={(e) => update(i, { keeperSlots: num(e.target.value) })}
+                      className="fig text-right"
+                      style={{ padding: '3px 6px', width: 52 }}
+                    />
+                  </>
+                )}
               </div>
             );
           })}
         </div>
+
+        {showKeepers && (
+          <div className="px-4 py-2" style={{ color: 'var(--dim)', borderTop: '1px solid var(--rule)' }}>
+            Keeper dollars come out of that manager's $
+            {league.config.budget}, and keeper slots out of their roster — both change what everyone
+            else can afford, so they are worth getting right before the first nomination.
+          </div>
+        )}
       </div>
     </div>
   );
