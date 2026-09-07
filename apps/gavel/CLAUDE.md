@@ -10,8 +10,21 @@ for a *reader*; this is for whoever has to *change* it.
 
 ## 1. What this app is
 
-A live **auction** draft board for one person, driven entirely by hand. It is
+A live **auction** draft TRACKER for one person, driven entirely by hand. It is
 open on a second monitor while the real draft runs on the first.
+
+It **pairs with** a real draft room rather than imitating one. Everything that
+room already shows is deliberately absent: no rival budgets, no rival rosters,
+no clock, no nomination queue. What Gavel owns is the ranking, the tiers, a
+price that responds to how the room has actually spent, and the record of who
+has gone. A feature that reproduces the draft room is the wrong feature — an
+earlier version had a three-field entry bar across the top and read as a worse
+Sleeper.
+
+**Marking a player drafted is a click on that player**, which opens one dialog:
+price (prefilled with the board value and selected) and a manager type-ahead.
+Clicking an already-drafted player reopens the same dialog to correct or
+undraft. There is no other way to record a pick, and there should not be.
 
 Its siblings over the same sport are League Desk (`sleeper-ui`, entity browser)
 and Waker (`waker`, decision feed). Gavel is neither: it exists for the ninety
@@ -57,8 +70,9 @@ src/web/
   index.css             THE design system. Colour and type live here.
   store.ts              local-first pick queue + sync. Derives state in-browser.
   search.ts             entry-bar player ranking
-  panels.tsx            Board, MyTeam, Teams, Log, RoomBar
-  App.tsx               shell + the entry bar (the hot path)
+  panels.tsx            Board, Drafted, MyTeam, ManagersDialog, RoomBar
+  PickModal.tsx         the ONLY way a pick is entered (the hot path)
+  App.tsx               shell, filter, dialog wiring
 
 scripts/snapshot.ts     freeze a league's board to /srv/benloe/data/gavel/
 verify/verify.mjs       browser harness: drives a real draft from the keyboard
@@ -119,6 +133,13 @@ Every one of these cost real time here.
   monitor — while looking perfect at 1600.
 - **Always an ephemeral port in the harness.** A stray server on a fixed port
   makes the next run silently test the old build.
+- **An optimistic pick carries a temporary NEGATIVE `seq` until the server
+  answers, and it must be reconciled when it does.** Without that, undrafting a
+  synced player skipped the DELETE entirely: the row vanished from the screen
+  and came back on the next reload. Its sibling: removing a not-yet-synced pick
+  has to drop it from the retry queue too, or the next flush puts it back. Both
+  were caught only by the harness's reload check — neither shows up in a session
+  that never refreshes.
 - **Never `pkill -f` on a pattern like `tsx src/server/index.ts`.** Waker and
   sleeper-ui run the identical command line. (It matched this session's own
   shell instead, which is the only reason nothing broke.)

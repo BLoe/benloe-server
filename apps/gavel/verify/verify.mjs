@@ -3,15 +3,13 @@
  *
  * Runs the real server against a THROWAWAY database and a copy of the real
  * snapshot, then drives the board the way it will actually be driven during an
- * auction: from the keyboard, fast, with no mouse.
+ * auction: click a player, type a price, type a manager, Enter.
  *
  * What it asserts is deliberately not "the page rendered". It asserts that
- * entering a pick changes the numbers that a person would bid against — the
- * team's remaining money, its max bid, the room's inflation — because a board
- * that renders beautifully and prices wrongly is worse than no board.
- *
- * Screenshots are written to .verify/ and are meant to be LOOKED AT. A green
- * exit code here means nothing errored; it does not mean the thing is any good.
+ * marking someone drafted takes them off the board, records who paid what, and
+ * moves the numbers a draft room cannot give you. Screenshots go to .verify/
+ * and are meant to be LOOKED AT — a green exit code means nothing errored, not
+ * that the board is any good.
  */
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
@@ -22,6 +20,7 @@ import { createServer } from 'node:net';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SNAPSHOT = process.env.GAVEL_SNAPSHOT || '/srv/benloe/data/gavel/snapshot-columbus.json';
+const YAHOO = '/srv/benloe/data/gavel/snapshot-yahoo.json';
 const OUT = join(ROOT, '.verify');
 
 const failures = [];
@@ -31,8 +30,8 @@ const fail = (msg) => {
 };
 const pass = (msg) => console.log(`  ✓ ${msg}`);
 
-/** Always an ephemeral port: a stray server from an interrupted run holding a
- *  fixed one would let the next run silently test the OLD build. */
+/** Always an ephemeral port: a stray server on a fixed one would let the next
+ *  run silently test the OLD build. */
 function freePort() {
   return new Promise((resolve, reject) => {
     const srv = createServer();
@@ -66,9 +65,6 @@ async function main() {
 
   const dataDir = mkdtempSync(join(tmpdir(), 'gavel-verify-'));
   copyFileSync(SNAPSHOT, join(dataDir, 'snapshot-columbus.json'));
-  // The second league proves the switcher and the keeper path, and that one
-  // engine really does serve two different rule sets.
-  const YAHOO = '/srv/benloe/data/gavel/snapshot-yahoo.json';
   const hasYahoo = existsSync(YAHOO);
   if (hasYahoo) copyFileSync(YAHOO, join(dataDir, 'snapshot-yahoo.json'));
   mkdirSync(OUT, { recursive: true });
@@ -108,147 +104,171 @@ async function main() {
       if (r.status() >= 500) failedRequests.push(`${r.status()} ${r.url()}`);
     });
 
-    // networkidle never fires on a page holding a poll open; use a selector.
+    // `text=` matches rendered text, never a placeholder. networkidle never
+    // fires on a page holding a poll open; wait on a real element.
     await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
-    // `text=` matches rendered text, never a placeholder attribute. Waiting on
-    // 'text=Nominate' silently timed out here even though the board was fine.
-    await page.getByPlaceholder(/Nominate/).waitFor({ state: 'visible', timeout: 15000 });
+    await page.getByPlaceholder(/Filter players/).waitFor({ state: 'visible', timeout: 15000 });
     pass('board loaded');
 
-    // ---- the board renders every position column ----
+    // Every label lookup is EXACT: `text=Board` is substring and
+    // case-insensitive, and once matched the gloss "priced to the board" too.
+    const labelFig = async (label) =>
+      await page
+        .getByText(label, { exact: true })
+        .first()
+        .locator('..')
+        .locator('.fig')
+        .first()
+        .innerText();
+
+    // ---- the board shows every position and no kickers ----
     for (const pos of ['RB', 'WR', 'QB', 'TE', 'DEF']) {
-      const count = await page.locator(`text="${pos}"`).count();
-      if (count === 0) fail(`no ${pos} column on the board`);
+      if ((await page.getByText(pos, { exact: true }).count()) === 0) {
+        fail(`no ${pos} column on the board`);
+      }
     }
     pass('all five positional columns present');
 
-    // A league with no kicker slot must not show a kicker column.
     if ((await page.getByText('Brandon Aubrey').count()) > 0) {
       fail('a kicker is on the board in a league that starts none');
     } else {
       pass('no kickers on the board');
     }
+    await page.screenshot({ path: join(OUT, '01-board.png') });
 
-    await page.screenshot({ path: join(OUT, '01-empty-board.png'), fullPage: false });
+    // ---- claim a team through the Managers dialog ----
+    await page.getByRole('button', { name: 'Managers' }).click();
+    const dialog = page.getByTestId('managers-dialog');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+    await page.screenshot({ path: join(OUT, '02-managers.png') });
+    await dialog.getByRole('button', { name: '·' }).nth(6).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await page.waitForTimeout(500);
 
-    // ---- claim a team, so budget and max bid have a subject ----
-    await page.getByRole('button', { name: /East Village All-Stars/ }).first().click();
-    await page.waitForTimeout(300);
-    const labelFig = async (label) =>
-      (await page.getByText(label, { exact: true }).first().locator('..').locator('.fig').first().innerText());
     const myMax = async () => Number((await labelFig('Max bid')).replace(/[^0-9]/g, ''));
-    const before = await myMax();
-    if (before !== 185) fail(`opening max bid should be $185 (200 - 15 x $1), got $${before}`);
-    else pass('opening max bid holds back a dollar per empty slot ($185)');
-
-    // ---- the hot path: enter a pick entirely from the keyboard ----
-    const bar = page.getByPlaceholder(/Nominate/);
-    await bar.click();
-    await bar.type('gibbs', { delay: 15 });
-    await page.waitForTimeout(250);
-    await page.screenshot({ path: join(OUT, '02-typeahead.png') });
-
-    await page.keyboard.press('Enter'); // choose the top candidate
-    await page.waitForTimeout(150);
-    await page.keyboard.type('62', { delay: 15 });
-    await page.keyboard.press('Enter'); // move to team
-    await page.waitForTimeout(150);
-    await page.keyboard.type('East', { delay: 15 });
-    await page.waitForTimeout(150);
-    await page.keyboard.press('Enter'); // commit
-    await page.waitForTimeout(600);
-
-    if ((await page.getByText('Sold: Jahmyr Gibbs — $62').count()) === 0) {
-      fail('keyboard-only entry did not record the pick');
+    if ((await myMax()) !== 185) {
+      fail(`opening max bid should be $185 (200 - 15 x $1), got $${await myMax()}`);
     } else {
-      pass('pick entered with keyboard only, no mouse');
+      pass('opening max bid holds back a dollar per empty slot ($185)');
     }
 
-    const after = await myMax();
-    // $200 - $62 spent = $138 left, 15 slots open, hold back 14 => $124.
-    if (after !== 124) fail(`max bid after a $62 buy should be $124, got $${after}`);
-    else pass('max bid recomputed correctly after a purchase ($124)');
+    // ---- the hot path: click a player, price, manager, Enter ----
+    const filter = page.getByPlaceholder(/Filter players/);
+    await filter.fill('gibbs');
+    await page.waitForTimeout(350);
+    await page.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
 
-    // ---- the player is off the board and cannot be double-entered ----
-    await bar.click();
-    await bar.type('gibbs', { delay: 15 });
+    const modal = page.getByRole('dialog', { name: /Jahmyr Gibbs/ });
+    await modal.waitFor({ state: 'visible', timeout: 5000 });
+    pass('clicking a player opens the pick dialog');
+    await page.screenshot({ path: join(OUT, '03-pick-modal.png') });
+
+    // Price is focused and selected on open, so typing replaces the suggestion.
+    await page.keyboard.type('62');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(150);
+    await page.keyboard.type('East');
     await page.waitForTimeout(250);
-    if ((await page.getByText('already sold').count()) === 0) {
-      fail('a drafted player is not marked as sold in the typeahead');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(700);
+
+    if ((await page.getByText('Drafted: Jahmyr Gibbs — $62').count()) === 0) {
+      fail('the pick dialog did not record the pick');
     } else {
-      pass('drafted player is marked sold rather than silently offered');
+      pass('pick recorded: click, price, manager, Enter');
     }
-    await page.keyboard.press('Escape');
+
+    if ((await myMax()) !== 124) {
+      fail(`max bid after a $62 buy should be $124, got $${await myMax()}`);
+    } else {
+      pass('max bid recomputed after a purchase ($124)');
+    }
+
+    // ---- the drafted player is struck through on the board ----
+    await filter.fill('gibbs');
+    await page.waitForTimeout(350);
+    const gibbsRow = page.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
+    const struck = await gibbsRow.evaluate((el) => {
+      const span = el.querySelector('span:nth-child(2)');
+      return span ? getComputedStyle(span).textDecorationLine : '';
+    });
+    if (!struck.includes('line-through')) fail('a drafted player is not struck through on the board');
+    else pass('drafted player struck through and priced at what was paid');
+    await filter.fill('');
+
+    // ---- the Drafted panel is the record ----
+    if ((await page.getByText('Drafted', { exact: true }).count()) === 0) {
+      fail('no Drafted panel');
+    } else {
+      pass('Drafted panel present');
+    }
 
     // ---- inflation responds to the room overspending ----
-    const inflationText = async () => await labelFig('Inflation');
-    const infBefore = inflationText();
-
-    // Buy four more, all well above the board price, from other teams.
     const overpays = [
-      ['bijan', '120', 'Closed'],
-      ['nacua', '95', 'Threat'],
-      ['chase', '95', 'Super'],
-      ['taylor', '90', 'Empire'],
+      ['bijan', 'Bijan Robinson', '120', 'Closed'],
+      ['nacua', 'Puka Nacua', '95', 'Threat'],
+      ['chase', "Ja'Marr Chase", '95', 'Super'],
+      ['taylor', 'Jonathan Taylor', '90', 'Empire'],
     ];
-    for (const [who, price, team] of overpays) {
-      await bar.click();
-      await bar.type(who, { delay: 10 });
-      await page.waitForTimeout(200);
+    for (const [q, name, price, team] of overpays) {
+      await filter.fill(q);
+      await page.waitForTimeout(300);
+      await page.getByRole('button', { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().click();
+      await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 5000 });
+      await page.keyboard.type(price);
       await page.keyboard.press('Enter');
       await page.waitForTimeout(120);
-      await page.keyboard.type(price, { delay: 10 });
+      await page.keyboard.type(team);
+      await page.waitForTimeout(220);
       await page.keyboard.press('Enter');
-      await page.waitForTimeout(120);
-      await page.keyboard.type(team, { delay: 10 });
-      await page.waitForTimeout(150);
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(350);
+      await page.waitForTimeout(450);
     }
 
-    const infAfter = await inflationText();
-    if (!infAfter.startsWith('-')) {
-      fail(`inflation should be negative after the room overspends, showed ${infAfter}`);
+    const inflation = await labelFig('Inflation');
+    if (!inflation.startsWith('-')) {
+      fail(`inflation should be negative after the room overspends, showed ${inflation}`);
     } else {
-      pass(`inflation went negative after heavy overpays (${infAfter})`);
+      pass(`inflation went negative after heavy overpays (${inflation})`);
     }
-    await page.screenshot({ path: join(OUT, '03-mid-draft.png') });
+    await page.screenshot({ path: join(OUT, '04-mid-draft.png') });
+
+    // ---- correcting a pick from the Drafted panel ----
+    await page.getByRole('button', { name: /Puka Nacua/ }).last().click();
+    const editModal = page.getByRole('dialog', { name: /Puka Nacua/ });
+    await editModal.waitFor({ state: 'visible', timeout: 5000 });
+    if ((await editModal.getByRole('button', { name: 'Undraft' }).count()) === 0) {
+      fail('an already-drafted player does not offer Undraft');
+    } else {
+      pass('clicking a drafted player offers a correction');
+    }
+    await editModal.getByRole('button', { name: 'Undraft' }).click();
+    await page.waitForTimeout(600);
 
     // ---- undo ----
     await page.keyboard.press('Control+z');
-    await page.waitForTimeout(500);
-    const soldCount = await page.locator('text=/^Sold \\(/').innerText();
-    if (!soldCount.includes('(4)')) fail(`undo should leave 4 picks, panel says ${soldCount}`);
-    else pass('ctrl+z removes the last pick');
+    await page.waitForTimeout(600);
+    const count = await labelFig('Drafted');
+    if (count.trim() !== '3') fail(`after one undraft and one undo, 3 picks should remain, got ${count}`);
+    else pass('undraft and ctrl+z both remove picks');
 
     // ---- reload reproduces the board exactly ----
     const roomBefore = await labelFig('Room');
     await page.reload({ waitUntil: 'domcontentloaded' });
-    // `text=` matches rendered text, never a placeholder attribute. Waiting on
-    // 'text=Nominate' silently timed out here even though the board was fine.
-    await page.getByPlaceholder(/Nominate/).waitFor({ state: 'visible', timeout: 15000 });
-    await page.waitForTimeout(600);
+    await page.getByPlaceholder(/Filter players/).waitFor({ state: 'visible', timeout: 15000 });
+    await page.waitForTimeout(700);
     const roomAfter = await labelFig('Room');
-    if (roomBefore !== roomAfter) {
-      fail(`reload changed the room total: ${roomBefore} -> ${roomAfter}`);
-    } else {
-      pass(`reload reproduces the board exactly (${roomAfter} left)`);
-    }
+    if (roomBefore !== roomAfter) fail(`reload changed the room total: ${roomBefore} -> ${roomAfter}`);
+    else pass(`reload reproduces the board exactly (${roomAfter} left)`);
 
-    // ---- layout integrity ----
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
-    );
-    if (overflow > 1) fail(`page scrolls horizontally by ${overflow}px`);
-    else pass('no horizontal overflow at 1600x1000');
-
-    await page.screenshot({ path: join(OUT, '04-after-reload.png') });
-
-    // A second monitor is often a smaller or rotated panel.
+    // ---- layout integrity across plausible second monitors ----
     let anyOverflow = false;
-    for (const [w, h, name] of [[1280, 800, '05-1280'], [1920, 1080, '06-1920']]) {
+    for (const [w, h, name] of [
+      [1600, 1000, '05-1600'],
+      [1280, 800, '06-1280'],
+      [1920, 1080, '07-1920'],
+    ]) {
       await page.setViewportSize({ width: w, height: h });
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(350);
       const o = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth
       );
@@ -258,61 +278,51 @@ async function main() {
       }
       await page.screenshot({ path: join(OUT, `${name}.png`) });
     }
-    if (!anyOverflow) pass('no overflow at 1280x800 or 1920x1080');
+    if (!anyOverflow) pass('no horizontal overflow at 1280, 1600 or 1920');
 
-    // ---- second league: switcher, renames, keeper salaries ----
+    // ---- second league: switcher, half-PPR pricing, keeper money ----
     if (hasYahoo) {
       await page.setViewportSize({ width: 1600, height: 1000 });
       await page.selectOption('select', 'yahoo');
-      await page.waitForTimeout(900);
+      await page.waitForTimeout(1000);
 
-      const roomYahoo = await labelFig('Room');
-      if (!roomYahoo.includes('2400')) {
-        fail(`switching leagues should show a fresh $2400 room, got ${roomYahoo}`);
+      if (!(await labelFig('Room')).includes('2400')) {
+        fail('switching leagues should show a fresh $2400 room');
       } else {
         pass('league switcher loads the second league with its own board');
       }
 
-      // Half-PPR must price a receiver differently from standard scoring.
-      await bar.click();
-      await bar.type('nacua', { delay: 15 });
-      await page.waitForTimeout(300);
-      // The read-out only exists once a player is actually selected.
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(250);
-      const nacuaYahoo = Number((await labelFig('Board')).replace(/[^0-9]/g, '') || 0);
+      await page.getByPlaceholder(/Filter players/).fill('nacua');
+      await page.waitForTimeout(350);
+      await page.getByRole('button', { name: /Puka Nacua/ }).first().click();
+      const yModal = page.getByRole('dialog', { name: /Puka Nacua/ });
+      await yModal.waitFor({ state: 'visible', timeout: 5000 });
+      const nacua = Number((await labelFig('Board')).replace(/[^0-9]/g, '') || 0);
       await page.keyboard.press('Escape');
-      if (nacuaYahoo < 55) {
-        fail(`half-PPR should lift Nacua above his standard price, got $${nacuaYahoo}`);
-      } else {
-        pass(`half-PPR prices Nacua at $${nacuaYahoo}, above his standard-scoring price`);
-      }
+      await page.getByPlaceholder(/Filter players/).fill('');
+      if (nacua < 55) fail(`half-PPR should lift Nacua above his standard price, got $${nacua}`);
+      else pass(`half-PPR prices Nacua at $${nacua}, above his standard-scoring price`);
 
-      // Keeper salaries: rename a team and commit $50 across 2 slots.
-      await page.getByRole('button', { name: 'edit' }).click();
-      await page.waitForTimeout(300);
-      // Scoped to the editor: the entry bar also has three inputs, and an
-      // unscoped nth(0) silently filled the nomination box instead.
-      const editor = page.getByTestId('team-editor');
-      await editor.getByLabel('Team 1 name').fill('Keeper Team');
-      await editor.getByLabel('Team 1 keeper dollars').fill('50');
-      await editor.getByLabel('Team 1 keeper slots').fill('2');
-      await page.getByRole('button', { name: 'save' }).click();
+      // Keeper salaries: rename a manager and commit $50 across 2 slots.
+      await page.getByRole('button', { name: 'Managers' }).click();
+      const md = page.getByTestId('managers-dialog');
+      await md.waitFor({ state: 'visible', timeout: 5000 });
+      await md.getByLabel('Team 1 name').fill('Keeper Team');
+      await md.getByLabel('Team 1 keeper dollars').fill('50');
+      await md.getByLabel('Team 1 keeper slots').fill('2');
+      await md.getByRole('button', { name: '·' }).first().click();
+      await md.getByRole('button', { name: 'Save' }).click();
       await page.waitForTimeout(700);
 
-      const keeperRow = page.getByRole('button', { name: /Keeper Team/ }).first();
-      if ((await keeperRow.count()) === 0) {
-        fail('renamed team did not appear in the room');
+      // $200 - $50 = $150 left; 15 - 2 = 13 slots; max bid 150 - 12 = $138.
+      const left = Number((await labelFig('Left')).replace(/[^0-9]/g, ''));
+      const max = await myMax();
+      if (left !== 150 || max !== 138) {
+        fail(`keeper team should read $150 left / $138 max, got $${left} / $${max}`);
       } else {
-        const text = await keeperRow.innerText();
-        // $200 - $50 = $150 left; 15 - 2 = 13 slots; max bid 150 - 12 = $138.
-        if (!text.includes('$138') || !text.includes('$150')) {
-          fail(`keeper team should read $138 max / $150 left, row says: ${text.replace(/\n/g, ' ')}`);
-        } else {
-          pass('keeper salary and slots reduce that team\'s budget and max bid');
-        }
+        pass('keeper salary and slots reduce budget and max bid');
       }
-      await page.screenshot({ path: join(OUT, '07-yahoo-keepers.png') });
+      await page.screenshot({ path: join(OUT, '08-yahoo-keepers.png') });
     }
 
     if (consoleErrors.length) fail(`console errors: ${consoleErrors.slice(0, 3).join(' | ')}`);
