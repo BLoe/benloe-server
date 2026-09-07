@@ -115,7 +115,15 @@ export function useLeague(leagueId: string | null) {
     load().catch(() => {});
   }, [load]);
 
-  /** Retry anything unsent. Runs on a timer and after every successful call. */
+  /**
+   * Retry anything unsent. Runs on a timer and after every successful call.
+   *
+   * Crucially it also RECONCILES ids. A pick is created locally with a
+   * temporary negative `seq`; once the server accepts it, that row's real id
+   * has to replace the temporary one. Without this the pick keeps its negative
+   * id for the life of the page, and a later undraft skips the server entirely
+   * — the player vanishes from the screen and comes back on the next reload.
+   */
   const flush = useCallback(async () => {
     if (!leagueId || flushing.current) return;
     const pending = loadQueue(leagueId);
@@ -123,23 +131,41 @@ export function useLeague(leagueId: string | null) {
     flushing.current = true;
     try {
       const sent: string[] = [];
+      const realSeq = new Map<string, number>();
+      let sawConflict = false;
+
       for (const p of pending) {
         try {
-          await api<{ pick: Pick }>(`/league/${leagueId}/picks`, {
+          const res = await api<{ pick: Pick }>(`/league/${leagueId}/picks`, {
             method: 'POST',
             body: JSON.stringify({ playerId: p.playerId, teamId: p.teamId, price: p.price }),
           });
           sent.push(p.playerId);
+          realSeq.set(p.playerId, res.pick.seq);
         } catch (err: any) {
-          // 409 means the server already has it — that is success, not failure.
-          if (err.status === 409) sent.push(p.playerId);
-          else break;
+          // 409 means the server already has it — success, but it did not tell
+          // us the id, so the log has to be re-read to learn it.
+          if (err.status === 409) {
+            sent.push(p.playerId);
+            sawConflict = true;
+          } else break;
         }
       }
+
       if (sent.length) {
         const remaining = loadQueue(leagueId).filter((p) => !sent.includes(p.playerId));
         saveQueue(leagueId, remaining);
         setQueue(remaining);
+        setPicks((prev) =>
+          prev.map((p) =>
+            realSeq.has(p.playerId) ? { ...p, seq: realSeq.get(p.playerId)! } : p
+          )
+        );
+      }
+
+      if (sawConflict) {
+        const fresh = await api<{ picks: Pick[] }>(`/league/${leagueId}/picks`).catch(() => null);
+        if (fresh) setPicks(fresh.picks);
       }
     } finally {
       flushing.current = false;
@@ -197,15 +223,28 @@ export function useLeague(leagueId: string | null) {
   const removePick = useCallback(
     async (seq: number) => {
       if (!leagueId) return;
+      const doomed = picks.find((p) => p.seq === seq);
       setPicks((prev) => prev.filter((p) => p.seq !== seq));
+
+      // A pick the server has never seen must also leave the retry queue, or
+      // the next flush cheerfully puts it back.
+      if (doomed) {
+        const pending = loadQueue(leagueId);
+        if (pending.some((p) => p.playerId === doomed.playerId)) {
+          const remaining = pending.filter((p) => p.playerId !== doomed.playerId);
+          saveQueue(leagueId, remaining);
+          setQueue(remaining);
+        }
+      }
       if (seq < 0) return;
+
       try {
         await api(`/league/${leagueId}/picks/${seq}`, { method: 'DELETE' });
       } catch {
         void load();
       }
     },
-    [leagueId, load]
+    [leagueId, load, picks]
   );
 
   const setMyTeam = useCallback(

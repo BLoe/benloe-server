@@ -8,19 +8,29 @@ every name — with the parts a sheet of paper cannot do: prices that move as th
 room spends, a max bid that accounts for the roster slots you still have to
 fill, and a running answer to "who can still outbid me".
 
+It is a **tracker**, not a draft room. It shows nothing your real draft room
+already shows — no rival budgets, no rosters, no clock. It shows what that room
+cannot: the ranking, the tiers, a price that moves as the room spends, and the
+record of who has gone.
+
 ## Using it
 
-Everything is one keystroke sequence, no mouse:
+Click a player. Type the price, Enter, type enough of the manager's name, Enter.
 
 ```
-type a name → Enter → type a price → Enter → type a team → Enter
+click → price → Enter → manager → Enter
 ```
 
-`Esc` clears. `Ctrl+Z` undoes the last sale. Typing anywhere on the page starts
-a nomination, so your hands never have to find the mouse.
+The price box opens prefilled with the board value and selected, so if the
+player went for what he was worth, two Enters are the whole pick.
 
-Click a team in the Room panel once to mark it as yours; its budget, max bid and
-open starting slots then sit at the top of the sidebar.
+Click an already-drafted player — on the board or in the Drafted list — to
+correct the price, move him to another manager, or undraft him. `Ctrl+Z` undoes
+the last one. The filter box at the top narrows the columns to find a name fast;
+it never records anything.
+
+**Managers** sets who is in the league, which team is yours, and what any
+keepers cost them.
 
 ## What the numbers mean
 

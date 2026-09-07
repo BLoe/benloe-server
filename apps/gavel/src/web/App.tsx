@@ -1,20 +1,19 @@
 /**
- * Gavel — the auction board.
+ * Gavel — an auction draft TRACKER.
  *
- * The entry bar is the hot path and everything else defers to it. One nomination
- * is: type part of a name, Enter, type a price, Enter, type part of a team name,
- * Enter. Four keystrokes plus two short words, no mouse, no confirmation step.
- * That budget is what the layout is built around; a pick that takes longer than
- * the auctioneer does is a pick that gets entered wrong.
+ * It sits beside a real draft room rather than replacing one. Everything the
+ * draft room already shows — rival budgets, rival rosters, the clock — is
+ * deliberately absent. What is here is the ranking, the tiers, a price that
+ * responds to how the room has actually spent, and a fast way to mark players
+ * gone.
+ *
+ * The whole interaction is: click a name, type a price, type a manager, Enter.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { adjustedValue, contenders } from '../lib/draft.js';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PlayerValue } from '../lib/valuation.js';
 import { fetchLeagues, fetchMe, useLeague, type LeagueSummary } from './store.js';
-import { searchPlayers } from './search.js';
-import { Board, Log, MyTeam, RoomBar, Teams, money, Pos } from './panels.js';
-
-type Stage = 'player' | 'price' | 'team';
+import { Board, Drafted, ManagersDialog, MyTeam, RoomBar } from './panels.js';
+import { PickModal, type PickTarget } from './PickModal.js';
 
 export default function App() {
   const [me, setMe] = useState<{ authed: boolean; signedIn: boolean; email: string | null } | null>(
@@ -42,10 +41,7 @@ function Splash({ children }: { children: React.ReactNode }) {
 
 const AUTH_URL = 'https://auth.benloe.com';
 
-/**
- * Sign-in is artanis's job. A browser already signed in anywhere on benloe.com
- * never sees this screen, because the cookie is issued on the parent domain.
- */
+/** Sign-in is artanis's job; a browser already signed in never sees this. */
 function SignIn({ me }: { me: { signedIn: boolean; email: string | null } }) {
   return (
     <div className="h-full grid place-items-center">
@@ -78,7 +74,12 @@ function Draft() {
   );
   const { league, state, unsynced, loading, error, addPick, undo, removePick, setMyTeam, saveTeams } =
     useLeague(leagueId);
+
   const [leagues, setLeagues] = useState<LeagueSummary[]>([]);
+  const [filter, setFilter] = useState('');
+  const [target, setTarget] = useState<PickTarget | null>(null);
+  const [managers, setManagers] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLeagues()
@@ -86,86 +87,66 @@ function Draft() {
       .catch(() => setLeagues([]));
   }, []);
 
-  const [stage, setStage] = useState<Stage>('player');
-  const [query, setQuery] = useState('');
-  const [cursor, setCursor] = useState(0);
-  const [player, setPlayer] = useState<PlayerValue | null>(null);
-  const [price, setPrice] = useState('');
-  const [teamQuery, setTeamQuery] = useState('');
-  const [flash, setFlash] = useState<string | null>(null);
-
-  const playerRef = useRef<HTMLInputElement>(null);
-  const priceRef = useRef<HTMLInputElement>(null);
-  const teamRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     localStorage.setItem('gavel:league', leagueId);
   }, [leagueId]);
 
-  const candidates = useMemo(
-    () => (league && state ? searchPlayers(query, league.values, state.drafted) : []),
-    [query, league, state]
-  );
-
-  const teamMatches = useMemo(() => {
-    if (!league) return [];
-    const q = teamQuery.toLowerCase().trim();
-    if (!q) return league.teams;
-    return league.teams.filter((t) => t.name.toLowerCase().includes(q));
-  }, [teamQuery, league]);
-
-  const reset = useCallback(() => {
-    setStage('player');
-    setQuery('');
-    setPlayer(null);
-    setPrice('');
-    setTeamQuery('');
-    setCursor(0);
-    playerRef.current?.focus();
-  }, []);
-
-  const choosePlayer = useCallback((p: PlayerValue) => {
-    setPlayer(p);
-    setQuery(p.name);
-    setStage('price');
-    setTimeout(() => priceRef.current?.focus(), 0);
-  }, []);
-
-  const commit = useCallback(
-    (teamId: string) => {
-      if (!player) return;
-      const amount = Math.round(Number(price));
-      if (!Number.isFinite(amount) || amount < 0) return;
-      addPick(player.id, teamId, amount);
-      setFlash(`${player.name} — ${money(amount)}`);
-      setTimeout(() => setFlash(null), 2200);
-      reset();
+  /** Clicking any player opens the one dialog — new pick or correction. */
+  const select = useCallback(
+    (player: PlayerValue) => {
+      const existing = state?.picks.find((p) => p.playerId === player.id);
+      setTarget({ player, existing });
     },
-    [player, price, addPick, reset]
+    [state]
   );
 
-  // Typing anywhere starts a nomination. During an auction the hands are not on
-  // the mouse and the eyes are on the other monitor.
+  const submit = useCallback(
+    (playerId: string, teamId: string, price: number) => {
+      const player = league?.values.find((v) => v.id === playerId);
+      const existing = target?.existing;
+      // A correction is a removal and a re-entry: the pick log is append-only
+      // and every number is a fold over it, so there is nothing else to update.
+      if (existing) removePick(existing.seq);
+      addPick(playerId, teamId, price);
+      setFlash(`${player?.name ?? 'Player'} — $${price}`);
+      setTimeout(() => setFlash(null), 2000);
+      setTarget(null);
+      setFilter('');
+    },
+    [addPick, removePick, league, target]
+  );
+
+  const remove = useCallback(
+    (seq: number) => {
+      removePick(seq);
+      setTarget(null);
+    },
+    [removePick]
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName);
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         void undo();
         return;
       }
-      if (e.key === 'Escape') {
-        reset();
-        return;
-      }
-      if (!typing && /^[a-zA-Z]$/.test(e.key)) {
-        playerRef.current?.focus();
+      const el = e.target as HTMLElement;
+      const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(el?.tagName);
+      if (e.key === 'Escape' && !typing) {
+        setFilter('');
+        setTarget(null);
+        setManagers(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [undo, reset]);
+  }, [undo]);
+
+  const currentLeague = useMemo(
+    () => leagues.find((l) => l.id === leagueId),
+    [leagues, leagueId]
+  );
 
   if (loading) return <Splash>Loading board…</Splash>;
   if (!league || !state) {
@@ -181,13 +162,8 @@ function Draft() {
     );
   }
 
-  const suggested = player ? adjustedValue(player, state, league.config) : 0;
-  const rivals = player && price ? contenders(state, Math.round(Number(price)) || 0) : [];
-  const me = state.teams.find((t) => t.teamId === league.myTeamId);
-
   return (
     <div className="h-full flex flex-col gap-2 p-2">
-      {/* ---- header ---- */}
       <header className="flex items-center gap-4 shrink-0">
         <span className="slab" style={{ fontSize: 22, color: 'var(--brass)', lineHeight: 1 }}>
           Gavel
@@ -196,7 +172,7 @@ function Draft() {
           <select
             value={leagueId}
             onChange={(e) => setLeagueId(e.target.value)}
-            title="Switch league"
+            aria-label="League"
             style={{ padding: '2px 6px' }}
           >
             {leagues.map((l) => (
@@ -206,219 +182,78 @@ function Draft() {
             ))}
           </select>
         ) : (
-          <span style={{ color: 'var(--muted)' }}>{league.name}</span>
+          <span style={{ color: 'var(--muted)' }}>{currentLeague?.name ?? league.name}</span>
         )}
-        <RoomBar state={state} league={league} />
+
+        {/* A filter, not an entry field: it narrows the columns and can never
+            record anything. Finding one name among three thousand needs to be
+            possible without scrolling five columns. */}
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter players"
+          aria-label="Filter players"
+          style={{ padding: '3px 8px', width: 180 }}
+        />
+
+        <RoomBar state={state} />
+
         <div className="ml-auto flex items-center gap-3">
           {unsynced > 0 && (
             <span
               className="fig"
-              title="Picks held locally; they will sync automatically. The board is unaffected."
+              title="Picks held locally; they sync automatically. The board is unaffected."
               style={{ color: 'var(--warn)' }}
             >
               ⟳ {unsynced} unsynced
             </span>
           )}
+          <button onClick={() => setManagers(true)} className="px-2 py-1" style={{ color: 'var(--muted)' }}>
+            Managers
+          </button>
           <span style={{ color: 'var(--dim)', fontSize: 11 }}>
-            <kbd>esc</kbd> clear · <kbd>ctrl+z</kbd> undo
+            <kbd>ctrl+z</kbd> undo
           </span>
         </div>
       </header>
 
-      {/* ---- entry bar: the hot path ---- */}
-      <div className="sheet shrink-0 relative" style={{ borderColor: 'var(--brass)' }}>
-        <div className="flex items-stretch">
-          <div className="flex-1 relative">
-            <input
-              ref={playerRef}
-              autoFocus
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setPlayer(null);
-                setStage('player');
-                setCursor(0);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  setCursor((c) => Math.min(c + 1, candidates.length - 1));
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  setCursor((c) => Math.max(c - 1, 0));
-                } else if (e.key === 'Enter' || e.key === 'Tab') {
-                  const chosen = candidates[cursor];
-                  if (chosen && !chosen.drafted) {
-                    e.preventDefault();
-                    choosePlayer(chosen.player);
-                  }
-                }
-              }}
-              placeholder="Nominate — type a name"
-              className="w-full border-0"
-              style={{ background: 'transparent', fontSize: 16, padding: '10px 12px' }}
-            />
-            {stage === 'player' && candidates.length > 0 && (
-              <div
-                className="absolute left-0 right-0 top-full z-20 sheet"
-                style={{ borderColor: 'var(--brass)' }}
-              >
-                {candidates.map((c, i) => (
-                  <button
-                    key={c.player.id}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      if (!c.drafted) choosePlayer(c.player);
-                    }}
-                    className={`w-full flex items-baseline gap-3 px-3 py-1 text-left ${c.drafted ? 'gone' : ''}`}
-                    style={{ background: i === cursor ? 'var(--raised)' : 'transparent' }}
-                  >
-                    <span className="fig w-10 text-right" style={{ color: 'var(--brass)', fontWeight: 600 }}>
-                      {money(adjustedValue(c.player, state, league.config))}
-                    </span>
-                    <Pos position={c.player.position} />
-                    <span className="flex-1 truncate">{c.player.name}</span>
-                    <span className="fig" style={{ color: 'var(--dim)', fontSize: 11 }}>
-                      {c.player.team ?? '--'} · T{c.player.tier}
-                    </span>
-                    {c.drafted && (
-                      <span className="fig" style={{ color: 'var(--live)', fontSize: 11 }}>
-                        already sold
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center border-l" style={{ borderColor: 'var(--rule)' }}>
-            <span className="label px-2">Price</span>
-            <input
-              ref={priceRef}
-              value={price}
-              inputMode="numeric"
-              onChange={(e) => setPrice(e.target.value.replace(/[^0-9]/g, ''))}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && price !== '') {
-                  e.preventDefault();
-                  setStage('team');
-                  setTimeout(() => teamRef.current?.focus(), 0);
-                }
-              }}
-              placeholder={player ? String(Math.round(suggested)) : '--'}
-              className="border-0 w-20"
-              style={{ background: 'transparent', fontSize: 16, padding: '10px 4px' }}
-            />
-          </div>
-
-          <div className="flex items-center border-l relative" style={{ borderColor: 'var(--rule)' }}>
-            <span className="label px-2">To</span>
-            <input
-              ref={teamRef}
-              value={teamQuery}
-              onChange={(e) => setTeamQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && teamMatches[0]) {
-                  e.preventDefault();
-                  commit(teamMatches[0].teamId);
-                }
-              }}
-              placeholder="team"
-              className="border-0 w-40"
-              style={{ background: 'transparent', fontSize: 16, padding: '10px 4px' }}
-            />
-            {stage === 'team' && teamMatches.length > 0 && (
-              <div
-                className="absolute right-0 top-full z-20 sheet w-56"
-                style={{ borderColor: 'var(--brass)' }}
-              >
-                {teamMatches.slice(0, 12).map((t, i) => (
-                  <button
-                    key={t.teamId}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      commit(t.teamId);
-                    }}
-                    className="w-full text-left px-3 py-1"
-                    style={{ background: i === 0 ? 'var(--raised)' : 'transparent' }}
-                  >
-                    {t.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Instant read on the lot in front of you. No network, no waiting. */}
-        {player && (
-          <div
-            className="flex items-center gap-5 px-3 py-1 rule-b"
-            style={{ borderTop: '1px solid var(--rule)', background: 'var(--raised)' }}
-          >
-            <span className="flex items-baseline gap-2">
-              <span className="label">Board</span>
-              <span className="fig" style={{ color: 'var(--brass)', fontWeight: 600 }}>
-                {money(suggested)}
-              </span>
-            </span>
-            <span className="flex items-baseline gap-2">
-              <span className="label">Tier</span>
-              <span className="fig">
-                {player.tier === 0
-                  ? 'below the pool'
-                  : `${player.tier} · ${league.values.filter((v) => v.position === player.position && v.tier === player.tier && !state.drafted.has(v.id)).length} left`}
-              </span>
-            </span>
-            {me && (
-              <span className="flex items-baseline gap-2">
-                <span className="label">Your max</span>
-                <span className="fig" style={{ color: me.maxBid < suggested ? 'var(--bad)' : 'var(--ink)' }}>
-                  {money(me.maxBid)}
-                </span>
-              </span>
-            )}
-            {price !== '' && (
-              <span className="flex items-baseline gap-2">
-                <span className="label">Can outbid</span>
-                <span className="fig">{rivals.filter((t) => t.teamId !== league.myTeamId).length}</span>
-                <span style={{ color: 'var(--dim)', fontSize: 11 }}>
-                  {rivals
-                    .filter((t) => t.teamId !== league.myTeamId)
-                    .slice(0, 4)
-                    .map((t) => t.name)
-                    .join(', ')}
-                </span>
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
       {flash && (
-        <div className="shrink-0 px-2" style={{ color: 'var(--good)' }}>
-          Sold: {flash}
+        <div className="shrink-0 px-1" style={{ color: 'var(--good)' }}>
+          Drafted: {flash}
         </div>
       )}
 
-      {/* ---- board + panels ---- */}
       <div className="flex gap-2 flex-1 min-h-0">
-        <Board league={league} state={state} onPick={choosePlayer} />
+        <Board league={league} state={state} filter={filter} onSelect={select} />
         <div
-          className="flex flex-col gap-2 shrink-0"
-          style={{ width: 'clamp(232px, 19vw, 300px)' }}
+          className="flex flex-col gap-2 shrink-0 min-h-0"
+          style={{ width: 'clamp(224px, 18vw, 280px)' }}
         >
           <MyTeam league={league} state={state} />
-          <Teams
-            league={league}
-            state={state}
-            onSetMyTeam={setMyTeam}
-            onSaveTeams={saveTeams}
-          />
-          <Log league={league} state={state} onRemove={removePick} />
+          <Drafted league={league} state={state} onSelect={select} />
         </div>
       </div>
+
+      {target && (
+        <PickModal
+          target={target}
+          teams={league.teams}
+          state={state}
+          config={league.config}
+          onSubmit={submit}
+          onRemove={remove}
+          onClose={() => setTarget(null)}
+        />
+      )}
+
+      {managers && (
+        <ManagersDialog
+          league={league}
+          onSetMyTeam={setMyTeam}
+          onSaveTeams={saveTeams}
+          onClose={() => setManagers(false)}
+        />
+      )}
     </div>
   );
 }
