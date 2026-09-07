@@ -222,12 +222,59 @@ async function main() {
     await filter.fill('gibbs');
     await page.waitForTimeout(350);
     const gibbsRow = board.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
-    const struck = await gibbsRow.evaluate((el) => {
-      const span = el.querySelector('span:nth-child(2)');
-      return span ? getComputedStyle(span).textDecorationLine : '';
+    // Park the cursor first: clicking leaves it hovering the row, and the hover
+    // state lifts the bar off pure black.
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(150);
+    const look = await gibbsRow.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const price = el.querySelector('span');
+      return {
+        background: style.backgroundColor,
+        name: getComputedStyle(el.querySelectorAll('span')[1]).color,
+        price: price ? getComputedStyle(price).color : '',
+      };
     });
-    if (!struck.includes('line-through')) fail('a drafted player is not struck through on the board');
-    else pass('drafted player struck through and priced at what was paid');
+    // Barred out in black, name still fully legible in white.
+    if (look.background !== 'rgb(0, 0, 0)') {
+      fail(`a sold row should be barred in black, got ${look.background}`);
+    } else if (look.name !== 'rgb(255, 255, 255)') {
+      fail(`a sold player's name should stay white, got ${look.name}`);
+    } else {
+      pass('sold row is barred in black with the name still readable');
+    }
+    // $62 against a ~$66 projection is under, so the price reads blue.
+    if (look.price !== 'rgb(92, 157, 237)') {
+      fail(`a below-projection price should read blue, got ${look.price}`);
+    } else {
+      pass('price paid under projection reads blue');
+    }
+
+    // And over projection reads red.
+    await filter.fill('bijan');
+    await page.waitForTimeout(350);
+    await board.getByRole('button', { name: /Bijan Robinson/ }).first().click();
+    await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 5000 });
+    await page.keyboard.type('140');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(120);
+    await page.keyboard.type('Closed');
+    await page.waitForTimeout(220);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(600);
+    await filter.fill('bijan');
+    await page.waitForTimeout(350);
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(150);
+    const overPrice = await board
+      .getByRole('button', { name: /Bijan Robinson/ })
+      .first()
+      .evaluate((el) => getComputedStyle(el.querySelector('span')).color);
+    if (overPrice !== 'rgb(232, 99, 90)') {
+      fail(`an above-projection price should read red, got ${overPrice}`);
+    } else {
+      pass('price paid over projection reads red');
+    }
     await filter.fill('');
 
     // ---- the Drafted panel is the record ----
@@ -239,7 +286,6 @@ async function main() {
 
     // ---- inflation responds to the room overspending ----
     const overpays = [
-      ['bijan', 'Bijan Robinson', '120', 'Closed'],
       ['nacua', 'Puka Nacua', '95', 'Threat'],
       ['chase', "Ja'Marr Chase", '95', 'Super'],
       ['taylor', 'Jonathan Taylor', '90', 'Empire'],

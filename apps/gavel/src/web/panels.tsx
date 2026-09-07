@@ -28,6 +28,21 @@ const POS_INK: Record<string, string> = {
 
 export const money = (n: number) => `$${Math.round(n)}`;
 
+/**
+ * Colour a price by what was paid against what the board projected.
+ *
+ * Blue under, red over. The comparison is always against `baseValue` — the
+ * pre-draft projection — and never against the live inflated price, so a
+ * purchase does not silently change colour as the room spends. Within a couple
+ * of dollars it is neither, because projections are not that precise.
+ */
+export function priceInk(paid: number, projected: number): string {
+  const delta = paid - projected;
+  if (delta > 2) return 'var(--over)';
+  if (delta < -2) return 'var(--under)';
+  return 'var(--taken-ink)';
+}
+
 export function Pos({ position }: { position: string }) {
   return (
     <span className="fig" style={{ color: POS_INK[position] ?? 'var(--muted)', fontWeight: 600 }}>
@@ -63,6 +78,7 @@ function Column({
   const supply = scarcity(state, league.values)[position];
   const tight = supply.ratio < 1;
   const q = normalise(filter).trim();
+  const teamName = new Map(league.teams.map((t) => [t.teamId, t.name]));
 
   const visible = q
     ? players.filter((p) => normalise(p.name).includes(q) || normalise(p.team ?? '') === q)
@@ -104,32 +120,60 @@ function Column({
 
     const price = adjustedValue(player, state, league.config);
     const pick = gone ? state.picks.find((p) => p.playerId === player.id) : undefined;
+    const paid = pick?.price ?? 0;
+    const delta = paid - player.baseValue;
 
     rows.push(
       <button
         key={player.id}
         onClick={() => onSelect(player)}
-        title={gone ? 'Edit or undo this pick' : 'Mark drafted'}
-        className={`w-full text-left px-2 py-[3px] flex items-baseline gap-2 hover:bg-raised ${gone ? 'gone' : ''}`}
+        title={
+          gone
+            ? `${money(paid)} vs $${Math.round(player.baseValue)} projected — click to edit or undo`
+            : 'Mark drafted'
+        }
+        className={`w-full text-left px-2 py-[3px] flex items-baseline gap-2 ${gone ? 'taken' : 'hover:bg-raised'}`}
       >
         <span
           className="fig w-8 text-right shrink-0"
-          style={{ color: gone ? 'var(--dim)' : 'var(--brass)', fontWeight: 600 }}
+          style={{
+            color: gone ? priceInk(paid, player.baseValue) : 'var(--brass)',
+            fontWeight: 600,
+          }}
         >
-          {gone ? money(pick?.price ?? 0) : money(price)}
+          {gone ? money(paid) : money(price)}
         </span>
-        <span className="truncate flex-1" style={{ textDecoration: gone ? 'line-through' : 'none' }}>
-          {player.name}
-        </span>
-        {pick?.keeper && (
-          <span className="fig shrink-0" title="Kept, not drafted" style={{ color: 'var(--brass)', fontSize: 9 }}>
-            K
+        <span className="truncate flex-1">{player.name}</span>
+        {gone ? (
+          <>
+            {/* How far off projection, so the colour is never the only signal. */}
+            <span
+              className="fig shrink-0"
+              style={{ color: priceInk(paid, player.baseValue), fontSize: 10 }}
+            >
+              {delta >= 0 ? '+' : ''}
+              {Math.round(delta)}
+            </span>
+            {pick?.keeper && (
+              <span className="fig shrink-0" title="Kept, not drafted" style={{ color: 'var(--brass)', fontSize: 9 }}>
+                K
+              </span>
+            )}
+            {/* Team and bye stop mattering the moment a player is gone; who
+                bought him does not. */}
+            <span
+              className="truncate shrink-0"
+              style={{ color: 'var(--muted)', fontSize: 10, maxWidth: 74 }}
+            >
+              {teamName.get(pick?.teamId ?? '') ?? ''}
+            </span>
+          </>
+        ) : (
+          <span className="fig shrink-0" style={{ color: 'var(--dim)', fontSize: 10 }}>
+            {player.team ?? '--'}
+            {player.byeWeek ? ` ·${player.byeWeek}` : ''}
           </span>
         )}
-        <span className="fig shrink-0" style={{ color: 'var(--dim)', fontSize: 10 }}>
-          {player.team ?? '--'}
-          {player.byeWeek ? ` ·${player.byeWeek}` : ''}
-        </span>
       </button>
     );
     shown += 1;
@@ -256,16 +300,19 @@ export function Drafted({
         )}
         {rows.map((pick) => {
           const player = byId.get(pick.playerId);
-          const value = player ? adjustedValue(player, state, league.config) : 0;
-          const delta = pick.price - value;
+          // Against the pre-draft projection, exactly as the board does it. Two
+          // different deltas for the same pick would be worse than none.
+          const projected = player?.baseValue ?? 0;
+          const delta = pick.price - projected;
+          const ink = priceInk(pick.price, projected);
           return (
             <button
               key={pick.seq}
               onClick={() => player && onSelect(player)}
-              title="Edit or undo this pick"
+              title={`${money(pick.price)} vs $${Math.round(projected)} projected — click to edit or undo`}
               className="w-full flex items-baseline gap-2 px-2 py-[3px] hover:bg-raised text-left"
             >
-              <span className="fig w-8 text-right shrink-0" style={{ color: 'var(--brass)', fontWeight: 600 }}>
+              <span className="fig w-8 text-right shrink-0" style={{ color: ink, fontWeight: 600 }}>
                 {money(pick.price)}
               </span>
               <span className="truncate flex-1">{player?.name ?? pick.playerId}</span>
@@ -274,14 +321,7 @@ export function Drafted({
                   K
                 </span>
               )}
-              <span
-                className="fig shrink-0"
-                title="Paid against this board's value"
-                style={{
-                  color: delta > 2 ? 'var(--bad)' : delta < -2 ? 'var(--good)' : 'var(--dim)',
-                  fontSize: 10,
-                }}
-              >
+              <span className="fig shrink-0" style={{ color: ink, fontSize: 10 }}>
                 {delta >= 0 ? '+' : ''}
                 {Math.round(delta)}
               </span>
@@ -521,15 +561,16 @@ export function Ticker({
       )}
       {recent.map((pick) => {
         const player = byId.get(pick.playerId);
+        const projected = player?.baseValue ?? 0;
         return (
           <button
             key={pick.seq}
             onClick={() => player && onSelect(player)}
-            title="Correct this pick"
+            title={`${money(pick.price)} vs $${Math.round(projected)} projected — click to correct`}
             className="flex items-baseline gap-2 px-3 shrink-0 hover:bg-raised h-full"
             style={{ borderRight: '1px solid var(--rule)' }}
           >
-            <span className="fig" style={{ color: 'var(--brass)', fontWeight: 600 }}>
+            <span className="fig" style={{ color: priceInk(pick.price, projected), fontWeight: 600 }}>
               {money(pick.price)}
             </span>
             <span style={{ whiteSpace: 'nowrap' }}>{player?.name ?? pick.playerId}</span>
