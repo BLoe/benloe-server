@@ -16,6 +16,14 @@ export interface Pick {
   teamId: string;
   price: number;
   at: number;
+  /**
+   * A keeper is a pick made before the draft: a player, a price and a team,
+   * exactly like every other pick. Modelling it as one is what keeps the money
+   * honest — a keeper's salary comes out of that manager's budget and its
+   * roster spot out of their slots, and both fall out of the same fold rather
+   * than being a second set of numbers to keep in agreement.
+   */
+  keeper?: boolean;
 }
 
 export interface TeamState {
@@ -42,6 +50,8 @@ export interface TeamState {
 export interface DraftState {
   teams: TeamState[];
   picks: Pick[];
+  /** Picks made before the draft. A subset of `picks`, never separate from it. */
+  keepers: Pick[];
   /** Money still unspent across the league. */
   moneyLeft: number;
   /** Roster spots still to be filled across the league. */
@@ -110,10 +120,6 @@ export function fillSlots(
 export interface TeamMeta {
   teamId: string;
   name: string;
-  /** Dollars already committed before the draft — Yahoo keeper salaries. */
-  committed?: number;
-  /** Roster spots already consumed by keepers. */
-  keeperSlots?: number;
 }
 
 /**
@@ -142,8 +148,10 @@ export function deriveState(
 
   const teamStates: TeamState[] = teams.map((t) => {
     const roster = perTeam.get(t.teamId) ?? [];
-    const spent = roster.reduce((sum, p) => sum + p.price, 0) + (t.committed ?? 0);
-    const filled = roster.length + (t.keeperSlots ?? 0);
+    // Keepers are in this list too, so they are counted once, here, and nowhere
+    // else.
+    const spent = roster.reduce((sum, p) => sum + p.price, 0);
+    const filled = roster.length;
     const openSlots = Math.max(0, capacity - filled);
     const remaining = cfg.budget - spent;
     const { needs, flexOpen, benchOpen } = fillSlots(roster, valuesById, cfg);
@@ -178,6 +186,7 @@ export function deriveState(
   return {
     teams: teamStates,
     picks,
+    keepers: picks.filter((p) => p.keeper),
     moneyLeft,
     slotsLeft,
     valueLeft,

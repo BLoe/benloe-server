@@ -149,7 +149,7 @@ app.post('/api/league/:id/picks', requireAuth, (req, res) => {
     res.status(404).json({ error: 'No such league.' });
     return;
   }
-  const { playerId, teamId, price } = req.body ?? {};
+  const { playerId, teamId, price, keeper } = req.body ?? {};
   if (typeof playerId !== 'string' || typeof teamId !== 'string') {
     res.status(400).json({ error: 'playerId and teamId are required.' });
     return;
@@ -169,7 +169,7 @@ app.post('/api/league/:id/picks', requireAuth, (req, res) => {
     res.status(409).json({ error: 'That player is already on the board.' });
     return;
   }
-  res.json({ pick: addPick(db, league.id, { playerId, teamId, price: amount }) });
+  res.json({ pick: addPick(db, league.id, { playerId, teamId, price: amount, keeper: !!keeper }) });
 });
 
 app.post('/api/league/:id/undo', requireAuth, (req, res) => {
@@ -227,12 +227,7 @@ app.post('/api/league/:id/teams', requireAuth, (req, res) => {
   }
   const cleaned = incoming
     .filter((t: any) => typeof t?.teamId === 'string' && typeof t?.name === 'string')
-    .map((t: any) => ({
-      teamId: t.teamId,
-      name: t.name.slice(0, 80),
-      committed: Number.isFinite(Number(t.committed)) ? Math.max(0, Number(t.committed)) : 0,
-      keeperSlots: Number.isFinite(Number(t.keeperSlots)) ? Math.max(0, Number(t.keeperSlots)) : 0,
-    }));
+    .map((t: any) => ({ teamId: t.teamId, name: t.name.slice(0, 80) }));
   setTeams(db, league.id, cleaned);
   res.json({ ok: true, teams: cleaned });
 });

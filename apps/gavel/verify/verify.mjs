@@ -136,32 +136,26 @@ async function main() {
     }
     await page.screenshot({ path: join(OUT, '01-board.png') });
 
-    // ---- claim a team through the Managers dialog ----
-    await page.getByRole('button', { name: 'Managers' }).click();
-    const dialog = page.getByTestId('managers-dialog');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.screenshot({ path: join(OUT, '02-managers.png') });
-    // Every control in this dialog must be labelled in the interface, not only
-    // to a screen reader: the first version had a bare middot for "my team" and
-    // two unlabelled number boxes.
-    for (const heading of ['Your team', 'Manager']) {
-      if ((await dialog.getByText(heading, { exact: true }).count()) === 0) {
-        fail(`Managers dialog has no "${heading}" column heading`);
-      }
-    }
-    if ((await dialog.getByText('This league has keepers').count()) === 0) {
-      fail('Managers dialog does not explain the keeper fields');
-    }
-    // Keeper columns stay hidden until a league says it uses them.
-    if ((await dialog.getByLabel('Team 1 keeper dollars').count()) > 0) {
-      fail('keeper fields are shown for a league with no keepers recorded');
+    // ---- choose your team: one list, one click, closes ----
+    await page.getByRole('button', { name: 'Your team' }).click();
+    const picker = page.getByTestId('team-picker');
+    await picker.waitFor({ state: 'visible', timeout: 5000 });
+    await page.screenshot({ path: join(OUT, '02-team-picker.png') });
+
+    // Nothing but the list belongs here — no keeper fields, no number boxes.
+    if ((await picker.getByLabel(/keeper/i).count()) > 0) {
+      fail('the team picker still carries keeper fields');
     } else {
-      pass('Managers dialog is fully labelled and hides keeper fields by default');
+      pass('team picker holds nothing but the manager list');
     }
 
-    await dialog.getByLabel('Mark East Village All-Stars as your team').check();
-    await dialog.getByRole('button', { name: 'Save' }).click();
+    await picker.getByRole('button', { name: 'East Village All-Stars' }).click();
     await page.waitForTimeout(500);
+    if ((await page.getByTestId('team-picker').count()) > 0) {
+      fail('picking a team did not close the dialog');
+    } else {
+      pass('clicking a name sets your team and closes');
+    }
 
     const myMax = async () => Number((await labelFig('Max bid')).replace(/[^0-9]/g, ''));
     if ((await myMax()) !== 185) {
@@ -321,28 +315,65 @@ async function main() {
       if (nacua < 55) fail(`half-PPR should lift Nacua above his standard price, got $${nacua}`);
       else pass(`half-PPR prices Nacua at $${nacua}, above his standard-scoring price`);
 
-      // Keeper salaries: rename a manager and commit $50 across 2 slots.
-      await page.getByRole('button', { name: 'Managers' }).click();
-      const md = page.getByTestId('managers-dialog');
-      await md.waitFor({ state: 'visible', timeout: 5000 });
-      await md.getByLabel('Team 1 name').fill('Keeper Team');
-      // Keeper fields appear only once the league is marked as using them.
-      await md.getByText('This league has keepers').click();
-      await page.waitForTimeout(250);
-      await md.getByLabel('Team 1 keeper dollars').fill('50');
-      await md.getByLabel('Team 1 keeper slots').fill('2');
-      await md.getByLabel('Mark Keeper Team as your team').check();
-      await md.getByRole('button', { name: 'Save' }).click();
-      await page.waitForTimeout(700);
+      // Keepers: entered as picks, through the same click-and-price path.
+      await page.getByRole('button', { name: 'Your team' }).click();
+      const p2 = page.getByTestId('team-picker');
+      await p2.waitFor({ state: 'visible', timeout: 5000 });
+      await p2.getByRole('button', { name: 'Rename managers' }).click();
+      await p2.getByLabel('Team 1 name').fill('Keeper Team');
+      await p2.getByRole('button', { name: 'Save' }).click();
+      await page.waitForTimeout(400);
+      await p2.getByRole('button', { name: 'Keeper Team' }).click();
+      await page.waitForTimeout(500);
+      pass('managers can be renamed for a league Gavel cannot read');
 
-      // $200 - $50 = $150 left; 15 - 2 = 13 slots; max bid 150 - 12 = $138.
+      await page.getByRole('button', { name: /^Keepers/ }).click();
+      await page.waitForTimeout(300);
+      if ((await page.getByText('Entering keepers').count()) === 0) {
+        fail('keeper mode gives no visible indication it is on');
+      } else {
+        pass('keeper mode is conspicuous while active');
+      }
+
+      await page.getByPlaceholder(/Filter players/).fill('gibbs');
+      await page.waitForTimeout(350);
+      await page.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
+      const kModal = page.getByRole('dialog', { name: /Jahmyr Gibbs/ });
+      await kModal.waitFor({ state: 'visible', timeout: 5000 });
+      if ((await kModal.getByRole('button', { name: 'Save keeper' }).count()) === 0) {
+        fail('the pick dialog does not say it is recording a keeper');
+      }
+      await page.keyboard.type('30');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(120);
+      await page.keyboard.type('Keeper Team');
+      await page.waitForTimeout(250);
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(700);
+      await page.getByRole('button', { name: 'Done with keepers' }).click();
+      await page.getByPlaceholder(/Filter players/).fill('');
+      await page.waitForTimeout(300);
+
+      // $200 - $30 = $170 left; 15 - 1 = 14 slots; max bid 170 - 13 = $157.
       const left = Number((await labelFig('Left')).replace(/[^0-9]/g, ''));
       const max = await myMax();
-      if (left !== 150 || max !== 138) {
-        fail(`keeper team should read $150 left / $138 max, got $${left} / $${max}`);
+      if (left !== 170 || max !== 157) {
+        fail(`keeper team should read $170 left / $157 max, got $${left} / $${max}`);
       } else {
-        pass('keeper salary and slots reduce budget and max bid');
+        pass('a keeper comes out of its manager\'s budget and roster');
       }
+
+      // And the kept player is off the board, marked as kept rather than bought.
+      await page.getByPlaceholder(/Filter players/).fill('gibbs');
+      await page.waitForTimeout(350);
+      const kept = page.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
+      if (!(await kept.innerText()).includes('K')) {
+        fail('a kept player is not marked K on the board');
+      } else {
+        pass('kept player is struck off the board and marked K');
+      }
+      await page.getByPlaceholder(/Filter players/).fill('');
+
       await page.screenshot({ path: join(OUT, '08-yahoo-keepers.png') });
     }
 
