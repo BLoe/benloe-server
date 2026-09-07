@@ -66,6 +66,11 @@ async function main() {
 
   const dataDir = mkdtempSync(join(tmpdir(), 'gavel-verify-'));
   copyFileSync(SNAPSHOT, join(dataDir, 'snapshot-columbus.json'));
+  // The second league proves the switcher and the keeper path, and that one
+  // engine really does serve two different rule sets.
+  const YAHOO = '/srv/benloe/data/gavel/snapshot-yahoo.json';
+  const hasYahoo = existsSync(YAHOO);
+  if (hasYahoo) copyFileSync(YAHOO, join(dataDir, 'snapshot-yahoo.json'));
   mkdirSync(OUT, { recursive: true });
 
   const port = await freePort();
@@ -76,7 +81,7 @@ async function main() {
       NODE_ENV: 'test',
       PORT: String(port),
       GAVEL_DATA_DIR: dataDir,
-      GAVEL_LEAGUES: 'columbus',
+      GAVEL_LEAGUES: 'columbus,yahoo',
       // The auth bypass, unreachable when NODE_ENV=production.
       GAVEL_TEST_USER: 'below413@gmail.com',
     },
@@ -129,11 +134,9 @@ async function main() {
     // ---- claim a team, so budget and max bid have a subject ----
     await page.getByRole('button', { name: /East Village All-Stars/ }).first().click();
     await page.waitForTimeout(300);
-    const myMax = async () =>
-      Number(
-        (await page.locator('text=Max bid').locator('..').locator('.fig').first().innerText())
-          .replace(/[^0-9]/g, '')
-      );
+    const labelFig = async (label) =>
+      (await page.getByText(label, { exact: true }).first().locator('..').locator('.fig').first().innerText());
+    const myMax = async () => Number((await labelFig('Max bid')).replace(/[^0-9]/g, ''));
     const before = await myMax();
     if (before !== 185) fail(`opening max bid should be $185 (200 - 15 x $1), got $${before}`);
     else pass('opening max bid holds back a dollar per empty slot ($185)');
@@ -178,8 +181,7 @@ async function main() {
     await page.keyboard.press('Escape');
 
     // ---- inflation responds to the room overspending ----
-    const inflationText = async () =>
-      (await page.locator('text=Inflation').locator('..').locator('.fig').first().innerText());
+    const inflationText = async () => await labelFig('Inflation');
     const infBefore = inflationText();
 
     // Buy four more, all well above the board price, from other teams.
@@ -220,13 +222,13 @@ async function main() {
     else pass('ctrl+z removes the last pick');
 
     // ---- reload reproduces the board exactly ----
-    const roomBefore = await page.locator('text=Room').locator('..').locator('.fig').first().innerText();
+    const roomBefore = await labelFig('Room');
     await page.reload({ waitUntil: 'domcontentloaded' });
     // `text=` matches rendered text, never a placeholder attribute. Waiting on
     // 'text=Nominate' silently timed out here even though the board was fine.
     await page.getByPlaceholder(/Nominate/).waitFor({ state: 'visible', timeout: 15000 });
     await page.waitForTimeout(600);
-    const roomAfter = await page.locator('text=Room').locator('..').locator('.fig').first().innerText();
+    const roomAfter = await labelFig('Room');
     if (roomBefore !== roomAfter) {
       fail(`reload changed the room total: ${roomBefore} -> ${roomAfter}`);
     } else {
@@ -257,6 +259,61 @@ async function main() {
       await page.screenshot({ path: join(OUT, `${name}.png`) });
     }
     if (!anyOverflow) pass('no overflow at 1280x800 or 1920x1080');
+
+    // ---- second league: switcher, renames, keeper salaries ----
+    if (hasYahoo) {
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await page.selectOption('select', 'yahoo');
+      await page.waitForTimeout(900);
+
+      const roomYahoo = await labelFig('Room');
+      if (!roomYahoo.includes('2400')) {
+        fail(`switching leagues should show a fresh $2400 room, got ${roomYahoo}`);
+      } else {
+        pass('league switcher loads the second league with its own board');
+      }
+
+      // Half-PPR must price a receiver differently from standard scoring.
+      await bar.click();
+      await bar.type('nacua', { delay: 15 });
+      await page.waitForTimeout(300);
+      // The read-out only exists once a player is actually selected.
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(250);
+      const nacuaYahoo = Number((await labelFig('Board')).replace(/[^0-9]/g, '') || 0);
+      await page.keyboard.press('Escape');
+      if (nacuaYahoo < 55) {
+        fail(`half-PPR should lift Nacua above his standard price, got $${nacuaYahoo}`);
+      } else {
+        pass(`half-PPR prices Nacua at $${nacuaYahoo}, above his standard-scoring price`);
+      }
+
+      // Keeper salaries: rename a team and commit $50 across 2 slots.
+      await page.getByRole('button', { name: 'edit' }).click();
+      await page.waitForTimeout(300);
+      // Scoped to the editor: the entry bar also has three inputs, and an
+      // unscoped nth(0) silently filled the nomination box instead.
+      const editor = page.getByTestId('team-editor');
+      await editor.getByLabel('Team 1 name').fill('Keeper Team');
+      await editor.getByLabel('Team 1 keeper dollars').fill('50');
+      await editor.getByLabel('Team 1 keeper slots').fill('2');
+      await page.getByRole('button', { name: 'save' }).click();
+      await page.waitForTimeout(700);
+
+      const keeperRow = page.getByRole('button', { name: /Keeper Team/ }).first();
+      if ((await keeperRow.count()) === 0) {
+        fail('renamed team did not appear in the room');
+      } else {
+        const text = await keeperRow.innerText();
+        // $200 - $50 = $150 left; 15 - 2 = 13 slots; max bid 150 - 12 = $138.
+        if (!text.includes('$138') || !text.includes('$150')) {
+          fail(`keeper team should read $138 max / $150 left, row says: ${text.replace(/\n/g, ' ')}`);
+        } else {
+          pass('keeper salary and slots reduce that team\'s budget and max bid');
+        }
+      }
+      await page.screenshot({ path: join(OUT, '07-yahoo-keepers.png') });
+    }
 
     if (consoleErrors.length) fail(`console errors: ${consoleErrors.slice(0, 3).join(' | ')}`);
     else pass('no console errors');

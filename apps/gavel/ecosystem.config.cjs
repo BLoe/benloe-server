@@ -16,7 +16,7 @@ module.exports = {
         PORT: 3013,
         GAVEL_DATA_DIR: '/srv/benloe/data/gavel',
         // Which frozen snapshots to load at boot, comma separated.
-        GAVEL_LEAGUES: 'columbus',
+        GAVEL_LEAGUES: 'columbus,yahoo',
         AUTH_SERVICE_URL: 'http://localhost:3002',
         GAVEL_OWNER_EMAIL: 'below413@gmail.com',
       },

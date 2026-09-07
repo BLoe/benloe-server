@@ -10,6 +10,8 @@ import type { Position } from '../lib/league.js';
 import type { PlayerValue } from '../lib/valuation.js';
 import { adjustedValue, contenders, scarcity, type DraftState, type Pick } from '../lib/draft.js';
 import type { LeaguePayload } from './store.js';
+import type { TeamMeta } from '../lib/draft.js';
+import { useState } from 'react';
 
 const POS_ORDER: Position[] = ['RB', 'WR', 'QB', 'TE', 'DEF'];
 const POS_INK: Record<string, string> = {
@@ -64,6 +66,8 @@ function Column({
     const gone = state.drafted.has(player.id);
     if (player.tier !== lastTier) {
       const left = players.filter((p) => p.tier === player.tier && !state.drafted.has(p.id)).length;
+      // Tier 0 is the remainder below the drafted pool, not a tier.
+      const isRest = player.tier === 0;
       rows.push(
         <div
           key={`t${player.tier}`}
@@ -76,10 +80,12 @@ function Column({
             opacity: 0.75,
           }}
         >
-          <span>Tier {player.tier}</span>
-          <span className="fig" style={{ color: 'var(--dim)' }}>
-            {left} left
-          </span>
+          <span>{isRest ? 'Below the pool' : `Tier ${player.tier}`}</span>
+          {!isRest && (
+            <span className="fig" style={{ color: 'var(--dim)' }}>
+              {left} left
+            </span>
+          )}
         </div>
       );
       lastTier = player.tier;
@@ -257,11 +263,81 @@ export function Teams({
   league,
   state,
   onSetMyTeam,
+  onSaveTeams,
 }: {
   league: LeaguePayload;
   state: DraftState;
   onSetMyTeam: (teamId: string) => void;
+  onSaveTeams: (teams: TeamMeta[]) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<TeamMeta[]>(league.teams);
+
+  const startEdit = () => {
+    setDraft(league.teams.map((t) => ({ ...t })));
+    setEditing(true);
+  };
+  const save = () => {
+    onSaveTeams(draft);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="sheet flex flex-col min-h-0" data-testid="team-editor">
+        <div className="rule-b px-2 py-1 label flex items-center" style={{ background: 'var(--raised)' }}>
+          <span className="flex-1">Name · keeper $ · slots</span>
+          <button onClick={save} style={{ color: 'var(--brass)' }}>
+            save
+          </button>
+        </div>
+        <div className="overflow-y-auto">
+          {draft.map((t, i) => (
+            <div key={t.teamId} className="flex gap-1 px-1 py-[2px]">
+              <input
+                aria-label={`Team ${i + 1} name`}
+                value={t.name}
+                onChange={(e) => {
+                  const next = [...draft];
+                  next[i] = { ...t, name: e.target.value };
+                  setDraft(next);
+                }}
+                className="flex-1 min-w-0"
+                style={{ padding: '2px 4px' }}
+              />
+              <input
+                aria-label={`Team ${i + 1} keeper dollars`}
+                value={t.committed ?? 0}
+                inputMode="numeric"
+                title="Dollars already committed to keepers"
+                onChange={(e) => {
+                  const next = [...draft];
+                  next[i] = { ...t, committed: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 };
+                  setDraft(next);
+                }}
+                className="fig w-10"
+                style={{ padding: '2px 4px' }}
+              />
+              <input
+                aria-label={`Team ${i + 1} keeper slots`}
+                value={t.keeperSlots ?? 0}
+                inputMode="numeric"
+                title="Roster spots already used by keepers"
+                onChange={(e) => {
+                  const next = [...draft];
+                  next[i] = { ...t, keeperSlots: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 };
+                  setDraft(next);
+                }}
+                className="fig w-8"
+                style={{ padding: '2px 4px' }}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   const teams = [...state.teams].sort((a, b) => b.maxBid - a.maxBid);
   return (
     <div className="sheet flex flex-col min-h-0">
@@ -270,6 +346,9 @@ export function Teams({
         <span className="w-10 text-right">Max</span>
         <span className="w-10 text-right">Left</span>
         <span className="w-8 text-right">Slots</span>
+        <button onClick={startEdit} className="w-8 text-right" title="Rename teams, enter keepers">
+          edit
+        </button>
       </div>
       <div className="overflow-y-auto">
         {teams.map((t) => {
@@ -295,6 +374,7 @@ export function Teams({
               <span className="fig w-8 text-right" style={{ color: 'var(--dim)' }}>
                 {t.openSlots}
               </span>
+              <span className="w-8" />
             </button>
           );
         })}
