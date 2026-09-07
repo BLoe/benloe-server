@@ -166,9 +166,10 @@ async function main() {
 
     // ---- the hot path: click a player, price, manager, Enter ----
     const filter = page.getByPlaceholder(/Filter players/);
+    const board = page.getByTestId('board');
     await filter.fill('gibbs');
     await page.waitForTimeout(350);
-    await page.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
+    await board.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
 
     const modal = page.getByRole('dialog', { name: /Jahmyr Gibbs/ });
     await modal.waitFor({ state: 'visible', timeout: 5000 });
@@ -184,10 +185,14 @@ async function main() {
     await page.keyboard.press('Enter');
     await page.waitForTimeout(700);
 
-    if ((await page.getByText('Drafted: Jahmyr Gibbs — $62').count()) === 0) {
-      fail('the pick dialog did not record the pick');
+    const ticker = page.getByLabel('Recent picks');
+    const tickerText = await ticker.innerText();
+    if (!tickerText.includes('Jahmyr Gibbs') || !tickerText.includes('$62')) {
+      fail(`the pick did not reach the ticker: ${tickerText.replace(/\n/g, ' ')}`);
+    } else if (!tickerText.includes('East Village')) {
+      fail(`the ticker does not name the buying manager: ${tickerText.replace(/\n/g, ' ')}`);
     } else {
-      pass('pick recorded: click, price, manager, Enter');
+      pass('pick recorded and standing in the ticker with price and manager');
     }
 
     if ((await myMax()) !== 124) {
@@ -196,10 +201,19 @@ async function main() {
       pass('max bid recomputed after a purchase ($124)');
     }
 
+    // The old confirmation vanished after two seconds, which is the opposite of
+    // what a live draft needs: the doubt arrives a minute later.
+    await page.waitForTimeout(3500);
+    if (!(await ticker.innerText()).includes('Jahmyr Gibbs')) {
+      fail('the ticker cleared itself, like the flash message it replaced');
+    } else {
+      pass('the ticker still shows the pick seconds later');
+    }
+
     // ---- the drafted player is struck through on the board ----
     await filter.fill('gibbs');
     await page.waitForTimeout(350);
-    const gibbsRow = page.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
+    const gibbsRow = board.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
     const struck = await gibbsRow.evaluate((el) => {
       const span = el.querySelector('span:nth-child(2)');
       return span ? getComputedStyle(span).textDecorationLine : '';
@@ -225,7 +239,10 @@ async function main() {
     for (const [q, name, price, team] of overpays) {
       await filter.fill(q);
       await page.waitForTimeout(300);
-      await page.getByRole('button', { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().click();
+      await board
+        .getByRole('button', { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })
+        .first()
+        .click();
       await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 5000 });
       await page.keyboard.type(price);
       await page.keyboard.press('Enter');
@@ -306,7 +323,7 @@ async function main() {
 
       await page.getByPlaceholder(/Filter players/).fill('nacua');
       await page.waitForTimeout(350);
-      await page.getByRole('button', { name: /Puka Nacua/ }).first().click();
+      await board.getByRole('button', { name: /Puka Nacua/ }).first().click();
       const yModal = page.getByRole('dialog', { name: /Puka Nacua/ });
       await yModal.waitFor({ state: 'visible', timeout: 5000 });
       const nacua = Number((await labelFig('Board')).replace(/[^0-9]/g, '') || 0);
@@ -337,7 +354,7 @@ async function main() {
 
       await page.getByPlaceholder(/Filter players/).fill('gibbs');
       await page.waitForTimeout(350);
-      await page.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
+      await board.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
       const kModal = page.getByRole('dialog', { name: /Jahmyr Gibbs/ });
       await kModal.waitFor({ state: 'visible', timeout: 5000 });
       if ((await kModal.getByRole('button', { name: 'Save keeper' }).count()) === 0) {
@@ -366,7 +383,7 @@ async function main() {
       // And the kept player is off the board, marked as kept rather than bought.
       await page.getByPlaceholder(/Filter players/).fill('gibbs');
       await page.waitForTimeout(350);
-      const kept = page.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
+      const kept = board.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
       if (!(await kept.innerText()).includes('K')) {
         fail('a kept player is not marked K on the board');
       } else {

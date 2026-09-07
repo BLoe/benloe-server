@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PlayerValue } from '../lib/valuation.js';
 import { fetchLeagues, fetchMe, useLeague, type LeagueSummary } from './store.js';
-import { Board, Drafted, MyTeam, RoomBar, TeamPickerDialog } from './panels.js';
+import { Board, Drafted, MyTeam, RoomBar, TeamPickerDialog, Ticker } from './panels.js';
 import { PickModal, type PickTarget } from './PickModal.js';
 
 export default function App() {
@@ -87,7 +87,6 @@ function Draft() {
    * silent error in the money.
    */
   const [keeperMode, setKeeperMode] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLeagues()
@@ -110,19 +109,16 @@ function Draft() {
 
   const submit = useCallback(
     (playerId: string, teamId: string, price: number) => {
-      const player = league?.values.find((v) => v.id === playerId);
       const existing = target?.existing;
       // A correction is a removal and a re-entry: the pick log is append-only
       // and every number is a fold over it, so there is nothing else to update.
       const asKeeper = existing ? !!existing.keeper : keeperMode;
       if (existing) removePick(existing.seq);
       addPick(playerId, teamId, price, asKeeper);
-      setFlash(`${player?.name ?? 'Player'} — $${price}${asKeeper ? ' (keeper)' : ''}`);
-      setTimeout(() => setFlash(null), 2000);
       setTarget(null);
       setFilter('');
     },
-    [addPick, removePick, league, target, keeperMode]
+    [addPick, removePick, target, keeperMode]
   );
 
   const remove = useCallback(
@@ -252,11 +248,7 @@ function Draft() {
         </div>
       )}
 
-      {flash && (
-        <div className="shrink-0 px-1" style={{ color: 'var(--good)' }}>
-          {flash.includes('(keeper)') ? 'Kept' : 'Drafted'}: {flash.replace(' (keeper)', '')}
-        </div>
-      )}
+      <Ticker league={league} state={state} onSelect={select} />
 
       <div className="flex gap-2 flex-1 min-h-0">
         <Board league={league} state={state} filter={filter} onSelect={select} />
