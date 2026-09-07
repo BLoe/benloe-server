@@ -141,7 +141,25 @@ async function main() {
     const dialog = page.getByTestId('managers-dialog');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
     await page.screenshot({ path: join(OUT, '02-managers.png') });
-    await dialog.getByRole('button', { name: '·' }).nth(6).click();
+    // Every control in this dialog must be labelled in the interface, not only
+    // to a screen reader: the first version had a bare middot for "my team" and
+    // two unlabelled number boxes.
+    for (const heading of ['Your team', 'Manager']) {
+      if ((await dialog.getByText(heading, { exact: true }).count()) === 0) {
+        fail(`Managers dialog has no "${heading}" column heading`);
+      }
+    }
+    if ((await dialog.getByText('This league has keepers').count()) === 0) {
+      fail('Managers dialog does not explain the keeper fields');
+    }
+    // Keeper columns stay hidden until a league says it uses them.
+    if ((await dialog.getByLabel('Team 1 keeper dollars').count()) > 0) {
+      fail('keeper fields are shown for a league with no keepers recorded');
+    } else {
+      pass('Managers dialog is fully labelled and hides keeper fields by default');
+    }
+
+    await dialog.getByLabel('Mark East Village All-Stars as your team').check();
     await dialog.getByRole('button', { name: 'Save' }).click();
     await page.waitForTimeout(500);
 
@@ -308,9 +326,12 @@ async function main() {
       const md = page.getByTestId('managers-dialog');
       await md.waitFor({ state: 'visible', timeout: 5000 });
       await md.getByLabel('Team 1 name').fill('Keeper Team');
+      // Keeper fields appear only once the league is marked as using them.
+      await md.getByText('This league has keepers').click();
+      await page.waitForTimeout(250);
       await md.getByLabel('Team 1 keeper dollars').fill('50');
       await md.getByLabel('Team 1 keeper slots').fill('2');
-      await md.getByRole('button', { name: '·' }).first().click();
+      await md.getByLabel('Mark Keeper Team as your team').check();
       await md.getByRole('button', { name: 'Save' }).click();
       await page.waitForTimeout(700);
 
