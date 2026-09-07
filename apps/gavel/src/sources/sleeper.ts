@@ -23,6 +23,7 @@ async function get<T>(path: string, timeoutMs = 30_000): Promise<T> {
 
 export interface SleeperLeague {
   league_id: string;
+  previous_league_id?: string | null;
   name: string;
   season: string;
   total_rosters: number;
@@ -106,4 +107,77 @@ export async function getByeWeeks(season: string): Promise<Record<string, number
     }
   }
   return byes;
+}
+
+export interface SleeperDraftPick {
+  player_id: string;
+  picked_by: string | null;
+  metadata: {
+    /** Auction price, as a string. Absent in a snake draft. */
+    amount?: string;
+    position?: string;
+    first_name?: string;
+    last_name?: string;
+  } | null;
+}
+
+export const getDraftPicks = (draftId: string) =>
+  get<SleeperDraftPick[]>(`/v1/draft/${draftId}/picks`, 30_000);
+
+export interface PastAuction {
+  season: string;
+  draftId: string;
+  picks: Array<{ playerId: string; position: string; price: number }>;
+}
+
+/**
+ * Every completed auction this league has run, walking `previous_league_id`.
+ *
+ * This is the best calibration data available anywhere: not what some market
+ * thinks a player is worth, but what THESE twelve managers actually paid, in
+ * this scoring system, with this roster shape. The Columbus league has two
+ * prior years on file and they agree closely with each other and disagree with
+ * generic market values in specific, repeatable ways — defences go for $1 and
+ * receivers cost more than a 2-WR league would suggest.
+ *
+ * Best-effort at every step: a season that fails to load is skipped rather than
+ * failing the snapshot, because a board with no history is still a board.
+ */
+export async function getAuctionHistory(leagueId: string, maxSeasons = 4): Promise<PastAuction[]> {
+  const out: PastAuction[] = [];
+  let id: string | null = leagueId;
+  let guard = 0;
+
+  while (id && guard < maxSeasons + 1) {
+    guard += 1;
+    let league: SleeperLeague;
+    try {
+      league = await getLeague(id);
+    } catch {
+      break;
+    }
+
+    try {
+      const drafts = await getDrafts(id);
+      for (const draft of drafts) {
+        if (draft.type !== 'auction' || draft.status !== 'complete') continue;
+        const picks = await getDraftPicks(draft.draft_id);
+        const priced = picks
+          .map((p) => ({
+            playerId: p.player_id,
+            position: p.metadata?.position ?? '',
+            price: Number(p.metadata?.amount),
+          }))
+          .filter((p) => p.playerId && p.position && Number.isFinite(p.price) && p.price > 0);
+        if (priced.length > 0) {
+          out.push({ season: league.season, draftId: draft.draft_id, picks: priced });
+        }
+      }
+    } catch {
+      // One unreadable season must not cost us the others.
+    }
+
+    id = (league as any).previous_league_id ?? null;
+  }
+  return out;
 }

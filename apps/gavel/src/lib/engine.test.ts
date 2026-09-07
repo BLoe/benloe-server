@@ -19,6 +19,7 @@ import {
 import { slotsFromRosterPositions } from './seed.js';
 import {
   assignTiers,
+  beerDemand,
   effectiveDemand,
   replacementLevels,
   valueBoard,
@@ -188,11 +189,29 @@ describe('valuation', () => {
     expect(demand.RB).toBe(base.RB);
   });
 
-  it('sets replacement at the best player without a starting job', () => {
-    const levels = replacementLevels(pool(), COLUMBUS);
-    const demand = effectiveDemand(pool(), COLUMBUS);
-    const qbs = pool().filter((p) => p.position === 'QB').sort((a, b) => b.points - a.points);
-    expect(levels.QB).toBe(qbs[demand.QB].points);
+  it('sets replacement deeper than the last starter, on a man-games footing', () => {
+    // A league CONSUMES more distinct players at a position than it STARTS in
+    // any given week, because starters miss time. Setting replacement at the
+    // last starter is the common choice and it is measurably too shallow: it
+    // priced the top back at $78 in a room whose two auctions on file never
+    // paid more than $65 for anyone.
+    const players = pool();
+    const starters = effectiveDemand(players, COLUMBUS);
+    const consumed = beerDemand(players, COLUMBUS);
+    const levels = replacementLevels(players, COLUMBUS);
+
+    // Running backs attrit hardest, so their baseline moves furthest.
+    expect(consumed.RB).toBeGreaterThan(starters.RB);
+    expect(consumed.WR).toBeGreaterThan(starters.WR);
+    // Defences are streamed, not injured out of a season, so they do not move.
+    expect(consumed.DEF).toBeCloseTo(starters.DEF, 5);
+
+    const qbs = players.filter((p) => p.position === 'QB').sort((a, b) => b.points - a.points);
+    expect(levels.QB).toBe(qbs[Math.round(consumed.QB)].points);
+    // Deeper baseline means a lower bar, which means more players clear it.
+    expect(levels.RB).toBeLessThan(
+      players.filter((p) => p.position === 'RB').sort((a, b) => b.points - a.points)[starters.RB].points
+    );
   });
 
   it('groups the top of the board into tiers rather than one player each', () => {

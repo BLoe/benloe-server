@@ -134,6 +134,14 @@ async function main() {
     } else {
       pass('no kickers on the board');
     }
+    // The board must state what its prices rest on. Implying a calibration it
+    // does not have is the worst thing this app could ship: the numbers look
+    // identical either way.
+    if ((await page.getByText(/calibrated · /).count()) === 0) {
+      fail('the board does not say what its prices are calibrated against');
+    } else {
+      pass('board states its calibration provenance');
+    }
     await page.screenshot({ path: join(OUT, '01-board.png') });
 
     // ---- choose your team: one list, one click, closes ----

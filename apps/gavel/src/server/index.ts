@@ -72,6 +72,7 @@ async function importSnapshots(): Promise<void> {
         myTeamId: existing?.myTeamId ?? null,
         capturedAt: snap.capturedAt,
         draftStartTime: snap.draftStartTime ?? null,
+        calibration: snap.calibration ?? null,
       });
       console.log(`[gavel] loaded snapshot ${slug}: ${snap.values.length} players`);
     } catch (err) {
@@ -134,6 +135,7 @@ app.get('/api/league/:id', requireAuth, (req, res) => {
     myTeamId: league.myTeamId,
     capturedAt: league.capturedAt,
     draftStartTime: league.draftStartTime,
+    calibration: league.calibration,
     picks: listPicks(db, league.id),
   });
 });

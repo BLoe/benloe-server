@@ -10,7 +10,7 @@
  * This is what makes the Yahoo league work without ever calling Yahoo.
  */
 import { scoreStatsRounded } from './scoring.js';
-import { valueBoard, type PlayerProjection, type PlayerValue } from './valuation.js';
+import { valueBoard, type BoardOptions, type PlayerProjection, type PlayerValue } from './valuation.js';
 import { POSITIONS, type LeagueConfig, type Position } from './league.js';
 import type { SleeperProjectionRow } from '../sources/sleeper.js';
 
@@ -54,8 +54,9 @@ export function projectionsFor(
 export function buildBoard(
   rows: SleeperProjectionRow[],
   cfg: LeagueConfig,
-  byes: Record<string, number>
+  byes: Record<string, number>,
+  options: BoardOptions = {}
 ): { players: PlayerProjection[]; values: PlayerValue[] } {
   const players = projectionsFor(rows, cfg, byes);
-  return { players, values: valueBoard(players, cfg) };
+  return { players, values: valueBoard(players, cfg, options) };
 }
