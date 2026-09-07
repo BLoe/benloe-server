@@ -215,9 +215,39 @@ describe('valuation', () => {
     expect(tiers[2]).toBe(tiers[3]);
   });
 
+  it('marks everyone below the drafted pool as the remainder, not a tier', () => {
+    // Reporting "621 left" for the bottom group is noise: it is not a tier, it
+    // is everyone who will not be drafted.
+    const rest = values.filter((v) => v.baseValue === 0);
+    expect(rest.length).toBeGreaterThan(0);
+    for (const v of rest) expect(v.tier).toBe(0);
+    for (const v of values.filter((x) => x.baseValue > 0)) expect(v.tier).toBeGreaterThan(0);
+  });
+
+  it('keeps tiers stable whatever the shape of the position curve', () => {
+    // A mean-gap threshold is not scale-free: at the top of a position the
+    // gaps run several times the average, so nearly every one broke a tier and
+    // the best players each landed in a tier of one.
+    const steepThenFlat = Array.from({ length: 40 }, (_, i) => ({
+      id: `p${i}`,
+      name: `P${i}`,
+      position: 'RB' as const,
+      team: null,
+      // A sharp elite cliff followed by a long flat tail.
+      points: i < 5 ? 300 - i * 18 : 210 - (i - 5) * 1.5,
+    }));
+    const tiers = assignTiers(steepThenFlat);
+    const distinct = new Set(tiers).size;
+    expect(distinct).toBeGreaterThan(2);
+    expect(distinct).toBeLessThan(12);
+    // The flat tail must not fragment into a tier per player.
+    expect(tiers[39] - tiers[10]).toBeLessThan(4);
+  });
+
   it('handles an empty pool without throwing', () => {
     expect(valueBoard([], COLUMBUS)).toEqual([]);
     expect(assignTiers([])).toEqual([]);
+    expect(assignTiers([{ id: 'a', name: 'a', position: 'RB', team: null, points: 1 }])).toEqual([1]);
   });
 });
 

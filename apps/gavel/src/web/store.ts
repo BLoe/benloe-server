@@ -47,6 +47,16 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const fetchMe = () =>
   api<{ authed: boolean; signedIn: boolean; email: string | null }>('/me');
 
+export interface LeagueSummary {
+  id: string;
+  name: string;
+  teams: number;
+  budget: number;
+  draftStartTime: number | null;
+}
+
+export const fetchLeagues = () => api<{ leagues: LeagueSummary[] }>('/leagues');
+
 /** A pick that has not yet been acknowledged by the server. */
 interface PendingPick extends Pick {
   pending: true;
@@ -210,6 +220,22 @@ export function useLeague(leagueId: string | null) {
     [leagueId]
   );
 
+  /**
+   * Team names and keeper commitments — the one part of a league no platform
+   * tells us reliably, and the part that moves every price in a keeper league.
+   */
+  const saveTeams = useCallback(
+    async (teams: TeamMeta[]) => {
+      if (!leagueId) return;
+      setLeague((prev) => (prev ? { ...prev, teams } : prev));
+      await api(`/league/${leagueId}/teams`, {
+        method: 'POST',
+        body: JSON.stringify({ teams }),
+      }).catch(() => void load());
+    },
+    [leagueId, load]
+  );
+
   const state = useMemo(() => {
     if (!league) return null;
     return deriveState(picks, league.teams, league.values, league.config);
@@ -226,6 +252,7 @@ export function useLeague(leagueId: string | null) {
     undo,
     removePick,
     setMyTeam,
+    saveTeams,
     reload: load,
   };
 }

@@ -43,7 +43,8 @@ src/lib/                pure, no network, no Express — all unit-tested
   valuation.ts          points -> VOR -> auction dollars (the value engine)
   draft.ts              live state: budgets, max bids, inflation, needs, scarcity
   seed.ts               platform settings -> LeagueConfig
-  engine.test.ts        29 tests; each names the mistake it prevents
+  board.ts              projection rows + config -> a priced board (platform-free)
+  engine.test.ts        31 tests; each names the mistake it prevents
 
 src/sources/sleeper.ts  the ONLY upstream, read only by the snapshot script
 
@@ -94,10 +95,14 @@ Every one of these cost real time here.
   pricing kickers anyway handed them ~$700 of a $2,400 room — Brandon Aubrey
   priced above Puka Nacua. `rosteredPositions()` filters them out. This was
   invisible in unit tests and obvious the moment the engine ran on real data.
-- **Tiers must be computed over the DRAFTED POOL, not the whole position.** A
-  gap threshold averaged across two hundred running backs is vanishingly small,
-  so every elite back landed in a tier of one — backwards, since the top of the
-  board is where tiers carry the most information.
+- **Tiers must be computed over the DRAFTED POOL, not the whole position, and
+  the threshold must be a QUANTILE of the gaps rather than a multiple of their
+  mean.** Both mistakes produced the same symptom from opposite directions:
+  averaged over two hundred backs the threshold vanished, and averaged over the
+  pool it was still smaller than every gap at the top, so the best players each
+  landed in a tier of one — backwards, since the top of the board is where
+  tiers carry the most information. Players outside the pool get **tier 0**,
+  rendered as "Below the pool"; counting how many remain there is meaningless.
 - **Flex is allocated against real projections**, greedily, not by a rule of
   thumb. In a four-receiver league that pulls flex toward receivers and moves
   replacement level with it.
@@ -152,7 +157,7 @@ one that admits a gap:
 
 ```
 npm run typecheck    # must be clean
-npm test             # 29 unit tests, pure, no network
+npm test             # 31 unit tests, pure, no network
 npm run verify       # drives a real draft in a browser from the keyboard
 npm run check        # all three
 ```
@@ -168,12 +173,27 @@ board is any good. Every visual bug so far was found by looking.
 
 ---
 
-## 6. Before a draft
+## 6. Leagues, and before a draft
+
+A league is either **read from Sleeper** or **described in a file**. Yahoo's API
+returned 403 through both the connector and the local MCP service, and it did
+not matter: a league's identity is its scoring map and roster shape, and
+projections are of NFL players rather than of a platform. `leagues/yahoo.json`
+carries the stated rules and the same engine prices it.
 
 ```
-npm run snapshot -- <sleeperLeagueId> <slug>   # freeze projections + prices
-pm2 restart gavel-api                           # import the snapshot
+npm run snapshot -- 1389704095224315904 columbus   # Sleeper league id + slug
+npm run snapshot -- leagues/yahoo.json             # a definition file
+pm2 delete gavel-api && pm2 start ecosystem.config.cjs   # if GAVEL_LEAGUES changed
 ```
+
+**`pm2 restart --update-env` does NOT re-read the ecosystem file.** Adding a
+league to `GAVEL_LEAGUES` and restarting looks like it worked and silently
+serves the old list.
+
+Team names and keeper salaries are entered in the app (the Room panel's `edit`),
+not in the definition file — no platform reports a keeper's auction salary
+reliably, and keeper money moves every price in the league.
 
 Re-running the snapshot mid-draft is pointless and the server never does it on a
 request. Run it a few hours before, not during.

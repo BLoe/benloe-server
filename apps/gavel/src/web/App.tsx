@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { adjustedValue, contenders } from '../lib/draft.js';
 import type { PlayerValue } from '../lib/valuation.js';
-import { fetchMe, useLeague } from './store.js';
+import { fetchLeagues, fetchMe, useLeague, type LeagueSummary } from './store.js';
 import { searchPlayers } from './search.js';
 import { Board, Log, MyTeam, RoomBar, Teams, money, Pos } from './panels.js';
 
@@ -76,8 +76,15 @@ function Draft() {
   const [leagueId, setLeagueId] = useState<string>(
     () => localStorage.getItem('gavel:league') || 'columbus'
   );
-  const { league, state, unsynced, loading, error, addPick, undo, removePick, setMyTeam } =
+  const { league, state, unsynced, loading, error, addPick, undo, removePick, setMyTeam, saveTeams } =
     useLeague(leagueId);
+  const [leagues, setLeagues] = useState<LeagueSummary[]>([]);
+
+  useEffect(() => {
+    fetchLeagues()
+      .then((r) => setLeagues(r.leagues))
+      .catch(() => setLeagues([]));
+  }, []);
 
   const [stage, setStage] = useState<Stage>('player');
   const [query, setQuery] = useState('');
@@ -185,7 +192,22 @@ function Draft() {
         <span className="slab" style={{ fontSize: 22, color: 'var(--brass)', lineHeight: 1 }}>
           Gavel
         </span>
-        <span style={{ color: 'var(--muted)' }}>{league.name}</span>
+        {leagues.length > 1 ? (
+          <select
+            value={leagueId}
+            onChange={(e) => setLeagueId(e.target.value)}
+            title="Switch league"
+            style={{ padding: '2px 6px' }}
+          >
+            {leagues.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span style={{ color: 'var(--muted)' }}>{league.name}</span>
+        )}
         <RoomBar state={state} league={league} />
         <div className="ml-auto flex items-center gap-3">
           {unsynced > 0 && (
@@ -344,7 +366,9 @@ function Draft() {
             <span className="flex items-baseline gap-2">
               <span className="label">Tier</span>
               <span className="fig">
-                {player.tier} · {league.values.filter((v) => v.position === player.position && v.tier === player.tier && !state.drafted.has(v.id)).length} left
+                {player.tier === 0
+                  ? 'below the pool'
+                  : `${player.tier} · ${league.values.filter((v) => v.position === player.position && v.tier === player.tier && !state.drafted.has(v.id)).length} left`}
               </span>
             </span>
             {me && (
@@ -386,7 +410,12 @@ function Draft() {
           style={{ width: 'clamp(232px, 19vw, 300px)' }}
         >
           <MyTeam league={league} state={state} />
-          <Teams league={league} state={state} onSetMyTeam={setMyTeam} />
+          <Teams
+            league={league}
+            state={state}
+            onSetMyTeam={setMyTeam}
+            onSaveTeams={saveTeams}
+          />
           <Log league={league} state={state} onRemove={removePick} />
         </div>
       </div>

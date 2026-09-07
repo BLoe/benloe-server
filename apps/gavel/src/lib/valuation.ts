@@ -144,21 +144,39 @@ export function replacementLevels(
  * spreads. Tiers are the thing a draft board is actually for: they say whether
  * waiting costs you nothing or costs you the last player of a kind.
  */
-export function assignTiers(sorted: PlayerProjection[], sensitivity = 1.5): number[] {
+export function assignTiers(sorted: PlayerProjection[], breakAt = 0.85): number[] {
   if (sorted.length === 0) return [];
+  if (sorted.length === 1) return [1];
+
   const gaps: number[] = [];
   for (let i = 1; i < sorted.length; i++) gaps.push(sorted[i - 1].points - sorted[i].points);
-  const positive = gaps.filter((g) => g > 0);
-  const mean = positive.length ? positive.reduce((a, b) => a + b, 0) / positive.length : 0;
-  const threshold = mean * sensitivity;
+
+  // A threshold taken from the MEAN gap is not scale-free: at the top of a
+  // position the gaps are several times the average, so nearly every one of
+  // them broke a tier and the best players each got a tier of one. A quantile
+  // asks the right question instead — "is this drop unusually large FOR THIS
+  // POSITION" — and yields a stable handful of tiers whatever the shape of the
+  // curve.
+  const threshold = quantile(gaps, breakAt);
 
   const tiers = [1];
   let tier = 1;
-  for (let i = 0; i < gaps.length; i++) {
-    if (threshold > 0 && gaps[i] > threshold) tier += 1;
+  for (const gap of gaps) {
+    if (threshold > 0 && gap > threshold) tier += 1;
     tiers.push(tier);
   }
   return tiers;
+}
+
+/** Linear-interpolated quantile. Small samples make the exact method matter. */
+function quantile(values: number[], q: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
 /**
@@ -202,9 +220,10 @@ export function valueBoard(players: PlayerProjection[], cfg: LeagueConfig): Play
     const drafted = list.filter((p) => inPool.has(p.id));
     const tiers = assignTiers(drafted);
     drafted.forEach((p, i) => tierById.set(p.id, tiers[i] ?? 1));
-    // Everyone below the drafted pool shares one bottom tier.
-    const bottom = (tiers[tiers.length - 1] ?? 0) + 1;
-    for (const p of list) if (!tierById.has(p.id)) tierById.set(p.id, bottom);
+    // Everyone below the drafted pool shares one bottom group. It is marked
+    // with tier 0 rather than a real tier number: it is not a tier, it is the
+    // remainder, and counting how many players are "left" in it is meaningless.
+    for (const p of list) if (!tierById.has(p.id)) tierById.set(p.id, 0);
   }
 
   const discretionary = totalMoney(cfg) - poolSize * cfg.minBid;
