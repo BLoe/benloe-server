@@ -26,6 +26,8 @@ export interface LeaguePayload {
   myTeamId: string | null;
   capturedAt: number;
   draftStartTime: number | null;
+  /** What these prices were calibrated against. Null means the raw model. */
+  calibration: { source: string; seasons: string[] } | null;
   picks: Pick[];
 }
 

@@ -67,10 +67,13 @@ src/lib/                pure, no network, no Express — all unit-tested
   valuation.ts          points -> VOR -> auction dollars (the value engine)
   draft.ts              live state: budgets, max bids, inflation, needs, scarcity
   seed.ts               platform settings -> LeagueConfig
+  history.ts            a league's own auctions -> a price curve per position
   board.ts              projection rows + config -> a priced board (platform-free)
   engine.test.ts        31 tests; each names the mistake it prevents
 
-src/sources/sleeper.ts  the ONLY upstream, read only by the snapshot script
+src/sources/
+  sleeper.ts            league, projections, and PAST AUCTIONS via previous_league_id
+  fantasycalc.ts        market values; the fallback anchor when there is no history
 
 src/server/
   index.ts              wiring only. Routes, static, snapshot import at boot.
@@ -166,25 +169,50 @@ Every one of these cost real time here.
 Because it will be replaced and the replacement needs the same contract.
 
 1. **Points** — `stats x league scoring`, per league. No canned columns.
-2. **Replacement** — the best player at a position with no starting job
-   league-wide, after flex is allocated greedily by projection.
+2. **Replacement** — a **man-games** baseline (`beerDemand`): a league consumes
+   more distinct players at a position than it starts in a week, because
+   starters miss time. Blended 40/60 with the last-starter baseline.
 3. **VOR** — points minus that baseline.
-4. **Dollars** — every drafted player costs at least `minBid`, so
-   `teams x slots x minBid` is committed before bidding; the rest is split in
-   proportion to positive VOR across the top `teams x slots` players.
-5. **Inflation** — `money left / value left`, recomputed on every pick. Only
-   the surplus above `minBid` inflates; a dollar player stays a dollar player.
+4. **Pool** — how many of each position actually get drafted. From this
+   league's own history where it has any; otherwise from the model.
+5. **Dollars** — `minBid` for every drafted player, the rest split in
+   proportion to positive VOR.
+6. **Calibration** — the model's within-position price curve is blended (60%)
+   with what this room has actually paid at each rank, then re-cleared so the
+   total is exactly the budget.
+7. **Inflation** — `money left / value left`, recomputed on every pick. Only
+   the surplus above `minBid` inflates.
 
-**The contract for better rankings is a points number per player.** Swap the
-projection source in `scripts/snapshot.ts` and everything downstream holds.
+**The division of labour is the whole idea: projections decide WHO occupies each
+rank; history decides HOW MANY get drafted and WHAT EACH RANK COSTS.** The
+second is not a property of the players at all — it is a property of twelve
+specific people and the roster they must fill.
+
+**The contract for better rankings is still a points number per player.**
+
+### What calibration fixed, measured against 2024 + 2025
+
+| | before | after | actual |
+|---|---|---|---|
+| top RB | $78 | $66 | $63-65 |
+| defences priced | 32, up to $10 | 10, at $2-4 | 9-10, at $1-2 |
+| budget: RB / WR | 44% / 41% | 46% / 42% | 43% / 44% |
 
 Known limits, stated because a tool that overstates its confidence is worse than
 one that admits a gap:
 
 - Projections are Sleeper's (Rotowire). They are ordinary, not good.
-- Bench players are priced at the minimum, because replacement is set at the
-  last starter. Real auctions do pay $2-4 for upside bench backs.
-- No injury, bye-week stacking, or schedule adjustment enters the price.
+- **Yahoo has no history and no market source for defences**, so its DEF prices
+  are model-only and probably too high — Columbus pays $1-2. Feed it real prices
+  via `history` in `leagues/yahoo.json` and this goes away.
+- A market curve run through this pipeline inherits **this pipeline's** shape,
+  so it corrects the positional counts but not the top-heaviness. Real auction
+  results are strictly better evidence.
+- The `GAMES_AVAILABLE` constants are published approximations, not measured
+  off nflverse.
+- Live prices still move by a single global inflation multiplier. A full
+  re-solve of replacement level against remaining demand is the right answer
+  and is NOT implemented.
 - Tier breaks come from points gaps only, not from any measure of uncertainty.
 
 ---
@@ -193,7 +221,7 @@ one that admits a gap:
 
 ```
 npm run typecheck    # must be clean
-npm test             # 32 unit tests, pure, no network
+npm test             # 44 unit tests, pure, no network
 npm run verify       # drives a real draft in a browser from the keyboard
 npm run check        # all three
 ```

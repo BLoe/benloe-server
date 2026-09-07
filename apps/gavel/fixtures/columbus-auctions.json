@@ -1,0 +1,1932 @@
+[
+ {
+  "season": "2025",
+  "picks": [
+   {
+    "playerId": "4866",
+    "position": "RB",
+    "price": 55
+   },
+   {
+    "playerId": "7564",
+    "position": "WR",
+    "price": 59
+   },
+   {
+    "playerId": "3198",
+    "position": "RB",
+    "price": 53
+   },
+   {
+    "playerId": "4984",
+    "position": "QB",
+    "price": 33
+   },
+   {
+    "playerId": "9509",
+    "position": "RB",
+    "price": 63
+   },
+   {
+    "playerId": "9221",
+    "position": "RB",
+    "price": 56
+   },
+   {
+    "playerId": "7547",
+    "position": "WR",
+    "price": 44
+   },
+   {
+    "playerId": "6794",
+    "position": "WR",
+    "price": 53
+   },
+   {
+    "playerId": "4034",
+    "position": "RB",
+    "price": 52
+   },
+   {
+    "playerId": "6786",
+    "position": "WR",
+    "price": 55
+   },
+   {
+    "playerId": "12527",
+    "position": "RB",
+    "price": 57
+   },
+   {
+    "playerId": "11632",
+    "position": "WR",
+    "price": 36
+   },
+   {
+    "playerId": "9226",
+    "position": "RB",
+    "price": 35
+   },
+   {
+    "playerId": "8112",
+    "position": "WR",
+    "price": 44
+   },
+   {
+    "playerId": "9493",
+    "position": "WR",
+    "price": 52
+   },
+   {
+    "playerId": "4881",
+    "position": "QB",
+    "price": 29
+   },
+   {
+    "playerId": "9224",
+    "position": "RB",
+    "price": 45
+   },
+   {
+    "playerId": "7569",
+    "position": "WR",
+    "price": 49
+   },
+   {
+    "playerId": "1466",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "11631",
+    "position": "WR",
+    "price": 47
+   },
+   {
+    "playerId": "5850",
+    "position": "RB",
+    "price": 50
+   },
+   {
+    "playerId": "11635",
+    "position": "WR",
+    "price": 30
+   },
+   {
+    "playerId": "5859",
+    "position": "WR",
+    "price": 36
+   },
+   {
+    "playerId": "6813",
+    "position": "RB",
+    "price": 59
+   },
+   {
+    "playerId": "11584",
+    "position": "RB",
+    "price": 44
+   },
+   {
+    "playerId": "11604",
+    "position": "TE",
+    "price": 38
+   },
+   {
+    "playerId": "6801",
+    "position": "WR",
+    "price": 39
+   },
+   {
+    "playerId": "9488",
+    "position": "WR",
+    "price": 39
+   },
+   {
+    "playerId": "11628",
+    "position": "WR",
+    "price": 36
+   },
+   {
+    "playerId": "8130",
+    "position": "TE",
+    "price": 25
+   },
+   {
+    "playerId": "12530",
+    "position": "WR",
+    "price": 11
+   },
+   {
+    "playerId": "8155",
+    "position": "RB",
+    "price": 28
+   },
+   {
+    "playerId": "4217",
+    "position": "TE",
+    "price": 20
+   },
+   {
+    "playerId": "8138",
+    "position": "RB",
+    "price": 33
+   },
+   {
+    "playerId": "11566",
+    "position": "QB",
+    "price": 20
+   },
+   {
+    "playerId": "8150",
+    "position": "RB",
+    "price": 41
+   },
+   {
+    "playerId": "4035",
+    "position": "RB",
+    "price": 22
+   },
+   {
+    "playerId": "4046",
+    "position": "QB",
+    "price": 11
+   },
+   {
+    "playerId": "5012",
+    "position": "TE",
+    "price": 8
+   },
+   {
+    "playerId": "5844",
+    "position": "TE",
+    "price": 7
+   },
+   {
+    "playerId": "6904",
+    "position": "QB",
+    "price": 25
+   },
+   {
+    "playerId": "3321",
+    "position": "WR",
+    "price": 23
+   },
+   {
+    "playerId": "9756",
+    "position": "WR",
+    "price": 9
+   },
+   {
+    "playerId": "2216",
+    "position": "WR",
+    "price": 28
+   },
+   {
+    "playerId": "4892",
+    "position": "QB",
+    "price": 7
+   },
+   {
+    "playerId": "5927",
+    "position": "WR",
+    "price": 21
+   },
+   {
+    "playerId": "6770",
+    "position": "QB",
+    "price": 37
+   },
+   {
+    "playerId": "12507",
+    "position": "RB",
+    "price": 33
+   },
+   {
+    "playerId": "8146",
+    "position": "WR",
+    "price": 18
+   },
+   {
+    "playerId": "2133",
+    "position": "WR",
+    "price": 18
+   },
+   {
+    "playerId": "4066",
+    "position": "TE",
+    "price": 3
+   },
+   {
+    "playerId": "10229",
+    "position": "WR",
+    "price": 19
+   },
+   {
+    "playerId": "4983",
+    "position": "WR",
+    "price": 17
+   },
+   {
+    "playerId": "8151",
+    "position": "RB",
+    "price": 25
+   },
+   {
+    "playerId": "12504",
+    "position": "RB",
+    "price": 9
+   },
+   {
+    "playerId": "7594",
+    "position": "RB",
+    "price": 32
+   },
+   {
+    "playerId": "4199",
+    "position": "RB",
+    "price": 13
+   },
+   {
+    "playerId": "5846",
+    "position": "WR",
+    "price": 16
+   },
+   {
+    "playerId": "5045",
+    "position": "WR",
+    "price": 18
+   },
+   {
+    "playerId": "4137",
+    "position": "RB",
+    "price": 26
+   },
+   {
+    "playerId": "8148",
+    "position": "WR",
+    "price": 16
+   },
+   {
+    "playerId": "8144",
+    "position": "WR",
+    "price": 11
+   },
+   {
+    "playerId": "12518",
+    "position": "TE",
+    "price": 4
+   },
+   {
+    "playerId": "4018",
+    "position": "RB",
+    "price": 8
+   },
+   {
+    "playerId": "9997",
+    "position": "WR",
+    "price": 13
+   },
+   {
+    "playerId": "8205",
+    "position": "RB",
+    "price": 17
+   },
+   {
+    "playerId": "12514",
+    "position": "WR",
+    "price": 11
+   },
+   {
+    "playerId": "8137",
+    "position": "WR",
+    "price": 14
+   },
+   {
+    "playerId": "10859",
+    "position": "TE",
+    "price": 9
+   },
+   {
+    "playerId": "5892",
+    "position": "RB",
+    "price": 17
+   },
+   {
+    "playerId": "11563",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "12489",
+    "position": "RB",
+    "price": 14
+   },
+   {
+    "playerId": "12529",
+    "position": "RB",
+    "price": 13
+   },
+   {
+    "playerId": "11620",
+    "position": "WR",
+    "price": 7
+   },
+   {
+    "playerId": "9484",
+    "position": "TE",
+    "price": 3
+   },
+   {
+    "playerId": "7049",
+    "position": "WR",
+    "price": 5
+   },
+   {
+    "playerId": "7525",
+    "position": "WR",
+    "price": 12
+   },
+   {
+    "playerId": "12526",
+    "position": "WR",
+    "price": 14
+   },
+   {
+    "playerId": "6783",
+    "position": "WR",
+    "price": 7
+   },
+   {
+    "playerId": "7526",
+    "position": "WR",
+    "price": 11
+   },
+   {
+    "playerId": "11655",
+    "position": "RB",
+    "price": 10
+   },
+   {
+    "playerId": "12512",
+    "position": "RB",
+    "price": 5
+   },
+   {
+    "playerId": "6790",
+    "position": "RB",
+    "price": 12
+   },
+   {
+    "playerId": "5967",
+    "position": "RB",
+    "price": 12
+   },
+   {
+    "playerId": "11624",
+    "position": "WR",
+    "price": 12
+   },
+   {
+    "playerId": "5947",
+    "position": "WR",
+    "price": 6
+   },
+   {
+    "playerId": "4981",
+    "position": "WR",
+    "price": 12
+   },
+   {
+    "playerId": "8228",
+    "position": "RB",
+    "price": 4
+   },
+   {
+    "playerId": "8154",
+    "position": "RB",
+    "price": 6
+   },
+   {
+    "playerId": "8134",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "1339",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "11637",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "3294",
+    "position": "QB",
+    "price": 2
+   },
+   {
+    "playerId": "4037",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "12501",
+    "position": "WR",
+    "price": 10
+   },
+   {
+    "playerId": "4144",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "BUF",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "5872",
+    "position": "WR",
+    "price": 8
+   },
+   {
+    "playerId": "10222",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "7543",
+    "position": "RB",
+    "price": 4
+   },
+   {
+    "playerId": "PHI",
+    "position": "DEF",
+    "price": 2
+   },
+   {
+    "playerId": "2449",
+    "position": "WR",
+    "price": 4
+   },
+   {
+    "playerId": "6806",
+    "position": "RB",
+    "price": 6
+   },
+   {
+    "playerId": "11638",
+    "position": "WR",
+    "price": 10
+   },
+   {
+    "playerId": "4039",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "7528",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "4033",
+    "position": "TE",
+    "price": 2
+   },
+   {
+    "playerId": "MIN",
+    "position": "DEF",
+    "price": 2
+   },
+   {
+    "playerId": "8676",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "DEN",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "1479",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "8183",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "6819",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "12481",
+    "position": "RB",
+    "price": 4
+   },
+   {
+    "playerId": "5849",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "8408",
+    "position": "RB",
+    "price": 5
+   },
+   {
+    "playerId": "7588",
+    "position": "RB",
+    "price": 4
+   },
+   {
+    "playerId": "9225",
+    "position": "RB",
+    "price": 4
+   },
+   {
+    "playerId": "10444",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "7090",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "9494",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "9500",
+    "position": "WR",
+    "price": 4
+   },
+   {
+    "playerId": "7611",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "10236",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "12484",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "PIT",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "4988",
+    "position": "RB",
+    "price": 3
+   },
+   {
+    "playerId": "12533",
+    "position": "RB",
+    "price": 6
+   },
+   {
+    "playerId": "6804",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "12457",
+    "position": "RB",
+    "price": 3
+   },
+   {
+    "playerId": "3163",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "6797",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "9753",
+    "position": "RB",
+    "price": 5
+   },
+   {
+    "playerId": "9508",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "4663",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "8143",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "12519",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "11630",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "6803",
+    "position": "WR",
+    "price": 4
+   },
+   {
+    "playerId": "BAL",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "12517",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "8121",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "5848",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "11589",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "9758",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "HOU",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "8136",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "4950",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "7670",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "7571",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "8132",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "9754",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "1689",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11575",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "5022",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "12495",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11576",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "GB",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "7591",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "12469",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "7553",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "WAS",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "7021",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "9501",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "12509",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "8129",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11646",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11626",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "8110",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "12497",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "8126",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11565",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "11618",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11586",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11560",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "2505",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "8142",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "12541",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "12543",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "12499",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "12534",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "2309",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "12490",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "CHI",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "11651",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "12535",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "10232",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11627",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "8131",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "4098",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "12471",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "6149",
+    "position": "WR",
+    "price": 1
+   }
+  ]
+ },
+ {
+  "season": "2024",
+  "picks": [
+   {
+    "playerId": "4034",
+    "position": "RB",
+    "price": 65
+   },
+   {
+    "playerId": "7564",
+    "position": "WR",
+    "price": 49
+   },
+   {
+    "playerId": "3321",
+    "position": "WR",
+    "price": 56
+   },
+   {
+    "playerId": "7547",
+    "position": "WR",
+    "price": 45
+   },
+   {
+    "playerId": "6786",
+    "position": "WR",
+    "price": 50
+   },
+   {
+    "playerId": "6794",
+    "position": "WR",
+    "price": 50
+   },
+   {
+    "playerId": "5892",
+    "position": "RB",
+    "price": 27
+   },
+   {
+    "playerId": "4866",
+    "position": "RB",
+    "price": 48
+   },
+   {
+    "playerId": "9509",
+    "position": "RB",
+    "price": 53
+   },
+   {
+    "playerId": "4046",
+    "position": "QB",
+    "price": 16
+   },
+   {
+    "playerId": "5850",
+    "position": "RB",
+    "price": 36
+   },
+   {
+    "playerId": "8155",
+    "position": "RB",
+    "price": 57
+   },
+   {
+    "playerId": "5859",
+    "position": "WR",
+    "price": 38
+   },
+   {
+    "playerId": "9221",
+    "position": "RB",
+    "price": 43
+   },
+   {
+    "playerId": "6813",
+    "position": "RB",
+    "price": 50
+   },
+   {
+    "playerId": "7543",
+    "position": "RB",
+    "price": 42
+   },
+   {
+    "playerId": "8146",
+    "position": "WR",
+    "price": 35
+   },
+   {
+    "playerId": "11628",
+    "position": "WR",
+    "price": 25
+   },
+   {
+    "playerId": "8151",
+    "position": "RB",
+    "price": 37
+   },
+   {
+    "playerId": "9226",
+    "position": "RB",
+    "price": 42
+   },
+   {
+    "playerId": "9493",
+    "position": "WR",
+    "price": 35
+   },
+   {
+    "playerId": "4984",
+    "position": "QB",
+    "price": 28
+   },
+   {
+    "playerId": "7553",
+    "position": "TE",
+    "price": 18
+   },
+   {
+    "playerId": "7525",
+    "position": "WR",
+    "price": 22
+   },
+   {
+    "playerId": "3198",
+    "position": "RB",
+    "price": 53
+   },
+   {
+    "playerId": "2133",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "1466",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "6803",
+    "position": "WR",
+    "price": 25
+   },
+   {
+    "playerId": "8112",
+    "position": "WR",
+    "price": 33
+   },
+   {
+    "playerId": "8205",
+    "position": "RB",
+    "price": 48
+   },
+   {
+    "playerId": "4137",
+    "position": "RB",
+    "price": 31
+   },
+   {
+    "playerId": "8144",
+    "position": "WR",
+    "price": 32
+   },
+   {
+    "playerId": "5872",
+    "position": "WR",
+    "price": 28
+   },
+   {
+    "playerId": "8150",
+    "position": "RB",
+    "price": 44
+   },
+   {
+    "playerId": "2449",
+    "position": "WR",
+    "price": 15
+   },
+   {
+    "playerId": "4066",
+    "position": "TE",
+    "price": 12
+   },
+   {
+    "playerId": "2216",
+    "position": "WR",
+    "price": 25
+   },
+   {
+    "playerId": "7526",
+    "position": "WR",
+    "price": 31
+   },
+   {
+    "playerId": "4983",
+    "position": "WR",
+    "price": 22
+   },
+   {
+    "playerId": "6904",
+    "position": "QB",
+    "price": 16
+   },
+   {
+    "playerId": "10859",
+    "position": "TE",
+    "price": 21
+   },
+   {
+    "playerId": "5846",
+    "position": "WR",
+    "price": 22
+   },
+   {
+    "playerId": "5967",
+    "position": "RB",
+    "price": 23
+   },
+   {
+    "playerId": "4881",
+    "position": "QB",
+    "price": 14
+   },
+   {
+    "playerId": "4039",
+    "position": "WR",
+    "price": 35
+   },
+   {
+    "playerId": "9758",
+    "position": "QB",
+    "price": 16
+   },
+   {
+    "playerId": "8138",
+    "position": "RB",
+    "price": 37
+   },
+   {
+    "playerId": "2309",
+    "position": "WR",
+    "price": 20
+   },
+   {
+    "playerId": "7569",
+    "position": "WR",
+    "price": 30
+   },
+   {
+    "playerId": "5012",
+    "position": "TE",
+    "price": 16
+   },
+   {
+    "playerId": "9502",
+    "position": "WR",
+    "price": 21
+   },
+   {
+    "playerId": "9501",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "11632",
+    "position": "WR",
+    "price": 19
+   },
+   {
+    "playerId": "6819",
+    "position": "WR",
+    "price": 17
+   },
+   {
+    "playerId": "9229",
+    "position": "QB",
+    "price": 14
+   },
+   {
+    "playerId": "4018",
+    "position": "RB",
+    "price": 25
+   },
+   {
+    "playerId": "10236",
+    "position": "TE",
+    "price": 20
+   },
+   {
+    "playerId": "4035",
+    "position": "RB",
+    "price": 21
+   },
+   {
+    "playerId": "8137",
+    "position": "WR",
+    "price": 19
+   },
+   {
+    "playerId": "5937",
+    "position": "WR",
+    "price": 4
+   },
+   {
+    "playerId": "7528",
+    "position": "RB",
+    "price": 22
+   },
+   {
+    "playerId": "8136",
+    "position": "RB",
+    "price": 33
+   },
+   {
+    "playerId": "6801",
+    "position": "WR",
+    "price": 28
+   },
+   {
+    "playerId": "6770",
+    "position": "QB",
+    "price": 9
+   },
+   {
+    "playerId": "11624",
+    "position": "WR",
+    "price": 6
+   },
+   {
+    "playerId": "1479",
+    "position": "WR",
+    "price": 8
+   },
+   {
+    "playerId": "4199",
+    "position": "RB",
+    "price": 22
+   },
+   {
+    "playerId": "4981",
+    "position": "WR",
+    "price": 18
+   },
+   {
+    "playerId": "9997",
+    "position": "WR",
+    "price": 18
+   },
+   {
+    "playerId": "7611",
+    "position": "RB",
+    "price": 16
+   },
+   {
+    "playerId": "5927",
+    "position": "WR",
+    "price": 15
+   },
+   {
+    "playerId": "9488",
+    "position": "WR",
+    "price": 11
+   },
+   {
+    "playerId": "2749",
+    "position": "RB",
+    "price": 16
+   },
+   {
+    "playerId": "8130",
+    "position": "TE",
+    "price": 11
+   },
+   {
+    "playerId": "6790",
+    "position": "RB",
+    "price": 13
+   },
+   {
+    "playerId": "8183",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "8139",
+    "position": "RB",
+    "price": 9
+   },
+   {
+    "playerId": "4037",
+    "position": "WR",
+    "price": 9
+   },
+   {
+    "playerId": "11620",
+    "position": "WR",
+    "price": 8
+   },
+   {
+    "playerId": "1426",
+    "position": "WR",
+    "price": 6
+   },
+   {
+    "playerId": "4217",
+    "position": "TE",
+    "price": 3
+   },
+   {
+    "playerId": "5022",
+    "position": "TE",
+    "price": 2
+   },
+   {
+    "playerId": "9756",
+    "position": "WR",
+    "price": 7
+   },
+   {
+    "playerId": "11586",
+    "position": "RB",
+    "price": 5
+   },
+   {
+    "playerId": "5849",
+    "position": "QB",
+    "price": 6
+   },
+   {
+    "playerId": "6804",
+    "position": "QB",
+    "price": 7
+   },
+   {
+    "playerId": "SF",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "5844",
+    "position": "TE",
+    "price": 3
+   },
+   {
+    "playerId": "4950",
+    "position": "WR",
+    "price": 7
+   },
+   {
+    "playerId": "10222",
+    "position": "WR",
+    "price": 11
+   },
+   {
+    "playerId": "6845",
+    "position": "RB",
+    "price": 10
+   },
+   {
+    "playerId": "10229",
+    "position": "WR",
+    "price": 21
+   },
+   {
+    "playerId": "11604",
+    "position": "TE",
+    "price": 2
+   },
+   {
+    "playerId": "11584",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "8228",
+    "position": "RB",
+    "price": 8
+   },
+   {
+    "playerId": "4082",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "6130",
+    "position": "RB",
+    "price": 9
+   },
+   {
+    "playerId": "96",
+    "position": "QB",
+    "price": 2
+   },
+   {
+    "playerId": "11635",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "CLE",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "7588",
+    "position": "RB",
+    "price": 10
+   },
+   {
+    "playerId": "5848",
+    "position": "WR",
+    "price": 5
+   },
+   {
+    "playerId": "7594",
+    "position": "RB",
+    "price": 3
+   },
+   {
+    "playerId": "5045",
+    "position": "WR",
+    "price": 7
+   },
+   {
+    "playerId": "8110",
+    "position": "TE",
+    "price": 2
+   },
+   {
+    "playerId": "DAL",
+    "position": "DEF",
+    "price": 2
+   },
+   {
+    "playerId": "3294",
+    "position": "QB",
+    "price": 2
+   },
+   {
+    "playerId": "8154",
+    "position": "RB",
+    "price": 11
+   },
+   {
+    "playerId": "PIT",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "11583",
+    "position": "RB",
+    "price": 6
+   },
+   {
+    "playerId": "11560",
+    "position": "QB",
+    "price": 3
+   },
+   {
+    "playerId": "11637",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "9224",
+    "position": "RB",
+    "price": 5
+   },
+   {
+    "playerId": "8167",
+    "position": "WR",
+    "price": 5
+   },
+   {
+    "playerId": "4381",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "7670",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "4033",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "BAL",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "6768",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "10232",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "5248",
+    "position": "RB",
+    "price": 4
+   },
+   {
+    "playerId": "4988",
+    "position": "RB",
+    "price": 5
+   },
+   {
+    "playerId": "8134",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "6826",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "8121",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11631",
+    "position": "WR",
+    "price": 7
+   },
+   {
+    "playerId": "7021",
+    "position": "RB",
+    "price": 3
+   },
+   {
+    "playerId": "6943",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "11589",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "8129",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "8132",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "8143",
+    "position": "RB",
+    "price": 7
+   },
+   {
+    "playerId": "9508",
+    "position": "RB",
+    "price": 6
+   },
+   {
+    "playerId": "3164",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "8148",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "5947",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "2374",
+    "position": "WR",
+    "price": 3
+   },
+   {
+    "playerId": "4663",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "6797",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "11625",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "5987",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11566",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "6806",
+    "position": "RB",
+    "price": 3
+   },
+   {
+    "playerId": "6783",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "7523",
+    "position": "QB",
+    "price": 2
+   },
+   {
+    "playerId": "4068",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11640",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11626",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11439",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "2197",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11643",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11619",
+    "position": "WR",
+    "price": 2
+   },
+   {
+    "playerId": "5001",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "NYJ",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "9753",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "5995",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "8676",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "9486",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "8119",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "8230",
+    "position": "RB",
+    "price": 2
+   },
+   {
+    "playerId": "7090",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "9757",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "7002",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "11576",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "8172",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "3163",
+    "position": "QB",
+    "price": 2
+   },
+   {
+    "playerId": "11630",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "7600",
+    "position": "TE",
+    "price": 1
+   },
+   {
+    "playerId": "8408",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "CIN",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "11581",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "1166",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "9500",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "7593",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11638",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "1689",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "421",
+    "position": "QB",
+    "price": 1
+   },
+   {
+    "playerId": "9754",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11647",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "6945",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11577",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11617",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11575",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "11627",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "7571",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "7608",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "IND",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "11655",
+    "position": "RB",
+    "price": 1
+   },
+   {
+    "playerId": "5970",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "PHI",
+    "position": "DEF",
+    "price": 1
+   },
+   {
+    "playerId": "11650",
+    "position": "WR",
+    "price": 1
+   },
+   {
+    "playerId": "11579",
+    "position": "RB",
+    "price": 1
+   }
+  ]
+ }
+]

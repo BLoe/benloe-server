@@ -28,6 +28,13 @@ export interface LeagueRow {
   myTeamId: string | null;
   capturedAt: number;
   draftStartTime: number | null;
+  /** What the prices were calibrated against, or null if nothing. */
+  calibration: Calibration | null;
+}
+
+export interface Calibration {
+  source: string;
+  seasons: string[];
 }
 
 export function openDb(path: string) {
@@ -46,7 +53,8 @@ export function openDb(path: string) {
       teams_json    TEXT NOT NULL,
       my_team_id    TEXT,
       captured_at   INTEGER NOT NULL,
-      draft_start   INTEGER
+      draft_start   INTEGER,
+      calibration   TEXT
     );
 
     CREATE TABLE IF NOT EXISTS picks (
@@ -63,11 +71,15 @@ export function openDb(path: string) {
     CREATE INDEX IF NOT EXISTS picks_league ON picks (league_id, id);
   `);
 
-  // Databases created before keepers existed need the column adding; SQLite has
+  // Databases created before these columns existed need them adding; SQLite has
   // no IF NOT EXISTS for ALTER, so ask first.
-  const columns = db.prepare(`PRAGMA table_info(picks)`).all() as Array<{ name: string }>;
-  if (!columns.some((c) => c.name === 'keeper')) {
+  const pickCols = db.prepare(`PRAGMA table_info(picks)`).all() as Array<{ name: string }>;
+  if (!pickCols.some((c) => c.name === 'keeper')) {
     db.exec(`ALTER TABLE picks ADD COLUMN keeper INTEGER NOT NULL DEFAULT 0`);
+  }
+  const leagueCols = db.prepare(`PRAGMA table_info(leagues)`).all() as Array<{ name: string }>;
+  if (!leagueCols.some((c) => c.name === 'calibration')) {
+    db.exec(`ALTER TABLE leagues ADD COLUMN calibration TEXT`);
   }
 
   return db;
@@ -77,15 +89,16 @@ export type Db = ReturnType<typeof openDb>;
 
 export function upsertLeague(db: Db, row: LeagueRow): void {
   db.prepare(
-    `INSERT INTO leagues (id, name, config, values_json, teams_json, my_team_id, captured_at, draft_start)
-     VALUES (@id, @name, @config, @values_json, @teams_json, @my_team_id, @captured_at, @draft_start)
+    `INSERT INTO leagues (id, name, config, values_json, teams_json, my_team_id, captured_at, draft_start, calibration)
+     VALUES (@id, @name, @config, @values_json, @teams_json, @my_team_id, @captured_at, @draft_start, @calibration)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        config = excluded.config,
        values_json = excluded.values_json,
        teams_json = excluded.teams_json,
        captured_at = excluded.captured_at,
-       draft_start = excluded.draft_start`
+       draft_start = excluded.draft_start,
+       calibration = excluded.calibration`
   ).run({
     id: row.id,
     name: row.name,
@@ -95,6 +108,7 @@ export function upsertLeague(db: Db, row: LeagueRow): void {
     my_team_id: row.myTeamId,
     captured_at: row.capturedAt,
     draft_start: row.draftStartTime,
+    calibration: row.calibration ? JSON.stringify(row.calibration) : null,
   });
 }
 
@@ -118,6 +132,7 @@ function hydrate(row: any): LeagueRow {
     myTeamId: row.my_team_id ?? null,
     capturedAt: row.captured_at,
     draftStartTime: row.draft_start ?? null,
+    calibration: row.calibration ? JSON.parse(row.calibration) : null,
   };
 }
 

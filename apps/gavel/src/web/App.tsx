@@ -205,6 +205,25 @@ function Draft() {
 
         <RoomBar state={state} />
 
+        {/*
+          Say what the prices rest on. A board that quietly implies it knows
+          this league's history when it does not is the worst thing this app
+          could ship, because every number on it looks identical either way.
+        */}
+        <span
+          className="fig"
+          title={
+            league.calibration
+              ? `Prices calibrated against ${league.calibration.source} (${league.calibration.seasons.join(', ')})`
+              : 'Model prices only — no auction history or market data for this league'
+          }
+          style={{ color: league.calibration ? 'var(--dim)' : 'var(--warn)', fontSize: 11 }}
+        >
+          {league.calibration
+            ? `calibrated · ${league.calibration.seasons.join(', ')}`
+            : 'uncalibrated'}
+        </span>
+
         <div className="ml-auto flex items-center gap-3">
           {unsynced > 0 && (
             <span
