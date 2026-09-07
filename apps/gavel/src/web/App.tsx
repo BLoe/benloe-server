@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PlayerValue } from '../lib/valuation.js';
 import { fetchLeagues, fetchMe, useLeague, type LeagueSummary } from './store.js';
-import { Board, Drafted, ManagersDialog, MyTeam, RoomBar } from './panels.js';
+import { Board, Drafted, MyTeam, RoomBar, TeamPickerDialog } from './panels.js';
 import { PickModal, type PickTarget } from './PickModal.js';
 
 export default function App() {
@@ -78,7 +78,15 @@ function Draft() {
   const [leagues, setLeagues] = useState<LeagueSummary[]>([]);
   const [filter, setFilter] = useState('');
   const [target, setTarget] = useState<PickTarget | null>(null);
-  const [managers, setManagers] = useState(false);
+  const [teamPicker, setTeamPicker] = useState(false);
+  /**
+   * Keeper entry is a MODE, not a different screen: the same board, the same
+   * click, the same dialog. Only the wording and the flag on the pick change.
+   * It is deliberately conspicuous while on, because a keeper entered during a
+   * live draft — or a live pick entered while still in keeper mode — is a
+   * silent error in the money.
+   */
+  const [keeperMode, setKeeperMode] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
   useEffect(() => {
@@ -106,14 +114,15 @@ function Draft() {
       const existing = target?.existing;
       // A correction is a removal and a re-entry: the pick log is append-only
       // and every number is a fold over it, so there is nothing else to update.
+      const asKeeper = existing ? !!existing.keeper : keeperMode;
       if (existing) removePick(existing.seq);
-      addPick(playerId, teamId, price);
-      setFlash(`${player?.name ?? 'Player'} — $${price}`);
+      addPick(playerId, teamId, price, asKeeper);
+      setFlash(`${player?.name ?? 'Player'} — $${price}${asKeeper ? ' (keeper)' : ''}`);
       setTimeout(() => setFlash(null), 2000);
       setTarget(null);
       setFilter('');
     },
-    [addPick, removePick, league, target]
+    [addPick, removePick, league, target, keeperMode]
   );
 
   const remove = useCallback(
@@ -136,7 +145,7 @@ function Draft() {
       if (e.key === 'Escape' && !typing) {
         setFilter('');
         setTarget(null);
-        setManagers(false);
+        setTeamPicker(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -147,6 +156,8 @@ function Draft() {
     () => leagues.find((l) => l.id === leagueId),
     [leagues, leagueId]
   );
+
+  const myTeamName = league?.teams.find((t) => t.teamId === league.myTeamId)?.name;
 
   if (loading) return <Splash>Loading board…</Splash>;
   if (!league || !state) {
@@ -208,8 +219,19 @@ function Draft() {
               ⟳ {unsynced} unsynced
             </span>
           )}
-          <button onClick={() => setManagers(true)} className="px-2 py-1" style={{ color: 'var(--muted)' }}>
-            Managers
+          <button
+            onClick={() => setKeeperMode((k) => !k)}
+            className="px-2 py-1"
+            style={{
+              color: keeperMode ? '#14110e' : 'var(--muted)',
+              background: keeperMode ? 'var(--brass)' : 'transparent',
+              fontWeight: keeperMode ? 600 : 400,
+            }}
+          >
+            {keeperMode ? 'Done with keepers' : `Keepers${state.keepers.length ? ` (${state.keepers.length})` : ''}`}
+          </button>
+          <button onClick={() => setTeamPicker(true)} className="px-2 py-1" style={{ color: 'var(--muted)' }}>
+            {myTeamName ?? 'Your team'}
           </button>
           <span style={{ color: 'var(--dim)', fontSize: 11 }}>
             <kbd>ctrl+z</kbd> undo
@@ -217,9 +239,22 @@ function Draft() {
         </div>
       </header>
 
+      {keeperMode && (
+        <div
+          className="shrink-0 px-3 py-1 flex items-center gap-3"
+          style={{ background: 'var(--brass)', color: '#14110e', fontWeight: 600 }}
+        >
+          <span>Entering keepers</span>
+          <span style={{ fontWeight: 400 }}>
+            Click each kept player and record what he costs his manager. These come off the board
+            and out of that manager's budget, exactly like a live purchase.
+          </span>
+        </div>
+      )}
+
       {flash && (
         <div className="shrink-0 px-1" style={{ color: 'var(--good)' }}>
-          Drafted: {flash}
+          {flash.includes('(keeper)') ? 'Kept' : 'Drafted'}: {flash.replace(' (keeper)', '')}
         </div>
       )}
 
@@ -240,18 +275,19 @@ function Draft() {
           teams={league.teams}
           state={state}
           config={league.config}
+          keeper={target.existing ? !!target.existing.keeper : keeperMode}
           onSubmit={submit}
           onRemove={remove}
           onClose={() => setTarget(null)}
         />
       )}
 
-      {managers && (
-        <ManagersDialog
+      {teamPicker && (
+        <TeamPickerDialog
           league={league}
           onSetMyTeam={setMyTeam}
           onSaveTeams={saveTeams}
-          onClose={() => setManagers(false)}
+          onClose={() => setTeamPicker(false)}
         />
       )}
     </div>

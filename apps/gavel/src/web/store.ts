@@ -138,7 +138,12 @@ export function useLeague(leagueId: string | null) {
         try {
           const res = await api<{ pick: Pick }>(`/league/${leagueId}/picks`, {
             method: 'POST',
-            body: JSON.stringify({ playerId: p.playerId, teamId: p.teamId, price: p.price }),
+            body: JSON.stringify({
+              playerId: p.playerId,
+              teamId: p.teamId,
+              price: p.price,
+              keeper: !!p.keeper,
+            }),
           });
           sent.push(p.playerId);
           realSeq.set(p.playerId, res.pick.seq);
@@ -178,7 +183,7 @@ export function useLeague(leagueId: string | null) {
   }, [flush]);
 
   const addPick = useCallback(
-    (playerId: string, teamId: string, price: number) => {
+    (playerId: string, teamId: string, price: number, keeper = false) => {
       if (!leagueId) return;
       // Applied to the screen before anything is sent. This is the whole point.
       const optimistic: PendingPick = {
@@ -187,6 +192,7 @@ export function useLeague(leagueId: string | null) {
         teamId,
         price,
         at: Date.now(),
+        keeper,
         pending: true,
       };
       setPicks((prev) => [...prev, optimistic]);

@@ -26,6 +26,17 @@ price (prefilled with the board value and selected) and a manager type-ahead.
 Clicking an already-drafted player reopens the same dialog to correct or
 undraft. There is no other way to record a pick, and there should not be.
 
+**A keeper is a pick.** Player, price, team — entered through the same click and
+the same dialog, under a conspicuous mode toggled from the header. It gets a
+`keeper` flag so it can be labelled, and nothing else about it is special: the
+salary comes out of that manager's budget and the roster spot out of their
+slots because it is in the same pick log everything else folds over.
+
+  An earlier version modelled keepers as `committed` dollars and `keeperSlots`
+  on the manager record. That was wrong twice over: two sets of numbers to keep
+  in agreement, and the kept player stayed on the board as though available.
+  Do not reintroduce it. `TeamMeta` is a team id and a name, and that is all.
+
 Its siblings over the same sport are League Desk (`sleeper-ui`, entity browser)
 and Waker (`waker`, decision feed). Gavel is neither: it exists for the ninety
 minutes of a draft and is organised around **one keystroke sequence and one
@@ -70,7 +81,7 @@ src/web/
   index.css             THE design system. Colour and type live here.
   store.ts              local-first pick queue + sync. Derives state in-browser.
   search.ts             entry-bar player ranking
-  panels.tsx            Board, Drafted, MyTeam, ManagersDialog, RoomBar
+  panels.tsx            Board, Drafted, MyTeam, TeamPickerDialog, RoomBar
   PickModal.tsx         the ONLY way a pick is entered (the hot path)
   App.tsx               shell, filter, dialog wiring
 
@@ -178,7 +189,7 @@ one that admits a gap:
 
 ```
 npm run typecheck    # must be clean
-npm test             # 31 unit tests, pure, no network
+npm test             # 32 unit tests, pure, no network
 npm run verify       # drives a real draft in a browser from the keyboard
 npm run check        # all three
 ```
@@ -212,9 +223,10 @@ pm2 delete gavel-api && pm2 start ecosystem.config.cjs   # if GAVEL_LEAGUES chan
 league to `GAVEL_LEAGUES` and restarting looks like it worked and silently
 serves the old list.
 
-Team names and keeper salaries are entered in the app (the Room panel's `edit`),
-not in the definition file — no platform reports a keeper's auction salary
-reliably, and keeper money moves every price in the league.
+Team names are renamed in the app (Your team -> Rename managers), and keepers
+are entered as picks in keeper mode. Neither belongs in the definition file: no
+platform reports a keeper's auction salary reliably, and keeper money moves
+every price in the league.
 
 Re-running the snapshot mid-draft is pointless and the server never does it on a
 request. Run it a few hours before, not during.

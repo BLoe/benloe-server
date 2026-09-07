@@ -28,6 +28,7 @@ export function PickModal({
   teams,
   state,
   config,
+  keeper,
   onSubmit,
   onRemove,
   onClose,
@@ -36,6 +37,8 @@ export function PickModal({
   teams: TeamMeta[];
   state: DraftState;
   config: LeagueConfig;
+  /** Entering keepers rather than live picks. Same fields, different wording. */
+  keeper?: boolean;
   onSubmit: (playerId: string, teamId: string, price: number) => void;
   onRemove: (seq: number) => void;
   onClose: () => void;
@@ -84,7 +87,7 @@ export function PickModal({
         style={{ width: 460, borderColor: 'var(--brass)' }}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
-        aria-label={`Mark ${player.name} drafted`}
+        aria-label={`${keeper ? 'Keep' : 'Mark'} ${player.name} ${keeper ? 'at' : 'drafted'}`}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
             e.preventDefault();
@@ -151,7 +154,7 @@ export function PickModal({
               ref={teamRef}
               aria-label="Team"
               value={teamQuery}
-              placeholder="type a manager"
+              placeholder={keeper ? 'type the keeping manager' : 'type a manager'}
               onChange={(e) => {
                 setTeamQuery(e.target.value);
                 setCursor(0);
@@ -219,7 +222,7 @@ export function PickModal({
             className={existing ? 'px-3 py-1' : 'ml-auto px-3 py-1'}
             style={{ background: 'var(--brass)', color: '#14110e', fontWeight: 600 }}
           >
-            {existing ? 'Update' : 'Mark drafted'}
+            {existing ? 'Update' : keeper ? 'Save keeper' : 'Mark drafted'}
           </button>
         </div>
       </div>

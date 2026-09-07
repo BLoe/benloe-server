@@ -56,11 +56,19 @@ export function openDb(path: string) {
       team_id    TEXT NOT NULL,
       price      INTEGER NOT NULL,
       at         INTEGER NOT NULL,
-      voided     INTEGER NOT NULL DEFAULT 0
+      voided     INTEGER NOT NULL DEFAULT 0,
+      keeper     INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS picks_league ON picks (league_id, id);
   `);
+
+  // Databases created before keepers existed need the column adding; SQLite has
+  // no IF NOT EXISTS for ALTER, so ask first.
+  const columns = db.prepare(`PRAGMA table_info(picks)`).all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === 'keeper')) {
+    db.exec(`ALTER TABLE picks ADD COLUMN keeper INTEGER NOT NULL DEFAULT 0`);
+  }
 
   return db;
 }
@@ -124,7 +132,9 @@ export function setTeams(db: Db, leagueId: string, teams: TeamMeta[]): void {
 /** The live pick list — voided rows are excluded, and `seq` is the row id. */
 export function listPicks(db: Db, leagueId: string): Pick[] {
   const rows = db
-    .prepare(`SELECT id, player_id, team_id, price, at FROM picks WHERE league_id = ? AND voided = 0 ORDER BY id`)
+    .prepare(
+      `SELECT id, player_id, team_id, price, at, keeper FROM picks WHERE league_id = ? AND voided = 0 ORDER BY id`
+    )
     .all(leagueId) as any[];
   return rows.map((r) => ({
     seq: r.id,
@@ -132,20 +142,21 @@ export function listPicks(db: Db, leagueId: string): Pick[] {
     teamId: r.team_id,
     price: r.price,
     at: r.at,
+    keeper: !!r.keeper,
   }));
 }
 
 export function addPick(
   db: Db,
   leagueId: string,
-  pick: { playerId: string; teamId: string; price: number }
+  pick: { playerId: string; teamId: string; price: number; keeper?: boolean }
 ): Pick {
   const at = Date.now();
   const info = db
     .prepare(
-      `INSERT INTO picks (league_id, player_id, team_id, price, at) VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO picks (league_id, player_id, team_id, price, at, keeper) VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(leagueId, pick.playerId, pick.teamId, pick.price, at);
+    .run(leagueId, pick.playerId, pick.teamId, pick.price, at, pick.keeper ? 1 : 0);
   return { seq: Number(info.lastInsertRowid), ...pick, at };
 }
 
@@ -161,12 +172,19 @@ export function voidPick(db: Db, leagueId: string, seq: number): boolean {
 export function voidLastPick(db: Db, leagueId: string): Pick | null {
   const row = db
     .prepare(
-      `SELECT id, player_id, team_id, price, at FROM picks WHERE league_id = ? AND voided = 0 ORDER BY id DESC LIMIT 1`
+      `SELECT id, player_id, team_id, price, at, keeper FROM picks WHERE league_id = ? AND voided = 0 ORDER BY id DESC LIMIT 1`
     )
     .get(leagueId) as any;
   if (!row) return null;
   voidPick(db, leagueId, row.id);
-  return { seq: row.id, playerId: row.player_id, teamId: row.team_id, price: row.price, at: row.at };
+  return {
+    seq: row.id,
+    playerId: row.player_id,
+    teamId: row.team_id,
+    price: row.price,
+    at: row.at,
+    keeper: !!row.keeper,
+  };
 }
 
 export function editPick(

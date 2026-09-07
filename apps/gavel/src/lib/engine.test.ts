@@ -288,12 +288,30 @@ describe('live draft state', () => {
     expect(benchOpen).toBe(SLOTS.BN - 2);
   });
 
-  it('counts keeper salaries and keeper slots against the budget', () => {
-    const withKeeper = [{ teamId: 't0', name: 'Team 0', committed: 45, keeperSlots: 2 }, ...teams.slice(1)];
-    const state = deriveState([], withKeeper, values, COLUMBUS);
+  it('treats a keeper as a pick, counted exactly once', () => {
+    // A keeper IS a purchase: a player, a price, a team. Modelling it as a
+    // separate pot of "committed dollars" on the manager meant two sets of
+    // numbers to keep in agreement, and the kept player stayed on the board.
+    const kept: Pick = { seq: 1, playerId: 'RB0', teamId: 't0', price: 30, at: 0, keeper: true };
+    const bought: Pick = { seq: 2, playerId: 'WR0', teamId: 't0', price: 15, at: 0 };
+    const state = deriveState([kept, bought], teams, values, COLUMBUS);
     const me = state.teams.find((t) => t.teamId === 't0')!;
+
+    expect(me.spent).toBe(45);
     expect(me.remaining).toBe(155);
     expect(me.openSlots).toBe(14);
+    // And the kept player is off the board like any other.
+    expect(state.drafted.has('RB0')).toBe(true);
+    expect(state.keepers.map((k) => k.playerId)).toEqual(['RB0']);
+  });
+
+  it('counts a keeper against the room, not just its own team', () => {
+    // Keeper money leaving the room is what makes everyone else's prices move.
+    const kept: Pick = { seq: 1, playerId: 'RB0', teamId: 't0', price: 30, at: 0, keeper: true };
+    const withKeeper = deriveState([kept], teams, values, COLUMBUS);
+    const empty = deriveState([], teams, values, COLUMBUS);
+    expect(withKeeper.moneyLeft).toBe(empty.moneyLeft - 30);
+    expect(withKeeper.slotsLeft).toBe(empty.slotsLeft - 1);
   });
 
   it('reads inflation above one when the room has money left over', () => {

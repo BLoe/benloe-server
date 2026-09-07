@@ -29,8 +29,19 @@ correct the price, move him to another manager, or undraft him. `Ctrl+Z` undoes
 the last one. The filter box at the top narrows the columns to find a name fast;
 it never records anything.
 
-**Managers** sets who is in the league, which team is yours, and what any
-keepers cost them.
+**Your team** in the header picks which manager you are — click a name and the
+dialog closes. It is also where a league's managers get renamed, for a league
+whose names could not be read from the platform.
+
+## Keepers
+
+**Keepers** in the header turns on keeper entry. Click each kept player and
+record what he costs his manager, exactly as you would a live purchase — a
+keeper is a pick. He comes off the board marked `K`, his salary comes out of
+that manager's budget, and his roster spot out of their slots.
+
+Do this before the draft starts. Cheap keepers leave more money in the room
+chasing fewer players, and the board's prices will say so.
 
 ## What the numbers mean
 
