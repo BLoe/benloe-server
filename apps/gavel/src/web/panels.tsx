@@ -186,7 +186,7 @@ export function Board({
   return (
     // `min-w-0` is load-bearing: without it this flex item refuses to shrink
     // below its content width and pushes the sidebar off a 1280px screen.
-    <div className="flex gap-2 min-h-0 flex-1 min-w-0">
+    <div className="flex gap-2 min-h-0 flex-1 min-w-0" data-testid="board">
       {columns.map((pos) => (
         <Column
           key={pos}
@@ -476,6 +476,74 @@ export function TeamPickerDialog({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The ticker: the last few sales, newest first, always on screen.
+ *
+ * It replaced a green confirmation that appeared for two seconds and then
+ * vanished. During a live auction that is exactly backwards — the moment you
+ * need to check what was just entered is a minute later, when the next lot is
+ * already up and you are half sure you typed the wrong manager. A standing
+ * record of the last few costs one line and answers that without a click.
+ *
+ * Entries are clickable, like everything else that represents a pick, so the
+ * correction is where the doubt is.
+ */
+export function Ticker({
+  league,
+  state,
+  onSelect,
+}: {
+  league: LeaguePayload;
+  state: DraftState;
+  onSelect: (player: PlayerValue) => void;
+}) {
+  const byId = new Map(league.values.map((v) => [v.id, v]));
+  const teamName = new Map(league.teams.map((t) => [t.teamId, t.name]));
+  const recent = [...state.picks].reverse().slice(0, 14);
+
+  return (
+    <div
+      className="sheet shrink-0 flex items-center gap-0 overflow-x-auto"
+      style={{ height: 30 }}
+      aria-label="Recent picks"
+    >
+      <span className="label px-2 shrink-0" style={{ borderRight: '1px solid var(--rule)' }}>
+        Last
+      </span>
+      {recent.length === 0 && (
+        <span className="px-3 shrink-0" style={{ color: 'var(--dim)' }}>
+          Nothing sold yet.
+        </span>
+      )}
+      {recent.map((pick) => {
+        const player = byId.get(pick.playerId);
+        return (
+          <button
+            key={pick.seq}
+            onClick={() => player && onSelect(player)}
+            title="Correct this pick"
+            className="flex items-baseline gap-2 px-3 shrink-0 hover:bg-raised h-full"
+            style={{ borderRight: '1px solid var(--rule)' }}
+          >
+            <span className="fig" style={{ color: 'var(--brass)', fontWeight: 600 }}>
+              {money(pick.price)}
+            </span>
+            <span style={{ whiteSpace: 'nowrap' }}>{player?.name ?? pick.playerId}</span>
+            {pick.keeper && (
+              <span className="fig" title="Kept, not drafted" style={{ color: 'var(--brass)', fontSize: 9 }}>
+                K
+              </span>
+            )}
+            <span style={{ color: 'var(--muted)', whiteSpace: 'nowrap', fontSize: 11 }}>
+              {teamName.get(pick.teamId) ?? '?'}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

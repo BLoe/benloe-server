@@ -81,7 +81,7 @@ src/web/
   index.css             THE design system. Colour and type live here.
   store.ts              local-first pick queue + sync. Derives state in-browser.
   search.ts             entry-bar player ranking
-  panels.tsx            Board, Drafted, MyTeam, TeamPickerDialog, RoomBar
+  panels.tsx            Board, Ticker, Drafted, MyTeam, TeamPickerDialog, RoomBar
   PickModal.tsx         the ONLY way a pick is entered (the hot path)
   App.tsx               shell, filter, dialog wiring
 
@@ -136,6 +136,10 @@ Every one of these cost real time here.
 
 ### The browser
 
+- **A player's name appears in three places** — the board, the ticker and the
+  Drafted panel — and the ticker precedes the board in the DOM. Any harness
+  lookup for a board row must be scoped to `getByTestId('board')`; an unscoped
+  `getByRole('button', { name: /Player/ }).first()` silently tests the ticker.
 - **`text=` matches rendered text, never a placeholder attribute.** Waiting on
   `text=Nominate` timed out for fifteen seconds against a perfectly healthy
   board. Use `getByPlaceholder`.

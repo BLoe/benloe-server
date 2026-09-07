@@ -24,8 +24,13 @@ click → price → Enter → manager → Enter
 The price box opens prefilled with the board value and selected, so if the
 player went for what he was worth, two Enters are the whole pick.
 
-Click an already-drafted player — on the board or in the Drafted list — to
-correct the price, move him to another manager, or undraft him. `Ctrl+Z` undoes
+The ticker under the header keeps the last fourteen sales on screen — price,
+player, manager — so you can check what you just entered a minute after you
+entered it.
+
+Click an already-drafted player — on the board, in the ticker, or in the
+Drafted list — to correct the price, move him to another manager, or undraft
+him. `Ctrl+Z` undoes
 the last one. The filter box at the top narrows the columns to find a name fast;
 it never records anything.
 
