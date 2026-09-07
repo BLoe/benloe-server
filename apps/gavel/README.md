@@ -24,6 +24,12 @@ click → price → Enter → manager → Enter
 The price box opens prefilled with the board value and selected, so if the
 player went for what he was worth, two Enters are the whole pick.
 
+A sold player is barred out in black on the board — still fully readable, with
+what was paid, how far that was from projection, and who bought him. The price
+reads **blue under projection, red over**, in the ticker and the Drafted list
+too. Every comparison is against the pre-draft projection, so a purchase never
+changes colour as the room spends.
+
 The ticker under the header keeps the last fourteen sales on screen — price,
 player, manager — so you can check what you just entered a minute after you
 entered it.

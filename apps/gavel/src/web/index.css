@@ -34,6 +34,22 @@
   --brass: #d9a441;
   /* Reserved: something with a live clock on it — the lot currently up. */
   --live: #e2564a;
+
+  /*
+   * A sold row is barred out in black and stays fully legible — the record of
+   * who has gone is half of what this board is for, so it must not be dimmed
+   * into unreadability.
+   */
+  --taken: #000000;
+  --taken-ink: #ffffff;
+
+  /*
+   * Paid against projection. Blue under, red over — deliberately NOT red/green,
+   * which is the one pair a deuteranope cannot separate at all, and this is the
+   * fastest scan on the board.
+   */
+  --under: #5c9ded;
+  --over: #e8635a;
   --good: #7fb069;
   --warn: #e0a33e;
   --bad: #c4574c;
@@ -142,9 +158,18 @@ select:focus {
   background: var(--dim);
 }
 
-/* A drafted player stays visible but stops competing for attention. */
-.gone {
-  opacity: 0.28;
+/*
+ * A sold player is barred out, not faded out. The bar is unmissable at a glance
+ * from a second monitor; the name stays white and fully readable, because
+ * "who has already gone" is a question this board gets asked constantly.
+ */
+.taken {
+  background: var(--taken);
+  color: var(--taken-ink);
+}
+
+.taken:hover {
+  background: #111;
 }
 
 kbd {
