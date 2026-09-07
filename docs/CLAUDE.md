@@ -192,7 +192,8 @@ root, and nothing stops a process allowed to use a secret from exercising it).
 | kickball-api | 3009 | apps/kickball | Kickball lineups |
 | sleeper-ui | 3010 | apps/sleeper-ui | Sleeper League Desk |
 | benloe-secrets | 3011 | apps/benloe-secrets | Server-wide encrypted secret store |
-| waker-api | 3012 | apps/waker | Waker — fantasy decision desk (next free port: 3013) |
+| waker-api | 3012 | apps/waker | Waker — fantasy decision desk |
+| gavel-api | 3013 | apps/gavel | Gavel — auction draft board (next free port: 3014) |
 
 Check services: `pm2 list`
 
@@ -233,6 +234,8 @@ the app's file before working in it; this one only covers the box.
   data misleads, and on the chat/token access rules, which are security-shaped.
 - `apps/waker/CLAUDE.md` — Waker, the fantasy decision desk. Dense on the data
   joins and on the ways Sleeper's and nflverse's data mislead.
+- `apps/gavel/CLAUDE.md` — Gavel, the live auction draft board. Dense on the
+  value model and on why nothing on its critical path may touch the network.
 
 The two are siblings over the same league and are deliberately kept distinct:
 League Desk browses entities, Waker is organised by decision. A change that
