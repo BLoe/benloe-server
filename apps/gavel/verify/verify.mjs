@@ -218,6 +218,18 @@ async function main() {
       pass('the ticker still shows the pick seconds later');
     }
 
+    // Clipped, not scrolled: the Drafted panel is where the full record lives,
+    // and a scrollbar here sent you looking in the wrong place.
+    const tickerScroll = await ticker.evaluate((el) => ({
+      overflowX: getComputedStyle(el).overflowX,
+      scrollable: el.scrollWidth - el.clientWidth,
+    }));
+    if (tickerScroll.overflowX !== 'hidden') {
+      fail(`the ticker should clip rather than scroll, got overflow-x: ${tickerScroll.overflowX}`);
+    } else {
+      pass('the ticker clips rather than scrolling');
+    }
+
     // ---- the drafted player is struck through on the board ----
     await filter.fill('gibbs');
     await page.waitForTimeout(350);
