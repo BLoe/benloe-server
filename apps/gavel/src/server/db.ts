@@ -16,16 +16,12 @@ import { dirname } from 'node:path';
 import type { LeagueConfig } from '../lib/league.js';
 import type { PlayerValue } from '../lib/valuation.js';
 import type { Pick } from '../lib/draft.js';
-import type { TeamMeta } from '../lib/draft.js';
 
 export interface LeagueRow {
   id: string;
   name: string;
   config: LeagueConfig;
   values: PlayerValue[];
-  teams: TeamMeta[];
-  /** The team the board belongs to — "my" needs and budget are highlighted. */
-  myTeamId: string | null;
   capturedAt: number;
   draftStartTime: number | null;
   /** What the prices were calibrated against, or null if nothing. */
@@ -50,7 +46,7 @@ export function openDb(path: string) {
       name          TEXT NOT NULL,
       config        TEXT NOT NULL,
       values_json   TEXT NOT NULL,
-      teams_json    TEXT NOT NULL,
+      teams_json    TEXT,
       my_team_id    TEXT,
       captured_at   INTEGER NOT NULL,
       draft_start   INTEGER,
@@ -61,11 +57,12 @@ export function openDb(path: string) {
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       league_id  TEXT NOT NULL,
       player_id  TEXT NOT NULL,
-      team_id    TEXT NOT NULL,
+      team_id    TEXT,
       price      INTEGER NOT NULL,
       at         INTEGER NOT NULL,
       voided     INTEGER NOT NULL DEFAULT 0,
-      keeper     INTEGER NOT NULL DEFAULT 0
+      keeper     INTEGER NOT NULL DEFAULT 0,
+      mine       INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS picks_league ON picks (league_id, id);
@@ -76,6 +73,27 @@ export function openDb(path: string) {
   const pickCols = db.prepare(`PRAGMA table_info(picks)`).all() as Array<{ name: string }>;
   if (!pickCols.some((c) => c.name === 'keeper')) {
     db.exec(`ALTER TABLE picks ADD COLUMN keeper INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!pickCols.some((c) => c.name === 'mine')) {
+    db.exec(`ALTER TABLE picks ADD COLUMN mine INTEGER NOT NULL DEFAULT 0`);
+    /*
+     * Backfill from the old model before it is unreachable.
+     *
+     * Picks used to name the buying manager, and the league recorded which of
+     * those was yours. A completed draft is sitting in this table; defaulting
+     * every row to "not mine" would silently erase which fifteen players were
+     * actually won. This runs exactly once, at the moment the column appears.
+     */
+    const filled = db
+      .prepare(
+        `UPDATE picks SET mine = 1
+          WHERE team_id IS NOT NULL
+            AND team_id = (SELECT my_team_id FROM leagues WHERE leagues.id = picks.league_id)`
+      )
+      .run();
+    if (filled.changes > 0) {
+      console.log(`[gavel] backfilled ${filled.changes} pick(s) as yours from the old team model`);
+    }
   }
   const leagueCols = db.prepare(`PRAGMA table_info(leagues)`).all() as Array<{ name: string }>;
   if (!leagueCols.some((c) => c.name === 'calibration')) {
@@ -89,13 +107,12 @@ export type Db = ReturnType<typeof openDb>;
 
 export function upsertLeague(db: Db, row: LeagueRow): void {
   db.prepare(
-    `INSERT INTO leagues (id, name, config, values_json, teams_json, my_team_id, captured_at, draft_start, calibration)
-     VALUES (@id, @name, @config, @values_json, @teams_json, @my_team_id, @captured_at, @draft_start, @calibration)
+    `INSERT INTO leagues (id, name, config, values_json, captured_at, draft_start, calibration)
+     VALUES (@id, @name, @config, @values_json, @captured_at, @draft_start, @calibration)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        config = excluded.config,
        values_json = excluded.values_json,
-       teams_json = excluded.teams_json,
        captured_at = excluded.captured_at,
        draft_start = excluded.draft_start,
        calibration = excluded.calibration`
@@ -104,8 +121,6 @@ export function upsertLeague(db: Db, row: LeagueRow): void {
     name: row.name,
     config: JSON.stringify(row.config),
     values_json: JSON.stringify(row.values),
-    teams_json: JSON.stringify(row.teams),
-    my_team_id: row.myTeamId,
     captured_at: row.capturedAt,
     draft_start: row.draftStartTime,
     calibration: row.calibration ? JSON.stringify(row.calibration) : null,
@@ -128,50 +143,42 @@ function hydrate(row: any): LeagueRow {
     name: row.name,
     config: JSON.parse(row.config),
     values: JSON.parse(row.values_json),
-    teams: JSON.parse(row.teams_json),
-    myTeamId: row.my_team_id ?? null,
     capturedAt: row.captured_at,
     draftStartTime: row.draft_start ?? null,
     calibration: row.calibration ? JSON.parse(row.calibration) : null,
   };
 }
 
-export function setMyTeam(db: Db, leagueId: string, teamId: string | null): void {
-  db.prepare(`UPDATE leagues SET my_team_id = ? WHERE id = ?`).run(teamId, leagueId);
-}
 
-export function setTeams(db: Db, leagueId: string, teams: TeamMeta[]): void {
-  db.prepare(`UPDATE leagues SET teams_json = ? WHERE id = ?`).run(JSON.stringify(teams), leagueId);
-}
 
 /** The live pick list — voided rows are excluded, and `seq` is the row id. */
 export function listPicks(db: Db, leagueId: string): Pick[] {
   const rows = db
     .prepare(
-      `SELECT id, player_id, team_id, price, at, keeper FROM picks WHERE league_id = ? AND voided = 0 ORDER BY id`
+      `SELECT id, player_id, price, at, keeper, mine FROM picks WHERE league_id = ? AND voided = 0 ORDER BY id`
     )
     .all(leagueId) as any[];
   return rows.map((r) => ({
     seq: r.id,
     playerId: r.player_id,
-    teamId: r.team_id,
     price: r.price,
     at: r.at,
     keeper: !!r.keeper,
+    mine: !!r.mine,
   }));
 }
 
 export function addPick(
   db: Db,
   leagueId: string,
-  pick: { playerId: string; teamId: string; price: number; keeper?: boolean }
+  pick: { playerId: string; price: number; mine?: boolean; keeper?: boolean }
 ): Pick {
   const at = Date.now();
   const info = db
     .prepare(
-      `INSERT INTO picks (league_id, player_id, team_id, price, at, keeper) VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO picks (league_id, player_id, price, at, keeper, mine) VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(leagueId, pick.playerId, pick.teamId, pick.price, at, pick.keeper ? 1 : 0);
+    .run(leagueId, pick.playerId, pick.price, at, pick.keeper ? 1 : 0, pick.mine ? 1 : 0);
   return { seq: Number(info.lastInsertRowid), ...pick, at };
 }
 
@@ -187,7 +194,7 @@ export function voidPick(db: Db, leagueId: string, seq: number): boolean {
 export function voidLastPick(db: Db, leagueId: string): Pick | null {
   const row = db
     .prepare(
-      `SELECT id, player_id, team_id, price, at, keeper FROM picks WHERE league_id = ? AND voided = 0 ORDER BY id DESC LIMIT 1`
+      `SELECT id, player_id, price, at, keeper, mine FROM picks WHERE league_id = ? AND voided = 0 ORDER BY id DESC LIMIT 1`
     )
     .get(leagueId) as any;
   if (!row) return null;
@@ -195,10 +202,10 @@ export function voidLastPick(db: Db, leagueId: string): Pick | null {
   return {
     seq: row.id,
     playerId: row.player_id,
-    teamId: row.team_id,
     price: row.price,
     at: row.at,
     keeper: !!row.keeper,
+    mine: !!row.mine,
   };
 }
 
@@ -206,15 +213,15 @@ export function editPick(
   db: Db,
   leagueId: string,
   seq: number,
-  patch: { teamId?: string; price?: number }
+  patch: { price?: number; mine?: boolean }
 ): boolean {
   const existing = db
-    .prepare(`SELECT team_id, price FROM picks WHERE league_id = ? AND id = ? AND voided = 0`)
+    .prepare(`SELECT price, mine FROM picks WHERE league_id = ? AND id = ? AND voided = 0`)
     .get(leagueId, seq) as any;
   if (!existing) return false;
-  db.prepare(`UPDATE picks SET team_id = ?, price = ? WHERE league_id = ? AND id = ?`).run(
-    patch.teamId ?? existing.team_id,
+  db.prepare(`UPDATE picks SET price = ?, mine = ? WHERE league_id = ? AND id = ?`).run(
     patch.price ?? existing.price,
+    patch.mine === undefined ? existing.mine : patch.mine ? 1 : 0,
     leagueId,
     seq
   );

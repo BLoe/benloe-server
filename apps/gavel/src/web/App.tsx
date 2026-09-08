@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PlayerValue } from '../lib/valuation.js';
 import { fetchLeagues, fetchMe, useLeague, type LeagueSummary } from './store.js';
-import { Board, Drafted, MyTeam, RoomBar, TeamPickerDialog, Ticker } from './panels.js';
+import { Board, Drafted, MyTeam, RoomBar, Ticker } from './panels.js';
 import { PickModal, type PickTarget } from './PickModal.js';
 
 export default function App() {
@@ -72,13 +72,11 @@ function Draft() {
   const [leagueId, setLeagueId] = useState<string>(
     () => localStorage.getItem('gavel:league') || 'columbus'
   );
-  const { league, state, unsynced, loading, error, addPick, undo, removePick, setMyTeam, saveTeams } =
-    useLeague(leagueId);
+  const { league, state, unsynced, loading, error, addPick, undo, removePick } = useLeague(leagueId);
 
   const [leagues, setLeagues] = useState<LeagueSummary[]>([]);
   const [filter, setFilter] = useState('');
   const [target, setTarget] = useState<PickTarget | null>(null);
-  const [teamPicker, setTeamPicker] = useState(false);
   /**
    * Keeper entry is a MODE, not a different screen: the same board, the same
    * click, the same dialog. Only the wording and the flag on the pick change.
@@ -108,13 +106,13 @@ function Draft() {
   );
 
   const submit = useCallback(
-    (playerId: string, teamId: string, price: number) => {
+    (playerId: string, price: number, mine: boolean) => {
       const existing = target?.existing;
       // A correction is a removal and a re-entry: the pick log is append-only
       // and every number is a fold over it, so there is nothing else to update.
       const asKeeper = existing ? !!existing.keeper : keeperMode;
       if (existing) removePick(existing.seq);
-      addPick(playerId, teamId, price, asKeeper);
+      addPick(playerId, price, { mine, keeper: asKeeper });
       setTarget(null);
       setFilter('');
     },
@@ -141,7 +139,6 @@ function Draft() {
       if (e.key === 'Escape' && !typing) {
         setFilter('');
         setTarget(null);
-        setTeamPicker(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -153,7 +150,6 @@ function Draft() {
     [leagues, leagueId]
   );
 
-  const myTeamName = league?.teams.find((t) => t.teamId === league.myTeamId)?.name;
 
   if (loading) return <Splash>Loading board…</Splash>;
   if (!league || !state) {
@@ -245,11 +241,8 @@ function Draft() {
           >
             {keeperMode ? 'Done with keepers' : `Keepers${state.keepers.length ? ` (${state.keepers.length})` : ''}`}
           </button>
-          <button onClick={() => setTeamPicker(true)} className="px-2 py-1" style={{ color: 'var(--muted)' }}>
-            {myTeamName ?? 'Your team'}
-          </button>
           <span style={{ color: 'var(--dim)', fontSize: 11 }}>
-            <kbd>ctrl+z</kbd> undo
+            <kbd>m</kbd> mine · <kbd>enter</kbd> other · <kbd>ctrl+z</kbd> undo
           </span>
         </div>
       </header>
@@ -275,7 +268,7 @@ function Draft() {
           className="flex flex-col gap-2 shrink-0 min-h-0"
           style={{ width: 'clamp(224px, 18vw, 280px)' }}
         >
-          <MyTeam league={league} state={state} />
+          <MyTeam state={state} />
           <Drafted league={league} state={state} onSelect={select} />
         </div>
       </div>
@@ -283,7 +276,6 @@ function Draft() {
       {target && (
         <PickModal
           target={target}
-          teams={league.teams}
           state={state}
           config={league.config}
           keeper={target.existing ? !!target.existing.keeper : keeperMode}
@@ -293,14 +285,6 @@ function Draft() {
         />
       )}
 
-      {teamPicker && (
-        <TeamPickerDialog
-          league={league}
-          onSetMyTeam={setMyTeam}
-          onSaveTeams={saveTeams}
-          onClose={() => setTeamPicker(false)}
-        />
-      )}
     </div>
   );
 }

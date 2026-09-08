@@ -44,6 +44,14 @@
   --taken-ink: #ffffff;
 
   /*
+   * Your own picks are lime, not black. Scanning "what do I already have" is a
+   * different question from "who is gone", asked constantly, and answered
+   * fastest by a colour you cannot miss from across a desk.
+   */
+  --mine: #a3e635;
+  --mine-ink: #0d1400;
+
+  /*
    * Paid against projection. Blue under, red over — deliberately NOT red/green,
    * which is the one pair a deuteranope cannot separate at all, and this is the
    * fastest scan on the board.
@@ -170,6 +178,15 @@ select:focus {
 
 .taken:hover {
   background: #111;
+}
+
+.mine {
+  background: var(--mine);
+  color: var(--mine-ink);
+}
+
+.mine:hover {
+  background: #b6ef52;
 }
 
 kbd {

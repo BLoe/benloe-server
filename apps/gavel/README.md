@@ -15,14 +15,19 @@ record of who has gone.
 
 ## Using it
 
-Click a player. Type the price, Enter, type enough of the manager's name, Enter.
+Click a player, check the price, and say whether you got him.
 
 ```
-click → price → Enter → manager → Enter
+click → price → m (mine)  or  enter (someone else)
 ```
 
-The price box opens prefilled with the board value and selected, so if the
-player went for what he was worth, two Enters are the whole pick.
+The price box opens prefilled with the board value and selected, so if he went
+for what he was worth it is one keystroke.
+
+Players you drafted are **lime** on the board; everyone else's are barred out in
+black. Gavel does not track which of the other eleven managers bought a player —
+it makes no difference to any decision you have to make, and your draft room
+shows it.
 
 A sold player is barred out in black on the board — still fully readable, with
 what was paid, how far that was from projection, and who bought him. The price
@@ -39,10 +44,6 @@ Drafted list — to correct the price, move him to another manager, or undraft
 him. `Ctrl+Z` undoes
 the last one. The filter box at the top narrows the columns to find a name fast;
 it never records anything.
-
-**Your team** in the header picks which manager you are — click a name and the
-dialog closes. It is also where a league's managers get renamed, for a league
-whose names could not be read from the platform.
 
 ## Keepers
 

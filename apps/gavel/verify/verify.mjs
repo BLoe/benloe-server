@@ -3,7 +3,7 @@
  *
  * Runs the real server against a THROWAWAY database and a copy of the real
  * snapshot, then drives the board the way it will actually be driven during an
- * auction: click a player, type a price, type a manager, Enter.
+ * auction: click a player, type a price, and press one key for who got him.
  *
  * What it asserts is deliberately not "the page rendered". It asserts that
  * marking someone drafted takes them off the board, records who paid what, and
@@ -144,35 +144,18 @@ async function main() {
     }
     await page.screenshot({ path: join(OUT, '01-board.png') });
 
-    // ---- choose your team: one list, one click, closes ----
-    await page.getByRole('button', { name: 'Your team' }).click();
-    const picker = page.getByTestId('team-picker');
-    await picker.waitFor({ state: 'visible', timeout: 5000 });
-    await page.screenshot({ path: join(OUT, '02-team-picker.png') });
-
-    // Nothing but the list belongs here — no keeper fields, no number boxes.
-    if ((await picker.getByLabel(/keeper/i).count()) > 0) {
-      fail('the team picker still carries keeper fields');
-    } else {
-      pass('team picker holds nothing but the manager list');
-    }
-
-    await picker.getByRole('button', { name: 'East Village All-Stars' }).click();
-    await page.waitForTimeout(500);
-    if ((await page.getByTestId('team-picker').count()) > 0) {
-      fail('picking a team did not close the dialog');
-    } else {
-      pass('clicking a name sets your team and closes');
-    }
-
     const myMax = async () => Number((await labelFig('Max bid')).replace(/[^0-9]/g, ''));
+    const myLeft = async () => Number((await labelFig('Left')).replace(/[^0-9]/g, ''));
+
+    // There is no team to choose: a pick is yours or it is not, so your budget
+    // is live from the first render.
     if ((await myMax()) !== 185) {
       fail(`opening max bid should be $185 (200 - 15 x $1), got $${await myMax()}`);
     } else {
       pass('opening max bid holds back a dollar per empty slot ($185)');
     }
 
-    // ---- the hot path: click a player, price, manager, Enter ----
+    // ---- the hot path: click, price, then one key for who got him ----
     const filter = page.getByPlaceholder(/Filter players/);
     const board = page.getByTestId('board');
     await filter.fill('gibbs');
@@ -182,108 +165,93 @@ async function main() {
     const modal = page.getByRole('dialog', { name: /Jahmyr Gibbs/ });
     await modal.waitFor({ state: 'visible', timeout: 5000 });
     pass('clicking a player opens the pick dialog');
+
+    // No manager list: the slowest thing in the app, recording something the
+    // board never used.
+    if ((await modal.getByPlaceholder(/manager/i).count()) > 0) {
+      fail('the pick dialog still asks which manager bought the player');
+    } else {
+      pass('pick dialog asks only price and whether it was you');
+    }
     await page.screenshot({ path: join(OUT, '03-pick-modal.png') });
 
-    // Price is focused and selected on open, so typing replaces the suggestion.
+    // Price is focused and selected on open, so typing replaces it. "m" claims
+    // the player for you.
     await page.keyboard.type('62');
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(150);
-    await page.keyboard.type('East');
-    await page.waitForTimeout(250);
-    await page.keyboard.press('Enter');
+    await page.keyboard.press('m');
     await page.waitForTimeout(700);
 
     const ticker = page.getByLabel('Recent picks');
     const tickerText = await ticker.innerText();
     if (!tickerText.includes('Jahmyr Gibbs') || !tickerText.includes('$62')) {
       fail(`the pick did not reach the ticker: ${tickerText.replace(/\n/g, ' ')}`);
-    } else if (!tickerText.includes('East Village')) {
-      fail(`the ticker does not name the buying manager: ${tickerText.replace(/\n/g, ' ')}`);
     } else {
-      pass('pick recorded and standing in the ticker with price and manager');
+      pass('pick recorded with two keystrokes and standing in the ticker');
     }
 
-    if ((await myMax()) !== 124) {
-      fail(`max bid after a $62 buy should be $124, got $${await myMax()}`);
+    if ((await myMax()) !== 124 || (await myLeft()) !== 138) {
+      fail(`after your own $62 buy expect $138 left / $124 max, got $${await myLeft()} / $${await myMax()}`);
     } else {
-      pass('max bid recomputed after a purchase ($124)');
+      pass('a pick marked yours moves your budget ($138 left, $124 max)');
     }
 
-    // The old confirmation vanished after two seconds, which is the opposite of
-    // what a live draft needs: the doubt arrives a minute later.
-    await page.waitForTimeout(3500);
-    if (!(await ticker.innerText()).includes('Jahmyr Gibbs')) {
-      fail('the ticker cleared itself, like the flash message it replaced');
-    } else {
-      pass('the ticker still shows the pick seconds later');
-    }
-
-    // Clipped, not scrolled: the Drafted panel is where the full record lives,
-    // and a scrollbar here sent you looking in the wrong place.
-    const tickerScroll = await ticker.evaluate((el) => ({
-      overflowX: getComputedStyle(el).overflowX,
-      scrollable: el.scrollWidth - el.clientWidth,
-    }));
-    if (tickerScroll.overflowX !== 'hidden') {
-      fail(`the ticker should clip rather than scroll, got overflow-x: ${tickerScroll.overflowX}`);
+    // Clipped, not scrolled: the Drafted panel is the full record.
+    const tickerScroll = await ticker.evaluate((el) => getComputedStyle(el).overflowX);
+    if (tickerScroll !== 'hidden') {
+      fail(`the ticker should clip rather than scroll, got overflow-x: ${tickerScroll}`);
     } else {
       pass('the ticker clips rather than scrolling');
     }
 
-    // ---- the drafted player is struck through on the board ----
+    // ---- yours is lime, theirs is barred in black ----
     await filter.fill('gibbs');
     await page.waitForTimeout(350);
-    const gibbsRow = board.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
-    // Park the cursor first: clicking leaves it hovering the row, and the hover
-    // state lifts the bar off pure black.
     await page.mouse.move(0, 0);
     await page.waitForTimeout(150);
-    const look = await gibbsRow.evaluate((el) => {
-      const style = getComputedStyle(el);
-      const price = el.querySelector('span');
-      return {
-        background: style.backgroundColor,
-        name: getComputedStyle(el.querySelectorAll('span')[1]).color,
-        price: price ? getComputedStyle(price).color : '',
-      };
-    });
-    // Barred out in black, name still fully legible in white.
-    if (look.background !== 'rgb(0, 0, 0)') {
-      fail(`a sold row should be barred in black, got ${look.background}`);
-    } else if (look.name !== 'rgb(255, 255, 255)') {
-      fail(`a sold player's name should stay white, got ${look.name}`);
+    const mineLook = await board
+      .getByRole('button', { name: /Jahmyr Gibbs/ })
+      .first()
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
+    if (mineLook !== 'rgb(163, 230, 53)') {
+      fail(`your own pick should be lime, got ${mineLook}`);
     } else {
-      pass('sold row is barred in black with the name still readable');
-    }
-    // $62 against a ~$66 projection is under, so the price reads blue.
-    if (look.price !== 'rgb(92, 157, 237)') {
-      fail(`a below-projection price should read blue, got ${look.price}`);
-    } else {
-      pass('price paid under projection reads blue');
+      pass('a player you drafted is lime on the board');
     }
 
-    // And over projection reads red.
+    // Someone else's, at a price well over projection.
     await filter.fill('bijan');
     await page.waitForTimeout(350);
     await board.getByRole('button', { name: /Bijan Robinson/ }).first().click();
     await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 5000 });
     await page.keyboard.type('140');
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(120);
-    await page.keyboard.type('Closed');
-    await page.waitForTimeout(220);
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(700);
+
+    if ((await myLeft()) !== 138) {
+      fail(`someone else's purchase must not touch your wallet, left is now $${await myLeft()}`);
+    } else {
+      pass("another manager's purchase leaves your budget alone");
+    }
+
     await filter.fill('bijan');
     await page.waitForTimeout(350);
     await page.mouse.move(0, 0);
     await page.waitForTimeout(150);
-    const overPrice = await board
+    const theirs = await board
       .getByRole('button', { name: /Bijan Robinson/ })
       .first()
-      .evaluate((el) => getComputedStyle(el.querySelector('span')).color);
-    if (overPrice !== 'rgb(232, 99, 90)') {
-      fail(`an above-projection price should read red, got ${overPrice}`);
+      .evaluate((el) => ({
+        bg: getComputedStyle(el).backgroundColor,
+        name: getComputedStyle(el.querySelectorAll('span')[1]).color,
+        price: getComputedStyle(el.querySelector('span')).color,
+      }));
+    if (theirs.bg !== 'rgb(0, 0, 0)' || theirs.name !== 'rgb(255, 255, 255)') {
+      fail(`someone else's pick should be barred in black with a white name, got ${JSON.stringify(theirs)}`);
+    } else {
+      pass("another manager's pick is barred in black, name still readable");
+    }
+    if (theirs.price !== 'rgb(232, 99, 90)') {
+      fail(`an above-projection price should read red, got ${theirs.price}`);
     } else {
       pass('price paid over projection reads red');
     }
@@ -298,11 +266,11 @@ async function main() {
 
     // ---- inflation responds to the room overspending ----
     const overpays = [
-      ['nacua', 'Puka Nacua', '95', 'Threat'],
-      ['chase', "Ja'Marr Chase", '95', 'Super'],
-      ['taylor', 'Jonathan Taylor', '90', 'Empire'],
+      ['nacua', 'Puka Nacua', '95'],
+      ['chase', "Ja'Marr Chase", '95'],
+      ['taylor', 'Jonathan Taylor', '90'],
     ];
-    for (const [q, name, price, team] of overpays) {
+    for (const [q, name, price] of overpays) {
       await filter.fill(q);
       await page.waitForTimeout(300);
       await board
@@ -312,12 +280,9 @@ async function main() {
       await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 5000 });
       await page.keyboard.type(price);
       await page.keyboard.press('Enter');
-      await page.waitForTimeout(120);
-      await page.keyboard.type(team);
-      await page.waitForTimeout(220);
-      await page.keyboard.press('Enter');
       await page.waitForTimeout(450);
     }
+    await filter.fill('');
 
     const inflation = await labelFig('Inflation');
     if (!inflation.startsWith('-')) {
@@ -399,17 +364,6 @@ async function main() {
       else pass(`half-PPR prices Nacua at $${nacua}, above his standard-scoring price`);
 
       // Keepers: entered as picks, through the same click-and-price path.
-      await page.getByRole('button', { name: 'Your team' }).click();
-      const p2 = page.getByTestId('team-picker');
-      await p2.waitFor({ state: 'visible', timeout: 5000 });
-      await p2.getByRole('button', { name: 'Rename managers' }).click();
-      await p2.getByLabel('Team 1 name').fill('Keeper Team');
-      await p2.getByRole('button', { name: 'Save' }).click();
-      await page.waitForTimeout(400);
-      await p2.getByRole('button', { name: 'Keeper Team' }).click();
-      await page.waitForTimeout(500);
-      pass('managers can be renamed for a league Gavel cannot read');
-
       await page.getByRole('button', { name: /^Keepers/ }).click();
       await page.waitForTimeout(300);
       if ((await page.getByText('Entering keepers').count()) === 0) {
@@ -423,37 +377,29 @@ async function main() {
       await board.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
       const kModal = page.getByRole('dialog', { name: /Jahmyr Gibbs/ });
       await kModal.waitFor({ state: 'visible', timeout: 5000 });
-      if ((await kModal.getByRole('button', { name: 'Save keeper' }).count()) === 0) {
-        fail('the pick dialog does not say it is recording a keeper');
-      }
       await page.keyboard.type('30');
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(120);
-      await page.keyboard.type('Keeper Team');
-      await page.waitForTimeout(250);
-      await page.keyboard.press('Enter');
+      await page.keyboard.press('m');
       await page.waitForTimeout(700);
       await page.getByRole('button', { name: 'Done with keepers' }).click();
       await page.getByPlaceholder(/Filter players/).fill('');
       await page.waitForTimeout(300);
 
       // $200 - $30 = $170 left; 15 - 1 = 14 slots; max bid 170 - 13 = $157.
-      const left = Number((await labelFig('Left')).replace(/[^0-9]/g, ''));
+      const left = await myLeft();
       const max = await myMax();
       if (left !== 170 || max !== 157) {
-        fail(`keeper team should read $170 left / $157 max, got $${left} / $${max}`);
+        fail(`your keeper should read $170 left / $157 max, got $${left} / $${max}`);
       } else {
-        pass('a keeper comes out of its manager\'s budget and roster');
+        pass("a keeper of yours comes out of your budget and roster");
       }
 
-      // And the kept player is off the board, marked as kept rather than bought.
       await page.getByPlaceholder(/Filter players/).fill('gibbs');
       await page.waitForTimeout(350);
       const kept = board.getByRole('button', { name: /Jahmyr Gibbs/ }).first();
       if (!(await kept.innerText()).includes('K')) {
         fail('a kept player is not marked K on the board');
       } else {
-        pass('kept player is struck off the board and marked K');
+        pass('kept player is off the board and marked K');
       }
       await page.getByPlaceholder(/Filter players/).fill('');
 

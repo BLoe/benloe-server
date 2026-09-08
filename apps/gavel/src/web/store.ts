@@ -15,15 +15,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LeagueConfig } from '../lib/league.js';
 import type { PlayerValue } from '../lib/valuation.js';
-import { deriveState, type Pick, type TeamMeta } from '../lib/draft.js';
+import { deriveState, type Pick } from '../lib/draft.js';
 
 export interface LeaguePayload {
   id: string;
   name: string;
   config: LeagueConfig;
   values: PlayerValue[];
-  teams: TeamMeta[];
-  myTeamId: string | null;
   capturedAt: number;
   draftStartTime: number | null;
   /** What these prices were calibrated against. Null means the raw model. */
@@ -142,9 +140,9 @@ export function useLeague(leagueId: string | null) {
             method: 'POST',
             body: JSON.stringify({
               playerId: p.playerId,
-              teamId: p.teamId,
               price: p.price,
               keeper: !!p.keeper,
+              mine: !!p.mine,
             }),
           });
           sent.push(p.playerId);
@@ -185,16 +183,16 @@ export function useLeague(leagueId: string | null) {
   }, [flush]);
 
   const addPick = useCallback(
-    (playerId: string, teamId: string, price: number, keeper = false) => {
+    (playerId: string, price: number, opts: { mine?: boolean; keeper?: boolean } = {}) => {
       if (!leagueId) return;
       // Applied to the screen before anything is sent. This is the whole point.
       const optimistic: PendingPick = {
         seq: -Date.now(),
         playerId,
-        teamId,
         price,
         at: Date.now(),
-        keeper,
+        mine: !!opts.mine,
+        keeper: !!opts.keeper,
         pending: true,
       };
       setPicks((prev) => [...prev, optimistic]);
@@ -255,37 +253,11 @@ export function useLeague(leagueId: string | null) {
     [leagueId, load, picks]
   );
 
-  const setMyTeam = useCallback(
-    async (teamId: string) => {
-      if (!leagueId) return;
-      setLeague((prev) => (prev ? { ...prev, myTeamId: teamId } : prev));
-      await api(`/league/${leagueId}/my-team`, {
-        method: 'POST',
-        body: JSON.stringify({ teamId }),
-      }).catch(() => {});
-    },
-    [leagueId]
-  );
-
-  /**
-   * Team names and keeper commitments — the one part of a league no platform
-   * tells us reliably, and the part that moves every price in a keeper league.
-   */
-  const saveTeams = useCallback(
-    async (teams: TeamMeta[]) => {
-      if (!leagueId) return;
-      setLeague((prev) => (prev ? { ...prev, teams } : prev));
-      await api(`/league/${leagueId}/teams`, {
-        method: 'POST',
-        body: JSON.stringify({ teams }),
-      }).catch(() => void load());
-    },
-    [leagueId, load]
-  );
+  
 
   const state = useMemo(() => {
     if (!league) return null;
-    return deriveState(picks, league.teams, league.values, league.config);
+    return deriveState(picks, league.values, league.config);
   }, [league, picks]);
 
   return {
@@ -298,8 +270,6 @@ export function useLeague(leagueId: string | null) {
     addPick,
     undo,
     removePick,
-    setMyTeam,
-    saveTeams,
     reload: load,
   };
 }
