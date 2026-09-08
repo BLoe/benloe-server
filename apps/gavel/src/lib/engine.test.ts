@@ -25,7 +25,7 @@ import {
   valueBoard,
   type PlayerProjection,
 } from './valuation.js';
-import { adjustedValue, contenders, deriveState, fillSlots, scarcity, type Pick } from './draft.js';
+import { adjustedValue, deriveState, fillSlots, scarcity, type Pick } from './draft.js';
 
 const SLOTS: RosterSlots = { QB: 1, RB: 2, WR: 4, TE: 1, DEF: 1, K: 0, FLEX: 1, BN: 6, IR: 1 };
 
@@ -272,34 +272,52 @@ describe('valuation', () => {
 
 describe('live draft state', () => {
   const values = valueBoard(pool(), COLUMBUS);
-  const teams = Array.from({ length: 12 }, (_, i) => ({ teamId: `t${i}`, name: `Team ${i}` }));
-  const pick = (seq: number, playerId: string, teamId: string, price: number): Pick => ({
-    seq, playerId, teamId, price, at: 0,
+  const mine = (seq: number, playerId: string, price: number, extra: Partial<Pick> = {}): Pick => ({
+    seq, playerId, price, at: 0, mine: true, ...extra,
+  });
+  const theirs = (seq: number, playerId: string, price: number, extra: Partial<Pick> = {}): Pick => ({
+    seq, playerId, price, at: 0, ...extra,
   });
 
   it('holds back a dollar for every slot still to fill', () => {
-    // A team with $40 and four empty slots can bid $37, not $40. Mistaking one
-    // for the other is how people overpay in the endgame.
-    const state = deriveState([pick(1, 'RB0', 't0', 160)], teams, values, COLUMBUS);
-    const me = state.teams.find((t) => t.teamId === 't0')!;
-    expect(me.remaining).toBe(40);
-    expect(me.openSlots).toBe(15);
-    expect(me.maxBid).toBe(40 - 14);
+    // A wallet with $40 and four empty slots can bid $37, not $40. Mistaking
+    // one for the other is how people overpay in the endgame.
+    const state = deriveState([mine(1, 'RB0', 160)], values, COLUMBUS);
+    expect(state.me.remaining).toBe(40);
+    expect(state.me.openSlots).toBe(15);
+    expect(state.me.maxBid).toBe(40 - 14);
   });
 
   it('reports a max bid of zero for a full roster', () => {
-    const picks = Array.from({ length: 16 }, (_, i) => pick(i + 1, `WR${i}`, 't0', 1));
-    const state = deriveState(picks, teams, values, COLUMBUS);
-    const me = state.teams.find((t) => t.teamId === 't0')!;
-    expect(me.openSlots).toBe(0);
-    expect(me.maxBid).toBe(0);
+    const picks = Array.from({ length: 16 }, (_, i) => mine(i + 1, `WR${i}`, 1));
+    const state = deriveState(picks, values, COLUMBUS);
+    expect(state.me.openSlots).toBe(0);
+    expect(state.me.maxBid).toBe(0);
+  });
+
+  it('ignores other people\'s purchases when computing YOUR budget', () => {
+    // The whole point of recording one bit of ownership: someone else spending
+    // $150 must not touch your wallet.
+    const state = deriveState([mine(1, 'RB0', 20), theirs(2, 'RB1', 150)], values, COLUMBUS);
+    expect(state.me.spent).toBe(20);
+    expect(state.me.remaining).toBe(180);
+    expect(state.me.filled).toBe(1);
+  });
+
+  it('counts every purchase against the room, whoever made it', () => {
+    // ...and the converse: the room's money and slots do not care who paid,
+    // which is why one bit is enough.
+    const state = deriveState([mine(1, 'RB0', 20), theirs(2, 'RB1', 150)], values, COLUMBUS);
+    expect(state.moneyLeft).toBe(12 * 200 - 170);
+    expect(state.slotsLeft).toBe(12 * 16 - 2);
+    expect(state.drafted.has('RB1')).toBe(true);
   });
 
   it('fills starters, then flex, then bench', () => {
-    // Five running backs in a two-RB league: RB filled, flex taken, two benched,
-    // and a tight end still needed.
+    // Five running backs in a two-RB league: RB filled, flex taken, two
+    // benched, and a tight end still needed.
     const byId = new Map(values.map((v) => [v.id, v]));
-    const roster = ['RB0', 'RB1', 'RB2', 'RB3', 'RB4'].map((id, i) => pick(i, id, 't0', 1));
+    const roster = ['RB0', 'RB1', 'RB2', 'RB3', 'RB4'].map((id, i) => mine(i, id, 1));
     const { needs, flexOpen, benchOpen } = fillSlots(roster, byId, COLUMBUS);
     expect(needs.RB).toBe(0);
     expect(needs.TE).toBe(1);
@@ -308,76 +326,70 @@ describe('live draft state', () => {
   });
 
   it('treats a keeper as a pick, counted exactly once', () => {
-    // A keeper IS a purchase: a player, a price, a team. Modelling it as a
-    // separate pot of "committed dollars" on the manager meant two sets of
-    // numbers to keep in agreement, and the kept player stayed on the board.
-    const kept: Pick = { seq: 1, playerId: 'RB0', teamId: 't0', price: 30, at: 0, keeper: true };
-    const bought: Pick = { seq: 2, playerId: 'WR0', teamId: 't0', price: 15, at: 0 };
-    const state = deriveState([kept, bought], teams, values, COLUMBUS);
-    const me = state.teams.find((t) => t.teamId === 't0')!;
-
-    expect(me.spent).toBe(45);
-    expect(me.remaining).toBe(155);
-    expect(me.openSlots).toBe(14);
-    // And the kept player is off the board like any other.
+    const kept = mine(1, 'RB0', 30, { keeper: true });
+    const bought = mine(2, 'WR0', 15);
+    const state = deriveState([kept, bought], values, COLUMBUS);
+    expect(state.me.spent).toBe(45);
+    expect(state.me.remaining).toBe(155);
+    expect(state.me.openSlots).toBe(14);
     expect(state.drafted.has('RB0')).toBe(true);
     expect(state.keepers.map((k) => k.playerId)).toEqual(['RB0']);
   });
 
-  it('counts a keeper against the room, not just its own team', () => {
-    // Keeper money leaving the room is what makes everyone else's prices move.
-    const kept: Pick = { seq: 1, playerId: 'RB0', teamId: 't0', price: 30, at: 0, keeper: true };
-    const withKeeper = deriveState([kept], teams, values, COLUMBUS);
-    const empty = deriveState([], teams, values, COLUMBUS);
+  it('counts someone else\'s keeper against the room', () => {
+    // Keeper money leaving the room is what moves everyone else's prices.
+    const withKeeper = deriveState([theirs(1, 'RB0', 30, { keeper: true })], values, COLUMBUS);
+    const empty = deriveState([], values, COLUMBUS);
     expect(withKeeper.moneyLeft).toBe(empty.moneyLeft - 30);
     expect(withKeeper.slotsLeft).toBe(empty.slotsLeft - 1);
+    expect(withKeeper.me.remaining).toBe(200);
   });
 
   it('reads inflation above one when the room has money left over', () => {
-    // Everyone bought cheap: the same value is still out there chasing more money.
-    const cheap = Array.from({ length: 12 }, (_, i) => pick(i + 1, `RB${i}`, `t${i}`, 1));
-    const state = deriveState(cheap, teams, values, COLUMBUS);
+    const cheap = Array.from({ length: 12 }, (_, i) => theirs(i + 1, `RB${i}`, 1));
+    const state = deriveState(cheap, values, COLUMBUS);
     expect(state.inflation).toBeGreaterThan(1);
     expect(adjustedValue(values[20], state, COLUMBUS)).toBeGreaterThan(values[20].baseValue);
   });
 
   it('reads inflation below one when the room overspends early', () => {
-    const dear = Array.from({ length: 12 }, (_, i) => pick(i + 1, `RB${i}`, `t${i}`, 150));
-    const state = deriveState(dear, teams, values, COLUMBUS);
+    const dear = Array.from({ length: 12 }, (_, i) => theirs(i + 1, `RB${i}`, 150));
+    const state = deriveState(dear, values, COLUMBUS);
     expect(state.inflation).toBeLessThan(1);
   });
 
   it('never inflates the minimum bid', () => {
-    // A dollar player is a dollar player however hot the room is.
-    const cheap = Array.from({ length: 12 }, (_, i) => pick(i + 1, `RB${i}`, `t${i}`, 1));
-    const state = deriveState(cheap, teams, values, COLUMBUS);
+    const cheap = Array.from({ length: 12 }, (_, i) => theirs(i + 1, `RB${i}`, 1));
+    const state = deriveState(cheap, values, COLUMBUS);
     const scrub = values.filter((v) => v.baseValue === COLUMBUS.minBid)[0];
     expect(adjustedValue(scrub, state, COLUMBUS)).toBe(COLUMBUS.minBid);
   });
 
-  it('excludes teams that cannot afford a bid from the contenders', () => {
-    const broke = [pick(1, 'RB0', 't0', 185)];
-    const state = deriveState(broke, teams, values, COLUMBUS);
-    const rivals = contenders(state, 50);
-    expect(rivals.some((t) => t.teamId === 't0')).toBe(false);
-    expect(rivals).toHaveLength(11);
-  });
+  it('measures supply against demand that shrinks as players go', () => {
+    // Without tracking who owns what, the honest assumption is that drafted
+    // players fill starting jobs before bench ones.
+    const empty = deriveState([], values, COLUMBUS);
+    expect(scarcity(empty, values, COLUMBUS).TE.demand).toBe(12);
 
-  it('measures supply against remaining demand, not raw counts', () => {
-    const state = deriveState([], teams, values, COLUMBUS);
-    const te = scarcity(state, values).TE;
-    expect(te.demand).toBe(12);
+    const someGone = deriveState(
+      Array.from({ length: 5 }, (_, i) => theirs(i + 1, `TE${i}`, 10)),
+      values,
+      COLUMBUS
+    );
+    const te = scarcity(someGone, values, COLUMBUS).TE;
+    expect(te.demand).toBe(7);
     expect(te.ratio).toBeCloseTo(te.supply / te.demand, 5);
   });
 
   it('derives an identical board from the same pick log', () => {
     // Reload safety: the log is the only state, so a refresh must reproduce the
     // screen exactly.
-    const picks = [pick(1, 'RB0', 't0', 60), pick(2, 'WR0', 't1', 40)];
-    const a = deriveState(picks, teams, values, COLUMBUS);
-    const b = deriveState(picks, teams, values, COLUMBUS);
+    const picks = [mine(1, 'RB0', 60), theirs(2, 'WR0', 40)];
+    const a = deriveState(picks, values, COLUMBUS);
+    const b = deriveState(picks, values, COLUMBUS);
     expect(b.moneyLeft).toBe(a.moneyLeft);
     expect(b.inflation).toBe(a.inflation);
+    expect(b.me.maxBid).toBe(a.me.maxBid);
     expect([...b.drafted]).toEqual([...a.drafted]);
   });
 });

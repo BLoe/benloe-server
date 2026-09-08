@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import type { Position } from '../lib/league.js';
 import type { PlayerValue } from '../lib/valuation.js';
-import { adjustedValue, scarcity, type DraftState, type TeamMeta } from '../lib/draft.js';
+import { adjustedValue, scarcity, type DraftState } from '../lib/draft.js';
 import type { LeaguePayload } from './store.js';
 
 const POS_ORDER: Position[] = ['RB', 'WR', 'QB', 'TE', 'DEF'];
@@ -36,11 +36,11 @@ export const money = (n: number) => `$${Math.round(n)}`;
  * purchase does not silently change colour as the room spends. Within a couple
  * of dollars it is neither, because projections are not that precise.
  */
-export function priceInk(paid: number, projected: number): string {
+export function priceInk(paid: number, projected: number, mine = false): string {
   const delta = paid - projected;
-  if (delta > 2) return 'var(--over)';
-  if (delta < -2) return 'var(--under)';
-  return 'var(--taken-ink)';
+  if (delta > 2) return mine ? '#7a1d16' : 'var(--over)';
+  if (delta < -2) return mine ? '#123a63' : 'var(--under)';
+  return mine ? 'var(--mine-ink)' : 'var(--taken-ink)';
 }
 
 export function Pos({ position }: { position: string }) {
@@ -75,10 +75,9 @@ function Column({
   filter: string;
   onSelect: (player: PlayerValue) => void;
 }) {
-  const supply = scarcity(state, league.values)[position];
+  const supply = scarcity(state, league.values, league.config)[position];
   const tight = supply.ratio < 1;
   const q = normalise(filter).trim();
-  const teamName = new Map(league.teams.map((t) => [t.teamId, t.name]));
 
   const visible = q
     ? players.filter((p) => normalise(p.name).includes(q) || normalise(p.team ?? '') === q)
@@ -122,6 +121,7 @@ function Column({
     const pick = gone ? state.picks.find((p) => p.playerId === player.id) : undefined;
     const paid = pick?.price ?? 0;
     const delta = paid - player.baseValue;
+    const isMine = !!pick?.mine;
 
     rows.push(
       <button
@@ -129,44 +129,40 @@ function Column({
         onClick={() => onSelect(player)}
         title={
           gone
-            ? `${money(paid)} vs $${Math.round(player.baseValue)} projected — click to edit or undo`
+            ? `${money(paid)} vs $${Math.round(player.baseValue)} projected — ${isMine ? 'yours' : 'someone else'}`
             : 'Mark drafted'
         }
-        className={`w-full text-left px-2 py-[3px] flex items-baseline gap-2 ${gone ? 'taken' : 'hover:bg-raised'}`}
+        className={`w-full text-left px-2 py-[3px] flex items-baseline gap-2 ${
+          isMine ? 'mine' : gone ? 'taken' : 'hover:bg-raised'
+        }`}
       >
         <span
           className="fig w-8 text-right shrink-0"
           style={{
-            color: gone ? priceInk(paid, player.baseValue) : 'var(--brass)',
+            color: gone ? priceInk(paid, player.baseValue, isMine) : 'var(--brass)',
             fontWeight: 600,
           }}
         >
           {gone ? money(paid) : money(price)}
         </span>
-        <span className="truncate flex-1">{player.name}</span>
+        <span className="truncate flex-1" style={{ fontWeight: isMine ? 600 : 400 }}>
+          {player.name}
+        </span>
         {gone ? (
           <>
-            {/* How far off projection, so the colour is never the only signal. */}
+            {/* The delta, so colour is never the only signal. */}
             <span
               className="fig shrink-0"
-              style={{ color: priceInk(paid, player.baseValue), fontSize: 10 }}
+              style={{ color: priceInk(paid, player.baseValue, isMine), fontSize: 10 }}
             >
               {delta >= 0 ? '+' : ''}
               {Math.round(delta)}
             </span>
             {pick?.keeper && (
-              <span className="fig shrink-0" title="Kept, not drafted" style={{ color: 'var(--brass)', fontSize: 9 }}>
+              <span className="fig shrink-0" title="Kept, not drafted" style={{ fontSize: 9 }}>
                 K
               </span>
             )}
-            {/* Team and bye stop mattering the moment a player is gone; who
-                bought him does not. */}
-            <span
-              className="truncate shrink-0"
-              style={{ color: 'var(--muted)', fontSize: 10, maxWidth: 74 }}
-            >
-              {teamName.get(pick?.teamId ?? '') ?? ''}
-            </span>
           </>
         ) : (
           <span className="fig shrink-0" style={{ color: 'var(--dim)', fontSize: 10 }}>
@@ -264,16 +260,11 @@ export function Drafted({
 }) {
   const [query, setQuery] = useState('');
   const byId = new Map(league.values.map((v) => [v.id, v]));
-  const teamName = new Map(league.teams.map((t) => [t.teamId, t.name]));
   const q = normalise(query).trim();
 
   const rows = [...state.picks].reverse().filter((pick) => {
     if (!q) return true;
-    const player = byId.get(pick.playerId);
-    return (
-      normalise(player?.name ?? '').includes(q) ||
-      normalise(teamName.get(pick.teamId) ?? '').includes(q)
-    );
+    return normalise(byId.get(pick.playerId)?.name ?? '').includes(q);
   });
 
   return (
@@ -304,13 +295,15 @@ export function Drafted({
           // different deltas for the same pick would be worse than none.
           const projected = player?.baseValue ?? 0;
           const delta = pick.price - projected;
-          const ink = priceInk(pick.price, projected);
+          const ink = priceInk(pick.price, projected, pick.mine);
           return (
             <button
               key={pick.seq}
               onClick={() => player && onSelect(player)}
               title={`${money(pick.price)} vs $${Math.round(projected)} projected — click to edit or undo`}
-              className="w-full flex items-baseline gap-2 px-2 py-[3px] hover:bg-raised text-left"
+              className={`w-full flex items-baseline gap-2 px-2 py-[3px] text-left ${
+                pick.mine ? 'mine' : 'hover:bg-raised'
+              }`}
             >
               <span className="fig w-8 text-right shrink-0" style={{ color: ink, fontWeight: 600 }}>
                 {money(pick.price)}
@@ -324,12 +317,6 @@ export function Drafted({
               <span className="fig shrink-0" style={{ color: ink, fontSize: 10 }}>
                 {delta >= 0 ? '+' : ''}
                 {Math.round(delta)}
-              </span>
-              <span
-                className="truncate shrink-0"
-                style={{ color: 'var(--muted)', fontSize: 10, maxWidth: 100 }}
-              >
-                {teamName.get(pick.teamId) ?? '?'}
               </span>
             </button>
           );
@@ -345,15 +332,8 @@ export function Drafted({
  * The one team whose budget is worth repeating here, because "what can I still
  * spend" has to survive a glance and the draft room buries it.
  */
-export function MyTeam({ league, state }: { league: LeaguePayload; state: DraftState }) {
-  const me = state.teams.find((t) => t.teamId === league.myTeamId);
-  if (!me) {
-    return (
-      <div className="sheet px-2 py-2" style={{ color: 'var(--muted)' }}>
-        <span className="label">Your team</span> — choose it from the header.
-      </div>
-    );
-  }
+export function MyTeam({ state }: { state: DraftState }) {
+  const me = state.me;
   const needs = Object.entries(me.needs).filter(([, n]) => n > 0);
   return (
     <div className="sheet">
@@ -412,125 +392,16 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 /**
- * Choosing which team is yours.
- *
- * One job: click a name, it is yours, the dialog closes. Nothing else lives
- * here — an earlier version bundled keeper salaries into this list as two
- * unlabelled number columns, which was both confusing and the wrong model
- * (a keeper is a pick, not a number on a manager).
- *
- * Renaming is behind a link because it is needed exactly once, for a league
- * whose managers Gavel could not read from the platform.
- */
-export function TeamPickerDialog({
-  league,
-  onSetMyTeam,
-  onSaveTeams,
-  onClose,
-}: {
-  league: LeaguePayload;
-  onSetMyTeam: (teamId: string) => void;
-  onSaveTeams: (teams: TeamMeta[]) => void;
-  onClose: () => void;
-}) {
-  const [renaming, setRenaming] = useState(false);
-  const [draft, setDraft] = useState<TeamMeta[]>(league.teams.map((t) => ({ ...t })));
-
-  const saveNames = () => {
-    onSaveTeams(draft);
-    setRenaming(false);
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center"
-      style={{ background: 'rgba(10,8,6,0.72)', paddingTop: '10vh' }}
-      onMouseDown={onClose}
-    >
-      <div
-        className="sheet"
-        style={{ width: 400, borderColor: 'var(--brass)' }}
-        onMouseDown={(e) => e.stopPropagation()}
-        data-testid="team-picker"
-        role="dialog"
-        aria-label="Your team"
-        onKeyDown={(e) => e.key === 'Escape' && onClose()}
-      >
-        <div className="rule-b px-4 py-2 flex items-center" style={{ background: 'var(--raised)' }}>
-          <span className="slab" style={{ fontSize: 19 }}>
-            {renaming ? 'Rename managers' : 'Your team'}
-          </span>
-          {renaming && (
-            <button
-              onClick={saveNames}
-              className="ml-auto px-3 py-1"
-              style={{ background: 'var(--brass)', color: '#14110e', fontWeight: 600 }}
-            >
-              Save
-            </button>
-          )}
-        </div>
-
-        <div className="max-h-[58vh] overflow-y-auto">
-          {renaming
-            ? draft.map((t, i) => (
-                <div key={t.teamId} className="px-3 py-1">
-                  <input
-                    aria-label={`Team ${i + 1} name`}
-                    value={t.name}
-                    onChange={(e) => {
-                      const next = [...draft];
-                      next[i] = { ...next[i], name: e.target.value };
-                      setDraft(next);
-                    }}
-                    className="w-full"
-                    style={{ padding: '3px 6px' }}
-                  />
-                </div>
-              ))
-            : league.teams.map((t) => {
-                const mine = t.teamId === league.myTeamId;
-                return (
-                  <button
-                    key={t.teamId}
-                    onClick={() => {
-                      onSetMyTeam(t.teamId);
-                      onClose();
-                    }}
-                    className="w-full text-left px-4 py-2 hover:bg-raised flex items-center gap-2"
-                    style={{ color: mine ? 'var(--brass)' : 'var(--ink)' }}
-                  >
-                    <span style={{ width: 12 }}>{mine ? '\u25b8' : ''}</span>
-                    <span style={{ fontSize: 15 }}>{t.name}</span>
-                  </button>
-                );
-              })}
-        </div>
-
-        <div className="px-4 py-2" style={{ borderTop: '1px solid var(--rule)' }}>
-          <button
-            onClick={() => (renaming ? setRenaming(false) : setRenaming(true))}
-            style={{ color: 'var(--muted)', fontSize: 11 }}
-          >
-            {renaming ? 'Back to picking your team' : 'Rename managers'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
  * The ticker: the last few sales, newest first, always on screen.
  *
  * It replaced a green confirmation that appeared for two seconds and then
  * vanished. During a live auction that is exactly backwards — the moment you
  * need to check what was just entered is a minute later, when the next lot is
- * already up and you are half sure you typed the wrong manager. A standing
- * record of the last few costs one line and answers that without a click.
+ * already up and you are half sure you fat-fingered the price.
  *
- * Entries are clickable, like everything else that represents a pick, so the
- * correction is where the doubt is.
+ * Clipped, never scrolled: the Drafted panel already holds the complete record
+ * and is searchable, so a scrollbar here only sent you looking in the wrong
+ * place. Whatever fits, fits; the rest fades out at the right edge.
  */
 export function Ticker({
   league,
@@ -542,16 +413,9 @@ export function Ticker({
   onSelect: (player: PlayerValue) => void;
 }) {
   const byId = new Map(league.values.map((v) => [v.id, v]));
-  const teamName = new Map(league.teams.map((t) => [t.teamId, t.name]));
   const recent = [...state.picks].reverse().slice(0, 14);
 
   return (
-    /*
-     * Clipped, never scrolled. The Drafted panel already holds the complete
-     * record and is searchable; the ticker only has to answer "what just
-     * happened", so a scrollbar here was an invitation to go looking in the
-     * wrong place. Whatever fits, fits — the rest fades out at the right edge.
-     */
     <div
       className="sheet shrink-0 flex items-center gap-0 overflow-hidden relative"
       style={{ height: 30 }}
@@ -573,21 +437,28 @@ export function Ticker({
             key={pick.seq}
             onClick={() => player && onSelect(player)}
             title={`${money(pick.price)} vs $${Math.round(projected)} projected — click to correct`}
-            className="flex items-baseline gap-2 px-3 shrink-0 hover:bg-raised h-full"
+            className={`flex items-baseline gap-2 px-3 shrink-0 h-full ${
+              pick.mine ? 'mine' : 'hover:bg-raised'
+            }`}
             style={{ borderRight: '1px solid var(--rule)' }}
           >
-            <span className="fig" style={{ color: priceInk(pick.price, projected), fontWeight: 600 }}>
+            <span
+              className="fig"
+              style={{ color: priceInk(pick.price, projected, pick.mine), fontWeight: 600 }}
+            >
               {money(pick.price)}
             </span>
             <span style={{ whiteSpace: 'nowrap' }}>{player?.name ?? pick.playerId}</span>
             {pick.keeper && (
-              <span className="fig" title="Kept, not drafted" style={{ color: 'var(--brass)', fontSize: 9 }}>
+              <span className="fig" title="Kept, not drafted" style={{ fontSize: 9 }}>
                 K
               </span>
             )}
-            <span style={{ color: 'var(--muted)', whiteSpace: 'nowrap', fontSize: 11 }}>
-              {teamName.get(pick.teamId) ?? '?'}
-            </span>
+            {pick.mine && (
+              <span className="label" style={{ color: 'var(--mine-ink)' }}>
+                you
+              </span>
+            )}
           </button>
         );
       })}

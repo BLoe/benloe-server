@@ -22,9 +22,18 @@ earlier version had a three-field entry bar across the top and read as a worse
 Sleeper.
 
 **Marking a player drafted is a click on that player**, which opens one dialog:
-price (prefilled with the board value and selected) and a manager type-ahead.
-Clicking an already-drafted player reopens the same dialog to correct or
-undraft. There is no other way to record a pick, and there should not be.
+price (prefilled and selected) and two buttons — **Me** (`m`) or **Other**
+(`enter`). Two keystrokes when the price is right. Clicking an already-drafted
+player reopens the same dialog to correct or undraft.
+
+**A pick records ONE bit about ownership: `mine`.** There was a manager
+type-ahead over twelve names; after the first live draft it was by a distance
+the slowest thing in the app — scrolling for a name mid-nomination while the
+auctioneer moved on — and it recorded something the board never used. Who else
+owns a player changes nothing you can act on, and the draft room shows it
+anyway. Your budget comes from your own picks; the room's money and slots come
+from the totals, which do not care who paid. **Do not reintroduce teams.**
+`TeamMeta`, the team picker and the `/my-team` and `/teams` endpoints are gone.
 
 **A keeper is a pick.** Player, price, team — entered through the same click and
 the same dialog, under a conspicuous mode toggled from the header. It gets a
@@ -151,6 +160,13 @@ Every one of these cost real time here.
   monitor — while looking perfect at 1600.
 - **Always an ephemeral port in the harness.** A stray server on a fixed port
   makes the next run silently test the old build.
+- **A schema change on this table has live data under it.** Adding `mine`
+  landed on a completed 139-pick draft; defaulting every row to 0 would have
+  silently erased which fifteen players were actually won. The migration
+  backfills from the old `team_id`/`my_team_id` pair at the moment the column
+  appears. Test any such migration against a **`VACUUM INTO`** copy, not a `cp`:
+  the database runs in WAL mode, so a plain file copy silently omits every
+  recent write and the test reads an empty table.
 - **An optimistic pick carries a temporary NEGATIVE `seq` until the server
   answers, and it must be reconciled when it does.** Without that, undrafting a
   synced player skipped the DELETE entirely: the row vanished from the screen
@@ -221,7 +237,7 @@ one that admits a gap:
 
 ```
 npm run typecheck    # must be clean
-npm test             # 44 unit tests, pure, no network
+npm test             # 45 unit tests, pure, no network
 npm run verify       # drives a real draft in a browser from the keyboard
 npm run check        # all three
 ```

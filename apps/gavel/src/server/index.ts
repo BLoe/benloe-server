@@ -27,8 +27,6 @@ import {
   voidPick,
   voidLastPick,
   editPick,
-  setMyTeam,
-  setTeams,
   type Db,
 } from './db.js';
 import { currentUser, isOwner, requireOwner } from './auth.js';
@@ -60,16 +58,11 @@ async function importSnapshots(): Promise<void> {
     if (!existsSync(path)) continue;
     try {
       const snap = JSON.parse(await readFile(path, 'utf8'));
-      const existing = getLeague(db, slug);
       upsertLeague(db, {
         id: slug,
         name: snap.league.name,
         config: snap.league,
         values: snap.values,
-        // Team metadata already in the database wins: it carries keeper
-        // salaries and renames that the snapshot knows nothing about.
-        teams: existing?.teams?.length ? existing.teams : snap.teams,
-        myTeamId: existing?.myTeamId ?? null,
         capturedAt: snap.capturedAt,
         draftStartTime: snap.draftStartTime ?? null,
         calibration: snap.calibration ?? null,
@@ -131,8 +124,6 @@ app.get('/api/league/:id', requireAuth, (req, res) => {
     name: league.name,
     config: league.config,
     values: league.values,
-    teams: league.teams,
-    myTeamId: league.myTeamId,
     capturedAt: league.capturedAt,
     draftStartTime: league.draftStartTime,
     calibration: league.calibration,
@@ -151,18 +142,14 @@ app.post('/api/league/:id/picks', requireAuth, (req, res) => {
     res.status(404).json({ error: 'No such league.' });
     return;
   }
-  const { playerId, teamId, price, keeper } = req.body ?? {};
-  if (typeof playerId !== 'string' || typeof teamId !== 'string') {
-    res.status(400).json({ error: 'playerId and teamId are required.' });
+  const { playerId, price, keeper, mine } = req.body ?? {};
+  if (typeof playerId !== 'string') {
+    res.status(400).json({ error: 'playerId is required.' });
     return;
   }
   const amount = Number(price);
   if (!Number.isInteger(amount) || amount < 0 || amount > league.config.budget) {
     res.status(400).json({ error: `Price must be a whole number between 0 and ${league.config.budget}.` });
-    return;
-  }
-  if (!league.teams.some((t) => t.teamId === teamId)) {
-    res.status(400).json({ error: 'Unknown team.' });
     return;
   }
   // A player already on the board is a double-entry, which is the single most
@@ -171,7 +158,9 @@ app.post('/api/league/:id/picks', requireAuth, (req, res) => {
     res.status(409).json({ error: 'That player is already on the board.' });
     return;
   }
-  res.json({ pick: addPick(db, league.id, { playerId, teamId, price: amount, keeper: !!keeper }) });
+  res.json({
+    pick: addPick(db, league.id, { playerId, price: amount, keeper: !!keeper, mine: !!mine }),
+  });
 });
 
 app.post('/api/league/:id/undo', requireAuth, (req, res) => {
@@ -199,8 +188,8 @@ app.patch('/api/league/:id/picks/:seq', requireAuth, (req, res) => {
     return;
   }
   const ok = editPick(db, req.params.id, Number(req.params.seq), {
-    teamId: typeof req.body?.teamId === 'string' ? req.body.teamId : undefined,
     price,
+    mine: typeof req.body?.mine === 'boolean' ? req.body.mine : undefined,
   });
   if (!ok) {
     res.status(404).json({ error: 'No such pick.' });
@@ -209,30 +198,7 @@ app.patch('/api/league/:id/picks/:seq', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/league/:id/my-team', requireAuth, (req, res) => {
-  const teamId = typeof req.body?.teamId === 'string' ? req.body.teamId : null;
-  setMyTeam(db, req.params.id, teamId);
-  res.json({ ok: true, myTeamId: teamId });
-});
 
-/** Team names and keeper commitments. The one thing no platform tells us. */
-app.post('/api/league/:id/teams', requireAuth, (req, res) => {
-  const league = getLeague(db, req.params.id);
-  if (!league) {
-    res.status(404).json({ error: 'No such league.' });
-    return;
-  }
-  const incoming = Array.isArray(req.body?.teams) ? req.body.teams : null;
-  if (!incoming) {
-    res.status(400).json({ error: 'teams array required.' });
-    return;
-  }
-  const cleaned = incoming
-    .filter((t: any) => typeof t?.teamId === 'string' && typeof t?.name === 'string')
-    .map((t: any) => ({ teamId: t.teamId, name: t.name.slice(0, 80) }));
-  setTeams(db, league.id, cleaned);
-  res.json({ ok: true, teams: cleaned });
-});
 
 const DIST = join(process.cwd(), 'dist');
 app.use(express.static(DIST, { index: false, maxAge: '1y' }));
