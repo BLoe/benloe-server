@@ -546,8 +546,14 @@ export function Ticker({
   const recent = [...state.picks].reverse().slice(0, 14);
 
   return (
+    /*
+     * Clipped, never scrolled. The Drafted panel already holds the complete
+     * record and is searchable; the ticker only has to answer "what just
+     * happened", so a scrollbar here was an invitation to go looking in the
+     * wrong place. Whatever fits, fits — the rest fades out at the right edge.
+     */
     <div
-      className="sheet shrink-0 flex items-center gap-0 overflow-x-auto"
+      className="sheet shrink-0 flex items-center gap-0 overflow-hidden relative"
       style={{ height: 30 }}
       aria-label="Recent picks"
     >
@@ -585,6 +591,20 @@ export function Ticker({
           </button>
         );
       })}
+
+      {/* The fade IS the ellipsis: it says "there is more" without pretending
+          to be a control. Never intercepts a click on the entry beneath it. */}
+      {recent.length > 0 && (
+        <div
+          aria-hidden="true"
+          className="absolute top-0 right-0 h-full"
+          style={{
+            width: 48,
+            pointerEvents: 'none',
+            background: 'linear-gradient(to right, transparent, var(--panel))',
+          }}
+        />
+      )}
     </div>
   );
 }
