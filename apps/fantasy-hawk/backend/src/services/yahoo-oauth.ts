@@ -26,6 +26,12 @@ export class YahooOAuthService {
       redirect_uri: this.callbackUrl,
       response_type: 'code',
       state: state,
+      // Fantasy Sports read. Without an explicit scope Yahoo issues a token
+      // carrying only the app's default permissions — which authenticates
+      // perfectly and then returns 403 "This application is not authorized to
+      // perform this action" on every Fantasy endpoint. Every token this box
+      // had stored was minted through a scope-less flow and was useless.
+      scope: 'fspt-r',
     });
 
     return `${YAHOO_AUTH_URL}?${params.toString()}`;
