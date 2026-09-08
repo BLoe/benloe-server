@@ -82,25 +82,39 @@ export async function getProjections(season: string): Promise<SleeperProjectionR
   );
 }
 
-/** Bye weeks, which Sleeper keeps on the team rather than the projection. */
+/**
+ * Bye weeks, derived from the schedule.
+ *
+ * A team's bye is the week it does not appear in any fixture. The schedule
+ * endpoint returns `home` and `away` per game and NOT a `team` field — reading
+ * `game.team` returns undefined for every row, which silently produced an empty
+ * map and a board where no player had a bye at all. Nothing threw; the data
+ * simply was not there.
+ */
 export async function getByeWeeks(season: string): Promise<Record<string, number>> {
-  const schedule = await get<Array<{ week: number; team: string }>>(
+  const schedule = await get<Array<{ week: number; home: string; away: string }>>(
     `/schedule/nfl/regular/${season}`
-  ).catch(() => [] as Array<{ week: number; team: string }>);
+  ).catch(() => [] as Array<{ week: number; home: string; away: string }>);
 
   const playing = new Map<number, Set<string>>();
   const teams = new Set<string>();
+  let lastWeek = 0;
   for (const game of schedule) {
-    if (!game?.team) continue;
-    teams.add(game.team);
+    if (!game?.home || !game?.away) continue;
+    teams.add(game.home);
+    teams.add(game.away);
+    lastWeek = Math.max(lastWeek, game.week);
     if (!playing.has(game.week)) playing.set(game.week, new Set());
-    playing.get(game.week)!.add(game.team);
+    playing.get(game.week)!.add(game.home);
+    playing.get(game.week)!.add(game.away);
   }
 
   const byes: Record<string, number> = {};
   for (const team of teams) {
-    for (const [week, set] of [...playing.entries()].sort((a, b) => a[0] - b[0])) {
-      if (week >= 4 && week <= 14 && !set.has(team)) {
+    for (let week = 1; week <= lastWeek; week++) {
+      const set = playing.get(week);
+      // A week with no fixtures at all is missing data, not a league-wide bye.
+      if (set && set.size > 0 && !set.has(team)) {
         byes[team] = week;
         break;
       }
