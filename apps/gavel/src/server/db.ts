@@ -174,9 +174,20 @@ export function addPick(
   pick: { playerId: string; price: number; mine?: boolean; keeper?: boolean }
 ): Pick {
   const at = Date.now();
+  // `team_id` is dead — ownership is the `mine` flag — but a database created
+  // before that change still carries `team_id TEXT NOT NULL`, and SQLite cannot
+  // drop a NOT NULL with ALTER. Relaxing it in CREATE TABLE only helps a fresh
+  // file. Writing an empty string satisfies the old constraint and costs
+  // nothing on a new one.
+  //
+  // This shipped broken and failed EVERY insert on the live database for a
+  // whole draft. Nothing surfaced it: the write path is deliberately
+  // fire-and-forget so the board never blocks on the network, so the retry
+  // queue simply grew while the UI stayed perfectly correct.
   const info = db
     .prepare(
-      `INSERT INTO picks (league_id, player_id, price, at, keeper, mine) VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO picks (league_id, player_id, team_id, price, at, keeper, mine)
+       VALUES (?, ?, '', ?, ?, ?, ?)`
     )
     .run(leagueId, pick.playerId, pick.price, at, pick.keeper ? 1 : 0, pick.mine ? 1 : 0);
   return { seq: Number(info.lastInsertRowid), ...pick, at };
