@@ -107,8 +107,19 @@ export type Db = ReturnType<typeof openDb>;
 
 export function upsertLeague(db: Db, row: LeagueRow): void {
   db.prepare(
-    `INSERT INTO leagues (id, name, config, values_json, captured_at, draft_start, calibration)
-     VALUES (@id, @name, @config, @values_json, @captured_at, @draft_start, @calibration)
+    // `teams_json` is dead — ownership is one bit on a pick — but a database
+    // created before that change still carries `teams_json TEXT NOT NULL`, and
+    // SQLite cannot drop a NOT NULL with ALTER. Writing '[]' satisfies the old
+    // constraint and is ignored by every reader.
+    //
+    // This shipped broken and failed EVERY snapshot import on the live
+    // database. The app carried on serving whatever board it had loaded before
+    // the teams removal, so a whole draft ran on stale prices — and a
+    // calibration fix made mid-draft never reached the browser at all. The
+    // error was logged and nothing looked at it, which is why /api/health now
+    // reports it.
+    `INSERT INTO leagues (id, name, config, values_json, teams_json, captured_at, draft_start, calibration)
+     VALUES (@id, @name, @config, @values_json, '[]', @captured_at, @draft_start, @calibration)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        config = excluded.config,
