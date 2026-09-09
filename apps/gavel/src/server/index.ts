@@ -50,6 +50,9 @@ app.use(express.json({ limit: '256kb' }));
  * Runs once at boot, never on a request. This is how a board produced by
  * `npm run snapshot` becomes available to the app.
  */
+/** Snapshot imports that failed at boot. Empty is the healthy state. */
+const importFailures: string[] = [];
+
 async function importSnapshots(): Promise<void> {
   const slugs = (process.env.GAVEL_LEAGUES || 'columbus').split(',').map((s) => s.trim());
   for (const slug of slugs) {
@@ -69,6 +72,11 @@ async function importSnapshots(): Promise<void> {
       });
       console.log(`[gavel] loaded snapshot ${slug}: ${snap.values.length} players`);
     } catch (err) {
+      // Surfaced on /api/health, not merely logged. The last time an import
+      // failed it did so on every boot for two days while the app served a
+      // stale board, and nothing said a word.
+      const message = err instanceof Error ? err.message : String(err);
+      importFailures.push(`${slug}: ${message}`);
       console.error(`[gavel] snapshot ${slug} failed to load:`, err);
     }
   }
@@ -88,6 +96,9 @@ app.get('/api/health', (_req, res) => {
       capturedAt: l.capturedAt,
     })),
     auth: 'artanis',
+    // A board can be perfectly serveable and still be the wrong one.
+    snapshotErrors: importFailures,
+    stale: importFailures.length > 0,
   });
 });
 
