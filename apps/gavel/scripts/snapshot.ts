@@ -29,7 +29,7 @@ import { buildBoard, projectionsFor } from '../src/lib/board.js';
 import { buildPriceCurve, curveFromPrices, type PastAuction, type PriceCurve } from '../src/lib/history.js';
 import { fetchMarketValues } from '../src/sources/fantasycalc.js';
 import { valueBoard, type PlayerProjection } from '../src/lib/valuation.js';
-import type { LeagueConfig } from '../src/lib/league.js';
+import { startingDemand, type LeagueConfig } from '../src/lib/league.js';
 
 const DATA_DIR = process.env.GAVEL_DATA_DIR || '/srv/benloe/data/gavel';
 
@@ -157,7 +157,9 @@ async function marketCurve(
   const priced = valueBoard(shadow, cfg)
     .filter((v) => v.baseValue > 0)
     .map((v) => ({ position: v.position, price: v.baseValue }));
-  return curveFromPrices(priced, ['market']);
+  // A market curve is already expressed in this league's own shape, so its
+  // source starting requirement is this league's.
+  return curveFromPrices(priced, ['market'], startingDemand(cfg));
 }
 
 async function main() {
@@ -181,6 +183,30 @@ async function main() {
   // market get consulted, and the board records which of the two it used.
   let curve: PriceCurve | null = buildPriceCurve(history, cfg);
   let calibration = curve ? { source: 'league history', seasons: curve.seasons } : null;
+
+  /*
+   * Borrow another league's price curve.
+   *
+   * For a league whose own auctions cannot be read. What transfers is the
+   * SHAPE — how steeply prices fall inside a position — because that is a
+   * property of auctions in general, and every real one is less top-heavy than
+   * a naive value model predicts. What does not transfer is how much each
+   * position costs; `valueBoard` rescales each position back to this league's
+   * own model spend before blending, so a 3-WR league does not inherit a 4-WR
+   * league's receiver budget.
+   */
+  const borrow = process.env.GAVEL_CURVE_FROM;
+  if (!curve && borrow) {
+    const [lent, lender] = await Promise.all([
+      getAuctionHistory(borrow).catch(() => [] as PastAuction[]),
+      getLeague(borrow).catch(() => null),
+    ]);
+    // The lender's own roster shape matters: it is what tells the blend that
+    // both leagues start one defence but a different number of receivers.
+    const lenderCfg = lender ? leagueFromSleeper(lender, null, 'lender') : undefined;
+    curve = buildPriceCurve(lent, cfg, lenderCfg);
+    if (curve) calibration = { source: `borrowed curve from league ${borrow}`, seasons: curve.seasons };
+  }
 
   if (!curve) {
     curve = await marketCurve(cfg, projections, byes).catch(() => null);

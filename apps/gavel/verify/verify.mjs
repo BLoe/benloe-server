@@ -340,9 +340,19 @@ async function main() {
     }
     if (!anyOverflow) pass('no horizontal overflow at 1280, 1600 or 1920');
 
-    // ---- second league: switcher, half-PPR pricing, keeper money ----
+    // ---- second league: switcher, per-league pricing, keeper money ----
     if (hasYahoo) {
       await page.setViewportSize({ width: 1600, height: 1000 });
+
+      // Read the top back in THIS league first, to compare after the switch.
+      await page.getByPlaceholder(/Filter players/).fill('gibbs');
+      await page.waitForTimeout(350);
+      await board.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
+      await page.getByRole('dialog').waitFor({ state: 'visible', timeout: 5000 });
+      const columbusRb = Number((await labelFig('Board')).replace(/[^0-9]/g, '') || 0);
+      await page.keyboard.press('Escape');
+      await page.getByPlaceholder(/Filter players/).fill('');
+      await page.waitForTimeout(200);
       await page.selectOption('select', 'yahoo');
       await page.waitForTimeout(1000);
 
@@ -352,16 +362,40 @@ async function main() {
         pass('league switcher loads the second league with its own board');
       }
 
-      await page.getByPlaceholder(/Filter players/).fill('nacua');
+      // The two leagues must price the same player differently — that is the
+      // whole point of scoring and roster shape being per-league.
+      //
+      // NOT asserting "half-PPR lifts receivers", which was the old test and
+      // was wrong: Yahoo starts THREE receivers to Columbus's four, so its
+      // receiver budget correctly scales down and cancels most of the PPR
+      // lift. The claim that survives is about running backs — fewer receiver
+      // slots plus half-PPR pass-catching backs makes them dearer here.
+      await page.getByPlaceholder(/Filter players/).fill('gibbs');
       await page.waitForTimeout(350);
-      await board.getByRole('button', { name: /Puka Nacua/ }).first().click();
-      const yModal = page.getByRole('dialog', { name: /Puka Nacua/ });
+      await board.getByRole('button', { name: /Jahmyr Gibbs/ }).first().click();
+      const yModal = page.getByRole('dialog', { name: /Jahmyr Gibbs/ });
       await yModal.waitFor({ state: 'visible', timeout: 5000 });
-      const nacua = Number((await labelFig('Board')).replace(/[^0-9]/g, '') || 0);
+      const yahooRb = Number((await labelFig('Board')).replace(/[^0-9]/g, '') || 0);
       await page.keyboard.press('Escape');
       await page.getByPlaceholder(/Filter players/).fill('');
-      if (nacua < 55) fail(`half-PPR should lift Nacua above his standard price, got $${nacua}`);
-      else pass(`half-PPR prices Nacua at $${nacua}, above his standard-scoring price`);
+      if (yahooRb <= columbusRb) {
+        fail(`the 3-WR half-PPR league should price the top back above the 4-WR standard one; got $${yahooRb} vs $${columbusRb}`);
+      } else {
+        pass(`roster shape and scoring reprice the top back across leagues ($${columbusRb} -> $${yahooRb})`);
+      }
+
+      // Defences must stay near the floor in BOTH leagues. The live bug put a
+      // $17 price on one mid-draft in a room that has never paid over $5.
+      await page.getByPlaceholder(/Filter players/).fill('rams');
+      await page.waitForTimeout(350);
+      const defRow = await board.getByRole('button', { name: /Rams/ }).first().innerText();
+      const defPrice = Number((defRow.match(/\$(\d+)/) || [])[1] || 99);
+      await page.getByPlaceholder(/Filter players/).fill('');
+      if (defPrice > 6) {
+        fail(`a defence should sit near the minimum, got $${defPrice}`);
+      } else {
+        pass(`defences priced near the floor ($${defPrice})`);
+      }
 
       // Keepers: entered as picks, through the same click-and-price path.
       await page.getByRole('button', { name: /^Keepers/ }).click();

@@ -368,11 +368,46 @@ export function valueBoard(
       // No prices for this position in the calibration source: keep the model's,
       // rather than blending toward zero.
       if (source.length === 0) continue;
+
+      // Take the SHAPE and the LEVEL from the curve; adjust the level only for
+      // a difference in STARTING REQUIREMENT.
+      //
+      // An earlier version rescaled each position to the model's own spend,
+      // reasoning that a 3-WR league should not inherit a 4-WR league's
+      // receiver budget. True for receivers — and catastrophic for defences.
+      // The model thinks defences are worth $58 a draft, because a good one
+      // out-projects replacement by fifteen points. Real rooms have paid $10,
+      // $12 and $18 for ALL of them, three years running. Rescaling to the
+      // model threw away the one number history had exactly right, and put a
+      // $17 price on a defence.
+      //
+      // What actually differs between leagues is how many of a position they
+      // start. Both leagues start one defence, so that level transfers
+      // untouched. One starts four receivers and the other three, so that one
+      // scales. The model gets no vote on the level at all.
       const historical = resample(source, list.length);
-      list.forEach((p, i) => {
+      const from = curve.sourceStarters?.[pos] ?? 0;
+      const to = startingDemand(cfg)[pos] ?? 0;
+      const level = from > 0 && to > 0 ? to / from : 1;
+
+      // Blend the two curves to get the SHAPE...
+      const mixed = list.map((p, i) => {
         const model = modelPrice.get(p.id) ?? 0;
-        blended.set(p.id, (1 - historyWeight) * model + historyWeight * (historical[i] ?? model));
+        return (1 - historyWeight) * model + historyWeight * (historical[i] ?? 0);
       });
+
+      // ...then force the position's TOTAL back to what history says the
+      // position costs. The model gets no say in the level at all, and this is
+      // why: its defence valuation is not a weak signal, it is not a signal.
+      // It is an artifact of applying value-over-replacement to a position
+      // nobody bids on, and blending even 40% of it in still priced every
+      // defence in a draft at $39 against a league that has never spent more
+      // than $18 on all of them together.
+      const target = historical.reduce((a, b) => a + b, 0) * level;
+      const mixedSum = mixed.reduce((a, b) => a + b, 0);
+      const fit = mixedSum > 0 ? target / mixedSum : 1;
+
+      list.forEach((p, i) => blended.set(p.id, mixed[i] * fit));
     }
   }
 

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildPriceCurve, curveFromPrices, fitCounts, resample } from './history.js';
 import { valueBoard, type PlayerProjection } from './valuation.js';
-import type { LeagueConfig, Position, RosterSlots } from './league.js';
+import { startingDemand, type LeagueConfig, type Position, type RosterSlots } from './league.js';
 
 const SLOTS: RosterSlots = { QB: 1, RB: 2, WR: 4, TE: 1, DEF: 1, K: 0, FLEX: 1, BN: 6, IR: 1 };
 const CFG: LeagueConfig = {
@@ -160,6 +160,46 @@ describe('a calibrated board', () => {
     }
   });
 
+  it('keeps defences cheap when a curve is borrowed by a league that also starts one', () => {
+    /*
+     * The live bug. An earlier version rescaled each position of a borrowed
+     * curve to the MODEL's spend for that position, reasoning that a 3-WR
+     * league should not inherit a 4-WR league's receiver budget.
+     *
+     * True for receivers. Catastrophic for defences. The model values all the
+     * defences in a draft around $58, because a good one out-projects
+     * replacement by fifteen points. This league has actually paid $10, $12 and
+     * $18 for all of them, three years running. Rescaling to the model threw
+     * away the one number history had exactly right and put $17 on a defence
+     * mid-draft.
+     *
+     * Both leagues start one defence, so that level must transfer untouched.
+     */
+    const YAHOOISH: LeagueConfig = {
+      ...CFG,
+      id: 'borrower',
+      // Three receivers rather than four; everything else identical.
+      slots: { ...SLOTS, WR: 3, BN: 7 },
+    };
+    const curve = buildPriceCurve(auctions as any, YAHOOISH, CFG)!;
+    const board = valueBoard(pool(), YAHOOISH, { curve });
+
+    const defs = board.filter((v) => v.position === 'DEF' && v.baseValue > 0);
+    const defTotal = defs.reduce((sum, v) => sum + v.baseValue, 0);
+    expect(defs.length).toBeGreaterThan(0);
+    // The lending league has never spent more than $18 on every defence
+    // combined. Allow generous headroom and still catch a $58 blowout.
+    expect(defTotal).toBeLessThan(30);
+    expect(Math.max(...defs.map((v) => v.baseValue))).toBeLessThan(8);
+
+    // ...while receivers DO scale down, because the borrower starts fewer.
+    const ownCurve = buildPriceCurve(auctions as any, CFG)!;
+    const ownBoard = valueBoard(pool(), CFG, { curve: ownCurve });
+    const wrShare = (b: typeof board) =>
+      b.filter((v) => v.position === 'WR').reduce((s, v) => s + v.baseValue, 0);
+    expect(wrShare(board)).toBeLessThan(wrShare(ownBoard));
+  });
+
   it('does not erase a position the calibration source knows nothing about', () => {
     // FantasyCalc carries no defences — they are never traded — and taking its
     // counts literally priced ZERO defences in a league that starts one.
@@ -167,7 +207,8 @@ describe('a calibrated board', () => {
       calibrated
         .filter((v) => v.baseValue > 0 && v.position !== 'DEF')
         .map((v) => ({ position: v.position, price: v.baseValue })),
-      ['market']
+      ['market'],
+      startingDemand(CFG)
     )!;
     expect(marketish.counts.DEF).toBe(0);
 

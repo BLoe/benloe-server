@@ -20,7 +20,7 @@
  * drafted, and WHAT EACH RANK COSTS. The model still decides who occupies which
  * rank. That split is the whole idea.
  */
-import { POSITIONS, type LeagueConfig, type Position } from './league.js';
+import { POSITIONS, startingDemand, type LeagueConfig, type Position } from './league.js';
 
 export interface PastAuction {
   season: string;
@@ -35,6 +35,15 @@ export interface PriceCurve {
   seasons: string[];
   /** Total dollars the curve accounts for. Should equal the room's budget. */
   total: number;
+  /**
+   * Starting jobs per position in the league this curve came FROM.
+   *
+   * Needed to borrow a curve across leagues. A league starting three receivers
+   * should not inherit a four-receiver league's receiver budget — but it should
+   * absolutely inherit its defence budget, because both start one and neither
+   * room will ever pay for one.
+   */
+  sourceStarters: Record<Position, number>;
 }
 
 const isPosition = (v: string): v is Position => (POSITIONS as readonly string[]).includes(v);
@@ -69,7 +78,12 @@ export function resample(curve: number[], length: number): number[] {
  * season is first scaled to the CURRENT budget — a league that changes its
  * budget or its roster size should still be able to use its own history.
  */
-export function buildPriceCurve(auctions: PastAuction[], cfg: LeagueConfig): PriceCurve | null {
+export function buildPriceCurve(
+  auctions: PastAuction[],
+  cfg: LeagueConfig,
+  /** The league the auctions came from, when it is not `cfg` itself. */
+  source?: LeagueConfig
+): PriceCurve | null {
   const usable = auctions.filter((a) => a.picks.length > 0);
   if (usable.length === 0) return null;
 
@@ -110,7 +124,13 @@ export function buildPriceCurve(auctions: PastAuction[], cfg: LeagueConfig): Pri
   }
 
   const total = POSITIONS.reduce((sum, pos) => sum + prices[pos].reduce((a, b) => a + b, 0), 0);
-  return { counts, prices, seasons: usable.map((a) => a.season), total };
+  return {
+    counts,
+    prices,
+    seasons: usable.map((a) => a.season),
+    total,
+    sourceStarters: startingDemand(source ?? cfg),
+  };
 }
 
 /**
@@ -164,7 +184,8 @@ export function fitCounts(
  */
 export function curveFromPrices(
   priced: Array<{ position: Position; price: number }>,
-  seasons: string[]
+  seasons: string[],
+  starters: Record<Position, number>
 ): PriceCurve | null {
   const withPrice = priced.filter((p) => p.price > 0);
   if (withPrice.length === 0) return null;
@@ -180,5 +201,5 @@ export function curveFromPrices(
     prices[pos] = list;
   }
   const total = withPrice.reduce((sum, p) => sum + p.price, 0);
-  return { counts, prices, seasons, total };
+  return { counts, prices, seasons, total, sourceStarters: starters };
 }
