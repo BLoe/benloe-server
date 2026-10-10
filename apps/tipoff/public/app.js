@@ -40,6 +40,9 @@ const S = load() ?? fresh();
 
 const keeperIds = new Set(league.keepers.map((k) => k.playerId).filter((x) => x != null));
 const adjAdp = keeperAdjustedAdp(players, keeperIds);
+// The sheet names managers; Yahoo shows team names. Managers stay the key.
+const teamName = (m) => league.teamNames?.[m] ?? m;
+const keptBy = new Map(league.keepers.filter((k) => k.playerId != null).map((k) => [k.playerId, k]));
 const room2025 = new Map(league.draft2025.filter((d) => d.playerId != null).map((d) => [d.playerId, d]));
 
 // ---------- derived ----------
@@ -292,7 +295,7 @@ function renderPicks() {
     prevRound = m.round;
     const used = m.at && clk.now && m.at < clk.now;
     const label = m.keeper ? `R${m.round} ${m.keeper.name.split(' ').pop()}` : `R${m.round}${m.at ? ` #${m.at}` : ' ?'}`;
-    html += `<span class="pk ${used ? 'used' : ''} ${m.keeper ? 'keep' : ''} ${clk.next && m.at === clk.next.at ? 'next' : ''}" title="${m.from ? 'from ' + esc(m.from) : 'own pick'}">${label}</span>`;
+    html += `<span class="pk ${used ? 'used' : ''} ${m.keeper ? 'keep' : ''} ${clk.next && m.at === clk.next.at ? 'next' : ''}" title="${m.from ? 'from ' + esc(teamName(m.from)) : 'own pick'}">${label}</span>`;
   }
   html += '</div>';
   if (sched.mySlot && EXTRA_ROUNDS.some((r) => !S.settings.extraFrom?.[r])) html += '<div class="warnline">Set who your extra 3rd/6th/8th came from in Draft setup.</div>';
@@ -338,6 +341,7 @@ function openPick(id) {
     `${f1(s.pts)} pts · ${f1(s.reb)} reb · ${f1(s.ast)} ast · ${f1(s.stl)} stl · ${f1(s.blk)} blk · ${f1(s.tpm)} 3pm · ${f1(s.fgm)} FGM · ${pct(s.fgm, s.fga)} FG · ${pct(s.ftm, s.fta)} FT · ${Math.round(s.gp)} GP`,
     `Sources (our rank): ESPN ${p.srcRanks.espn ?? '–'} · CBS ${p.srcRanks.cbs ?? '–'} · FantasyPros ${p.srcRanks.fp ?? '–'}`,
     `Market: Yahoo ADP ${p.adpYahoo ?? '–'} · ESPN ADP ${p.adpEspn ?? '–'} · experts ${p.ecr ?? '–'}`,
+    keptBy.has(id) ? `Kept by ${teamName(keptBy.get(id).team)} (round ${keptBy.get(id).round})` : null,
     r25 ? `2025 in this league: R${r25.round} by ${r25.team}` : null,
     p.outlook ? p.outlook.slice(0, 320) + (p.outlook.length > 320 ? '…' : '') : null,
   ]
@@ -382,10 +386,12 @@ $('#pickDialog').addEventListener('close', () => {
 // ---------- settings ----------
 function openSettings() {
   const st = S.settings;
-  const teamOpts = (sel) => ['<option value="">—</option>', ...league.teams.map((t) => `<option ${t === sel ? 'selected' : ''}>${esc(t)}</option>`)].join('');
+  const byName = [...league.teams].sort((a, b) => teamName(a).localeCompare(teamName(b)));
+  const teamOpts = (sel) =>
+    ['<option value="">—</option>', ...byName.map((t) => `<option value="${esc(t)}" ${t === sel ? 'selected' : ''}>${esc(teamName(t))}${teamName(t) !== t ? ` · ${esc(t)}` : ''}</option>`)].join('');
   $('#settingsForm').innerHTML = `
     <h2>Draft setup</h2>
-    <p>The draft order is in the Yahoo lobby. With it, the board knows every pick of yours and skips the keeper picks so the counter matches Yahoo's.</p>
+    <p>Teams are listed by their Yahoo name, manager alongside. The draft order is in the Yahoo lobby. With it, the board knows every pick of yours and skips the keeper picks so the counter matches Yahoo's.</p>
     <div class="grid">${st.order.map((t, i) => `<span>Slot ${i + 1}</span><select data-order="${i}">${teamOpts(t)}</select>`).join('')}</div>
     <p>Your extra picks — whose pick was it originally?</p>
     <div class="grid">${EXTRA_ROUNDS.map((r) => `<span>Round ${r}</span><select data-extra="${r}">${teamOpts(st.extraFrom?.[r])}</select>`).join('')}</div>
