@@ -9,7 +9,7 @@ const KEEPERS_TAB = '2026 Keepers';
 const DRAFT_TAB = '2025 Draft Results';
 const KEEPERS_2025_TAB = '2025 Keepers';
 // Yahoo team names that changed since the 2025 draft grid: manager -> name.
-const TEAM_NAME_OVERRIDES = {};
+const TEAM_NAME_OVERRIDES = { 'Joe M': 'Austin 316', 'Florio/Avi': 'Knicks in 5' };
 const ME = 'Ben Loe';
 // Spellings in the sheet that no rule would reconcile.
 const ALIAS = { alexandersarr: 'alexsarr', dejountemurrary: 'dejountemurray', austinreeves: 'austinreaves', shadensharpe: 'shaedonsharpe', jarenjackson: 'jarenjackson' };
