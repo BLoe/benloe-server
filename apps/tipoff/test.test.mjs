@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import { overall, openSlots, valuePlayers, tiers, survival } from './public/model.js';
 import { schedule, clock, keeperAdjustedAdp, parsePicks } from './public/draft.js';
 
-const league = JSON.parse(readFileSync(new URL('./public/league.json', import.meta.url)));
+const real = JSON.parse(readFileSync(new URL('./public/league.json', import.meta.url)));
+// The order-derived path, as if no Yahoo grid had been read.
+const league = { ...real, yahooPicks: undefined };
 const { players } = JSON.parse(readFileSync(new URL('./public/players.json', import.meta.url)));
 const order = ['Florio/Avi', 'Tim Doyle', 'Garrett', 'John M', 'Mike S', 'Ben M', 'Aaron M', 'Thomas H', 'Joe M', 'Ben Loe', 'John L', 'Joe C'];
 const settings = { order, extraFrom: { 3: 'Garrett', 6: 'Mike S', 8: 'Joe C' }, flaggPick: 'own' };
@@ -106,4 +108,17 @@ test('typed picks beat the computed schedule, with no draft order at all', () =>
   assert.equal(c.horizon.at, 18);
   // Counter steps over a typed keeper pick: 29 made -> pick 31, not 30.
   assert.equal(clock(s, [], 29).now, 31);
+});
+
+test('the Yahoo grid: our real picks, keepers placed, a 55-pick wait after #101', () => {
+  const s = schedule(real, { order: Array(12).fill('') });
+  assert.deepEqual(s.mine.filter((m) => !m.keeper).map((m) => m.at), [5, 20, 29, 44, 53, 62, 68, 77, 90, 92, 101, 164, 173, 188]);
+  assert.deepEqual(s.mine.filter((m) => m.keeper).map((m) => [m.keeper.name, m.at]), [['Cooper Flagg', 31], ['Kyshawn George', 149]]);
+  assert.equal(s.keeperPicks.size, 21);
+  assert.equal(clock(s, [], 0).next.at, 5);
+  const at101 = clock(s, [], s.seq.indexOf(101));
+  assert.ok(at101.onClock);
+  assert.equal(at101.horizon.at, 164);
+  // What Ben types still wins over the grid.
+  assert.equal(schedule(real, { order: [], myPicksText: '7 8' }).mine.filter((m) => !m.keeper)[0].at, 7);
 });

@@ -291,7 +291,7 @@ function renderScarcity() {
 
 function renderPicks() {
   const { sched, clk } = V;
-  let html = `<h3>Your picks<span>${sched.typedMine ? 'from Yahoo' : sched.mySlot ? `slot ${sched.mySlot}` : 'not set'}</span></h3><div class="picks">`;
+ let html = `<h3>Your picks<span>${sched.typedMine ? (S.settings.myPicksText ? 'typed' : 'from your Yahoo screenshots') : sched.mySlot ? `slot ${sched.mySlot}` : 'not set'}</span></h3><div class="picks">`;
   let prevRound = 0;
   for (const m of sched.mine) {
     if (m.round - prevRound > 1 && prevRound) html += `<span class="pk gap">— R${prevRound + 1}–${m.round - 1} sold —</span>`;
@@ -396,9 +396,10 @@ function openSettings() {
   $('#settingsForm').innerHTML = `
     <h2>Draft setup</h2>
     <p><b>Simplest:</b> this board can't see Yahoo, so read your pick numbers off the Yahoo draft lobby and type them here — <span class="num">34</span> or <span class="num">3.10</span> (round 3, pick 10). Typed numbers beat everything below. Other teams' trades don't matter: they change who picks, never when.</p>
-    <label>Your picks — the 14 you'll actually make (not Flagg's or George's)<textarea data-text="myPicksText" rows="2" placeholder="10, 15, 3.3, 4.10 …">${esc(st.myPicksText ?? '')}</textarea></label>
-    <label>Keeper picks — every pick the Yahoo lobby shows pre-filled with a keeper, all teams (optional; keeps the counter in step)<textarea data-text="keeperPicksText" rows="2" placeholder="34, 40, 41 …">${esc(st.keeperPicksText ?? '')}</textarea></label>
+    <label>Your picks — the 14 you'll actually make (not Flagg's or George's)<textarea data-text="myPicksText" rows="2" placeholder="${esc(league.yahooPicks?.mine ? 'From your Yahoo screenshots: ' + league.yahooPicks.mine : '10, 15, 3.3, 4.10 …')}">${esc(st.myPicksText ?? '')}</textarea></label>
+    <label>Keeper picks — every pick the Yahoo lobby shows pre-filled with a keeper, all teams (optional; keeps the counter in step)<textarea data-text="keeperPicksText" rows="2" placeholder="${esc(league.yahooPicks?.keepers ? 'From your Yahoo screenshots: ' + league.yahooPicks.keepers : '34, 40, 41 …')}">${esc(st.keeperPicksText ?? '')}</textarea></label>
     <p class="parsed" id="parsedPicks"></p>
+    <p>Rather not type them? <a href="upload.html" target="_blank" style="color:var(--accent)">Upload screenshots of the lobby's pick list</a> and ask Claude to fill these in.</p>
     <p><b>Or</b> the round-1 order. Teams are listed by their Yahoo name, manager alongside. The draft order is in the Yahoo lobby. With it, the board knows every pick of yours and skips the keeper picks so the counter matches Yahoo's.</p>
     <div class="grid">${st.order.map((t, i) => `<span>Slot ${i + 1}</span><select data-order="${i}">${teamOpts(t)}</select>`).join('')}</div>
     <p>Your extra picks — whose pick was it originally?</p>

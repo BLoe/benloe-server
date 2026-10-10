@@ -50,11 +50,11 @@ await page.selectOption('select[data-extra="8"]', 'Joe C');
 await page.screenshot({ path: OUT + '2-setup.png' });
 await page.click('#settingsForm button[value=close]');
 
-if (!(await clockText()).includes('#10')) fail('slot 10: next pick should be #10, clock says ' + (await clockText()));
+if (!(await clockText()).includes('#5')) fail('from the Yahoo grid our first pick is #5, clock says ' + (await clockText()));
 
-// Nine rival picks by keyboard: search, Enter opens the top row, Enter = taken.
+// Four rival picks by keyboard: search, Enter opens the top row, Enter = taken.
 const board = page.getByTestId('board');
-for (let i = 0; i < 9; i++) {
+for (let i = 0; i < 4; i++) {
   const first = await board.locator('tbody tr.p').first().locator('td.name').innerText();
   await page.click('#board tbody tr.p >> nth=0');
   await page.keyboard.press('Enter');
@@ -62,8 +62,8 @@ for (let i = 0; i < 9; i++) {
   if (i === 0 && (await board.locator('tbody tr.p').first().locator('td.name').innerText()) === first) fail('taken player still at top of board');
 }
 const c = await clockText();
-if (!c.includes("ON THE CLOCK")) fail('after nine picks we should be on the clock: ' + c);
-if (!c.includes('Pick 10')) fail('counter should read pick 10: ' + c);
+if (!c.includes("ON THE CLOCK")) fail('after four picks we should be on the clock: ' + c);
+if (!c.includes('Pick 5')) fail('counter should read pick 5: ' + c);
 await page.screenshot({ path: OUT + '3-on-the-clock.png' });
 
 // Take the shortlist's top suggestion as ours with 'm'.
@@ -72,8 +72,8 @@ await page.click('#suggest .row.top');
 await page.keyboard.press('m');
 if (!(await page.locator('#team').innerText()).includes(sug)) fail(`${sug} not on our team after m`);
 const c2 = await clockText();
-if (!c2.includes('Pick 11')) fail('counter should move to 11: ' + c2);
-if (!c2.includes('#15')) fail('our next pick from slot 10 is #15: ' + c2);
+if (!c2.includes('Pick 6')) fail('counter should move to 6: ' + c2);
+if (!c2.includes('#20')) fail('our next pick is #20: ' + c2);
 
 // Undo puts him back.
 await page.click('#undo');
@@ -91,7 +91,7 @@ await page.click('button[data-punt="fgp"]'); // restore
 // Reload: everything survives.
 await page.reload();
 await page.waitForSelector('table.b tbody tr');
-if (!(await clockText()).includes('Pick 11')) fail('reload lost the pick counter: ' + (await clockText()));
+if (!(await clockText()).includes('Pick 6')) fail('reload lost the pick counter: ' + (await clockText()));
 if (!(await page.locator('#team').innerText()).includes(sug)) fail('reload lost our pick');
 
 await page.click('button[data-tab="pos"]');
@@ -114,10 +114,13 @@ await page.screenshot({ path: OUT + '7-typed-picks.png' });
 const parsed = await page.locator('#parsedPicks').innerText();
 if (!parsed.includes('#26 (R3)') || !parsed.includes('#89 (R8)')) fail('typed picks not parsed: ' + parsed);
 await page.click('#settingsForm button[value=close]');
-if (!(await page.locator('#mypicks').innerText()).includes('from Yahoo')) fail('picks panel does not show typed picks');
-if (!(await clockText()).includes('#14')) fail('next pick should be #14 from typed list: ' + (await clockText()));
+if (!(await page.locator('#mypicks').innerText()).includes('typed')) fail('picks panel does not show typed picks');
+if (!(await clockText()).includes('#11')) fail('next pick should be #11 from typed list: ' + (await clockText()));
 
-// Upload page: a file in, listed, on disk, deleted.
+// Upload page, reached the way Ben would: the header link.
+await page.goto(URL_);
+if (!(await page.getByTestId('upload-link').isVisible())) fail('upload link not visible in header');
+if ((await page.getByTestId('upload-link').getAttribute('href')) !== 'upload.html') fail('upload link points elsewhere');
 await page.goto(URL_ + 'upload.html');
 await page.setInputFiles('#pick', OUT + '1-fresh.png');
 await page.waitForSelector('.shot img');
