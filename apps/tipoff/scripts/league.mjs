@@ -76,9 +76,11 @@ for (const m of teams) {
   const v = votes[m] ?? [];
   if (v.length && v.every((x) => x === v[0])) teamNames[m] = v[0];
 }
+// The grid's own names, by manager, before any rename — to label 2025 picks.
+const teamNames2025 = { ...teamNames };
 Object.assign(teamNames, TEAM_NAME_OVERRIDES);
 
-writeFileSync(new URL('../public/league.json', import.meta.url), JSON.stringify({ fetchedAt: new Date().toISOString(), me: ME, teams, teamNames, keepers, draft2025 }, null, 1));
+writeFileSync(new URL('../public/league.json', import.meta.url), JSON.stringify({ fetchedAt: new Date().toISOString(), me: ME, teams, teamNames, teamNames2025, keepers, draft2025 }, null, 1));
 for (const m of teams) console.log(`  ${m.padEnd(11)} -> ${teamNames[m] ?? 'UNRESOLVED'}`);
 console.log(`${teams.length} teams, ${keepers.length} keepers, ${draft2025.length} picks from 2025`);
 const missingKeepers = keepers.filter((k) => k.playerId == null).map((k) => k.name);

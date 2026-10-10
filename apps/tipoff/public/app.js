@@ -42,6 +42,9 @@ const keeperIds = new Set(league.keepers.map((k) => k.playerId).filter((x) => x 
 const adjAdp = keeperAdjustedAdp(players, keeperIds);
 // The sheet names managers; Yahoo shows team names. Managers stay the key.
 const teamName = (m) => league.teamNames?.[m] ?? m;
+// The 2025 grid is headed by 2025 team names; show today's name for the same team.
+const manager2025 = new Map(Object.entries(league.teamNames2025 ?? {}).map(([m, n]) => [n, m]));
+const teamNow = (name2025) => (manager2025.has(name2025) ? teamName(manager2025.get(name2025)) : name2025);
 const keptBy = new Map(league.keepers.filter((k) => k.playerId != null).map((k) => [k.playerId, k]));
 const room2025 = new Map(league.draft2025.filter((d) => d.playerId != null).map((d) => [d.playerId, d]));
 
@@ -342,7 +345,7 @@ function openPick(id) {
     `Sources (our rank): ESPN ${p.srcRanks.espn ?? '–'} · CBS ${p.srcRanks.cbs ?? '–'} · FantasyPros ${p.srcRanks.fp ?? '–'}`,
     `Market: Yahoo ADP ${p.adpYahoo ?? '–'} · ESPN ADP ${p.adpEspn ?? '–'} · experts ${p.ecr ?? '–'}`,
     keptBy.has(id) ? `Kept by ${teamName(keptBy.get(id).team)} (round ${keptBy.get(id).round})` : null,
-    r25 ? `2025 in this league: R${r25.round} by ${r25.team}` : null,
+    r25 ? `2025 in this league: R${r25.round} by ${teamNow(r25.team)}` : null,
     p.outlook ? p.outlook.slice(0, 320) + (p.outlook.length > 320 ? '…' : '') : null,
   ]
     .filter(Boolean)
