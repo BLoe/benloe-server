@@ -111,7 +111,7 @@ function renderClock() {
     html += `<button class="step" data-act="back" title="Pick counter back one">−</button>
       <span class="now num">Pick ${clk.now} <span class="next">R${roundOf(clk.now)}</span></span>
       <button class="step" data-act="fwd" title="Pick counter forward one (e.g. a pick you didn't mark)">+</button>`;
-    if (!sched.mySlot) html += `<span class="next">Set the draft order in <b>Draft setup</b> to track your picks</span>`;
+    if (!sched.known) html += `<span class="next">Enter your picks or the draft order in <b>Draft setup</b> to track your picks</span>`;
     else if (clk.onClock) html += `<span class="onclock">YOU'RE ON THE CLOCK</span><span class="next">then #${clk.horizon?.at ?? '–'}</span>`;
     else if (clk.next) html += `<span class="next">You: <b>#${clk.next.at}</b> in ${clk.idx(clk.next.at) - clk.made} picks</span>`;
   }
@@ -291,7 +291,7 @@ function renderScarcity() {
 
 function renderPicks() {
   const { sched, clk } = V;
-  let html = `<h3>Your picks<span>${sched.mySlot ? `slot ${sched.mySlot}` : 'set draft order'}</span></h3><div class="picks">`;
+  let html = `<h3>Your picks<span>${sched.typedMine ? 'from Yahoo' : sched.mySlot ? `slot ${sched.mySlot}` : 'not set'}</span></h3><div class="picks">`;
   let prevRound = 0;
   for (const m of sched.mine) {
     if (m.round - prevRound > 1 && prevRound) html += `<span class="pk gap">— R${prevRound + 1}–${m.round - 1} sold —</span>`;
@@ -301,7 +301,8 @@ function renderPicks() {
     html += `<span class="pk ${used ? 'used' : ''} ${m.keeper ? 'keep' : ''} ${clk.next && m.at === clk.next.at ? 'next' : ''}" title="${m.from ? 'from ' + esc(teamName(m.from)) : 'own pick'}">${label}</span>`;
   }
   html += '</div>';
-  if (sched.mySlot && EXTRA_ROUNDS.some((r) => !S.settings.extraFrom?.[r])) html += '<div class="warnline">Set who your extra 3rd/6th/8th came from in Draft setup.</div>';
+  if (sched.mySlot && !sched.typedMine && EXTRA_ROUNDS.some((r) => !S.settings.extraFrom?.[r])) html += '<div class="warnline">Set who your extra 3rd/6th/8th came from in Draft setup — or type your picks there.</div>';
+  if (sched.typedMine && sched.mine.filter((m) => !m.keeper).length !== 14) html += `<div class="warnline">${sched.mine.filter((m) => !m.keeper).length} picks entered; you should have 14 besides the two keepers.</div>`;
   $('#mypicks').innerHTML = html;
 }
 
@@ -394,7 +395,11 @@ function openSettings() {
     ['<option value="">—</option>', ...byName.map((t) => `<option value="${esc(t)}" ${t === sel ? 'selected' : ''}>${esc(teamName(t))}${teamName(t) !== t ? ` · ${esc(t)}` : ''}</option>`)].join('');
   $('#settingsForm').innerHTML = `
     <h2>Draft setup</h2>
-    <p>Teams are listed by their Yahoo name, manager alongside. The draft order is in the Yahoo lobby. With it, the board knows every pick of yours and skips the keeper picks so the counter matches Yahoo's.</p>
+    <p><b>Simplest:</b> this board can't see Yahoo, so read your pick numbers off the Yahoo draft lobby and type them here — <span class="num">34</span> or <span class="num">3.10</span> (round 3, pick 10). Typed numbers beat everything below. Other teams' trades don't matter: they change who picks, never when.</p>
+    <label>Your picks — the 14 you'll actually make (not Flagg's or George's)<textarea data-text="myPicksText" rows="2" placeholder="10, 15, 3.3, 4.10 …">${esc(st.myPicksText ?? '')}</textarea></label>
+    <label>Keeper picks — every pick the Yahoo lobby shows pre-filled with a keeper, all teams (optional; keeps the counter in step)<textarea data-text="keeperPicksText" rows="2" placeholder="34, 40, 41 …">${esc(st.keeperPicksText ?? '')}</textarea></label>
+    <p class="parsed" id="parsedPicks"></p>
+    <p><b>Or</b> the round-1 order. Teams are listed by their Yahoo name, manager alongside. The draft order is in the Yahoo lobby. With it, the board knows every pick of yours and skips the keeper picks so the counter matches Yahoo's.</p>
     <div class="grid">${st.order.map((t, i) => `<span>Slot ${i + 1}</span><select data-order="${i}">${teamOpts(t)}</select>`).join('')}</div>
     <p>Your extra picks — whose pick was it originally?</p>
     <div class="grid">${EXTRA_ROUNDS.map((r) => `<span>Round ${r}</span><select data-extra="${r}">${teamOpts(st.extraFrom?.[r])}</select>`).join('')}</div>
@@ -402,7 +407,27 @@ function openSettings() {
     <p>Pick counter offset: <b class="num">${S.offset}</b> (the − / + buttons beside the pick number adjust it).</p>
     <div class="actions"><button type="button" class="danger" data-reset>Reset the whole draft</button><button value="close">Done</button></div>`;
   $('#settingsDialog').showModal();
+  showParsed();
 }
+function showParsed() {
+  const el = $('#parsedPicks');
+  if (!el) return;
+  const sc = V.sched;
+  el.textContent = [
+    sc.typedMine ? `Your picks: ${sc.mine.filter((m) => !m.keeper).map((m) => `#${m.at} (R${m.round})`).join(', ')}` : null,
+    sc.typedKeepers ? `Keeper picks: ${sc.typedKeepers} (sheet lists ${league.keepers.length})` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+$('#settingsForm').addEventListener('input', (e) => {
+  const t = e.target;
+  if (!t.dataset.text) return;
+  S.settings[t.dataset.text] = t.value;
+  save();
+  render();
+  showParsed();
+});
 $('#settingsForm').addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.order != null) S.settings.order[Number(t.dataset.order)] = t.value;

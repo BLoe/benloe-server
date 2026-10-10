@@ -50,6 +50,11 @@ league's. Re-run both scripts to rebuild them.
 - **ADP assumes no keepers.** `keeperAdjustedAdp` moves everyone behind a
   keeper up a slot; the pick counter skips keeper picks once the draft order
   is set, so it matches Yahoo's numbering.
+- **Picks are traded all over this league.** Draft setup takes Ben's own pick
+  numbers and the keeper-filled picks typed from the Yahoo lobby (`34` or
+  `3.10`); typed numbers override the order-derived schedule. Rival-to-rival
+  trades need no modelling: they change who picks, never when. Nothing here
+  reads Yahoo — its API returns 403.
 - **Positions are FantasyPros' (Yahoo-style)**, e.g. Flagg PF/SF/SG. ESPN's
   own eligibility is narrower and wrong for Yahoo.
 - **Tiers use a gap relative to the gaps around it**, not one global cutoff —
