@@ -193,7 +193,8 @@ root, and nothing stops a process allowed to use a secret from exercising it).
 | sleeper-ui | 3010 | apps/sleeper-ui | Sleeper League Desk |
 | benloe-secrets | 3011 | apps/benloe-secrets | Server-wide encrypted secret store |
 | waker-api | 3012 | apps/waker | Waker — fantasy decision desk |
-| gavel-api | 3013 | apps/gavel | Gavel — auction draft board (next free port: 3014) |
+| gavel-api | 3013 | apps/gavel | Gavel — auction draft board |
+| tipoff-api | 3014 | apps/tipoff | Tipoff — NBA draft board gate + screenshot uploads (next free port: 3015) |
 
 Check services: `pm2 list`
 
@@ -237,8 +238,8 @@ the app's file before working in it; this one only covers the box.
 - `apps/gavel/CLAUDE.md` — Gavel, the live auction draft board. Dense on the
   value model and on why nothing on its critical path may touch the network.
 - `apps/tipoff/CLAUDE.md` — Tipoff, the fantasy NBA snake-draft board
-  (static, tipoff.benloe.com). Dense on the three-source projection blend and
-  on the league's FGM-for-TO categories.
+  (tipoff.benloe.com, owner-only). Dense on the three-source projection blend
+  and on the league's FGM-for-TO categories; says where uploaded screenshots land.
 
 The two are siblings over the same league and are deliberately kept distinct:
 League Desk browses entities, Waker is organised by decision. A change that

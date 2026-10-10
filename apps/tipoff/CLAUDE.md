@@ -1,8 +1,20 @@
 # Tipoff — working context
 
 The fantasy **NBA** snake-draft board for Ben's 12-team Yahoo keeper league.
-Live at https://tipoff.benloe.com. Static: Caddy serves `public/` directly
-(`infra/caddy/tipoff.benloe.com`); no PM2 process, no server, no secrets.
+Live at https://tipoff.benloe.com, **owner-only**. Caddy serves `public/`
+directly but asks `tipoff-api` (`server.mjs`, PM2, port 3014) first via
+`forward_auth` → `/api/gate`: 204 for Ben, 401 → redirect to artanis, 403 for
+anyone else signed in. No secrets; the owner email is in the ecosystem file.
+
+`server.mjs` also holds the **screenshot drop box**: `upload.html` (paste,
+drop or pick) → `POST /api/uploads` → `/srv/benloe/data/tipoff/uploads/`,
+images sniffed by bytes, 0600. When Ben says "read the Tipoff uploads", read
+that directory with vision — newest file name sorts last. The board never
+calls the server; once loaded, a draft needs neither it nor artanis.
+
+`node verify/verify.mjs` runs its own `server.mjs` on an ephemeral port with
+a test user and a temp upload dir (`TIPOFF_SERVE_STATIC`, `TIPOFF_TEST_USER`,
+both dead under `NODE_ENV=production`), since the live site is gated.
 
 It pairs with the Yahoo draft room, like Gavel does with Sleeper's: no clock, no
 rival rosters, no chat. It owns value in THIS league's categories, tiers,
@@ -25,7 +37,7 @@ positional scarcity, and "will he last to my next pick".
 npm run snapshot   # ESPN + CBS + FantasyPros projections, ADP, ECR -> public/players.json
 node scripts/league.mjs   # sheet -> public/league.json (keepers, 2025 draft)
 npm test           # pure model + draft-state tests
-node verify/verify.mjs    # drives a draft on the LIVE site; read .verify/*.png
+node verify/verify.mjs    # drives a draft + an upload on a local server; read .verify/*.png
 npm run analyze    # punt simulation + where this league disagrees with ADP
 ```
 

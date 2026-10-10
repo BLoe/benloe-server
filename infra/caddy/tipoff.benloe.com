@@ -1,9 +1,25 @@
 tipoff.benloe.com {
-    # Static: the board is three files and two frozen JSON snapshots. Draft
-    # state lives in the browser, so nothing here is on the critical path once
-    # the page has loaded.
-    root * /srv/benloe/apps/tipoff/public
-    file_server
+    # The screenshot drop box and the owner gate. Both live in tipoff-api
+    # (port 3014), which checks the artanis cookie itself.
+    handle /api/* {
+        reverse_proxy 127.0.0.1:3014
+    }
+
+    # The board: static files, owner only. forward_auth asks tipoff-api
+    # whether this browser is Ben (204); a signed-out browser is sent to
+    # artanis and comes back here; anyone else signed in gets the 403.
+    # Once the page has loaded, the draft itself touches neither service.
+    handle {
+        forward_auth 127.0.0.1:3014 {
+            uri /api/gate
+            @signin status 401
+            handle_response @signin {
+                redir https://auth.benloe.com/?redirect=https://tipoff.benloe.com{uri} 302
+            }
+        }
+        root * /srv/benloe/apps/tipoff/public
+        file_server
+    }
 
     encode gzip
 
