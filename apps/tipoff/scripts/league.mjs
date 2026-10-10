@@ -7,9 +7,12 @@ import { norm } from './snapshot.mjs';
 const SHEET = '10L3pzV4nD1DqCcTwURkncnzdXNSJFPnixTEWYgtr2T4';
 const KEEPERS_TAB = '2026 Keepers';
 const DRAFT_TAB = '2025 Draft Results';
+const KEEPERS_2025_TAB = '2025 Keepers';
+// Yahoo team names that changed since the 2025 draft grid: manager -> name.
+const TEAM_NAME_OVERRIDES = {};
 const ME = 'Ben Loe';
 // Spellings in the sheet that no rule would reconcile.
-const ALIAS = { alexandersarr: 'alexsarr', dejountemurrary: 'dejountemurray' };
+const ALIAS = { alexandersarr: 'alexsarr', dejountemurrary: 'dejountemurray', austinreeves: 'austinreaves', shadensharpe: 'shaedonsharpe', jarenjackson: 'jarenjackson' };
 
 async function csv(sheet) {
   const url = `https://docs.google.com/spreadsheets/d/${SHEET}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet)}`;
@@ -57,7 +60,26 @@ const draft2025 = draft.slice(1).flatMap(([round, ...names]) =>
   }),
 );
 
-writeFileSync(new URL('../public/league.json', import.meta.url), JSON.stringify({ fetchedAt: new Date().toISOString(), me: ME, teams, keepers, draft2025 }, null, 1));
+// The sheet keys teams by manager; Yahoo shows team names. The 2025 grid is
+// headed by team name, and each manager's 2025 keepers sit in their column at
+// exactly their keeper round — so the keepers identify the column.
+const teamNames = {};
+let mgr = null;
+const votes = {};
+for (const [t, name, round] of (await csv(KEEPERS_2025_TAB)).slice(1)) {
+  if (t) mgr = t.replace(/\s+/g, ' ').replace(/^Florio$/, 'Florio/Avi');
+  if (!name) continue;
+  const hit = draft2025.find((d) => d.round === Number(round) && norm(d.name) === (ALIAS[norm(name)] ?? norm(name)));
+  if (hit) (votes[mgr] ??= []).push(hit.team);
+}
+for (const m of teams) {
+  const v = votes[m] ?? [];
+  if (v.length && v.every((x) => x === v[0])) teamNames[m] = v[0];
+}
+Object.assign(teamNames, TEAM_NAME_OVERRIDES);
+
+writeFileSync(new URL('../public/league.json', import.meta.url), JSON.stringify({ fetchedAt: new Date().toISOString(), me: ME, teams, teamNames, keepers, draft2025 }, null, 1));
+for (const m of teams) console.log(`  ${m.padEnd(11)} -> ${teamNames[m] ?? 'UNRESOLVED'}`);
 console.log(`${teams.length} teams, ${keepers.length} keepers, ${draft2025.length} picks from 2025`);
 const missingKeepers = keepers.filter((k) => k.playerId == null).map((k) => k.name);
 if (missingKeepers.length) console.log('UNRESOLVED KEEPERS:', missingKeepers.join(', '));

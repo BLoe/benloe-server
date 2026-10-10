@@ -9,7 +9,7 @@ const { chromium } = require('playwright');
 const URL_ = process.env.TIPOFF_URL ?? 'https://tipoff.benloe.com/';
 const OUT = new URL('../.verify/', import.meta.url).pathname;
 mkdirSync(OUT, { recursive: true });
-const ORDER = ['Florio/Avi', 'Tim Doyle', 'Garrett', 'John M', 'Mike S', 'Ben M', 'Aaron M', 'Thomas H', 'Joe M', 'Ben Loe', 'John L', 'Joe C'];
+const ORDER = ['Florio/Avi', 'Tim Doyle', 'Garrett', 'John M', 'Mike S', 'Ben M', 'Aaron M', 'Thomas H', 'Joe M', 'Ben Loe', 'John L', 'Joe C']; // option values stay manager keys
 const fail = (m) => {
   console.error('FAIL:', m);
   process.exitCode = 1;
