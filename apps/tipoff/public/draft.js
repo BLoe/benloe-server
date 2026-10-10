@@ -66,7 +66,8 @@ export function schedule(league, settings) {
     }
   }
   // Typed from Yahoo: our live picks, and every keeper-filled pick.
-  const typedMine = parsePicks(settings.myPicksText);
+  // What Ben typed wins; otherwise the grid read off his Yahoo screenshots.
+  const typedMine = parsePicks(settings.myPicksText || league.yahooPicks?.mine);
   if (typedMine.length) {
     const keepers = mine.filter((m) => m.keeper);
     mine.length = 0;
@@ -75,10 +76,11 @@ export function schedule(league, settings) {
     // counter, which the typed keeper list (or the order) covers.
     for (const k of league.keepers.filter((x) => x.mine)) {
       const placed = keepers.find((m) => m.keeper === k);
-      mine.push({ round: k.round, at: placed?.at && !typedMine.includes(placed.at) ? placed.at : null, keeper: k, from: null });
+      const fromGrid = parsePicks(league.yahooPicks?.keeperAt?.[k.name])[0];
+      mine.push({ round: k.round, at: fromGrid ?? (placed?.at && !typedMine.includes(placed.at) ? placed.at : null), keeper: k, from: null });
     }
   }
-  const typedKeepers = parsePicks(settings.keeperPicksText);
+  const typedKeepers = parsePicks(settings.keeperPicksText || league.yahooPicks?.keepers);
   if (typedKeepers.length) {
     keeperPicks.clear();
     for (const at of typedKeepers) keeperPicks.set(at, { name: 'keeper', round: Math.ceil(at / TEAMS) });

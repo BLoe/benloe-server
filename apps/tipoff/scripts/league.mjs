@@ -8,6 +8,21 @@ const SHEET = '10L3pzV4nD1DqCcTwURkncnzdXNSJFPnixTEWYgtr2T4';
 const KEEPERS_TAB = '2026 Keepers';
 const DRAFT_TAB = '2025 Draft Results';
 const KEEPERS_2025_TAB = '2025 Keepers';
+// Read off Ben's screenshots of the Yahoo draft grid (2026-10-10), as
+// round.pick. Picks are traded widely, so these beat anything derived from
+// a draft order. Ours: the 14 live picks. Keepers: all 21 pre-filled picks.
+const YAHOO_PICKS = {
+  mine: '1.5 2.8 3.5 4.8 5.5 6.2 6.8 7.5 8.6 8.8 9.5 14.8 15.5 16.8',
+  keepers: {
+    '3.7': 'Cooper Flagg', '4.2': 'Julius Randle', '4.11': 'Deni Avdija', '5.4': 'Jayson Tatum',
+    '6.3': 'Tyrese Haliburton', '6.4': 'Donovan Clingan', '6.5': 'Darius Garland', '6.11': 'Austin Reaves',
+    '7.11': 'Dyson Daniels', '8.7': 'Stephon Castle', '8.9': 'Alexander Sarr', '8.12': 'Ryan Rollins',
+    '9.9': 'Amen Thompson', '9.12': 'Keyonte George', '10.7': 'Jaden McDaniels', '12.3': 'N. Alexander-Walker',
+    '12.10': 'Dejounte Murrary', '13.1': 'VJ Edgecombe', '13.3': 'Damian Lillard', '13.5': 'Kyshawn George',
+    '15.12': 'Kon Knueppel',
+  },
+};
+
 // Yahoo team names that changed since the 2025 draft grid: manager -> name.
 const TEAM_NAME_OVERRIDES = { 'Joe M': 'Austin 316', 'Florio/Avi': 'Knicks in 5' };
 const ME = 'Ben Loe';
@@ -80,7 +95,13 @@ for (const m of teams) {
 const teamNames2025 = { ...teamNames };
 Object.assign(teamNames, TEAM_NAME_OVERRIDES);
 
-writeFileSync(new URL('../public/league.json', import.meta.url), JSON.stringify({ fetchedAt: new Date().toISOString(), me: ME, teams, teamNames, teamNames2025, keepers, draft2025 }, null, 1));
+// Every keeper in the sheet must have exactly one pre-filled pick, and vice versa.
+const gridNames = Object.values(YAHOO_PICKS.keepers);
+const off = keepers.filter((k) => !gridNames.includes(k.name)).map((k) => k.name).concat(gridNames.filter((n) => !keepers.some((k) => k.name === n)));
+if (off.length) throw new Error('sheet keepers and Yahoo grid disagree: ' + off.join(', '));
+const yahooPicks = { mine: YAHOO_PICKS.mine, keepers: Object.keys(YAHOO_PICKS.keepers).join(' '), keeperAt: Object.fromEntries(Object.entries(YAHOO_PICKS.keepers).map(([rp, n]) => [n, rp])) };
+
+writeFileSync(new URL('../public/league.json', import.meta.url), JSON.stringify({ fetchedAt: new Date().toISOString(), me: ME, teams, teamNames, teamNames2025, keepers, draft2025, yahooPicks }, null, 1));
 for (const m of teams) console.log(`  ${m.padEnd(11)} -> ${teamNames[m] ?? 'UNRESOLVED'}`);
 console.log(`${teams.length} teams, ${keepers.length} keepers, ${draft2025.length} picks from 2025`);
 const missingKeepers = keepers.filter((k) => k.playerId == null).map((k) => k.name);
