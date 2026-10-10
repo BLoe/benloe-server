@@ -2,11 +2,23 @@
 // asserts the numbers a person drafts by actually move. Screenshots land in
 // .verify/ — LOOK at them; a clean exit only means nothing threw.
 import { createRequire } from 'node:module';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const require = createRequire('/srv/benloe/apps/gavel/package.json');
 const { chromium } = require('playwright');
 
-const URL_ = process.env.TIPOFF_URL ?? 'https://tipoff.benloe.com/';
+// The live site is owner-gated, so by default run our own server.mjs on an
+// ephemeral port: test user, static files from public/, a throwaway upload dir.
+const uploadDir = mkdtempSync(join(tmpdir(), 'tipoff-verify-'));
+const port = 20000 + Math.floor(Math.random() * 20000);
+const server = spawn('node', [new URL('../server.mjs', import.meta.url).pathname], {
+  env: { ...process.env, NODE_ENV: 'test', PORT: String(port), TIPOFF_TEST_USER: '1', TIPOFF_SERVE_STATIC: '1', TIPOFF_UPLOAD_DIR: uploadDir },
+  stdio: 'inherit',
+});
+await new Promise((r) => setTimeout(r, 600));
+const URL_ = process.env.TIPOFF_URL ?? `http://127.0.0.1:${port}/`;
 const OUT = new URL('../.verify/', import.meta.url).pathname;
 mkdirSync(OUT, { recursive: true });
 const ORDER = ['Florio/Avi', 'Tim Doyle', 'Garrett', 'John M', 'Mike S', 'Ben M', 'Aaron M', 'Thomas H', 'Joe M', 'Ben Loe', 'John L', 'Joe C']; // option values stay manager keys
@@ -105,6 +117,23 @@ await page.click('#settingsForm button[value=close]');
 if (!(await page.locator('#mypicks').innerText()).includes('from Yahoo')) fail('picks panel does not show typed picks');
 if (!(await clockText()).includes('#14')) fail('next pick should be #14 from typed list: ' + (await clockText()));
 
+// Upload page: a file in, listed, on disk, deleted.
+await page.goto(URL_ + 'upload.html');
+await page.setInputFiles('#pick', OUT + '1-fresh.png');
+await page.waitForSelector('.shot img');
+if (readdirSync(uploadDir).length !== 1) fail('upload did not land on disk');
+if (!(await page.locator('#status').innerText()).includes('Saved 1')) fail('upload status: ' + (await page.locator('#status').innerText()));
+await page.screenshot({ path: OUT + '8-upload.png' });
+page.once('dialog', (d) => d.accept());
+await page.click('.shot .meta button');
+await page.waitForFunction(() => !document.querySelector('.shot'));
+if (readdirSync(uploadDir).length !== 0) fail('delete did not remove the file');
 if (errors.length) fail('console errors: ' + errors.join(' | '));
+errors.length = 0;
+// The server refuses non-images by their bytes (the browser logs the 415).
+const bad = await page.evaluate(async () => (await fetch('api/uploads', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: 'not an image' })).status);
+if (bad !== 415) fail('non-image upload got ' + bad);
+
 await browser.close();
+server.kill();
 console.log(process.exitCode ? 'verify: FAILED' : 'verify: ok', '— screenshots in', OUT);

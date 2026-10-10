@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Tipoff Uploads</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .wrap { max-width: 900px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 36px 16px; text-align: center; color: var(--muted); background: var(--panel); outline: none; }
+  .drop:focus, .drop.over { border-color: var(--accent); color: var(--text); }
+  .drop b { color: var(--text); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .shot { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+  .shot img { width: 100%; height: 140px; object-fit: cover; object-position: top; background: var(--panel-2); display: block; }
+  .shot .meta { padding: 6px 8px; font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+  .shot .meta button { padding: 1px 6px; font-size: 11px; }
+  .status { font-size: 12px; color: var(--muted); min-height: 1.3em; }
+  .status.err { color: var(--bad); }
+  .status.ok { color: var(--good); }
+  .top a { color: var(--muted); text-decoration: none; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Tipoff</div>
+  <div class="next">Screenshots for Claude</div>
+  <div class="top-actions"><a href="./">← Board</a></div>
+</header>
+<div class="wrap">
+  <div class="drop" id="drop" tabindex="0">
+    <b>Paste</b> a screenshot here (⌘V / Ctrl+V), <b>drop</b> files, or
+    <label style="display:inline;color:var(--accent);cursor:pointer;text-decoration:underline">choose files<input type="file" id="pick" accept="image/*" multiple hidden></label>.
+    <div class="note">Each one is saved on the server as it arrives. Come back to Claude and say "read the Tipoff uploads".</div>
+  </div>
+  <div class="status" id="status"></div>
+  <h3 style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)">Saved <span id="count"></span></h3>
+  <div class="grid" id="grid"></div>
+</div>
+<script type="module">
+const $ = (s) => document.querySelector(s);
+const status = (msg, cls = '') => { const el = $('#status'); el.textContent = msg; el.className = 'status ' + cls; };
+
+async function api(path, opts) {
+  const res = await fetch('api/uploads' + path, { credentials: 'same-origin', ...opts });
+  if (res.status === 401) {
+    location.href = 'https://auth.benloe.com/?redirect=' + encodeURIComponent(location.href);
+    throw new Error('Signing you in…');
+  }
+  const body = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
+  if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+  return body;
+}
+
+async function refresh() {
+  const { files } = await api('');
+  $('#count').textContent = `· ${files.length}`;
+  $('#grid').replaceChildren(
+    ...files.map((f) => {
+      const card = document.createElement('div');
+      card.className = 'shot';
+      const img = document.createElement('img');
+      img.src = 'api/uploads/' + encodeURIComponent(f.name);
+      img.alt = f.name;
+      img.loading = 'lazy';
+      const a = document.createElement('a');
+      a.href = img.src;
+      a.target = '_blank';
+      a.append(img);
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const label = document.createElement('span');
+      label.textContent = `${f.name.slice(0, 19).replace('T', ' ').replace(/-(\d\d)-(\d\d)$/, ':$1:$2')} · ${Math.round(f.bytes / 1024)} KB`;
+      const del = document.createElement('button');
+      del.textContent = 'Delete';
+      del.onclick = async () => {
+        if (!confirm('Delete this screenshot?')) return;
+        await api('/' + encodeURIComponent(f.name), { method: 'DELETE' });
+        refresh();
+      };
+      meta.append(label, del);
+      card.append(a, meta);
+      return card;
+    }),
+  );
+}
+
+async function upload(files) {
+  const imgs = [...files].filter((f) => f.type.startsWith('image/'));
+  if (!imgs.length) return status('That wasn’t an image.', 'err');
+  let done = 0;
+  for (const f of imgs) {
+    status(`Uploading ${done + 1} of ${imgs.length}…`);
+    try {
+      await api('', { method: 'POST', headers: { 'Content-Type': f.type }, body: f });
+      done++;
+    } catch (e) {
+      return status(`Failed: ${e.message}`, 'err');
+    }
+  }
+  status(`Saved ${done} screenshot${done === 1 ? '' : 's'}.`, 'ok');
+  refresh();
+}
+
+document.addEventListener('paste', (e) => {
+  const files = [...(e.clipboardData?.items ?? [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); upload(files); }
+});
+const drop = $('#drop');
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); upload(e.dataTransfer.files); });
+$('#pick').addEventListener('change', (e) => upload(e.target.files));
+drop.focus();
+refresh().catch((e) => status(e.message, 'err'));
+</script>
+</body>
+</html>
