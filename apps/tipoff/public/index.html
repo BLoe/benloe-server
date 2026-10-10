@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Tipoff</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23e8732c'/><path d='M2 16h28M16 2v28M6 6c6 6 6 14 0 20M26 6c-6 6-6 14 0 20' stroke='%23111' stroke-width='1.6' fill='none'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Tipoff</div>
+  <div class="clock" id="clock"></div>
+  <div class="strategy" id="strategy"></div>
+  <div class="top-actions">
+    <button id="undo" title="Undo the last mark">Undo</button>
+    <button id="settingsBtn">Draft setup</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="boardcol">
+    <div class="filters">
+      <input id="search" type="search" placeholder="Find a player  ( / )" autocomplete="off">
+      <div class="chips" id="posFilter"></div>
+      <div class="tabs" id="tabs">
+        <button data-tab="board" class="on">Board</button>
+        <button data-tab="pos">Tiers by position</button>
+      </div>
+      <label class="toggle"><input type="checkbox" id="showTaken"> show taken</label>
+    </div>
+    <div id="board" data-testid="board"></div>
+    <div id="posview" hidden></div>
+  </section>
+
+  <aside class="side">
+    <section class="card" id="suggest"></section>
+    <section class="card" id="team"></section>
+    <section class="card" id="profile"></section>
+    <section class="card" id="scarcity"></section>
+    <section class="card" id="mypicks"></section>
+  </aside>
+</main>
+
+<dialog id="pickDialog">
+  <form method="dialog" class="pick">
+    <div class="pick-name" id="pickName"></div>
+    <div class="pick-meta" id="pickMeta"></div>
+    <div class="pick-btns" id="pickBtns"></div>
+  </form>
+</dialog>
+
+<dialog id="settingsDialog">
+  <form method="dialog" class="settings" id="settingsForm"></form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
