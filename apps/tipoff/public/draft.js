@@ -7,11 +7,30 @@ const OWN_ROUNDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16]; // 10-12 were so
 export const EXTRA_ROUNDS = [3, 6, 8];
 
 /**
+ * Pick numbers as Yahoo prints them: "34" (overall) or "3.10" (round 3, the
+ * tenth pick of that round — Yahoo numbers within a round in draft order, so
+ * the snake is already applied). Commas, spaces or newlines between.
+ */
+export function parsePicks(text) {
+  const out = [];
+  for (const t of String(text ?? '').split(/[\s,;]+/).filter(Boolean)) {
+    const m = t.match(/^(\d+)[.\-/](\d+)$/);
+    const n = m ? (Number(m[1]) - 1) * TEAMS + Number(m[2]) : Number(t);
+    if (Number.isInteger(n) && n >= 1 && n <= TOTAL_PICKS && !out.includes(n)) out.push(n);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
  * Where every pick that matters to us falls.
  *  - our picks, own and extra, with the two keeper picks flagged
  *  - every keeper pick in the league whose position is known (needs the
  *    draft order); those picks are filled before the draft and are skipped
  *    by the room, so the pick counter must skip them too.
+ * Picks are traded all over this league, so either half can instead be typed
+ * straight from Yahoo (settings.myPicksText / keeperPicksText). Typed numbers
+ * win: trades between other teams never change WHEN a pick happens, only who
+ * makes it, which the board does not track.
  */
 export function schedule(league, settings) {
   const order = settings.order ?? [];
@@ -46,11 +65,39 @@ export function schedule(league, settings) {
       if (s) keeperPicks.set(overall(k.round, s), k);
     }
   }
+  // Typed from Yahoo: our live picks, and every keeper-filled pick.
+  const typedMine = parsePicks(settings.myPicksText);
+  if (typedMine.length) {
+    const keepers = mine.filter((m) => m.keeper);
+    mine.length = 0;
+    for (const at of typedMine) mine.push({ round: Math.ceil(at / TEAMS), at, from: null, typed: true });
+    // Our keepers still show in the list; where they sit only matters to the
+    // counter, which the typed keeper list (or the order) covers.
+    for (const k of league.keepers.filter((x) => x.mine)) {
+      const placed = keepers.find((m) => m.keeper === k);
+      mine.push({ round: k.round, at: placed?.at && !typedMine.includes(placed.at) ? placed.at : null, keeper: k, from: null });
+    }
+  }
+  const typedKeepers = parsePicks(settings.keeperPicksText);
+  if (typedKeepers.length) {
+    keeperPicks.clear();
+    for (const at of typedKeepers) keeperPicks.set(at, { name: 'keeper', round: Math.ceil(at / TEAMS) });
+    for (const m of mine) if (m.keeper && m.at && !keeperPicks.has(m.at)) m.at = null;
+  }
   mine.sort((a, b) => (a.at ?? 999) - (b.at ?? 999) || a.round - b.round);
   // The room's sequence: every pick not already filled by a keeper.
   const seq = [];
   for (let i = 1; i <= TOTAL_PICKS; i++) if (!keeperPicks.has(i)) seq.push(i);
-  return { mySlot, mine, keeperPicks, seq, orderComplete: order.filter(Boolean).length === TEAMS };
+  return {
+    mySlot,
+    mine,
+    keeperPicks,
+    seq,
+    known: !!mySlot || typedMine.length > 0, // do we know our own picks at all
+    typedMine: typedMine.length > 0,
+    typedKeepers: typedKeepers.length,
+    orderComplete: order.filter(Boolean).length === TEAMS,
+  };
 }
 
 /** The pick on the clock, and our next two live picks. */

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { overall, openSlots, valuePlayers, tiers, survival } from './public/model.js';
-import { schedule, clock, keeperAdjustedAdp } from './public/draft.js';
+import { schedule, clock, keeperAdjustedAdp, parsePicks } from './public/draft.js';
 
 const league = JSON.parse(readFileSync(new URL('./public/league.json', import.meta.url)));
 const { players } = JSON.parse(readFileSync(new URL('./public/players.json', import.meta.url)));
@@ -87,4 +87,23 @@ test('keepers pull everyone behind them earlier', () => {
 test('survival: falls as the horizon moves past ADP', () => {
   assert.ok(survival(40, 10, 20) > 0.9);
   assert.ok(survival(40, 10, 60) < 0.2);
+});
+
+test('parsePicks: overall numbers and Yahoo round.pick, deduped and sorted', () => {
+  assert.deepEqual(parsePicks('34, 3.10\n10 2.3; 999 x'), [10, 15, 34]);
+});
+
+test('typed picks beat the computed schedule, with no draft order at all', () => {
+  const typed = '7 18 31 35 43 55 66 70 79 90 102 159 162 183';
+  const s = schedule(league, { order: Array(12).fill(''), myPicksText: typed, keeperPicksText: '30 41 52' });
+  assert.ok(s.known);
+  assert.deepEqual(s.mine.filter((m) => !m.keeper).map((m) => m.at), parsePicks(typed));
+  assert.equal(s.mine.filter((m) => m.keeper).length, 2);
+  assert.equal(s.seq.length, 192 - 3);
+  const c = clock(s, [], 6);
+  assert.equal(c.now, 7);
+  assert.ok(c.onClock);
+  assert.equal(c.horizon.at, 18);
+  // Counter steps over a typed keeper pick: 29 made -> pick 31, not 30.
+  assert.equal(clock(s, [], 29).now, 31);
 });

@@ -94,6 +94,17 @@ await page.screenshot({ path: OUT + '6-phone.png' });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 if (overflow > 1) fail(`phone: page scrolls horizontally by ${overflow}px`);
 
+// Typed picks from Yahoo override the order-derived schedule.
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.click('#settingsBtn');
+await page.fill('textarea[data-text="myPicksText"]', '11 14 3.2 35 59 62 6.4 6.9 83 96 8.5 107 159 182');
+await page.screenshot({ path: OUT + '7-typed-picks.png' });
+const parsed = await page.locator('#parsedPicks').innerText();
+if (!parsed.includes('#26 (R3)') || !parsed.includes('#89 (R8)')) fail('typed picks not parsed: ' + parsed);
+await page.click('#settingsForm button[value=close]');
+if (!(await page.locator('#mypicks').innerText()).includes('from Yahoo')) fail('picks panel does not show typed picks');
+if (!(await clockText()).includes('#14')) fail('next pick should be #14 from typed list: ' + (await clockText()));
+
 if (errors.length) fail('console errors: ' + errors.join(' | '));
 await browser.close();
 console.log(process.exitCode ? 'verify: FAILED' : 'verify: ok', '— screenshots in', OUT);
