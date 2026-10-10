@@ -1,0 +1,1 @@
+{"name":"tipoff","private":true,"type":"module","scripts":{"snapshot":"node scripts/snapshot.mjs","test":"node --test","analyze":"node scripts/analyze.mjs"}}

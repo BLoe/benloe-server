@@ -236,6 +236,9 @@ the app's file before working in it; this one only covers the box.
   joins and on the ways Sleeper's and nflverse's data mislead.
 - `apps/gavel/CLAUDE.md` — Gavel, the live auction draft board. Dense on the
   value model and on why nothing on its critical path may touch the network.
+- `apps/tipoff/CLAUDE.md` — Tipoff, the fantasy NBA snake-draft board
+  (static, tipoff.benloe.com). Dense on the three-source projection blend and
+  on the league's FGM-for-TO categories.
 
 The two are siblings over the same league and are deliberately kept distinct:
 League Desk browses entities, Waker is organised by decision. A change that
