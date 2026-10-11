@@ -20,7 +20,16 @@ async function fetchText(url, headers = {}) {
   return res.text();
 }
 
-export const norm = (name) =>
+// Same player, different spelling across sources (CBS uses legal first
+// names). Each maps to the spelling ESPN uses. Without it the player splits
+// into a full entry and a CBS-only ghost with no positions.
+const NICKNAME = { nicolasclaxton: 'nicclaxton', gregoryjackson: 'ggjackson', ronholland: 'ronaldholland', moewagner: 'moritzwagner' };
+
+export const norm = (name) => {
+  const k = normRaw(name);
+  return NICKNAME[k] ?? k;
+};
+const normRaw = (name) =>
   name
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
