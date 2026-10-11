@@ -46,6 +46,7 @@ node scripts/league.mjs   # sheet -> public/league.json (keepers, 2025 draft)
 npm test           # pure model + draft-state tests
 node verify/verify.mjs    # drives a draft + an upload on a local server; read .verify/*.png
 npm run analyze    # first-pass punt sim + where this league disagrees with ADP
+node scripts/season.mjs    # post-draft: real rosters (data/tipoff/results-2026.json), category ranks, Ben's H2H odds
 node scripts/strategy.mjs  # stricter punt sim: real picks, projection error, CIs (~90s)
 ```
 
