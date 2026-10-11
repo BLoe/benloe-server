@@ -10,12 +10,14 @@
 // No dependencies. Auth is artanis's cookie checked against the auth service
 // on localhost, the same delegation Gavel uses.
 import { createServer } from 'node:http';
-import { mkdirSync, writeFileSync, readdirSync, statSync, readFileSync, unlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readdirSync, statSync, readFileSync, unlinkSync, renameSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 const PORT = Number(process.env.PORT || 3014);
 const DIR = process.env.TIPOFF_UPLOAD_DIR || '/srv/benloe/data/tipoff/uploads';
+// Beside the uploads dir: /srv/benloe/data/tipoff/state.json in production.
+const STATE = process.env.TIPOFF_STATE_FILE || join(DIR, '..', 'state.json');
 const AUTH = process.env.AUTH_SERVICE_URL || 'http://localhost:3002';
 const OWNER = (process.env.TIPOFF_OWNER_EMAIL || '').toLowerCase();
 const MAX = 15 * 1024 * 1024;
@@ -87,8 +89,40 @@ createServer(async (req, res) => {
     res.writeHead(w === 'owner' ? 204 : w ? 403 : 401, { 'Cache-Control': 'no-store' });
     return res.end(w === 'other' ? 'This board is private.' : '');
   }
-  if (!url.pathname.startsWith('/api/uploads')) return json(res, 404, { error: 'not found' });
+  if (!url.pathname.startsWith('/api/uploads') && url.pathname !== '/api/state') return json(res, 404, { error: 'not found' });
   if (w !== 'owner') return json(res, w ? 403 : 401, { error: w ? 'Not yours.' : 'Sign in at auth.benloe.com.', needsAuth: !w });
+
+  // The board's draft state, mirrored here so a Claude session can read the
+  // live draft off disk. The browser stays the source of truth: it pushes
+  // after every change and never reads this back.
+  if (url.pathname === '/api/state') {
+    if (req.method === 'GET') {
+      try {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(readFileSync(STATE));
+      } catch {
+        return json(res, 404, { error: 'no state yet' });
+      }
+    }
+    if (req.method !== 'PUT') return json(res, 405, { error: 'method not allowed' });
+    const chunks = [];
+    let size = 0;
+    for await (const c of req) {
+      size += c.length;
+      if (size > 512 * 1024) return json(res, 413, { error: 'too large' });
+      chunks.push(c);
+    }
+    let body;
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString());
+    } catch {
+      return json(res, 400, { error: 'not JSON' });
+    }
+    if (!Array.isArray(body?.marks)) return json(res, 400, { error: 'no marks' });
+    writeFileSync(STATE + '.tmp', JSON.stringify({ receivedAt: new Date().toISOString(), ...body }, null, 1), { mode: 0o600 });
+    renameSync(STATE + '.tmp', STATE);
+    return json(res, 200, { ok: true });
+  }
 
   const name = url.pathname.slice('/api/uploads/'.length);
   if (req.method === 'GET' && !name) return json(res, 200, { files: list() });

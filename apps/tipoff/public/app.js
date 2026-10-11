@@ -11,12 +11,26 @@ const load = () => {
     return null;
   }
 };
+// Mirror to the server so Claude can read the live draft. Fire-and-forget,
+// debounced, never awaited: the board must not care whether this works.
+let pushTimer;
+const push = () => {
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    try {
+      fetch('api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(S), keepalive: true }).catch(() => {});
+    } catch {
+      /* offline: the next change will try again */
+    }
+  }, 400);
+};
 const save = () => {
   try {
     localStorage.setItem(KEY, JSON.stringify(S));
   } catch {
     /* private window: the draft still works, it just won't survive a reload */
   }
+  push();
 };
 
 const [data, league] = await Promise.all([fetch('players.json').then((r) => r.json()), fetch('league.json').then((r) => r.json())]);
@@ -507,3 +521,4 @@ document.addEventListener('keydown', (e) => {
 });
 
 render();
+push();

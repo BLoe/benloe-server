@@ -2,7 +2,7 @@
 // asserts the numbers a person drafts by actually move. Screenshots land in
 // .verify/ — LOOK at them; a clean exit only means nothing threw.
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, readdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,7 +14,7 @@ const { chromium } = require('playwright');
 const uploadDir = mkdtempSync(join(tmpdir(), 'tipoff-verify-'));
 const port = 20000 + Math.floor(Math.random() * 20000);
 const server = spawn('node', [new URL('../server.mjs', import.meta.url).pathname], {
-  env: { ...process.env, NODE_ENV: 'test', PORT: String(port), TIPOFF_TEST_USER: '1', TIPOFF_SERVE_STATIC: '1', TIPOFF_UPLOAD_DIR: uploadDir },
+  env: { ...process.env, TIPOFF_STATE_FILE: join(uploadDir, 'state.json'), NODE_ENV: 'test', PORT: String(port), TIPOFF_TEST_USER: '1', TIPOFF_SERVE_STATIC: '1', TIPOFF_UPLOAD_DIR: uploadDir },
   stdio: 'inherit',
 });
 await new Promise((r) => setTimeout(r, 600));
@@ -117,6 +117,11 @@ await page.click('#settingsForm button[value=close]');
 if (!(await page.locator('#mypicks').innerText()).includes('typed')) fail('picks panel does not show typed picks');
 if (!(await clockText()).includes('#11')) fail('next pick should be #11 from typed list: ' + (await clockText()));
 
+// The live draft is mirrored to the server for Claude to read.
+await page.waitForTimeout(800);
+const mirrored = JSON.parse(readFileSync(join(uploadDir, 'state.json'), 'utf8'));
+if (!mirrored.marks?.some((m) => m.mine && !m.keeper)) fail('server state mirror is missing our pick');
+
 // Upload page, reached the way Ben would: the header link.
 await page.goto(URL_);
 if (!(await page.getByTestId('upload-link').isVisible())) fail('upload link not visible in header');
@@ -124,13 +129,13 @@ if ((await page.getByTestId('upload-link').getAttribute('href')) !== 'upload.htm
 await page.goto(URL_ + 'upload.html');
 await page.setInputFiles('#pick', OUT + '1-fresh.png');
 await page.waitForSelector('.shot img');
-if (readdirSync(uploadDir).length !== 1) fail('upload did not land on disk');
+if (readdirSync(uploadDir).filter((f) => f.endsWith('.png')).length !== 1) fail('upload did not land on disk');
 if (!(await page.locator('#status').innerText()).includes('Saved 1')) fail('upload status: ' + (await page.locator('#status').innerText()));
 await page.screenshot({ path: OUT + '8-upload.png' });
 page.once('dialog', (d) => d.accept());
 await page.click('.shot .meta button');
 await page.waitForFunction(() => !document.querySelector('.shot'));
-if (readdirSync(uploadDir).length !== 0) fail('delete did not remove the file');
+if (readdirSync(uploadDir).filter((f) => f.endsWith('.png')).length !== 0) fail('delete did not remove the file');
 if (errors.length) fail('console errors: ' + errors.join(' | '));
 errors.length = 0;
 // The server refuses non-images by their bytes (the browser logs the 415).
