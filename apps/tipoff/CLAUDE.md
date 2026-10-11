@@ -12,6 +12,13 @@ images sniffed by bytes, 0600. When Ben says "read the Tipoff uploads", read
 that directory with vision — newest file name sorts last. The board never
 calls the server; once loaded, a draft needs neither it nor artanis.
 
+**Mid-draft advice:** the board PUTs its whole state to `/api/state` after every
+change (debounced, fire-and-forget; the browser stays the source of truth and
+never reads it back). `node scripts/state.mjs` prints the live draft from
+`/srv/benloe/data/tipoff/state.json`: clock, Ben's roster and open slots,
+best available with survival to his next pick, scarcity. Check "pushed Ns ago"
+before trusting it.
+
 `node verify/verify.mjs` runs its own `server.mjs` on an ephemeral port with
 a test user and a temp upload dir (`TIPOFF_SERVE_STATIC`, `TIPOFF_TEST_USER`,
 both dead under `NODE_ENV=production`), since the live site is gated.
