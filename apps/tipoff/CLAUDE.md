@@ -38,7 +38,8 @@ npm run snapshot   # ESPN + CBS + FantasyPros projections, ADP, ECR -> public/pl
 node scripts/league.mjs   # sheet -> public/league.json (keepers, 2025 draft)
 npm test           # pure model + draft-state tests
 node verify/verify.mjs    # drives a draft + an upload on a local server; read .verify/*.png
-npm run analyze    # punt simulation + where this league disagrees with ADP
+npm run analyze    # first-pass punt sim + where this league disagrees with ADP
+node scripts/strategy.mjs  # stricter punt sim: real picks, projection error, CIs (~90s)
 ```
 
 Both JSON files are gitignored: one is other sites' data, the other is the

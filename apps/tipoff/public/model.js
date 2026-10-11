@@ -67,13 +67,15 @@ function zTable(players, pool, L) {
  *   gpWeight   — 0 ranks purely per game; 1 scales value fully by projected
  *                games. Weekly H2H punishes missed games, but not as hard as
  *                a season-total roto league does, so the default is between.
+ *   weights    — per-category multipliers for partial emphasis (punts win)
  *   line       — which stat line to value; the blend by default, or one
  *                source's (players without that source are dropped).
  */
-export function valuePlayers(all, { punts = [], gpWeight = 0.5, line = (p) => p.proj } = {}) {
+export function valuePlayers(all, { punts = [], weights = null, gpWeight = 0.5, line = (p) => p.proj } = {}) {
   const L = line;
   const players = all.filter((p) => L(p));
-  const w = Object.fromEntries(CATS.map((c) => [c, punts.includes(c) ? 0 : 1]));
+  // weights: optional partial emphasis, e.g. { fgp: 0.5 }; a punt is weight 0.
+  const w = Object.fromEntries(CATS.map((c) => [c, punts.includes(c) ? 0 : (weights?.[c] ?? 1)]));
   const score = (row) => CATS.reduce((s, c) => s + w[c] * row[c], 0);
   const avail = (p) => 1 - gpWeight + gpWeight * Math.min(1, L(p).gp / FULL_SEASON);
 
