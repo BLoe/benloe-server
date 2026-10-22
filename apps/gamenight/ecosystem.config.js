@@ -37,23 +37,10 @@ module.exports = {
       max_memory_restart: '1G',
       restart_delay: 4000,
     },
-    {
-      name: 'gamenight-frontend',
-      script: 'serve',
-      env: {
-        PM2_SERVE_PATH: '/srv/benloe/apps/gamenight/dist',
-        PM2_SERVE_PORT: 3000,
-        PM2_SERVE_SPA: 'true',
-        PM2_SERVE_HOMEPAGE: '/index.html',
-      },
-      instances: 1,
-      exec_mode: 'fork',
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      error_file: '/srv/benloe/logs/gamenight-frontend-err.log',
-      out_file: '/srv/benloe/logs/gamenight-frontend-out.log',
-      time: true,
-      watch: false,
-      max_memory_restart: '500M',
-    },
+    // 2026-10-22: gamenight-frontend (pm2's built-in `serve` on :3000) is
+    // retired. Caddy already serves dist/ directly, so nothing routed to it —
+    // and it ran as ROOT over a directory claude-worker owns, so a symlink in
+    // dist/ returned any root-readable file (verified with a canary), including
+    // every rendered secrets set. Do not bring back a root static server here.
   ],
 };
