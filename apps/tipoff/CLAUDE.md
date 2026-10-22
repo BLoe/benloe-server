@@ -1,5 +1,8 @@
 # Tipoff — working context
 
+What happened at the 2026 draft, and the to-do list for next October, is in
+[NOTES.md](NOTES.md). Read it before the next draft.
+
 The fantasy **NBA** snake-draft board for Ben's 12-team Yahoo keeper league.
 Live at https://tipoff.benloe.com, **owner-only**. Caddy serves `public/`
 directly but asks `tipoff-api` (`server.mjs`, PM2, port 3014) first via
