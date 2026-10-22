@@ -1,5 +1,5 @@
 arch.benloe.com {
-    root * /srv/benloe/static/arch.benloe.com
+    root * /var/www/benloe/arch
     try_files {path} {path}/ /index.html
     file_server
 
