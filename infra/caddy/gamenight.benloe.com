@@ -22,7 +22,7 @@ gamenight.benloe.com {
     
     # Frontend served from static files (built React app)
     handle {
-        root * /srv/benloe/apps/gamenight/dist
+        root * /var/www/benloe/gamenight
         file_server
         encode gzip
         

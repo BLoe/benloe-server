@@ -11,7 +11,7 @@ fitness.benloe.com {
 
     # Handle static files (React SPA)
     handle {
-        root * /srv/benloe/apps/fitness/dist
+        root * /var/www/benloe/fitness
         try_files {path} {path}/ /index.html
         file_server
     }

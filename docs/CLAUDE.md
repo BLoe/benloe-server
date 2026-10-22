@@ -205,6 +205,15 @@ Check services: `pm2 list`
 3. Restart service: `pm2 restart <service-name>`
 4. Commit and push: `git add . && git commit && git push`
 
+**Frontends for arch, cabinet, dada, fantasyhawk, fitness, gamenight and weights
+are not live until published:** `cabinet-privops publish-static <site>` copies
+the build into root-owned `/var/www/benloe/<site>`, which is what Caddy serves
+(`rollback-static <site>` returns to the previous release; five are kept).
+Building alone changes nothing users see. Caddy must never serve a directory
+`claude-worker` can write to, or that sits under one it owns — `file_server`
+follows symlinks, so that publishes anything the caddy user can read,
+including the TLS keys.
+
 ## OS Updates (7-Day Delay Rule)
 
 Ubuntu packages are updated automatically, but **only versions published at
