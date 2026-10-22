@@ -77,6 +77,10 @@ chown -R claude-worker:claude-worker "$SERVER_DIR/dist"
 echo "cabinet-deploy: build web..."
 (cd "$REPO_ROOT/apps/cabinet/web" && HOME=/home/claude-worker npm run build)
 chown -R claude-worker:claude-worker "$REPO_ROOT/apps/cabinet/web/dist"
+# Caddy serves a root-owned copy, not web/dist itself (2026-10-22 — a symlink
+# in dist/ used to publish anything caddy could read). Building does not change
+# the live UI; this copy does.
+sudo -n /usr/local/sbin/cabinet-privops publish-static cabinet
 
 TARGET_SHA="$(node -p "require('$SERVER_DIR/dist/build-info.json').sha")"
 

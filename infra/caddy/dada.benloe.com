@@ -6,7 +6,7 @@ dada.benloe.com {
 
     # Handle static files
     handle {
-        root * /srv/benloe/static/dada.benloe.com
+        root * /var/www/benloe/dada
         try_files {path} {path}/ /index.html
         file_server
     }

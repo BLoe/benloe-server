@@ -94,6 +94,74 @@ case "$cmd" in
       /usr/bin/caddy validate --config /etc/caddy/Caddyfile >&2
     exec /usr/bin/systemctl reload caddy
     ;;
+  publish-static|rollback-static)
+    # Copy a built frontend into the root-owned tree Caddy serves (2026-10-22).
+    #
+    # Caddy used to serve these straight out of their build directories, which
+    # claude-worker owns. file_server follows symlinks, so one `ln -s` in a
+    # dist/ published any file the caddy user can read — including the TLS
+    # private keys under /var/lib/caddy — at a public URL (verified with a
+    # canary). Caddy now serves /var/www/benloe/<site>, a root-owned symlink to
+    # a root-owned release directory that this command builds.
+    #
+    # The copy is READ AS claude-worker (setpriv) so it can never pick up
+    # anything the agent couldn't already read, only regular files and
+    # directories are archived, and any symlink that survives the race between
+    # find and tar is deleted before the release goes live. Hardlinks to files
+    # the agent doesn't own are already refused by fs.protected_hardlinks=1.
+    #
+    # arch's source dir is root-owned but sits in static/, which claude-worker
+    # owns — and owning the parent is enough to rename a root-owned directory
+    # aside and put your own in its place (verified). So it is copied too.
+    #
+    # The site table is fixed here, in the root-owned copy, so a caller picks a
+    # site, never a path. Adding a site means editing this table and having
+    # real root re-install the script.
+    site="${1:-}"
+    case "$site" in
+      arch)        src=/srv/benloe/static/arch.benloe.com ;;
+      cabinet)     src=/srv/benloe/apps/cabinet/web/dist ;;
+      dada)        src=/srv/benloe/static/dada.benloe.com ;;
+      fantasyhawk) src=/srv/benloe/apps/fantasy-hawk/frontend/dist ;;
+      fitness)     src=/srv/benloe/apps/fitness/dist ;;
+      gamenight)   src=/srv/benloe/apps/gamenight/dist ;;
+      weights)     src=/srv/benloe/static/weights.benloe.com ;;
+      *) echo "usage: $cmd {arch|cabinet|dada|fantasyhawk|fitness|gamenight|weights}" >&2; exit 1 ;;
+    esac
+    served=/var/www/benloe
+    releases="$served/.releases/$site"
+    live="$served/$site"
+    install -d -o root -g root -m 755 "$served" "$served/.releases" "$releases"
+
+    if [[ "$cmd" == "rollback-static" ]]; then
+      cur="$(readlink "$live" 2>/dev/null || true)"
+      prev="$(ls -1d "$releases"/*/ 2>/dev/null | sed 's#/$##' | sort | grep -v -x -F "$cur" | tail -1 || true)"
+      [[ -n "$prev" ]] || { echo "rollback-static: no earlier release of $site to go back to" >&2; exit 1; }
+      ln -sfn "$prev" "$live.tmp" && mv -Tf "$live.tmp" "$live"
+      log "rollback-static $site -> $prev"
+      echo "rolled back: $live -> $prev"
+      exit 0
+    fi
+
+    [[ -d "$src" ]] || { echo "publish-static: $src does not exist — build first" >&2; exit 1; }
+    rel="$releases/$(date -u +%Y%m%dT%H%M%SZ)"
+    [[ ! -e "$rel" ]] || { echo "publish-static: $rel already exists; retry in a second" >&2; exit 1; }
+    install -d -o root -g root -m 755 "$rel"
+    # cd before dropping privileges: the reader needs no access to /root.
+    ( cd "$src" && setpriv --reuid=claude-worker --regid=claude-worker --clear-groups \
+        sh -c 'find . -mindepth 1 \( -type f -o -type d \) -print0 \
+               | tar --null --no-recursion -T - -cf -' ) \
+      | ( umask 022 && tar -xf - -C "$rel" --no-same-owner --no-same-permissions )
+    find "$rel" -type l -delete
+    chown -R root:root "$rel"
+    chmod -R u=rwX,go=rX "$rel"
+    [[ -n "$(ls -A "$rel")" ]] || { rm -rf "$rel"; echo "publish-static: $src is empty — refusing to publish nothing" >&2; exit 1; }
+    ln -sfn "$rel" "$live.tmp" && mv -Tf "$live.tmp" "$live"
+    # Keep the last five releases so rollback-static has somewhere to go.
+    ls -1d "$releases"/*/ | sed 's#/$##' | sort | head -n -5 | xargs -r rm -rf
+    log "publish-static $site -> $rel ($(find "$rel" -type f | wc -l) files)"
+    echo "published: $live -> $rel"
+    ;;
   redeploy)
     name="${1:-}"
     [[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || { echo "invalid app name" >&2; exit 1; }
@@ -181,7 +249,7 @@ PY
     ;;
   *)
     echo "cabinet-privops: unknown or missing subcommand: '$cmd'" >&2
-    echo "usage: cabinet-privops {pm2-list|pm2-restart <name>|pm2-start <name>|pm2-save|caddy-reload|redeploy <name>}" >&2
+    echo "usage: cabinet-privops {pm2-list|pm2-restart <name>|pm2-start <name>|pm2-save|caddy-reload|redeploy <name>|publish-static <site>|rollback-static <site>}" >&2
     echo "  pm2-start reads /etc/benloe/ecosystem/<name>.config.js (root-owned)" >&2
     echo "  install-ecosystem <name> promotes the repo config there — real root only" >&2
     echo "  (__drain-restart is internal — use redeploy)" >&2
