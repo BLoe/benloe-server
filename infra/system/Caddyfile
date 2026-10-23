@@ -2,7 +2,10 @@
 
 # Root domain
 benloe.com {
-	root * /srv/benloe/static/benloe.com
+	# Root-owned copy of static/benloe.com, made by
+	# `cabinet-privops publish-static home`. Never serve the source directly:
+	# claude-worker owns it, and file_server follows symlinks.
+	root * /var/www/benloe/home
 	file_server
 	encode gzip
 }
@@ -13,4 +16,5 @@ www.benloe.com {
 }
 
 # Import subdomain configurations from monorepo
+import /etc/caddy/secure.d/*
 import /srv/benloe/infra/caddy/*
