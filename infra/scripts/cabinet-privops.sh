@@ -125,8 +125,9 @@ case "$cmd" in
       fantasyhawk) src=/srv/benloe/apps/fantasy-hawk/frontend/dist ;;
       fitness)     src=/srv/benloe/apps/fitness/dist ;;
       gamenight)   src=/srv/benloe/apps/gamenight/dist ;;
+      home)        src=/srv/benloe/static/benloe.com ;;
       weights)     src=/srv/benloe/static/weights.benloe.com ;;
-      *) echo "usage: $cmd {arch|cabinet|dada|fantasyhawk|fitness|gamenight|weights}" >&2; exit 1 ;;
+      *) echo "usage: $cmd {arch|cabinet|dada|fantasyhawk|fitness|gamenight|home|weights}" >&2; exit 1 ;;
     esac
     served=/var/www/benloe
     releases="$served/.releases/$site"
