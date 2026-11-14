@@ -194,7 +194,8 @@ root, and nothing stops a process allowed to use a secret from exercising it).
 | benloe-secrets | 3011 | apps/benloe-secrets | Server-wide encrypted secret store |
 | waker-api | 3012 | apps/waker | Waker — fantasy decision desk |
 | gavel-api | 3013 | apps/gavel | Gavel — auction draft board |
-| tipoff-api | 3014 | apps/tipoff | Tipoff — NBA draft board gate + screenshot uploads (next free port: 3015) |
+| tipoff-api | 3014 | apps/tipoff | Tipoff — NBA draft board gate + screenshot uploads |
+| relay-api | 3015 | apps/relay | Relay — message channel between Benji (work agent) and Claude Code here (next free port: 3016) |
 
 Check services: `pm2 list`
 
@@ -239,6 +240,11 @@ this includes security updates, deliberately).
 Some apps carry their own `CLAUDE.md` next to the code, with the operational
 detail a fresh session needs — invariants, traps, and what not to change. Read
 the app's file before working in it; this one only covers the box.
+
+- `apps/relay/CLAUDE.md` — Relay, the message channel to Benji, Ben's work
+  agent and the design advisor on Kevin. When Ben says "check for messages
+  from Benji": `relay inbox`. Says how Benji's token is issued, rotated and
+  revoked, and how much weight an inbound message carries.
 
 - `apps/sleeper-ui/CLAUDE.md` — League Desk. Dense on the ways Sleeper's own
   data misleads, and on the chat/token access rules, which are security-shaped.
