@@ -186,6 +186,32 @@ describe('a turn', () => {
     expect(r!.text).toMatch(/Something went wrong/);
   });
 
+  it('trims old tool results in batches, so the cache breaks once every five turns', async () => {
+    const kevin = await makeKevin([toy]);
+    const t = createThread(kevin);
+    const big = 'x'.repeat(5000);
+    const ins = kevin.db.prepare('INSERT INTO messages (thread_id, turn_id, role, content) VALUES (?,?,?,?)');
+    const mkTurn = (n: number) => {
+      const id = Number(kevin.db.prepare("INSERT INTO turns (thread_id, started_at, status) VALUES (?, ?, 'done')").run(t.id, new Date().toISOString()).lastInsertRowid);
+      ins.run(t.id, id, 'user', JSON.stringify([{ type: 'text', text: `q${n}` }]));
+      ins.run(t.id, id, 'assistant', JSON.stringify([{ type: 'tool_use', id: `c${n}`, name: 'query', input: {} }]));
+      ins.run(t.id, id, 'user', JSON.stringify([{ type: 'tool_result', tool_use_id: `c${n}`, content: big }]));
+      ins.run(t.id, id, 'assistant', JSON.stringify([{ type: 'text', text: `a${n}` }]));
+    };
+    const trimmedTurns = () => loadHistory(kevin, t.id).messages.filter((m) => JSON.stringify(m.content).includes('older result trimmed')).length;
+    for (let n = 1; n <= 10; n++) mkTurn(n);
+    expect(trimmedTurns()).toBe(0); // 10 turns: 4 are past the window, less than a batch
+    mkTurn(11);
+    expect(trimmedTurns()).toBe(5);
+    const first = loadHistory(kevin, t.id).messages[2]!.content as any[];
+    expect(first[0].content.length).toBeLessThan(800);
+    expect(first[0].tool_use_id).toBe('c1'); // the block stays; only its text shrinks
+    for (let n = 12; n <= 15; n++) mkTurn(n);
+    expect(trimmedTurns()).toBe(5); // unchanged for the next four turns
+    mkTurn(16);
+    expect(trimmedTurns()).toBe(10);
+  });
+
   it('compacts a long thread into a summary and sends history from after it', async () => {
     const kevin = await makeKevin();
     const t = createThread(kevin);
@@ -197,6 +223,8 @@ describe('a turn', () => {
     }
     model.reply({ content: [text('Ben asked six questions; the first two are settled.')] });
     expect(await compact(kevin, t.id, 4)).toBe(true);
+    expect(model.requests.at(-1)!.system).toMatch(/word for word/);
+    expect((await ok(kevin, 'recall', { query: 'six questions settled' })).hits[0]).toMatchObject({ kind: 'log-summary' });
     const { messages, summary } = loadHistory(kevin, t.id);
     expect(summary).toMatch(/six questions/);
     expect(messages.length).toBe(8);

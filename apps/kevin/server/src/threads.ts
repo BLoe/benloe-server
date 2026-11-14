@@ -5,6 +5,7 @@ import { bus } from './bus.js';
 import { nowIso } from './db.js';
 import type { Kevin } from './kevin.js';
 import { small } from './llm.js';
+import { indexItem } from './memory.js';
 import { runTurn, type TurnHandle, type TurnInput, type TurnOpts, type TurnResult } from './agent.js';
 
 interface ThreadState {
@@ -123,13 +124,27 @@ async function afterTurn(kevin: Kevin, threadId: string, handle: TurnHandle): Pr
   if (handle.lastPromptTokens > COMPACT_ABOVE_TOKENS) await compact(kevin, threadId);
 }
 
-/** Summarises everything but the last few turns; history is then sent from after that point. */
+const KEEP_TAIL_CHARS = 60_000;
+
+/**
+ * Summarises the older part of a thread; history is then sent from after
+ * that point. The cut is always at a turn boundary, so no tool result is
+ * separated from its call. `keepTurns` is a maximum: when the recent turns are
+ * large, fewer are kept verbatim, but always at least one.
+ */
 export async function compact(kevin: Kevin, threadId: string, keepTurns = KEEP_TURNS): Promise<boolean> {
   const { db } = kevin;
-  const t = db.prepare('SELECT summary, summary_upto FROM threads WHERE id = ?').get(threadId) as { summary: string | null; summary_upto: number };
-  const turnIds = (db.prepare('SELECT DISTINCT turn_id FROM messages WHERE thread_id = ? AND id > ? ORDER BY turn_id').all(threadId, t.summary_upto) as { turn_id: number }[]).map((r) => r.turn_id);
-  if (turnIds.length <= keepTurns) return false;
-  const cutTurn = turnIds[turnIds.length - keepTurns - 1]!;
+  const t = db.prepare('SELECT title, summary, summary_upto FROM threads WHERE id = ?').get(threadId) as { title: string; summary: string | null; summary_upto: number };
+  const sizes = db.prepare('SELECT turn_id, SUM(LENGTH(content)) AS chars FROM messages WHERE thread_id = ? AND id > ? GROUP BY turn_id ORDER BY turn_id').all(threadId, t.summary_upto) as { turn_id: number; chars: number }[];
+  let keep = 0;
+  let tail = 0;
+  for (let i = sizes.length - 1; i >= 0 && keep < keepTurns; i--) {
+    tail += sizes[i]!.chars;
+    if (keep >= 1 && tail > KEEP_TAIL_CHARS) break;
+    keep++;
+  }
+  if (sizes.length <= keep) return false;
+  const cutTurn = sizes[sizes.length - keep - 1]!.turn_id;
   const rows = db.prepare('SELECT id, role, content FROM messages WHERE thread_id = ? AND id > ? AND turn_id <= ? ORDER BY id').all(threadId, t.summary_upto, cutTurn) as { id: number; role: string; content: string }[];
   if (!rows.length) return false;
   const text = rows
@@ -150,10 +165,13 @@ export async function compact(kevin: Kevin, threadId: string, keepTurns = KEEP_T
   const summary = await small(
     db,
     { purpose: 'compaction', threadId },
-    'You are compressing the earlier part of a conversation between Ben and his assistant Kevin so the conversation can continue without it. Write what Kevin needs to carry on: what Ben asked for and decided, facts and numbers that came up, what was changed in his data, and anything left open. Plain prose and short lists, at most 600 words.',
+    'You are compressing the earlier part of a conversation between Ben and his assistant Kevin so the conversation can continue without it. Use these headings: Context, Decisions, Work completed, Open threads. Under Decisions, keep Ben\'s decisions, corrections and stated preferences word for word, in quotation marks. Paraphrase the rest: what he asked for, the facts and numbers that came up, what was changed in his data, what is still unresolved. At most 600 words.',
     `${t.summary ? `Summary of what came before this section:\n${t.summary}\n\n` : ''}The section to compress:\n${text}`,
     4000,
   );
+  if (!summary.trim()) return false;
   db.prepare('UPDATE threads SET summary = ?, summary_upto = ? WHERE id = ?').run(summary, rows.at(-1)!.id, threadId);
+  // Recallable later, once the detail is gone from the live conversation.
+  indexItem(db, 'log-summary', `compaction-${threadId}`, `${t.title} (earlier part)`, summary);
   return true;
 }

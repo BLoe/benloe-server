@@ -95,11 +95,37 @@ export function stripForHistory(role: 'user' | 'assistant', content: Msg['conten
   return out;
 }
 
-/** The thread's stored conversation, from after the compaction point. */
+const TRIM_AFTER_TURNS = 6;
+const TRIM_BATCH = 5;
+const TRIM_TO_CHARS = 600;
+
+/**
+ * The thread's stored conversation, from after the compaction point.
+ *
+ * Tool results are most of what fills a thread, and an old one is rarely
+ * needed in full. Results in turns more than TRIM_AFTER_TURNS back are cut to
+ * their first TRIM_TO_CHARS characters. The boundary moves in steps of
+ * TRIM_BATCH turns, because rewriting an old message invalidates the prompt
+ * cache from that point: once every five turns, not once a turn.
+ */
 export function loadHistory(kevin: Kevin, threadId: string): { messages: Msg[]; summary: string | null } {
   const t = kevin.db.prepare('SELECT summary, summary_upto FROM threads WHERE id = ?').get(threadId) as { summary: string | null; summary_upto: number };
-  const rows = kevin.db.prepare('SELECT role, content FROM messages WHERE thread_id = ? AND id > ? ORDER BY id').all(threadId, t.summary_upto) as { role: 'user' | 'assistant'; content: string }[];
-  return { messages: rows.map((r) => ({ role: r.role, content: JSON.parse(r.content) as Block[] })), summary: t.summary };
+  const rows = kevin.db.prepare('SELECT turn_id, role, content FROM messages WHERE thread_id = ? AND id > ? ORDER BY id').all(threadId, t.summary_upto) as { turn_id: number; role: 'user' | 'assistant'; content: string }[];
+  const turnIds = [...new Set(rows.map((r) => r.turn_id))];
+  const trimCount = Math.max(0, Math.floor((turnIds.length - TRIM_AFTER_TURNS) / TRIM_BATCH) * TRIM_BATCH);
+  const trimmed = new Set(turnIds.slice(0, trimCount));
+  const messages = rows.map((r) => {
+    const content = JSON.parse(r.content) as Block[];
+    if (trimmed.has(r.turn_id)) {
+      for (const b of content) {
+        if (b.type === 'tool_result' && typeof b.content === 'string' && b.content.length > TRIM_TO_CHARS) {
+          b.content = `${b.content.slice(0, TRIM_TO_CHARS)}\n[older result trimmed from ${b.content.length} characters; run the tool again if the rest is needed]`;
+        }
+      }
+    }
+    return { role: r.role, content };
+  });
+  return { messages, summary: t.summary };
 }
 
 /** Marks the end of the conversation as a cache breakpoint, on a copy. */
