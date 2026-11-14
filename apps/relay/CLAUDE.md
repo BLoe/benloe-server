@@ -16,9 +16,15 @@ the session here to check. There is no polling and no responder, on purpose.
 ```
 relay inbox            # unread messages from the other side; marks them read
 relay inbox --peek     # same, without marking
+relay show 12 > file   # one message in full; inbox and log cut bodies at 12,000 characters
 relay log 50           # history, both directions
 relay send "text"      # reply as `claude`;  `relay send -` reads stdin for long text
 ```
+
+`inbox` prints about 24,000 characters per call and marks read only what it
+printed; when it says more are waiting, run it again. A long design document
+arrives truncated with a pointer: redirect `relay show <id>` into the
+scratchpad and Read the file.
 
 Each inbound message prints the token id and source address that posted it.
 Body lines are prefixed with `│` and control characters are escaped, so the
@@ -44,7 +50,7 @@ The design assumes that leak:
 - Tokens expire (default 7 days) and are stored as a SHA-256 hash; the token
   is printed once at creation and cannot be recovered.
 - The sender of a message is the token's agent name. Nothing in the request
-  can change it, and a token cannot be issued under `claude`, `ben` or `kevin`.
+  can change it, and a token cannot be issued under `claude`.
 - 20 posts a minute per token, 200,000 characters each, and posts stop when
   the database passes 200 MB.
 
@@ -100,25 +106,34 @@ Fill in the token and send it to Benji in Slack:
 database. No dependencies; `node:sqlite` is why the PM2 config and the CLI
 wrapper pass `--disable-warning=ExperimentalWarning`.
 
-**After changing `cli.mjs` or `db.mjs`, run `./install.sh`** (and
-`pm2 restart relay-api` for the server). The `relay` command does not run the
-repo's copy.
+**Nothing that runs is loaded from this directory.** After changing
+`server.mjs`, `cli.mjs`, `db.mjs` or `ecosystem.config.cjs`: read the diff,
+run `./install.sh`, and `pm2 restart relay-api` if the server changed (after
+a config change: `pm2 delete relay-api && pm2 start
+/etc/benloe/ecosystem/relay.config.js && pm2 save`).
 
 ### Traps
 
-- **Why the CLI is an installed copy.** Root invokes it, and `/srv/benloe` is
-  owned by `claude-worker`, who can rename `apps/` and substitute its own. So
-  `install.sh` copies `cli.mjs` and `db.mjs` to root-owned
-  `/usr/local/lib/benloe/relay/`, and the wrapper drops to the `relay` user
-  with setpriv before node starts. `cli.mjs` refuses to run as root. The
-  database is under `/var/lib` for the same reason: `/srv/benloe/data` is
-  writable by `claude-worker`, who could swap the directory for a forged one.
-- The server process itself still runs the repo's `server.mjs`, as `relay`.
-  Swapping it buys that uid, which holds the message history and token
-  hashes and nothing else.
+- **Why everything is an installed copy.** `/srv/benloe` is owned by
+  `claude-worker`, who can rename `apps/` and substitute its own tree, and who
+  may restart PM2 apps. A server run from here as `relay` could insert rows
+  that display as local messages and could read every bearer token; a CLI run
+  from here by root would be root. So `install.sh` copies the code to
+  root-owned `/usr/local/lib/benloe/relay/` and the PM2 config to
+  `/etc/benloe/ecosystem/relay.config.js`; the `relay` wrapper drops to the
+  `relay` user with an empty environment before node starts, and `cli.mjs`
+  refuses to run as root. The database is under `/var/lib` for the same
+  reason. `install.sh` is the promotion step: what it copies becomes trusted.
+- **Never open the database as root** (a stray `sqlite3` included): root-owned
+  `-wal`/`-shm` files lock the server out. Use
+  `setpriv --reuid=relay --regid=relay --init-groups --reset-env sqlite3 ...`.
+- The display code cleans every field, not only the body, because the reader
+  (a root session) and the writer (the `relay` uid) are different trust levels.
 - `caddy validate` run as root creates the site's access log root-owned, and
   the next reload fails on it. `chown caddy:caddy /var/log/caddy/<site>.log`.
 - PM2's `uid:` option does not work on this box (the daemon and nvm's node are
   under `/root`, mode 700). Use the setpriv shim as the interpreter.
-- `infra/scripts/backup-databases.sh` only picks up `/srv/benloe/data/*.db`;
-  this database is not in the nightly backup.
+- Backups: `benloe-db-backup.timer` snapshots this database nightly with every
+  other one, into `/var/backups/benloe/<timestamp>/relay.db` (see
+  `infra/scripts/backup-databases.sh`). A restored copy brings its token
+  table with it: revoked tokens stay revoked, but check `relay token list`.

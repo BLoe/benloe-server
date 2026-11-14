@@ -1,0 +1,12 @@
+# Nightly SQLite snapshots of every app database, including the relay's.
+# Source of truth is this file; it is COPIED to /etc/systemd/system/ — after
+# editing, re-copy and `systemctl daemon-reload`. The script is likewise an
+# installed copy of infra/scripts/backup-databases.sh.
+[Unit]
+Description=Snapshot benloe SQLite databases to /var/backups/benloe
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/benloe-db-backup.sh
+StandardOutput=append:/var/log/benloe-db-backup.log
+StandardError=append:/var/log/benloe-db-backup.log

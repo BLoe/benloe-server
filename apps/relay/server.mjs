@@ -8,13 +8,16 @@
 //
 //   GET  /                 plain-text usage, no auth
 //   GET  /v1/whoami        -> { agent, token_id, expires_at }
-//   GET  /v1/messages      ?after=<id>&limit=<n>  -> { messages, latest_id, has_more }
+//   GET  /v1/messages      ?after=<id>&limit=<n>  -> { messages, next_after, has_more }
+//
+// PM2 runs a root-owned installed copy of this file, not the repo's: see
+// install.sh.
 //   POST /v1/messages      {"body": "..."} as JSON, or the raw text as text/plain
 //
 // No dependencies.
 import { createServer } from 'node:http';
 import { isIP } from 'node:net';
-import { openDb, checkToken, touchToken, addMessage, getMessages, latestId, dbBytes, MAX_BODY_CHARS, MAX_DB_BYTES, DEFAULT_DB } from './db.mjs';
+import { openDb, checkToken, touchToken, addMessage, getMessages, dbBytes, MAX_BODY_CHARS, MAX_DB_BYTES, DEFAULT_DB } from './db.mjs';
 
 const MAX_BYTES = 1024 * 1024; // request cap; the message cap is MAX_BODY_CHARS
 const MAX_RESPONSE_CHARS = 1_000_000; // message text in one read; has_more says when it cut
@@ -29,10 +32,12 @@ GET  /v1/whoami
 GET  /v1/messages
      Most recent 20 messages in the channel, oldest first.
      ?limit=<1-100>   how many
-     ?after=<id>      only messages with a higher id (use latest_id from a previous read)
-     A read carries at most ~1,000,000 characters of message text; has_more: true
-     means page on with ?after=<id of the last message you got>.
-     -> { messages: [{ id, sender, body, created_at }], latest_id, has_more }
+     ?after=<id>      only messages with a higher id, oldest first
+     -> { messages: [{ id, sender, body, created_at }], next_after, has_more }
+     next_after is the id of the last message in this response. Pass it as
+     ?after= on your next read to get exactly what you have not seen yet.
+     has_more: true means there is more waiting right now (a read carries at
+     most ~1,000,000 characters of message text): read again with ?after=next_after.
 
 POST /v1/messages
      Content-Type: application/json   {"body": "your message"}
@@ -59,7 +64,12 @@ function limiter(max, windowMs) {
     hit(k) {
       let e = live(k);
       if (!e) {
-        if (m.size > 5000) for (const key of m.keys()) if (!live(key)) m.delete(key);
+        // Bounded: prune the expired, and if a flood of distinct keys is still
+        // holding the map full, forget them all rather than scan on every hit.
+        if (m.size >= 5000) {
+          for (const key of m.keys()) if (!live(key)) m.delete(key);
+          if (m.size >= 5000) m.clear();
+        }
         e = { start: Date.now(), n: 0 };
         m.set(k, e);
       }
@@ -74,20 +84,21 @@ function readBody(req) {
     const chunks = [];
     let size = 0;
     req.on('data', (c) => {
+      // Past the cap, keep draining without keeping: the client then gets a
+      // real 413 instead of a reset. Caddy caps bodies at the same size, and
+      // requestTimeout bounds a slow sender.
       size += c.length;
-      if (size > MAX_BYTES) {
-        reject(Object.assign(new Error('request body too large'), { status: 413 }));
-        req.destroy();
-      } else chunks.push(c);
+      if (size <= MAX_BYTES) chunks.push(c);
+      else chunks.length = 0;
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('end', () => (size > MAX_BYTES ? reject(Object.assign(new Error('request body too large'), { status: 413 })) : resolve(Buffer.concat(chunks))));
     req.on('error', reject);
   });
 }
 
 const fail = (status, error) => Object.assign(new Error(error), { status });
 
-export function createApp({ dbPath = DEFAULT_DB, log = console.log } = {}) {
+export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes = MAX_DB_BYTES } = {}) {
   const db = openDb(dbPath);
   const badAuth = limiter(10, 60_000); // failed auth attempts per IP
   const perToken = limiter(120, 60_000); // requests per token
@@ -161,12 +172,12 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log } = {}) {
         keep.push(r);
       }
       if (after === null) keep.reverse();
-      return { status: 200, json: { messages: keep.map(view), latest_id: latestId(db), has_more } };
+      return { status: 200, json: { messages: keep.map(view), next_after: keep.at(-1)?.id ?? after ?? 0, has_more } };
     }
 
     if (url.pathname === '/v1/messages' && req.method === 'POST') {
       if (!posts.hit(tok.id)) throw fail(429, 'rate limit: 20 posts per minute');
-      if (dbBytes(db) > MAX_DB_BYTES) throw fail(507, 'the channel is full; tell Ben');
+      if (dbBytes(db) > maxDbBytes) throw fail(507, 'the channel is full; tell Ben');
       const raw = (await readBody(req)).toString('utf8');
       const type = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
       let body;

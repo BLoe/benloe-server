@@ -235,6 +235,23 @@ this includes security updates, deliberately).
 - Kernel updates set the reboot-required flag; reboots are manual (Ben's call).
   PM2 and Caddy are boot-enabled, so a plain `systemctl reboot` is safe.
 
+## Database Backups
+
+Every SQLite database is snapshotted nightly (~09:15 UTC) to
+`/var/backups/benloe/<timestamp>/` — root-only, 14 days kept, each snapshot
+integrity-checked. Covers `/srv/benloe/data/*.db`, one level of subdirectories
+(`cabinet/`, `gavel/`), and the relay database in `/var/lib/benloe-relay`.
+
+- Script: `infra/scripts/backup-databases.sh`, run as the installed copy
+  `/usr/local/sbin/benloe-db-backup.sh` — after editing, re-install it (the
+  command is in the script's header).
+- Schedule: `benloe-db-backup.timer`; units in `infra/systemd/`, copied to
+  `/etc/systemd/system/`. Run one now: `systemctl start benloe-db-backup.service`.
+- Log: `/var/log/benloe-db-backup.log`. A failed database fails the unit:
+  `systemctl status benloe-db-backup.service`.
+- These are on the same disk as the data. They cover a bad migration or a
+  deleted row, not the loss of the droplet.
+
 ## Per-App Context Files
 
 Some apps carry their own `CLAUDE.md` next to the code, with the operational
