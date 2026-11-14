@@ -64,9 +64,7 @@ export function parseCron(expr: string): Cron {
   return { minute: field(f[0]!, 0, 59), hour: field(f[1]!, 0, 23), dom: field(f[2]!, 1, 31), month: field(f[3]!, 1, 12), dow, domStar: f[2] === '*', dowStar: f[4] === '*' };
 }
 
-function cronMatches(c: Cron, d: Date, tz: string): boolean {
-  const p = parts(d, tz);
-  if (!c.minute.has(p.mi) || !c.hour.has(p.h) || !c.month.has(p.mo)) return false;
+function dayMatches(c: Cron, p: { d: number; dow: number }): boolean {
   const dom = c.dom.has(p.d);
   const dow = c.dow.has(p.dow);
   // Cron's rule: when both day fields are restricted, either may match.
@@ -76,10 +74,24 @@ function cronMatches(c: Cron, d: Date, tz: string): boolean {
 /** The first minute strictly after `after` that matches, searching up to 366 days. */
 export function nextCron(expr: string, after: Date, tz = config.timezone): Date | null {
   const c = parseCron(expr);
-  const t = new Date(Math.floor(after.getTime() / 60_000) * 60_000 + 60_000);
-  for (let i = 0; i < 366 * 24 * 60; i++) {
-    if (cronMatches(c, t, tz)) return t;
-    t.setTime(t.getTime() + 60_000);
+  const MIN = 60_000;
+  let t = Math.floor(after.getTime() / MIN) * MIN + MIN;
+  const end = t + 366 * 24 * 60 * MIN;
+  // Skips whole days and hours that cannot match, so an expression that never
+  // fires costs a few thousand steps, not half a million.
+  while (t <= end) {
+    const p = parts(new Date(t), tz);
+    if (!c.month.has(p.mo) || !dayMatches(c, p)) {
+      // To just before the next local midnight; an hour early, so a DST shift cannot carry us past it.
+      t += Math.max(1, (23 - p.h) * 60 - p.mi) * MIN + (p.h === 23 ? (59 - p.mi) * MIN : 0);
+      continue;
+    }
+    if (!c.hour.has(p.h)) {
+      t += (60 - p.mi) * MIN;
+      continue;
+    }
+    if (c.minute.has(p.mi)) return new Date(t);
+    t += MIN;
   }
   return null;
 }

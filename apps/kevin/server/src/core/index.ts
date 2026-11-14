@@ -178,10 +178,14 @@ export function coreTools(kevin: Kevin): ToolDef[] {
       description: 'Search your long-term memory: summaries of past conversations, the daily log of what changed, notes, and the text of stored documents and attachments. Use it when a question depends on something from before today.',
       input: z.object({
         query: z.string().min(2).describe('Words that would appear in what you are looking for.'),
-        kinds: z.array(z.string()).optional().describe('Limit to kinds: log-summary, log-event, log-note, document, attachment, recipe.'),
+        kinds: z.array(z.string()).optional().describe('Limit to kinds: log-summary (conversation summaries), log-note, document, attachment, recipe, space-record, log-event (the raw record of every data change; left out unless you ask for it).'),
         limit: z.number().int().min(1).max(20).default(8),
       }),
-      run: async ({ query, kinds, limit }) => ({ hits: await search(db, query, limit, kinds) }),
+      run: async ({ query, kinds, limit }) => {
+        // Change events echo the text of the thing they changed and would crowd out the thing itself.
+        const hits = await search(db, query, kinds ? limit : limit * 3, kinds);
+        return { hits: (kinds ? hits : hits.filter((h) => h.kind !== 'log-event')).slice(0, limit) };
+      },
     }),
     defineTool({
       name: 'note',

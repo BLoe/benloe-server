@@ -195,7 +195,8 @@ root, and nothing stops a process allowed to use a secret from exercising it).
 | waker-api | 3012 | apps/waker | Waker — fantasy decision desk |
 | gavel-api | 3013 | apps/gavel | Gavel — auction draft board |
 | tipoff-api | 3014 | apps/tipoff | Tipoff — NBA draft board gate + screenshot uploads |
-| relay-api | 3015 | apps/relay | Relay — message channel between Benji (work agent) and Claude Code here (next free port: 3016) |
+| relay-api | 3015 | apps/relay | Relay — message channel between Benji (work agent) and Claude Code here |
+| kevin-api | 3016 | apps/kevin | Kevin — Ben's personal agent: API, event stream and web app (next free port: 3017) |
 
 Check services: `pm2 list`
 
@@ -241,6 +242,8 @@ Every SQLite database is snapshotted nightly (~09:15 UTC) to
 `/var/backups/benloe/<timestamp>/` — root-only, 14 days kept, each snapshot
 integrity-checked. Covers `/srv/benloe/data/*.db`, one level of subdirectories
 (`cabinet/`, `gavel/`), and the relay database in `/var/lib/benloe-relay`.
+Kevin backs himself up (database, documents and uploads) into
+`/var/lib/kevin/backups/`, nightly, seven days kept; see `apps/kevin`.
 
 - Script: `infra/scripts/backup-databases.sh`, run as the installed copy
   `/usr/local/sbin/benloe-db-backup.sh` — after editing, re-install it (the
@@ -258,6 +261,11 @@ Some apps carry their own `CLAUDE.md` next to the code, with the operational
 detail a fresh session needs — invariants, traps, and what not to change. Read
 the app's file before working in it; this one only covers the box.
 
+- `apps/kevin/CLAUDE.md` — Kevin, Ben's personal agent (kevin.benloe.com,
+  owner-only): pantry, cooking, workouts, money, taxes, documents. Says where
+  its data and running code live (outside the repo, on purpose), the rules the
+  model API imposes on the agent loop, how to add a domain, and how to deploy.
+  Kevin's own requests for changes are in `/var/lib/kevin/SUGGESTIONS.md`.
 - `apps/relay/CLAUDE.md` — Relay, the message channel to Benji, Ben's work
   agent and the design advisor on Kevin. When Ben says "check for messages
   from Benji": `relay inbox`. Says how Benji's token is issued, rotated and

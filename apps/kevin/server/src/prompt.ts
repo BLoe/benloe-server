@@ -29,7 +29,8 @@ const HIDDEN = new Set(['push_subscriptions', 'embeddings', 'messages', '_migrat
 
 export function schemaText(db: DB): string {
   const rows = db
-    .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'search_index_%' ORDER BY name")
+    // Views too: a domain may define one so the model's common queries are trivially right.
+    .prepare("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'search_index_%' ORDER BY type, name")
     .all() as { name: string; sql: string }[];
   return rows
     .filter((r) => !HIDDEN.has(r.name))
@@ -44,7 +45,7 @@ export function buildStableSystem(db: DB, domains: Domain[]): string {
     read('rules.md'),
     read('people.md'),
     read('profile.md'),
-    `# The app\n\nBen uses you through a web app with these pages: Home (/), Pantry (/pantry), Cooking (/cooking), Workouts (/workouts), Money (/money), Taxes (/taxes), Documents (/documents), Jobs (/jobs), Settings (/settings). Chat sits beside every page. Notifications you send appear in the app's inbox and as push notifications; give each a \`link\` to the page it is about.\n\nTimes in the database are UTC ISO strings unless a column says otherwise; dates Ben means are in ${config.timezone}.`,
+    `# The app\n\nBen uses you through a web app with these pages: Home (/), Pantry (/pantry), Cooking (/cooking), Workouts (/workouts), Money (/money), Taxes (/taxes), Documents (/documents), one page per space (/s/<slug>), Jobs (/jobs), Settings (/settings). Chat sits beside every page. Notifications you send appear in the app's inbox and as push notifications; give each a \`link\` to the page it is about.\n\nTimes in the database are UTC ISO strings unless a column says otherwise; dates Ben means are in ${config.timezone}.`,
     notes ? `# Areas\n\n${notes}` : '',
     `# Database schema (SQLite)\n\n\`\`\`sql\n${schemaText(db)}\n\`\`\``,
   ]

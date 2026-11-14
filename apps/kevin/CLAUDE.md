@@ -70,6 +70,22 @@ is writable by another uid, and this database holds tax and medical records.
   `deep`. `config.ts` holds the ids; prices are in `llm.ts` and must be updated
   with them.
 
+## Spaces: how Kevin handles what has no page
+
+Ben's main complaint about Cabinet was that a fixed set of areas does not
+generalise: a task that fits none of them has nowhere to live. So the built-in
+domains are the exception, kept only where an area needs logic a list cannot
+give (CSV import, progression math, the tax packet). Everything else is a
+**space** (`domains/spaces.ts`): Kevin creates one at runtime with
+`space_save` (name, layout, custom fields), fills it with
+`space_records_update`, and it has a page at `/s/<slug>` and a place in the
+nav immediately, rendered generically by layout (list, checklist, table,
+board, notes). Open records with a due date reach Home.
+
+When Ben asks for a new kind of tracking, the answer is a space, made by Kevin
+in conversation. A new built-in domain is warranted only when Ben keeps hitting
+something a space cannot do.
+
 ## Adding or changing a domain
 
 A domain is one file, `server/src/domains/<name>.ts`, default-exporting

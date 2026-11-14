@@ -177,7 +177,7 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
 
   // ---- the request, fixed for the whole turn (rule 1) ----
   const { messages: history, summary } = loadHistory(kevin, threadId);
-  const hits = opts.origin === 'chat' ? keywordSearch(db, input.text, 5, ['log-summary', 'log-note', 'document', 'recipe']) : [];
+  const hits = opts.origin === 'chat' ? keywordSearch(db, input.text, 5, ['log-summary', 'log-note', 'document', 'recipe', 'space-record']) : [];
   const ctxText = contextBlock({ page: input.page, hits, origin: opts.origin });
   const userText = [input.text, att.note].filter(Boolean).join('\n\n');
   // A compaction summary rides in front of the first message after the cut

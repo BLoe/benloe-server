@@ -143,7 +143,9 @@ export function createHttp(kevin: Kevin): express.Express {
     const a = getAttachment(kevin.db, Number(req.params.id));
     if (!a || !existsSync(attachmentPath(a))) return void res.status(404).json({ error: 'no such attachment' });
     // Uploaded bytes are never allowed to run as a page on this origin.
-    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'");
+    // A PDF is the exception: the browser's own PDF viewer will not render inside a sandbox, and the type was
+    // decided from the file's bytes at upload, so it is served plainly.
+    if (a.mime !== 'application/pdf') res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'");
     res.setHeader('Content-Disposition', `${a.kind === 'image' || a.kind === 'pdf' ? 'inline' : 'attachment'}; filename="${a.filename.replace(/[^\w.\- ]/g, '_')}"`);
     res.type(a.mime).sendFile(attachmentPath(a));
   });
