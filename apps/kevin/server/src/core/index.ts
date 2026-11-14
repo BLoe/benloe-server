@@ -245,6 +245,9 @@ export function coreTools(kevin: Kevin): ToolDef[] {
         } catch (e) {
           throw new ToolError((e as Error).message);
         }
+        if (type === 'once' && enabled && next && next.getTime() < Date.now() - 60_000) {
+          throw new ToolError('That one-time schedule\'s time has passed. Give it a new trigger_value to arm it again.');
+        }
         const keepThread = (old.thread_id as string | undefined) && s.action === 'agent_turn' ? JSON.stringify({ ...(JSON.parse(payload) as object), thread_id: old.thread_id }) : payload;
         db.prepare('UPDATE schedules SET name = ?, trigger_type = ?, trigger_value = ?, payload = ?, enabled = ?, next_run_at = ?, spend_cap_usd = ? WHERE id = ?')
           .run(i.name ?? s.name, type, value, keepThread, enabled && next ? 1 : 0, enabled ? (next?.toISOString() ?? null) : null, i.spend_cap_usd ?? s.spend_cap_usd, s.id);

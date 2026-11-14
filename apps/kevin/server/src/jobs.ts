@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { bus } from './bus.js';
 import { config } from './config.js';
 import { nowIso } from './db.js';
 import type { Kevin } from './kevin.js';
@@ -281,6 +282,8 @@ export class JobRunner {
       this.inflight.delete(key);
     }
     db.prepare('UPDATE job_runs SET ended_at = ?, outcome = ?, detail = ?, cost_usd = ? WHERE id = ?').run(nowIso(), result.outcome, result.detail?.slice(0, 1000) ?? null, result.costUsd ?? 0, id);
+    // The Jobs page shows the ledger; idle heartbeats are not worth a refresh.
+    if (result.outcome !== 'nothing-to-do') bus.publish({ type: 'data_changed', domains: ['system'] });
     if (result.outcome === 'errored' && key !== 'system:heartbeat') {
       await notify(db, { title: `Job failed: ${key.startsWith('schedule:') ? this.scheduleName(key) : key.slice(7)}`, body: result.detail?.slice(0, 300), link: '/jobs', source: key }).catch(() => undefined);
     }

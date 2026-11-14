@@ -25,8 +25,11 @@ export const transport = {
 
 export async function notify(db: DB, n: NotifyInput): Promise<{ id: number; pushed: number }> {
   const link = n.link && n.link.startsWith('/') ? n.link : null;
-  const id = Number(db.prepare('INSERT INTO notifications (at, title, body, link, source) VALUES (?,?,?,?,?)').run(nowIso(), n.title, n.body ?? '', link, n.source ?? 'kevin').lastInsertRowid);
-  bus.publish({ type: 'notification', id, title: n.title, body: n.body ?? '', link });
+  const at = nowIso();
+  const source = n.source ?? 'kevin';
+  const id = Number(db.prepare('INSERT INTO notifications (at, title, body, link, source) VALUES (?,?,?,?,?)').run(at, n.title, n.body ?? '', link, source).lastInsertRowid);
+  bus.publish({ type: 'notification', id, at, title: n.title, body: n.body ?? '', link, source });
+  bus.publish({ type: 'data_changed', domains: ['system'] });
   logEvent(db, `notification: ${n.title}${n.body ? ' — ' + n.body.slice(0, 200) : ''}`);
   let pushed = 0;
   if (setup()) {

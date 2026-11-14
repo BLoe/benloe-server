@@ -22,7 +22,7 @@ export type BusEvent =
   | { type: 'thread_updated'; threadId: string; title?: string }
   /** A typed write touched these domains; pages showing them should refetch. */
   | { type: 'data_changed'; domains: string[] }
-  | { type: 'notification'; id: number; title: string; body: string; link: string | null };
+  | { type: 'notification'; id: number; at: string; title: string; body: string; link: string | null; source: string | null };
 
 class Bus extends EventEmitter {
   publish(e: BusEvent): void {

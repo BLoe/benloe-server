@@ -230,7 +230,7 @@ export default defineDomain({
         const s = findSpace(db, i.space);
         const fields = fieldsOf(s);
         const now = nowIso();
-        const out = { space: s.slug, added: [] as string[], updated: [] as string[], deleted: [] as string[] };
+        const out = { space: s.slug, added: [] as string[], updated: [] as string[], deleted: [] as string[], records: [] as { id: number; title: string }[] };
         db.transaction(() => {
           let next = (db.prepare('SELECT COALESCE(MAX(position), 0) AS p FROM space_records WHERE space_id = ?').get(s.id) as { p: number }).p;
           for (const r of i.records) {
@@ -256,6 +256,7 @@ export default defineDomain({
                 r.title ?? cur.title, JSON.stringify(merged), r.done === undefined ? cur.done : r.done ? 1 : 0, r.due_on === undefined ? cur.due_on : r.due_on,
                 r.body === undefined ? cur.body : r.body, r.position ?? cur.position, now, cur.id);
               out.updated.push(r.title ?? cur.title);
+              out.records.push({ id: cur.id, title: r.title ?? cur.title });
               indexRecord(db, s, db.prepare('SELECT * FROM space_records WHERE id = ?').get(cur.id) as RecordRow);
             } else {
               if (!r.title) throw new ToolError('A new record needs a title.');
@@ -263,6 +264,7 @@ export default defineDomain({
               const id = db.prepare('INSERT INTO space_records (space_id, title, data, done, due_on, body, position, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
                 .run(s.id, r.title, JSON.stringify(data), r.done ? 1 : 0, r.due_on ?? null, r.body ?? null, r.position ?? next, now, now).lastInsertRowid;
               out.added.push(r.title);
+              out.records.push({ id: Number(id), title: r.title });
               indexRecord(db, s, db.prepare('SELECT * FROM space_records WHERE id = ?').get(id) as RecordRow);
             }
           }

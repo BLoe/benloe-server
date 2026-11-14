@@ -60,6 +60,8 @@ export interface TurnHandle {
   /** Messages Ben sent while this turn was running, not yet delivered. */
   pending: TurnInput[];
   confirms: Map<string, (approved: boolean) => void>;
+  /** What each open confirm is asking, so a reloaded page can show the card again. */
+  confirmSummaries: Map<string, string>;
   /** Prompt size of the last request, for the compaction decision. */
   lastPromptTokens: number;
 }
@@ -217,7 +219,9 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
 
   const facts = factsBlock(db);
   const system: Anthropic.Beta.BetaTextBlockParam[] = [
-    { type: 'text', text: kevin.stableSystem, cache_control: { type: 'ephemeral', ttl: '1h' } },
+    // The deep model is used a turn or two at a time; a one-hour cache write of this prefix at its
+    // rates costs more than the reads it would save.
+    { type: 'text', text: kevin.stableSystem, cache_control: model === config.models.deep ? { type: 'ephemeral' } : { type: 'ephemeral', ttl: '1h' } },
     ...(facts ? [{ type: 'text' as const, text: facts }] : []),
   ];
   const tools = [...(kevin.tools.apiTools((t) => opts.origin === 'chat' || t.name !== 'shell') as unknown as Anthropic.Beta.BetaToolUnion[]), ...WEB_TOOLS];
@@ -245,11 +249,13 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
         const done = (approved: boolean) => {
           clearTimeout(timer);
           handle.confirms.delete(confirmId);
+          handle.confirmSummaries.delete(confirmId);
           bus.publish({ type: 'confirm_resolved', threadId, confirmId, approved });
           resolve(approved);
         };
         const timer = setTimeout(() => done(false), 5 * 60_000);
         handle.confirms.set(confirmId, done);
+        handle.confirmSummaries.set(confirmId, summaryText);
         bus.publish({ type: 'confirm_request', threadId, turnId, confirmId, tool: 'confirm', summary: summaryText });
       });
     },
@@ -339,7 +345,7 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
       if (!calls.length) {
         // Ben wrote while the last reply was streaming: answer that too.
         if (handle.pending.length && msg.stop_reason === 'end_turn') {
-          turnMessages.push({ role: 'user', content: drainPending(handle, threadId, turnId) });
+          turnMessages.push({ role: 'user', content: drainPending(kevin, handle, threadId, turnId) });
           continue;
         }
         if (msg.stop_reason === 'max_tokens') handle.items.push({ type: 'status', text: 'That reply hit the length limit and was cut off.' });
@@ -365,7 +371,7 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
       );
       if (handle.abort.signal.aborted) throw new DOMException('stopped', 'AbortError');
       // Rule 3: Ben's mid-turn words go after the last tool result, as his.
-      turnMessages.push({ role: 'user', content: [...results, ...(handle.pending.length ? drainPending(handle, threadId, turnId) : [])] });
+      turnMessages.push({ role: 'user', content: [...results, ...(handle.pending.length ? drainPending(kevin, handle, threadId, turnId) : [])] });
 
       if (opts.spendCapUsd != null) {
         const cost = (db.prepare('SELECT cost_usd FROM turns WHERE id = ?').get(turnId) as { cost_usd: number }).cost_usd;
@@ -402,12 +408,14 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
   }
 }
 
-function drainPending(handle: TurnHandle, threadId: string, turnId: number): Block[] {
+function drainPending(kevin: Kevin, handle: TurnHandle, threadId: string, turnId: number): Block[] {
   const out: Block[] = [];
   for (const p of handle.pending.splice(0)) {
     bus.publish({ type: 'user_folded', threadId, turnId, text: p.text });
     handle.items.push({ type: 'status', text: `Ben: ${p.text}` });
-    out.push({ type: 'text', text: p.text });
+    // Files sent mid-turn come along as their extracted text; history keeps exactly this.
+    const att = attachmentBlocks(kevin, p.attachments ?? []);
+    out.push({ type: 'text', text: [p.text, att.note].filter(Boolean).join('\n\n') || '(no text)' });
   }
   return out;
 }

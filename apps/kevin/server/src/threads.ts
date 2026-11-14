@@ -48,7 +48,9 @@ export function getThread(kevin: Kevin, id: string) {
     // A running turn's items live in memory until it ends.
     items: handle && handle.turnId === t.id ? handle.items : (JSON.parse(t.assistant_ui as string) as unknown),
   }));
-  return { ...thread, running: !!handle, turns };
+  // Confirms waiting on Ben, so a page loaded mid-turn can still show the buttons.
+  const confirms = handle ? [...handle.confirmSummaries].map(([confirmId, summary]) => ({ confirmId, summary, turnId: handle.turnId })) : [];
+  return { ...thread, running: !!handle, turns, confirms };
 }
 
 /**
@@ -63,7 +65,7 @@ export function send(kevin: Kevin, threadId: string, input: TurnInput, opts: Tur
     return Promise.resolve(null);
   }
   const run = s.chain.then(async () => {
-    const handle: TurnHandle = { turnId: 0, items: [], abort: new AbortController(), pending: [], confirms: new Map(), lastPromptTokens: 0 };
+    const handle: TurnHandle = { turnId: 0, items: [], abort: new AbortController(), pending: [], confirms: new Map(), confirmSummaries: new Map(), lastPromptTokens: 0 };
     s.handle = handle;
     try {
       const result = await runTurn(kevin, threadId, input, opts, handle);
