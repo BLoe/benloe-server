@@ -139,17 +139,47 @@ export function markRead(db, reader, id) {
 // something that reads as the header of another message: a real header is
 // the only line that starts at column 0.
 export const clean = (s) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+// maxChars bounds the PRINTED size of the body (after escaping, with the line
+// prefixes), so a caller can budget on the length of what this returns.
 export function formatMessage(m, { maxChars = 0 } = {}) {
-  // Every field is cleaned, not only the body: the database is written by the
-  // server's uid, which is not this reader's.
+  // Every field is cleaned, not only the body: whatever wrote the row, the
+  // reader is a root session and trusts none of it.
   const f = (v) => clean(String(v)).replace(/\n/g, ' ');
   const via = m.token_id ? `  [via token ${f(m.token_id)}, from ${f(m.ip)}]` : '  [local]';
-  let body = String(m.body).trimEnd();
-  let note = [];
-  if (maxChars && body.length > maxChars) {
-    note = [`  [truncated: ${body.length - maxChars} more characters. Full text: relay show ${f(m.id)} > <file>]`];
-    body = body.slice(0, maxChars);
+  const all = clean(String(m.body).trimEnd()).split('\n');
+  const lines = [];
+  let used = 0;
+  let cut = false;
+  for (const line of all) {
+    const room = maxChars ? maxChars - used - 5 : Infinity;
+    if (room <= 0) {
+      cut = true;
+      break;
+    }
+    const text = line.length > room ? line.slice(0, room) : line;
+    lines.push(`  │ ${text}`);
+    used += text.length + 5;
+    if (text.length < line.length) {
+      cut = true;
+      break;
+    }
   }
-  const lines = clean(body).split('\n').map((line) => `  │ ${line}`);
+  const note = cut ? [`  [truncated: message is ${String(m.body).length} characters. Full text: relay show ${f(m.id)} > <file>]`] : [];
   return [`──── #${f(m.id)}  ${f(m.sender)}  ${f(m.created_at)}${via}`, ...lines, ...note, ''].join('\n');
+}
+
+// Formats messages until `budget` printed characters are used (always at
+// least one). -> { text: [...], shown: [...messages] }
+export function formatWithin(msgs, { perMessage, budget }) {
+  const text = [];
+  const shown = [];
+  let used = 0;
+  for (const m of msgs) {
+    const t = formatMessage(m, { maxChars: perMessage });
+    if (shown.length && used + t.length > budget) break;
+    used += t.length;
+    text.push(t);
+    shown.push(m);
+  }
+  return { text, shown };
 }

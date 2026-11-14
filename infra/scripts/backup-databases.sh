@@ -31,9 +31,16 @@ count=0
 failed=0
 
 # sqlite3's .backup takes a consistent snapshot of a live WAL database.
-# -L: these directories are writable by other uids; never follow a symlink.
+# These directories are writable by other uids: find does not follow
+# symlinks and -type f skips them. Names with a quote would break the
+# .backup argument, so they are skipped and counted as failures.
 while IFS= read -r -d '' db; do
     name=$(realpath --relative-to="$DATA_DIR" "$db" | tr '/' '_')
+    if [[ "$db" == *"'"* || -L "$db" ]]; then
+        echo "  FAIL  $db (unsafe name)"
+        failed=$((failed + 1))
+        continue
+    fi
     if sqlite3 "$db" ".timeout 5000" ".backup '$BACKUP_DIR/$name'"; then
         echo "  ok    data/${name}"
         count=$((count + 1))

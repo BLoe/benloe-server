@@ -16,7 +16,7 @@
 // install.sh. The /usr/local/bin/relay wrapper drops to the `relay` user with
 // setpriv before node starts, so nothing here ever executes as root.
 import { readFileSync } from 'node:fs';
-import { openDb, createToken, listTokens, revokeTokens, addMessage, getMessages, getMessage, unreadFor, markRead, formatMessage, LOCAL_SENDER as ME } from './db.mjs';
+import { openDb, createToken, listTokens, revokeTokens, addMessage, getMessages, getMessage, unreadFor, markRead, formatMessage, formatWithin, LOCAL_SENDER as ME } from './db.mjs';
 
 if (process.getuid?.() === 0) {
   console.error('relay: refusing to run as root; use /usr/local/bin/relay, which drops to the relay user');
@@ -48,12 +48,10 @@ function ttlMs(s) {
   return +m[1] * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2]];
 }
 
-// What one `inbox` or `log` call may print. A session's tool output is cut
-// off well below a 200,000-character message, and a message that scrolled
-// away unseen must not count as read.
-const PER_MESSAGE = 12_000;
-const PER_CALL = 24_000;
-const show = (m) => console.log(formatMessage(m, { maxChars: PER_MESSAGE }));
+// What one `inbox` or `log` call may print, in printed characters. A
+// session's tool output is cut off well below a 200,000-character message,
+// and a message that scrolled away unseen must not count as read.
+const LIMITS = { perMessage: 10_000, budget: 24_000 };
 
 const db = openDb();
 const [cmd, sub, ...rest] = args.length ? args : ['help'];
@@ -64,16 +62,9 @@ if (cmd === 'inbox') {
   if (!msgs.length) console.log('No new messages.');
   else {
     // Print what fits; only what was printed is marked read.
-    const shown = [];
-    let chars = 0;
-    for (const m of msgs) {
-      const cost = Math.min(m.body.length, PER_MESSAGE);
-      if (shown.length && chars + cost > PER_CALL) break;
-      chars += cost;
-      shown.push(m);
-    }
+    const { text, shown } = formatWithin(msgs, LIMITS);
     console.log(`${msgs.length} new message${msgs.length > 1 ? 's' : ''}:\n`);
-    shown.forEach(show);
+    text.forEach((t) => console.log(t));
     const left = msgs.length - shown.length;
     if (left) console.log(`${left} more unread not shown yet. Run relay inbox again.`);
     if (!peek) markRead(db, ME, shown.at(-1).id);
@@ -96,7 +87,10 @@ if (cmd === 'inbox') {
   if (!(n >= 1)) die('relay log [n]');
   const msgs = getMessages(db, { limit: Math.min(n, 1000) });
   if (!msgs.length) console.log('No messages yet.');
-  msgs.forEach(show);
+  // Newest first into the budget, printed oldest first.
+  const { text } = formatWithin(msgs.toReversed(), LIMITS);
+  if (text.length < msgs.length) console.log(`(${msgs.length - text.length} older not shown; relay show <id> prints one in full)\n`);
+  text.reverse().forEach((t) => console.log(t));
 } else if (cmd === 'token' && sub === 'create') {
   const ttl = flag('--ttl') ?? '7d';
   const note = flag('--note');

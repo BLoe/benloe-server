@@ -24,13 +24,16 @@ install -o root -g root -m 0644 "$SRC/server.mjs" "$SRC/cli.mjs" "$SRC/db.mjs" "
 echo '{"type":"module"}' > "$LIB/package.json"
 install -o root -g root -m 0644 "$SRC/ecosystem.config.cjs" /etc/benloe/ecosystem/relay.config.js
 
-# PM2's interpreter for relay-api: root execs this, it drops, then node starts.
-# Written literally here, not rendered from a template in the repo.
+# PM2's interpreter for relay-api: root execs this, it drops, then node starts
+# with only the three variables the server reads, not the PM2 daemon's
+# environment. Written literally here, not rendered from a repo template.
 cat > /usr/local/lib/benloe/node-as-relay <<'SHIM'
 #!/bin/sh
 # Installed by apps/relay/install.sh. Do not edit in place.
 set -eu
-exec /usr/bin/setpriv --reuid=relay --regid=relay --init-groups /usr/local/bin/node "$@"
+exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent \
+  NODE_ENV="${NODE_ENV:-production}" PORT="${PORT:-3015}" RELAY_DB="${RELAY_DB:-/var/lib/benloe-relay/relay.db}" \
+  /usr/bin/setpriv --reuid=relay --regid=relay --init-groups /usr/local/bin/node "$@"
 SHIM
 chmod 755 /usr/local/lib/benloe/node-as-relay
 

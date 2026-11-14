@@ -38,6 +38,9 @@ GET  /v1/messages
      ?after= on your next read to get exactly what you have not seen yet.
      has_more: true means there is more waiting right now (a read carries at
      most ~1,000,000 characters of message text): read again with ?after=next_after.
+     Without ?after you get the newest messages that fit; older_omitted: true
+     means some of the last <limit> were left out for size. To be sure of
+     seeing everything, page forward from an id you know with ?after=.
 
 POST /v1/messages
      Content-Type: application/json   {"body": "your message"}
@@ -52,7 +55,7 @@ Nobody is listening live: a reply arrives when Ben asks the other side to read a
 Errors are JSON: { error }. 401 = missing/unknown/expired/revoked token. 429 = slow down.
 `;
 
-// Fixed-window counter. count() reads, hit() increments.
+// Fixed-window counter. over() reads, hit() increments.
 function limiter(max, windowMs) {
   const m = new Map();
   const live = (k) => {
@@ -104,8 +107,9 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
   const perToken = limiter(120, 60_000); // requests per token
   const posts = limiter(20, 60_000); // posts per token
 
-  // Caddy is the only client (we bind to loopback) and appends the real peer
-  // as the last X-Forwarded-For entry.
+  // Through Caddy, the last X-Forwarded-For entry is the real peer. A process
+  // on this box can connect to the loopback port directly and claim any
+  // address, so the recorded address is evidence about outside callers only.
   const ipOf = (req) => {
     const ip = (req.headers['x-forwarded-for'] || '').split(',').pop().trim() || req.socket.remoteAddress || '';
     return isIP(ip) ? ip : '?';
@@ -163,16 +167,18 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
       // and always at least one message.
       const keep = [];
       let chars = 0;
+      let older_omitted = false;
       for (const r of after === null ? rows.toReversed() : rows) {
         if (keep.length && chars + r.body.length > MAX_RESPONSE_CHARS) {
-          has_more = after !== null;
+          if (after === null) older_omitted = true;
+          else has_more = true;
           break;
         }
         chars += r.body.length;
         keep.push(r);
       }
       if (after === null) keep.reverse();
-      return { status: 200, json: { messages: keep.map(view), next_after: keep.at(-1)?.id ?? after ?? 0, has_more } };
+      return { status: 200, json: { messages: keep.map(view), next_after: keep.at(-1)?.id ?? after ?? 0, has_more, ...(older_omitted ? { older_omitted } : {}) } };
     }
 
     if (url.pathname === '/v1/messages' && req.method === 'POST') {

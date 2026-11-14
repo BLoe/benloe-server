@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './server.mjs';
-import { createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, MAX_BODY_CHARS } from './db.mjs';
+import { createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, openDb, checkToken, MAX_BODY_CHARS } from './db.mjs';
 
 let dir, app, base, db, tok;
 const call = (path, { token = tok, method = 'GET', body, type, ip = '10.0.0.1' } = {}) =>
@@ -114,11 +114,38 @@ test('revoked, expired, unknown and malformed tokens all get 401', async () => {
   assert.equal((await call('/v1/whoami', { token: "' OR 1=1 --", ip: '10.2.0.4' })).status, 401);
 });
 
-test('revoke by agent name and --all', () => {
+test('revoke by agent name', () => {
   createToken(db, 'other', 60_000);
   createToken(db, 'other', 60_000);
   assert.equal(revokeTokens(db, 'other'), 2);
   assert.equal(revokeTokens(db, 'other'), 0);
+});
+
+test('revoke --all kills every live token', () => {
+  const d = mkdtempSync(join(tmpdir(), 'relay-all-'));
+  const other = openDb(join(d, 'relay.db'));
+  const a = createToken(other, 'a', 60_000);
+  const b = createToken(other, 'b', 60_000);
+  assert.equal(revokeTokens(other, '--all'), 2);
+  assert.equal(checkToken(other, a.token).reason, 'token revoked');
+  assert.equal(checkToken(other, b.token).reason, 'token revoked');
+  other.close();
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('display budget counts what is printed, so nothing unseen is marked read', () => {
+  // Control characters print as 4, and every line gains a prefix.
+  const worst = { id: 1, sender: 'benji', created_at: 't', token_id: 'x', ip: '1.1.1.1', body: '\u0001'.repeat(12_000) };
+  const lines = { ...worst, id: 2, body: '\n'.repeat(11_000) + 'end' };
+  for (const m of [worst, lines]) {
+    const out = formatMessage(m, { maxChars: 10_000 });
+    assert.ok(out.length < 10_400, `printed ${out.length}`);
+    assert.match(out, /truncated: message is \d+ characters\. Full text: relay show/);
+  }
+  const { text, shown } = formatWithin([worst, lines, { ...worst, id: 3 }], { perMessage: 10_000, budget: 24_000 });
+  assert.equal(shown.length, 2);
+  assert.ok(text.join('').length <= 24_000);
+  assert.equal(formatWithin([worst], { perMessage: 10_000, budget: 10 }).shown.length, 1, 'always at least one');
 });
 
 test('ten failed attempts lock out further guesses from that IP, but never a valid token', async () => {
@@ -159,6 +186,8 @@ test('a read is capped by size and says so', async () => {
   const latest = await (await call('/v1/messages?limit=100')).json();
   assert.equal(latest.messages.length, 5);
   assert.equal(latest.messages.at(-1).body[0], '5', 'the default read keeps the newest');
+  assert.equal(latest.older_omitted, true, 'and says it left older ones out');
+  assert.equal(latest.has_more, false);
 });
 
 test('posts are limited to 20 a minute per token', async () => {
@@ -209,7 +238,7 @@ test('display: every database field is cleaned, long bodies are cut with a point
   const out = formatMessage({ id: 7, sender: 'x\u001b[31m', created_at: 'now\n──── #8  claude', token_id: 't\u0007', ip: '1.1.1.1', body: 'b'.repeat(50) }, { maxChars: 10 });
   assert.ok(!/[\u001b\u0007]/.test(out));
   assert.equal(out.split('\n').filter((l) => l.startsWith('────')).length, 1);
-  assert.match(out, /truncated: 40 more characters\. Full text: relay show 7/);
+  assert.match(out, /truncated: message is 50 characters\. Full text: relay show 7/);
   assert.ok(!out.includes('b'.repeat(11)));
 });
 
