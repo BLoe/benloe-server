@@ -2,8 +2,8 @@
 // Domain tools (pantry, workouts, ...) live in src/domains/.
 import type Anthropic from '@anthropic-ai/sdk';
 import { execFile } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { getSetting, nowIso, setSetting } from '../db.js';
@@ -35,13 +35,36 @@ function runShell(command: string, signal?: AbortSignal): Promise<{ code: number
   });
 }
 
-/** Resolves a path inside the sandbox folder; anything that leaves it is refused. */
+/**
+ * Resolves a path inside the sandbox folder; anything that leaves it is refused.
+ *
+ * The shell runs as another uid and can plant symlinks in this folder, while
+ * these file tools run as Kevin, who can read the database and the document
+ * vault. So the check is made on the real path of the deepest part that
+ * exists, and the final component is never followed (see openNoFollow).
+ */
 export function sandboxPath(p: string): string {
-  const root = resolve(config.shellDir);
+  const root = realpathSync(config.shellDir);
   const target = resolve(root, p.replace(/^\/+/, ''));
-  const rel = relative(root, target);
-  if (rel === '..' || rel.startsWith('..' + sep) || resolve(root, rel) !== target) throw new ToolError('That path is outside the sandbox folder.');
-  return target;
+  let probe = target;
+  while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe);
+  // lstat, not exists: a dangling symlink "does not exist" but must still be refused.
+  const real = join(realpathSync(probe), relative(probe, target));
+  const rel = relative(root, real);
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new ToolError('That path is outside the sandbox folder.');
+  const link = lstatSync(real, { throwIfNoEntry: false });
+  if (link?.isSymbolicLink()) throw new ToolError('That path is a symbolic link; the file tools only open real files in the sandbox.');
+  return real;
+}
+
+/** Opens without following a symlink in the last component, closing the gap between the check above and the open. */
+function openNoFollow(path: string, flags: number, mode?: number): number {
+  try {
+    return openSync(path, flags | constants.O_NOFOLLOW, mode);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ELOOP') throw new ToolError('That path is a symbolic link; the file tools only open real files in the sandbox.');
+    throw e;
+  }
 }
 
 // ---- research sub-agent ------------------------------------------------------
@@ -296,8 +319,15 @@ export function coreTools(kevin: Kevin): ToolDef[] {
       input: z.object({ path: z.string(), max_chars: z.number().int().min(100).max(100_000).default(30_000) }),
       run: ({ path, max_chars }) => {
         const p = sandboxPath(path);
-        if (!existsSync(p) || !statSync(p).isFile()) throw new ToolError(`No file at ${path}. file_list shows what is there.`);
-        const text = readFileSync(p, 'utf8');
+        if (!existsSync(p)) throw new ToolError(`No file at ${path}. file_list shows what is there.`);
+        const fd = openNoFollow(p, constants.O_RDONLY);
+        let text: string;
+        try {
+          if (!fstatSync(fd).isFile()) throw new ToolError(`${path} is not a file.`);
+          text = readFileSync(fd, 'utf8');
+        } finally {
+          closeSync(fd);
+        }
         return text.length > max_chars ? `${text.slice(0, max_chars)}\n[cut: file is ${text.length} characters]` : text;
       },
     }),
@@ -309,7 +339,13 @@ export function coreTools(kevin: Kevin): ToolDef[] {
         const p = sandboxPath(path);
         if (existsSync(p) && !(await ctx.confirm(`Overwrite ${path} in the sandbox?`))) throw new ToolError('Ben declined to overwrite that file.');
         mkdirSync(dirname(p), { recursive: true, mode: 0o2770 });
-        writeFileSync(p, content, { mode: 0o660 });
+        // Re-check after creating folders, then open without following a link.
+        const fd = openNoFollow(sandboxPath(path), constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o660);
+        try {
+          writeFileSync(fd, content);
+        } finally {
+          closeSync(fd);
+        }
         return { written: path, chars: content.length };
       },
     }),
@@ -320,7 +356,7 @@ export function coreTools(kevin: Kevin): ToolDef[] {
       run: ({ path }) => {
         const p = sandboxPath(path);
         if (!existsSync(p)) return { entries: [] };
-        return { entries: readdirSync(p, { withFileTypes: true }).slice(0, 500).map((e) => ({ name: e.name, dir: e.isDirectory(), size: e.isFile() ? statSync(join(p, e.name)).size : undefined })) };
+        return { entries: readdirSync(p, { withFileTypes: true }).slice(0, 500).map((e) => ({ name: e.name, dir: e.isDirectory(), ...(e.isSymbolicLink() ? { symlink: true } : {}), size: e.isFile() ? lstatSync(join(p, e.name)).size : undefined })) };
       },
     }),
     defineTool({

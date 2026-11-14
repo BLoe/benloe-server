@@ -143,6 +143,27 @@ describe('sandbox files', () => {
     expect(() => sandboxPath('../etc/passwd')).toThrow();
     expect(() => sandboxPath('a/../../x')).toThrow();
     expect(sandboxPath('/notes/a.txt')).toMatch(/sandbox\/notes\/a\.txt$/);
+    expect(() => sandboxPath('/etc/passwd/../../etc/shadow')).not.toThrow(); // stays inside: leading slashes are relative to the sandbox
+  });
+  it('refuses symlinks the shell could plant, whether they point at a file or a folder', async () => {
+    const kevin = await makeKevin();
+    const { symlinkSync, writeFileSync, mkdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { config } = await import('../src/config.js');
+    const secret = join(config.dataDir, 'secret.txt');
+    writeFileSync(secret, 'tax return');
+    mkdirSync(join(config.shellDir, 'links'), { recursive: true });
+    symlinkSync(secret, join(config.shellDir, 'links', 'file'));
+    symlinkSync(config.dataDir, join(config.shellDir, 'links', 'dir'));
+    symlinkSync('/nonexistent/x', join(config.shellDir, 'links', 'dangling'));
+    for (const path of ['links/file', 'links/dir/secret.txt', 'links/dangling']) {
+      expect((await call(kevin, 'file_read', { path })).ok, path).toBe(false);
+      expect((await call(kevin, 'file_write', { path, content: 'x' })).ok, path).toBe(false);
+    }
+    expect((await call(kevin, 'file_write', { path: 'links/dir/new.txt', content: 'x' })).ok).toBe(false);
+    const { readFileSync, existsSync } = await import('node:fs');
+    expect(readFileSync(secret, 'utf8')).toBe('tax return');
+    expect(existsSync(join(config.dataDir, 'new.txt'))).toBe(false);
   });
   it('writes, lists, reads, and asks before overwriting or deleting', async () => {
     const kevin = await makeKevin();

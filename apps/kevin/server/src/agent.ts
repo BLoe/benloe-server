@@ -249,6 +249,12 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
         if (e.type === 'content_block_start') {
           const b = e.content_block as { type: string; id?: string; name?: string };
           let item: UiItem | null = null;
+          const prev = handle.items.at(-1);
+          if (b.type === 'text' && prev?.type === 'text') {
+            // A cited answer arrives as several adjacent text blocks; it is one piece of prose.
+            byIndex.set(e.index, prev);
+            return;
+          }
           if (b.type === 'text') item = { type: 'text', text: '' };
           else if (b.type === 'thinking') item = { type: 'status', text: '' };
           else if (b.type === 'tool_use' || b.type === 'server_tool_use') {

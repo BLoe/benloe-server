@@ -1,6 +1,7 @@
 // Notifications: one inbox row, one live event, and a web push to every
 // subscribed device. A device whose subscription has expired is forgotten.
-import webpush from 'web-push';
+// web-push 4 is an ES module with named exports only (its published types still describe a default export).
+import * as webpush from 'web-push';
 import { bus } from './bus.js';
 import { config } from './config.js';
 import { type DB, nowIso } from './db.js';

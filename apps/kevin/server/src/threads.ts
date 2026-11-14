@@ -66,7 +66,8 @@ export function send(kevin: Kevin, threadId: string, input: TurnInput, opts: Tur
     s.handle = handle;
     try {
       const result = await runTurn(kevin, threadId, input, opts, handle);
-      void afterTurn(kevin, threadId, handle).catch((e) => console.error('afterTurn failed', e));
+      // Titles and compaction are model calls: only after a turn that really ran.
+      if (result.status === 'done' || result.status === 'stopped') void afterTurn(kevin, threadId, handle).catch((e) => console.error('afterTurn failed', e));
       // Anything that arrived too late to fold becomes the next turn.
       for (const late of handle.pending.splice(0)) queueMicrotask(() => void send(kevin, threadId, late, opts));
       return result;
