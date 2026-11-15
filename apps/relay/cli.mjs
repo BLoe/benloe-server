@@ -16,7 +16,7 @@
 // install.sh. The /usr/local/bin/relay wrapper drops to the `relay` user with
 // setpriv before node starts, so nothing here ever executes as root.
 import { readFileSync } from 'node:fs';
-import { openDb, createToken, listTokens, revokeTokens, addMessage, getMessages, getMessage, unreadFor, markRead, formatMessage, formatWithin, LOCAL_SENDER as ME } from './db.mjs';
+import { openDb, createToken, listTokens, revokeTokens, addMessage, getMessages, getMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, clean, LOCAL_SENDER as ME } from './db.mjs';
 
 if (process.getuid?.() === 0) {
   console.error('relay: refusing to run as root; use /usr/local/bin/relay, which drops to the relay user');
@@ -57,17 +57,12 @@ const db = openDb();
 const [cmd, sub, ...rest] = args.length ? args : ['help'];
 
 if (cmd === 'inbox') {
-  const peek = has('--peek');
-  const msgs = unreadFor(db, ME);
-  if (!msgs.length) console.log('No new messages.');
+  const { total, text, left } = inboxBatch(db, ME, LIMITS, { peek: has('--peek') });
+  if (!total) console.log('No new messages.');
   else {
-    // Print what fits; only what was printed is marked read.
-    const { text, shown } = formatWithin(msgs, LIMITS);
-    console.log(`${msgs.length} new message${msgs.length > 1 ? 's' : ''}:\n`);
+    console.log(`${total} new message${total > 1 ? 's' : ''}:\n`);
     text.forEach((t) => console.log(t));
-    const left = msgs.length - shown.length;
     if (left) console.log(`${left} more unread not shown yet. Run relay inbox again.`);
-    if (!peek) markRead(db, ME, shown.at(-1).id);
   }
 } else if (cmd === 'send') {
   const text = args.slice(1).join(' ');
@@ -110,7 +105,8 @@ if (cmd === 'inbox') {
   for (const t of rows) {
     const state = t.revoked_at ? `REVOKED ${t.revoked_at}` : Date.parse(t.expires_at) <= Date.now() ? `EXPIRED ${t.expires_at}` : `live until ${t.expires_at}`;
     const used = t.last_used_at ? `last used ${t.last_used_at} from ${t.last_ip}` : 'never used';
-    console.log(`${t.id}  ${t.agent.padEnd(10)} ${state}; ${used}${t.note ? `; ${t.note}` : ''}`);
+    // Every field comes from a database the server's uid can write; none reaches the terminal raw.
+    console.log(clean(`${t.id}  ${String(t.agent).padEnd(10)} ${state}; ${used}${t.note ? `; ${t.note}` : ''}`).replace(/\n/g, ' '));
   }
 } else if (cmd === 'token' && sub === 'revoke') {
   if (!rest[0]) die('relay token revoke <id | agent | --all>');
