@@ -217,7 +217,7 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
   const storedUser: Block[] = [{ type: 'text', text: ctxText }, { type: 'text', text: userText || '(no text)' }];
   const turnMessages: Msg[] = [{ role: 'user', content: [...att.images, ...storedUser] }];
 
-  const facts = factsBlock(db);
+  const facts = factsBlock(db, kevin.domains);
   const system: Anthropic.Beta.BetaTextBlockParam[] = [
     // The deep model is used a turn or two at a time; a one-hour cache write of this prefix at its
     // rates costs more than the reads it would save.

@@ -53,10 +53,14 @@ export function buildStableSystem(db: DB, domains: Domain[]): string {
     .join('\n\n');
 }
 
-export function factsBlock(db: DB): string {
+/** The second system block: what changes as Kevin works. Never cached on its own. */
+export function factsBlock(db: DB, domains: Domain[] = []): string {
   const facts = listFacts(db);
-  if (!facts.length) return '';
-  return '# Facts you have saved about Ben\n\n' + facts.map((f) => `- [${f.id}] (${f.category}) ${f.text}`).join('\n');
+  const parts = [
+    facts.length ? '# Facts you have saved about Ben\n\n' + facts.map((f) => `- [${f.id}] (${f.category}) ${f.text}`).join('\n') : '',
+    ...domains.map((d) => d.promptState?.(db)?.trim() ?? ''),
+  ].filter(Boolean);
+  return parts.join('\n\n');
 }
 
 export function contextBlock(o: { page?: string | null; hits?: Hit[]; summary?: string | null; now?: Date; origin?: 'chat' | 'job' }): string {

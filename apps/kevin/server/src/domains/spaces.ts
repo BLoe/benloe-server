@@ -25,7 +25,7 @@ interface SpaceRow {
   fields: string; board_field: string | null; pinned: number; archived: number; created_by: string; created_at: string; updated_at: string;
 }
 interface RecordRow {
-  id: number; space_id: number; title: string; data: string; done: number; due_on: string | null; body: string | null; position: number; created_at: string; updated_at: string;
+  id: number; space_id: number; title: string; data: string; done: number; due_on: string | null; body: string | null; position: number; attachment_ids: string; created_at: string; updated_at: string;
 }
 
 const isDay = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().startsWith(s);
@@ -84,9 +84,72 @@ function coerceData(fields: Field[], data: Record<string, unknown>): Record<stri
   return out;
 }
 
-const recordView = (r: RecordRow) => ({
-  id: r.id, title: r.title, done: !!r.done, due_on: r.due_on, body: r.body, data: JSON.parse(r.data) as Record<string, unknown>, position: r.position, created_at: r.created_at, updated_at: r.updated_at,
-});
+function recordView(db: DB, r: RecordRow) {
+  const ids = JSON.parse(r.attachment_ids) as number[];
+  const attachments = ids
+    .map((id) => db.prepare('SELECT id, filename, mime, kind FROM attachments WHERE id = ?').get(id) as { id: number; filename: string; mime: string; kind: string } | undefined)
+    .filter((a): a is { id: number; filename: string; mime: string; kind: string } => !!a)
+    .map((a) => ({ ...a, url: `/api/attachments/${a.id}/raw` }));
+  return {
+    id: r.id, title: r.title, done: !!r.done, due_on: r.due_on, body: r.body, data: JSON.parse(r.data) as Record<string, unknown>, position: r.position,
+    attachments, created_at: r.created_at, updated_at: r.updated_at,
+  };
+}
+
+const NAME_NOISE = new Set(['the', 'a', 'an', 'my', 'our', 'to', 'for', 'of', 'in', 'and', 'list', 'tracker', 'tracking', 'log', 'plan', 'planning', 'notes', 'stuff', 'things']);
+const nameWords = (s: string): string[] => (s.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((w) => w.replace(/s$/, '')).filter((w) => w.length > 1 && !NAME_NOISE.has(w));
+
+/** Existing spaces whose names share most of their meaningful words with `name`: "Japan trip" vs "Trip to Japan". */
+export function similarSpaces(db: DB, name: string): { slug: string; name: string }[] {
+  const want = new Set(nameWords(name));
+  if (!want.size) return [];
+  return (db.prepare('SELECT slug, name FROM spaces WHERE archived = 0').all() as { slug: string; name: string }[]).filter((s) => {
+    const have = new Set(nameWords(s.name));
+    if (!have.size) return false;
+    const shared = [...want].filter((w) => have.has(w)).length;
+    return shared / Math.min(want.size, have.size) >= 0.6;
+  });
+}
+
+/**
+ * Reconciles a new field list with the old one. A field keeps its key for life: the key is what
+ * records, SQL in scheduled checks and the table layout read by, so a rename changes the label only.
+ * A type change converts the stored values, and is refused if any value cannot be converted.
+ */
+function reconcileFields(db: DB, s: SpaceRow, incoming: { key?: string; label: string; type: Field['type']; options?: string[] }[]): Field[] {
+  const old = fieldsOf(s);
+  const used = new Set<string>();
+  const next: Field[] = incoming.map((f) => {
+    const prior = (f.key && old.find((o) => o.key === keyify(f.key!))) || old.find((o) => o.label.toLowerCase() === f.label.toLowerCase() && !used.has(o.key));
+    const key = prior?.key ?? keyify(f.key ?? f.label);
+    used.add(key);
+    return { key, label: f.label, type: f.type, ...(f.type === 'select' ? { options: f.options ?? [] } : {}) };
+  });
+  const changed = next.filter((f) => {
+    const o = old.find((x) => x.key === f.key);
+    return o && (o.type !== f.type || (f.type === 'select' && JSON.stringify(o.options) !== JSON.stringify(f.options)));
+  });
+  if (changed.length) {
+    const rows = db.prepare('SELECT id, title, data FROM space_records WHERE space_id = ?').all(s.id) as { id: number; title: string; data: string }[];
+    const upd = db.prepare('UPDATE space_records SET data = ? WHERE id = ?');
+    for (const r of rows) {
+      const data = JSON.parse(r.data) as Record<string, unknown>;
+      let touched = false;
+      for (const f of changed) {
+        if (data[f.key] == null || data[f.key] === '') continue;
+        try {
+          data[f.key] = coerceData([f], { [f.key]: data[f.key] })[f.key];
+          touched = true;
+        } catch {
+          throw new ToolError(`Changing "${f.label}" to ${f.type} would lose data: the record "${r.title}" holds "${String(data[f.key])}". Fix or clear those values first, or add a new field instead.`);
+        }
+      }
+      if (touched) upd.run(JSON.stringify(data), r.id);
+    }
+  }
+  return next;
+}
+
 
 function spaceView(db: DB, s: SpaceRow) {
   const c = db.prepare('SELECT COUNT(*) AS total, COALESCE(SUM(done = 0), 0) AS open, COALESCE(SUM(done = 0 AND due_on IS NOT NULL AND due_on <= ?), 0) AS due FROM space_records WHERE space_id = ?')
@@ -142,13 +205,26 @@ export default defineDomain({
       CREATE INDEX space_records_due ON space_records(done, due_on);
       `,
     },
+    {
+      id: 'spaces-002',
+      // Files attached to a record: a booking confirmation on a trip item, a receipt on a repair.
+      sql: `ALTER TABLE space_records ADD COLUMN attachment_ids TEXT NOT NULL DEFAULT '[]';   -- JSON array of attachments.id (uploaded files shown on the record)`,
+    },
   ],
-  promptNote: `Spaces are how you handle anything that is not pantry, cooking, workouts, money, taxes or documents. When Ben brings something with ongoing state (a trip to plan, a car's service history, books to read, a home project, gift ideas, a job search), make a space for it with space_save and put the records in with space_records_update in the same turn; it gets its own page at /s/<slug> straight away. Pick the layout that fits: checklist for things to tick off, table for records with several fields, board for things moving through stages, notes for writing (an itinerary, a comparison, a plan), list otherwise. Give a space only the fields it needs; title, done, due_on and body exist on every record already. Reuse an existing space when one fits (SELECT slug, name, description FROM spaces WHERE archived = 0). A one-off question needs no space. Read records with SQL: SELECT r.title, json_extract(r.data, '$.cost') FROM space_records r JOIN spaces s ON s.id = r.space_id WHERE s.slug = 'portugal-trip'.`,
+  promptState: (db) => {
+    const rows = db.prepare('SELECT * FROM spaces WHERE archived = 0 ORDER BY name COLLATE NOCASE').all() as SpaceRow[];
+    if (!rows.length) return '# Spaces\n\nNone yet.';
+    return '# Spaces that exist\n\n' + rows.map((r) => {
+      const f = fieldsOf(r).map((x) => x.key).join(', ');
+      return `- ${r.slug} — ${r.name} (${r.layout}${f ? `; fields: ${f}` : ''})${r.description ? `: ${r.description}` : ''}`;
+    }).join('\n');
+  },
+  promptNote: `Spaces are how you handle anything that is not pantry, cooking, workouts, money, taxes or documents. When Ben brings something with ongoing state (a trip to plan, a car's service history, books to read, a home project, gift ideas, a job search), make a space for it with space_save and put the records in with space_records_update in the same turn; it gets its own page at /s/<slug> straight away. Pick the layout that fits: checklist for things to tick off, table for records with several fields, board for things moving through stages, notes for writing (an itinerary, a comparison, a plan), list otherwise. Give a space only the fields it needs; title, done, due_on and body exist on every record already. The spaces that exist are listed under "Spaces that exist"; add to one of those when it fits, since every new space is a permanent entry in Ben's navigation. A one-off question needs no space. When something is over (the trip happened), archive its space with space_save { archived: true }; the records are kept and Ben can delete it for good from the app. A file Ben attached can be put on a record with attachment_ids. Read records with SQL: SELECT r.title, json_extract(r.data, '$.cost') FROM space_records r JOIN spaces s ON s.id = r.space_id WHERE s.slug = 'portugal-trip'.`,
   tools: [
     defineTool({
       name: 'space_save',
       description:
-        'Create a space, or change one (pass its slug or id as `space`). A space is a named area with its own page for something that has no built-in page. On create, name is required and the slug is derived from it. On update only the fields you pass change; passing `fields` replaces the field list (values already stored under keys you keep are kept). Example: { name: "Car maintenance", icon: "car", layout: "table", description: "Service history and what is due for the Subaru", fields: [{ label: "Mileage", type: "number" }, { label: "Cost", type: "money" }, { label: "Shop" }] }.',
+        'Create a space, or change one (pass its slug or id as `space`). A space is a named area with its own page for something that has no built-in page. On create, name is required and the slug is derived from it. On update only the fields you pass change; passing `fields` replaces the field list. A field keeps its key for life: to rename one, send the same key with a new label; changing a type converts the stored values. Example: { name: "Car maintenance", icon: "car", layout: "table", description: "Service history and what is due for the Subaru", fields: [{ label: "Mileage", type: "number" }, { label: "Cost", type: "money" }, { label: "Shop" }] }.',
       input: z.object({
         space: z.union([z.string(), z.number()]).optional().describe('Slug or id of an existing space to change. Omit to create.'),
         name: z.string().min(1).max(60).optional(),
@@ -159,12 +235,18 @@ export default defineDomain({
         board_field: z.string().nullable().optional().describe('board layout: key of the select field whose options are the columns.'),
         pinned: z.boolean().optional().describe('Show in the nav.'),
         archived: z.boolean().optional().describe('true when the thing is over (the trip happened); hides the space and keeps its records.'),
+        confirm_new: z.boolean().optional().describe('Create it even though a similarly named space exists, after deciding that one does not fit.'),
       }),
       touches: ['spaces'],
       run: (i, ctx) => {
         const { db } = ctx;
         const now = nowIso();
-        const fields: Field[] | undefined = i.fields?.map((f) => ({ key: keyify(f.key ?? f.label), label: f.label, type: f.type, ...(f.type === 'select' ? { options: f.options ?? [] } : {}) }));
+        // One transaction: a space that fails a later check (a board with no columns) must not be left behind.
+        return db.transaction(() => {
+        const target = i.space === undefined ? null : findSpace(db, i.space);
+        const fields: Field[] | undefined = !i.fields ? undefined
+          : target ? reconcileFields(db, target, i.fields)
+          : i.fields.map((f) => ({ key: keyify(f.key ?? f.label), label: f.label, type: f.type, ...(f.type === 'select' ? { options: f.options ?? [] } : {}) }));
         if (fields) {
           const keys = fields.map((f) => f.key);
           const dup = keys.find((k, n) => keys.indexOf(k) !== n);
@@ -173,11 +255,13 @@ export default defineDomain({
           if (empty) throw new ToolError(`The select field "${empty.label}" needs options.`);
           if (fields.some((f) => ['title', 'done', 'due_on', 'body'].includes(f.key))) throw new ToolError('title, done, due_on and body exist on every record already; leave them out of fields.');
         }
-        // One transaction: a space that fails a later check (a board with no columns) must not be left behind.
-        return db.transaction(() => {
         let s: SpaceRow;
-        if (i.space === undefined) {
+        if (!target) {
           if (!i.name) throw new ToolError('A new space needs a name.');
+          const near = similarSpaces(db, i.name).filter((x) => x.slug !== slugify(i.name!));
+          if (near.length && !i.confirm_new && ctx.source !== 'ui') {
+            throw new ToolError(`There is already ${near.map((x) => `"${x.name}" (${x.slug})`).join(' and ')}. Add to that space if it is the same thing; if this really is separate, call again with confirm_new: true.`);
+          }
           let slug = slugify(i.name);
           if (db.prepare('SELECT 1 FROM spaces WHERE slug = ?').get(slug)) {
             const existing = db.prepare('SELECT slug, name, archived FROM spaces WHERE slug = ?').get(slug) as { slug: string; name: string; archived: number };
@@ -189,7 +273,7 @@ export default defineDomain({
             .run(slug, i.name.trim(), i.icon ?? null, i.description ?? null, layout, JSON.stringify(fields ?? []), i.board_field ?? null, i.pinned === false ? 0 : 1, ctx.source === 'ui' ? 'ben' : 'kevin', now, now).lastInsertRowid;
           s = db.prepare('SELECT * FROM spaces WHERE id = ?').get(id) as SpaceRow;
         } else {
-          const cur = findSpace(db, i.space);
+          const cur = target;
           db.prepare('UPDATE spaces SET name = ?, icon = ?, description = ?, layout = ?, fields = ?, board_field = ?, pinned = ?, archived = ?, updated_at = ? WHERE id = ?').run(
             i.name?.trim() ?? cur.name, i.icon === undefined ? cur.icon : i.icon, i.description === undefined ? cur.description : i.description, i.layout ?? cur.layout,
             fields ? JSON.stringify(fields) : cur.fields, i.board_field === undefined ? cur.board_field : i.board_field,
@@ -220,6 +304,7 @@ export default defineDomain({
           due_on: day.nullable().optional(),
           body: z.string().max(100_000).nullable().optional().describe('Markdown notes for this record; in a notes space, the page content.'),
           data: z.record(z.string(), z.unknown()).optional().describe('Custom field values by field key. null clears a value.'),
+          attachment_ids: z.array(z.number().int()).max(20).optional().describe('Uploaded files to show on this record (the #ids of attachments Ben sent). Replaces the record\'s list.'),
           position: z.number().optional().describe('Manual order, ascending.'),
           delete: z.boolean().optional(),
         })).min(1).max(300),
@@ -250,19 +335,21 @@ export default defineDomain({
               continue;
             }
             const data = r.data ? coerceData(fields, r.data) : {};
+            const missing = r.attachment_ids?.find((id) => !db.prepare('SELECT 1 FROM attachments WHERE id = ?').get(id));
+            if (missing !== undefined) throw new ToolError(`There is no attachment #${missing}.`);
             if (cur) {
               const merged = { ...(JSON.parse(cur.data) as Record<string, unknown>), ...data };
-              db.prepare('UPDATE space_records SET title = ?, data = ?, done = ?, due_on = ?, body = ?, position = ?, updated_at = ? WHERE id = ?').run(
+              db.prepare('UPDATE space_records SET title = ?, data = ?, done = ?, due_on = ?, body = ?, position = ?, attachment_ids = ?, updated_at = ? WHERE id = ?').run(
                 r.title ?? cur.title, JSON.stringify(merged), r.done === undefined ? cur.done : r.done ? 1 : 0, r.due_on === undefined ? cur.due_on : r.due_on,
-                r.body === undefined ? cur.body : r.body, r.position ?? cur.position, now, cur.id);
+                r.body === undefined ? cur.body : r.body, r.position ?? cur.position, r.attachment_ids ? JSON.stringify(r.attachment_ids) : cur.attachment_ids, now, cur.id);
               out.updated.push(r.title ?? cur.title);
               out.records.push({ id: cur.id, title: r.title ?? cur.title });
               indexRecord(db, s, db.prepare('SELECT * FROM space_records WHERE id = ?').get(cur.id) as RecordRow);
             } else {
               if (!r.title) throw new ToolError('A new record needs a title.');
               next += 1;
-              const id = db.prepare('INSERT INTO space_records (space_id, title, data, done, due_on, body, position, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
-                .run(s.id, r.title, JSON.stringify(data), r.done ? 1 : 0, r.due_on ?? null, r.body ?? null, r.position ?? next, now, now).lastInsertRowid;
+              const id = db.prepare('INSERT INTO space_records (space_id, title, data, done, due_on, body, position, attachment_ids, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+                .run(s.id, r.title, JSON.stringify(data), r.done ? 1 : 0, r.due_on ?? null, r.body ?? null, r.position ?? next, JSON.stringify(r.attachment_ids ?? []), now, now).lastInsertRowid;
               out.added.push(r.title);
               out.records.push({ id: Number(id), title: r.title });
               indexRecord(db, s, db.prepare('SELECT * FROM space_records WHERE id = ?').get(id) as RecordRow);
@@ -275,7 +362,10 @@ export default defineDomain({
     }),
     defineTool({
       name: 'space_delete',
-      description: 'Delete a space and every record in it, for good. For something that is simply over, archive it with space_save { archived: true } instead, which keeps the records.',
+      description: 'Delete a space and every record in it, for good.',
+      // Ben only, from the app. Kevin archives (space_save { archived: true }), which loses nothing.
+      agent: false,
+      ui: true,
       input: z.object({ space: z.union([z.string(), z.number()]) }),
       touches: ['spaces'],
       run: async ({ space }, ctx) => {
@@ -319,7 +409,7 @@ export default defineDomain({
       const s = (/^\d+$/.test(p.space ?? '') ? db.prepare('SELECT * FROM spaces WHERE id = ?').get(Number(p.space)) : db.prepare('SELECT * FROM spaces WHERE slug = ?').get(p.space ?? '')) as SpaceRow | undefined;
       if (!s) return { space: null, records: [] };
       const rows = db.prepare('SELECT * FROM space_records WHERE space_id = ? ORDER BY done, due_on IS NULL, due_on, position, id').all(s.id) as RecordRow[];
-      return { space: spaceView(db, s), records: rows.map(recordView), today: localDay() };
+      return { space: spaceView(db, s), records: rows.map((r) => recordView(db, r)), today: localDay() };
     },
     home: (_p, db) => {
       const today = localDay();

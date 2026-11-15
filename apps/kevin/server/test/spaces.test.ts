@@ -76,8 +76,10 @@ describe('spaces', () => {
     await ok(kevin, 'space_save', { space: 'gifts', archived: true });
     expect((await view(kevin, 'spaces/nav')).spaces).toEqual([]);
     expect((await view(kevin, 'spaces/list', { archived: '1' })).spaces[0].archived).toBe(true);
-    expect((await call(kevin, 'space_delete', { space: 'gifts' }, { confirm: false })).text).toMatch(/declined/);
-    expect(await ok(kevin, 'space_delete', { space: 'gifts' })).toEqual({ deleted: 'Gifts', records: 1 });
+    // Deleting for good is Ben's, from the app; Kevin archives.
+    expect((await call(kevin, 'space_delete', { space: 'gifts' })).ok).toBe(false);
+    expect(kevin.tools.apiTools().map((t) => t.name)).not.toContain('space_delete');
+    expect((await call(kevin, 'space_delete', { space: 'gifts' }, { source: 'ui' })).value).toEqual({ deleted: 'Gifts', records: 1 });
     expect((await view(kevin, 'spaces/get', { space: 'gifts' })).space).toBeNull();
   });
 
@@ -86,5 +88,45 @@ describe('spaces', () => {
     expect((await call(kevin, 'nav_update', { hidden_pages: ['/taxes'] })).ok).toBe(false);
     expect((await call(kevin, 'nav_update', { hidden_pages: ['/taxes', '/nonsense'] }, { source: 'ui' })).ok).toBe(true);
     expect((await view(kevin, 'spaces/nav')).builtin.filter((b: any) => b.hidden).map((b: any) => b.path)).toEqual(['/taxes']);
+  });
+
+  it('stops a near-duplicate space unless Kevin insists, and lists spaces in the uncached prompt block', async () => {
+    const kevin = await makeKevin([spaces]);
+    const { factsBlock } = await import('../src/prompt.js');
+    expect(factsBlock(kevin.db, kevin.domains)).toMatch(/# Spaces\n\nNone yet/);
+    await ok(kevin, 'space_save', { name: 'Trip to Japan', layout: 'checklist', description: 'April 2027', fields: [{ label: 'Cost', type: 'money' }] });
+    const dup = await call(kevin, 'space_save', { name: 'Japan trip' });
+    expect(dup.ok).toBe(false);
+    expect(dup.text).toMatch(/already "Trip to Japan" \(trip-to-japan\).*confirm_new/);
+    expect((await call(kevin, 'space_save', { name: 'Japan trip', confirm_new: true })).ok).toBe(true);
+    expect((await call(kevin, 'space_save', { name: 'Car maintenance' })).ok).toBe(true); // unrelated names pass
+    const block = factsBlock(kevin.db, kevin.domains);
+    expect(block).toMatch(/- trip-to-japan — Trip to Japan \(checklist; fields: cost\): April 2027/);
+    expect(kevin.stableSystem).not.toContain('trip-to-japan'); // never in the cached prefix
+  });
+
+  it('keeps a field\'s key through a rename and converts values on a type change, refusing a lossy one', async () => {
+    const kevin = await makeKevin([spaces]);
+    await ok(kevin, 'space_save', { name: 'Repairs', fields: [{ label: 'Cost' }, { label: 'Shop' }] });
+    await ok(kevin, 'space_records_update', { space: 'repairs', records: [{ title: 'Brakes', data: { cost: '$420.50', shop: 'Midas' } }, { title: 'Wipers', data: { cost: '18' } }] });
+    // Rename by label match and by key; change Cost from text to money.
+    const s = await ok(kevin, 'space_save', { space: 'repairs', fields: [{ key: 'cost', label: 'Total cost', type: 'money' }, { key: 'shop', label: 'Garage' }] });
+    expect(s.fields).toEqual([{ key: 'cost', label: 'Total cost', type: 'money' }, { key: 'shop', label: 'Garage', type: 'text' }]);
+    const q = await ok(kevin, 'query', { sql: "SELECT title, json_extract(data, '$.cost') AS cost, json_extract(data, '$.shop') AS shop FROM space_records ORDER BY id" });
+    expect(q.rows).toEqual([{ title: 'Brakes', cost: 420.5, shop: 'Midas' }, { title: 'Wipers', cost: 18, shop: null }]);
+    // A change that cannot be converted is refused and nothing is altered.
+    const bad = await call(kevin, 'space_save', { space: 'repairs', fields: [{ key: 'cost', label: 'Total cost', type: 'money' }, { key: 'shop', label: 'Garage', type: 'date' }] });
+    expect(bad.text).toMatch(/would lose data: the record "Brakes" holds "Midas"/);
+    expect((await view(kevin, 'spaces/get', { space: 'repairs' })).space.fields[1].type).toBe('text');
+  });
+
+  it('puts an uploaded file on a record', async () => {
+    const kevin = await makeKevin([spaces]);
+    const { saveUpload } = await import('../src/attachments.js');
+    const a = saveUpload(kevin.db, Buffer.from('Confirmation ABC123'), 'booking.txt');
+    await ok(kevin, 'space_save', { name: 'Lisbon' });
+    await ok(kevin, 'space_records_update', { space: 'lisbon', records: [{ title: 'Hotel', attachment_ids: [a.id] }] });
+    expect((await view(kevin, 'spaces/get', { space: 'lisbon' })).records[0].attachments).toEqual([{ id: a.id, filename: 'booking.txt', mime: 'text/plain', kind: 'text', url: `/api/attachments/${a.id}/raw` }]);
+    expect((await call(kevin, 'space_records_update', { space: 'lisbon', records: [{ title: 'Flight', attachment_ids: [999] }] })).text).toMatch(/no attachment #999/);
   });
 });

@@ -23,6 +23,11 @@ export interface Domain {
    * For what views and tools cannot carry: file downloads, raw uploads.
    */
   routes?(router: Router, db: DB): void;
+  /**
+   * Current state the model should always see (e.g. which spaces exist). Rendered into the
+   * uncached system block beside the facts, so it can change without rewriting the cached prefix.
+   */
+  promptState?(db: DB): string;
   /** A few lines for the system prompt: what this area is and how Kevin should work in it. */
   promptNote?: string;
 }
