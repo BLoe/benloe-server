@@ -158,3 +158,47 @@ export function updateFact(db: DB, id: number, text: string, category?: string):
 export function deleteFact(db: DB, id: number): boolean {
   return db.prepare('DELETE FROM facts WHERE id = ?').run(id).changes > 0;
 }
+
+// ---- profile -----------------------------------------------------------------
+
+export interface ProfileSection { key: string; title: string; body: string; position: number; updated_at: string; updated_by: string }
+
+export const profileKey = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'section';
+
+export function listProfile(db: DB): ProfileSection[] {
+  return db.prepare('SELECT * FROM profile_sections ORDER BY position, key').all() as ProfileSection[];
+}
+
+export function findProfileSection(db: DB, ref: string): ProfileSection | undefined {
+  return (db.prepare('SELECT * FROM profile_sections WHERE key = ? OR title = ? COLLATE NOCASE').get(profileKey(ref), ref) as ProfileSection | undefined);
+}
+
+/** Creates or replaces a section. The version it replaces is kept in profile_history. */
+export function saveProfileSection(db: DB, o: { key: string; title: string; body: string; by: string; position?: number }): ProfileSection {
+  const now = nowIso();
+  const cur = db.prepare('SELECT * FROM profile_sections WHERE key = ?').get(o.key) as ProfileSection | undefined;
+  db.transaction(() => {
+    if (cur && (cur.body !== o.body || cur.title !== o.title)) {
+      db.prepare('INSERT INTO profile_history (key, title, body, replaced_at, replaced_by) VALUES (?,?,?,?,?)').run(cur.key, cur.title, cur.body, now, o.by);
+    }
+    const position = o.position ?? cur?.position ?? ((db.prepare('SELECT COALESCE(MAX(position), 0) AS p FROM profile_sections').get() as { p: number }).p + 10);
+    db.prepare(
+      `INSERT INTO profile_sections (key, title, body, position, updated_at, updated_by) VALUES (?,?,?,?,?,?)
+       ON CONFLICT(key) DO UPDATE SET title = excluded.title, body = excluded.body, position = excluded.position, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    ).run(o.key, o.title.trim(), o.body.trim(), position, now, o.by);
+  })();
+  indexItem(db, 'profile', o.key, o.title, o.body);
+  return db.prepare('SELECT * FROM profile_sections WHERE key = ?').get(o.key) as ProfileSection;
+}
+
+export function deleteProfileSection(db: DB, key: string, by: string): boolean {
+  const cur = db.prepare('SELECT * FROM profile_sections WHERE key = ?').get(key) as ProfileSection | undefined;
+  if (!cur) return false;
+  db.transaction(() => {
+    db.prepare('INSERT INTO profile_history (key, title, body, replaced_at, replaced_by) VALUES (?,?,?,?,?)').run(cur.key, cur.title, cur.body, nowIso(), by);
+    db.prepare('DELETE FROM profile_sections WHERE key = ?').run(key);
+  })();
+  unindexItem(db, 'profile', key);
+  return true;
+}
+

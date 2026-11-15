@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { dateTime, duration, modelLabel, plural, ago, toolLabel } from '@/lib/format';
 import { useNow } from '@/lib/hooks';
 import type { AuditRow, Health } from '@/lib/types';
+import { isProfileWrite } from '@/lib/profile';
 import { useView } from '@/lib/useView';
 import { cn } from '@/lib/utils';
 
@@ -90,12 +91,16 @@ function AuditItem({ row, now }: { row: AuditRow; now: Date }) {
         </span>
         <ChevronRight className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
       </button>
-      {open && (
-        <div className="space-y-2 px-4 pb-3">
-          <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 font-mono text-xs break-words whitespace-pre-wrap">{pretty(row.input)}</pre>
-          <pre className={cn('max-h-48 overflow-auto rounded-md bg-muted p-2 font-mono text-xs break-words whitespace-pre-wrap', !row.ok && 'text-destructive')}>{row.result}</pre>
-        </div>
-      )}
+      {open &&
+        (isProfileWrite(row.tool) ? (
+          // What Kevin knows about Ben is shown in one place only.
+          <p className="px-4 pb-3 text-sm text-muted-foreground">A change to “About you”. Its text is shown only under Settings, Memory.</p>
+        ) : (
+          <div className="space-y-2 px-4 pb-3">
+            <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 font-mono text-xs break-words whitespace-pre-wrap">{pretty(row.input)}</pre>
+            <pre className={cn('max-h-48 overflow-auto rounded-md bg-muted p-2 font-mono text-xs break-words whitespace-pre-wrap', !row.ok && 'text-destructive')}>{row.result}</pre>
+          </div>
+        ))}
     </li>
   );
 }

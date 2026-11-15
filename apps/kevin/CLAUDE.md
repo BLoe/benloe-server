@@ -71,6 +71,36 @@ is writable by another uid, and this database holds tax and medical records.
   `deep`. `config.ts` holds the ids; prices are in `llm.ts` and must be updated
   with them.
 
+## What Kevin knows about Ben, and where each kind of thing lives
+
+Nothing personal is in this repository, which is public. `workspace/` holds
+only Kevin's persona and working rules.
+
+| Layer | What it is | Where | How it grows |
+|---|---|---|---|
+| Profile | Prose: who Ben is, family, history, health background, how he operates | `profile_sections` (+ `profile_history`: every earlier version) | Kevin, with `profile_update`; Ben, in Settings → Memory |
+| Facts | Single sentences Ben has said that steer behaviour | `facts` | `remember` / `fact_update` |
+| Log | What happened: notes, conversation summaries, every data change | `memory_log` | `note`; the `memory` job; automatically on each write |
+| Records | Structured data | domain tables, spaces, the document vault | typed tools |
+
+The profile is its own system block with its own cache breakpoint; facts and
+the list of spaces follow it uncached. A fact is Ben's direct statement and
+outranks the profile where they differ. Sections are versioned because
+Cabinet lost a correction of Ben's when a later session re-authored the file
+it lived in: a rewrite here can always be undone, and the rules tell Kevin to
+fix a corrected belief where it lives and save the correction as a fact.
+
+Everything is searchable through one index (`search_index`, kinds `profile`,
+`log-*`, `document`, `attachment`, `recipe`, `space-record`), which is what
+`recall` and the per-message memory hits read.
+
+On 2026-11-15 Ben's real data was carried over from Cabinet in a one-time
+import (no link between the systems remains): its file on Ben became the
+profile, its lab results, insurance plans, claims and weigh-ins became
+spaces, its lab documents went into the vault, and its account balances,
+2025 HSA contributions and shelf-stable pantry staples went into the matching
+domains. `settings.cabinet_import` records the counts.
+
 ## Spaces: how Kevin handles what has no page
 
 Ben's main complaint about Cabinet was that a fixed set of areas does not

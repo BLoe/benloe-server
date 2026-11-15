@@ -22,7 +22,7 @@ import { nowIso } from './db.js';
 import type { Kevin } from './kevin.js';
 import { anthropic, record, spend } from './llm.js';
 import { keywordSearch } from './memory.js';
-import { contextBlock, factsBlock } from './prompt.js';
+import { contextBlock, factsBlock, profileBlock } from './prompt.js';
 import type { ToolCtx } from './tools.js';
 
 type Block = Anthropic.Beta.BetaContentBlockParam;
@@ -219,10 +219,13 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
 
   const scope = kevin.scope();
   const facts = factsBlock(db, kevin.domains);
+  const profile = profileBlock(db);
   const system: Anthropic.Beta.BetaTextBlockParam[] = [
     // The deep model is used a turn or two at a time; a one-hour cache write of this prefix at its
     // rates costs more than the reads it would save.
     { type: 'text', text: scope.system, cache_control: model === config.models.deep ? { type: 'ephemeral' } : { type: 'ephemeral', ttl: '1h' } },
+    // The profile is long and changes rarely: its own breakpoint, so saving a fact or making a space never rewrites it.
+    ...(profile ? [{ type: 'text' as const, text: profile, cache_control: model === config.models.deep ? { type: 'ephemeral' as const } : { type: 'ephemeral' as const, ttl: '1h' as const } }] : []),
     ...(facts ? [{ type: 'text' as const, text: facts }] : []),
   ];
   const tools = [...(kevin.tools.apiTools((t) => !scope.offTools.has(t.name) && (opts.origin === 'chat' || t.name !== 'shell')) as unknown as Anthropic.Beta.BetaToolUnion[]), ...WEB_TOOLS];

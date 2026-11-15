@@ -7,8 +7,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input, Textarea } from '@/components/ui/input';
 import { act, useAct } from '@/lib/act';
 import { clock, shortDate } from '@/lib/format';
+import { logLine } from '@/lib/profile';
 import type { Fact, MemoryHit, MemoryLogRow } from '@/lib/types';
 import { useView } from '@/lib/useView';
+import { Profile } from './Profile';
 
 function FactDialog({ fact, categories, onClose }: { fact: Fact | null; categories: string[]; onClose: () => void }) {
   const [text, setText] = useState(fact?.text ?? '');
@@ -55,7 +57,7 @@ function Facts() {
   return (
     <Section
       title="Facts"
-      description="What Kevin always knows about you."
+      description="Single things Kevin must always keep in mind: an allergy, a preference, a goal."
       action={
         <Button size="sm" onClick={() => setEditing('new')}>
           <Plus />
@@ -114,6 +116,7 @@ function Facts() {
 
 const kindLabel: Record<string, string> = {
   'log-summary': 'Conversation', 'log-event': 'Change', 'log-note': 'Note', document: 'Document', attachment: 'Upload', recipe: 'Recipe',
+  'space-record': 'Space item', profile: 'About you',
   summary: 'Conversation', event: 'Change', note: 'Note',
 };
 
@@ -127,7 +130,7 @@ function MemorySearch() {
   }, [text]);
   const view = useView<MemoryHit[]>('system/memory_search', { q }, { enabled: q.length >= 2 });
   return (
-    <Section title="Search memory" description="Past conversations, the daily log, notes, and the text of documents and uploads.">
+    <Section title="The log and search" description="Everything else: past conversations, what changed day by day, notes, and the text of documents. Kevin looks things up here when he needs them.">
       <div className="relative">
         <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="What do you want to find?" aria-label="Search memory" className="pl-9" enterKeyHint="search" />
@@ -161,12 +164,12 @@ function MemorySearch() {
 function TodayLog() {
   const view = useView<MemoryLogRow[]>('system/memory_log');
   return (
-    <Section title="Today’s log" description="What changed today, as Kevin recorded it.">
+    <Section title={<span className="text-[15px]">Today</span>} description="What changed today, as Kevin recorded it.">
       <ViewState view={view} rows={2} empty={<p className="rounded-xl border border-dashed px-4 py-4 text-sm text-muted-foreground">Nothing logged yet today.</p>}>
         {(rows) => (
           <List>
             {rows.map((r) => (
-              <ListRow key={r.id} wrap title={<span className="text-[14px] font-normal break-words">{r.text}</span>} subtitle={`${clock(r.at)}, ${(kindLabel[r.kind] ?? r.kind).toLowerCase()}`} />
+              <ListRow key={r.id} wrap title={<span className="text-[14px] font-normal break-words">{logLine(r.text)}</span>} subtitle={`${clock(r.at)}, ${(kindLabel[r.kind] ?? r.kind).toLowerCase()}`} />
             ))}
           </List>
         )}
@@ -177,10 +180,13 @@ function TodayLog() {
 
 export function Memory() {
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-8">
+      <Profile />
       <Facts />
-      <MemorySearch />
-      <TodayLog />
+      <div className="flex flex-col gap-4">
+        <MemorySearch />
+        <TodayLog />
+      </div>
     </div>
   );
 }

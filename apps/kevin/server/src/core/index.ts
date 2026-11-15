@@ -11,7 +11,7 @@ import type { View } from '../domains.js';
 import { readOnlyQuery, scheduleSpentThisMonth, systemJobs, type ScheduleRow } from '../jobs.js';
 import type { Kevin } from '../kevin.js';
 import { anthropic, monthStartIso, record, spend } from '../llm.js';
-import { addFact, deleteFact, listFacts, logEvent, search, updateFact } from '../memory.js';
+import { addFact, deleteFact, deleteProfileSection, findProfileSection, listFacts, listProfile, logEvent, profileKey, saveProfileSection, search, updateFact } from '../memory.js';
 import { notify } from '../push.js';
 import { localDay, nextRun } from '../time.js';
 import { defineTool, ToolError, type ToolDef } from '../tools.js';
@@ -174,11 +174,38 @@ export function coreTools(kevin: Kevin): ToolDef[] {
       },
     }),
     defineTool({
+      name: 'profile_update',
+      description:
+        'Keep the "About Ben" profile: the prose picture of who he is that is in front of you in every conversation (family, history, health background, work, how he operates, the people in his life). Use it when you learn something that belongs in that picture and will still be true in a year. `append` adds a paragraph to a section and is the usual call; `body` replaces a whole section, for when it needs rewriting; a new `section` name creates one. Earlier versions are kept. A single preference or constraint is a `remember` fact instead; something that happened is a `note`.',
+      input: z.object({
+        section: z.string().min(1).max(60).describe('The section title or key: "Family", "Health history", "Work". A name that does not exist yet creates a section.'),
+        append: z.string().min(1).max(4000).optional().describe('Text to add to the end of the section.'),
+        body: z.string().min(1).max(20_000).optional().describe('The complete new text of the section, replacing what is there.'),
+        title: z.string().min(1).max(60).optional().describe('Rename the section.'),
+        delete: z.boolean().optional(),
+      }),
+      touches: ['system'],
+      run: async (i, ctx) => {
+        const by = ctx.source === 'ui' ? 'ben' : 'kevin';
+        const cur = findProfileSection(db, i.section);
+        if (i.delete) {
+          if (!cur) throw new ToolError(`No profile section "${i.section}". Sections: ${listProfile(db).map((s) => s.title).join(', ') || '(none)'}.`);
+          if (!(await ctx.confirm(`Delete the "${cur.title}" section of your profile?`))) throw new ToolError('Ben declined to delete that section.');
+          deleteProfileSection(db, cur.key, by);
+          return { deleted: cur.title };
+        }
+        if (!i.append && !i.body && !(cur && i.title)) throw new ToolError('Pass append (to add to the section) or body (to replace it).');
+        const body = i.body ?? (cur ? `${cur.body}${i.append ? `\n\n${i.append.trim()}` : ''}` : i.append!);
+        const s = saveProfileSection(db, { key: cur?.key ?? profileKey(i.section), title: i.title ?? cur?.title ?? i.section.trim(), body, by });
+        return { section: s.title, key: s.key, chars: s.body.length, created: !cur };
+      },
+    }),
+    defineTool({
       name: 'recall',
       description: 'Search your long-term memory: summaries of past conversations, the daily log of what changed, notes, and the text of stored documents and attachments. Use it when a question depends on something from before today.',
       input: z.object({
         query: z.string().min(2).describe('Words that would appear in what you are looking for.'),
-        kinds: z.array(z.string()).optional().describe('Limit to kinds: log-summary (conversation summaries), log-note, document, attachment, recipe, space-record, log-event (the raw record of every data change; left out unless you ask for it).'),
+        kinds: z.array(z.string()).optional().describe('Limit to kinds: log-summary (conversation summaries), log-note, document, attachment, recipe, space-record, profile, log-event (the raw record of every data change; left out unless you ask for it).'),
         limit: z.number().int().min(1).max(20).default(8),
       }),
       run: async ({ query, kinds, limit }) => {
@@ -422,6 +449,13 @@ export function coreViews(kevin: Kevin): Record<string, View> {
       recent_turns: db.prepare("SELECT u.id, u.thread_id, t.title, u.started_at, u.model, u.status, u.cost_usd FROM turns u JOIN threads t ON t.id = u.thread_id ORDER BY u.id DESC LIMIT 15").all(),
     }),
     facts: () => listFacts(db),
+    /** The "About Ben" profile, with how many earlier versions each section has. */
+    profile: () => ({
+      sections: listProfile(db).map((s) => ({ ...s, versions: (db.prepare('SELECT COUNT(*) AS n FROM profile_history WHERE key = ?').get(s.key) as { n: number }).n })),
+      chars: listProfile(db).reduce((n, s) => n + s.body.length, 0),
+    }),
+    /** ?key= → earlier versions of a section, newest first. */
+    profile_history: (p) => db.prepare('SELECT id, key, title, body, replaced_at, replaced_by FROM profile_history WHERE key = ? ORDER BY id DESC LIMIT 50').all(p.key ?? ''),
     schedules: () => (db.prepare('SELECT * FROM schedules ORDER BY enabled DESC, next_run_at IS NULL, next_run_at').all() as ScheduleRow[]).map((s) => scheduleView(kevin, s)),
     /** System jobs with their last run and whether they are paused. */
     jobs: () =>

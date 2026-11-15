@@ -164,6 +164,31 @@ const CORE: Migration[] = [
     );
     `,
   },
+  {
+    id: 'core-002',
+    sql: `
+    -- Who Ben is, in prose: the long-lived picture (family, history, health background, how he works).
+    -- Lives here, not in the repo, because the repo is public. Rendered into the system prompt.
+    CREATE TABLE profile_sections (
+      key TEXT PRIMARY KEY,                          -- stable slug: 'family', 'health-history'
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,                            -- markdown
+      position INTEGER NOT NULL DEFAULT 0,           -- order in the prompt and on the page
+      updated_at TEXT NOT NULL,
+      updated_by TEXT NOT NULL                       -- kevin | ben | import
+    );
+    -- Every earlier version of a section. A rewrite can never silently lose what was there.
+    CREATE TABLE profile_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      replaced_at TEXT NOT NULL,
+      replaced_by TEXT NOT NULL
+    );
+    CREATE INDEX profile_history_key ON profile_history(key, id);
+    `,
+  },
 ];
 
 export function openDb(path: string, extra: Migration[] = []): DB {

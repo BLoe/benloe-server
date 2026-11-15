@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import type { DB } from './db.js';
 import type { Domain } from './domains.js';
 import { config } from './config.js';
-import { type Hit, listFacts } from './memory.js';
+import { type Hit, listFacts, listProfile } from './memory.js';
 import { localStamp } from './time.js';
 
 const read = (name: string): string => {
@@ -50,8 +50,6 @@ export function buildStableSystem(db: DB, domains: Domain[], off: string[] = [])
   return [
     read('persona.md'),
     read('rules.md'),
-    read('people.md'),
-    read('profile.md'),
     `# The app\n\nBen uses you through a web app with these pages: Home (/), Pantry (/pantry), Cooking (/cooking), Workouts (/workouts), Money (/money), Taxes (/taxes), Documents (/documents), one page per space (/s/<slug>), Jobs (/jobs), Settings (/settings). Chat sits beside every page. Notifications you send appear in the app's inbox and as push notifications; give each a \`link\` to the page it is about.\n\nTimes in the database are UTC ISO strings unless a column says otherwise; dates Ben means are in ${config.timezone}.`,
     notes ? `# Areas\n\n${notes}` : '',
     off.length ? `# Areas switched off\n\nBen has switched these built-in areas off, so you have no tools or tables for them: ${off.join(', ')}. If he asks for one, tell him it can be turned back on in Settings, under Navigation.` : '',
@@ -61,7 +59,20 @@ export function buildStableSystem(db: DB, domains: Domain[], off: string[] = [])
     .join('\n\n');
 }
 
-/** The second system block: what changes as Kevin works. Never cached on its own. */
+/**
+ * Who Ben is: the profile sections from the database (never from the repo, which is public).
+ * Its own system block with its own cache breakpoint: it is long and changes rarely.
+ */
+export function profileBlock(db: DB): string {
+  const sections = listProfile(db);
+  if (!sections.length) return '';
+  return (
+    '# About Ben\n\nWhat you know about Ben as a person, kept by you over time. Where a saved fact below says something different, the fact is newer and wins; fix the section when you notice.\n\n' +
+    sections.map((s) => `## ${s.title}\n\n${s.body}`).join('\n\n')
+  );
+}
+
+/** The last system block: what changes as Kevin works. Never cached on its own. */
 export function factsBlock(db: DB, domains: Domain[] = []): string {
   const facts = listFacts(db);
   const parts = [

@@ -47,6 +47,7 @@ describe('a turn', () => {
     // The stable prompt is the cached block; nothing time-dependent is in it.
     expect(req.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
     expect(req.system[0].text).toContain('You are Kevin');
+    expect(req.system.length).toBe(1); // no profile, no facts, no spaces: one block
     expect(req.system[0].text).toContain('CREATE TABLE toys');
     expect(req.system[0].text).not.toMatch(/\bnow: /);
     // Time and page ride in the user message; the conversation's tail is the second breakpoint.
@@ -185,6 +186,32 @@ describe('a turn', () => {
     expect(system().length).toBeLessThan(fullLength - 5000);
     // The data is untouched, and a call that slips through is still refused by nothing: the tool exists, it is only not offered.
     expect(kevin.db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'money_transactions'").get()).toEqual({ n: 1 });
+  });
+
+  it('keeps Ben\'s profile in its own cached block, versions every change, and lets facts outrank it', async () => {
+    const kevin = await makeKevin();
+    const t = createThread(kevin);
+    await ok(kevin, 'profile_update', { section: 'Family', body: 'Sister Beth lives on Long Island.' });
+    await ok(kevin, 'profile_update', { section: 'family', append: 'Two nieces.' });
+    await ok(kevin, 'remember', { text: 'Ben dislikes pickles.', category: 'food' });
+    model.reply({ content: [text('ok')] }, { content: [text('T')] });
+    await send(kevin, t.id, { text: 'hi' });
+    const sys = model.requests[0]!.system;
+    expect(sys.map((b: any) => !!b.cache_control)).toEqual([true, true, false]);
+    expect(sys[0].text).not.toContain('Beth'); // never in the block built from the repo's files
+    expect(sys[1].text).toMatch(/# About Ben[\s\S]*## Family\n\nSister Beth lives on Long Island\.\n\nTwo nieces\./);
+    expect(sys[1].text).toMatch(/the fact is newer and wins/);
+    expect(sys[2].text).toContain('Ben dislikes pickles.');
+
+    const p = await view(kevin, 'system/profile');
+    expect(p.sections).toMatchObject([{ key: 'family', title: 'Family', versions: 1, updated_by: 'kevin' }]);
+    expect((await view(kevin, 'system/profile_history', { key: 'family' }))[0].body).toBe('Sister Beth lives on Long Island.');
+    expect((await ok(kevin, 'recall', { query: 'nieces', kinds: ['profile'] })).hits[0]).toMatchObject({ kind: 'profile', ref: 'family' });
+    // Deleting asks first, and the text survives in history.
+    expect((await kevin.tools.call('profile_update', { section: 'Family', delete: true }, { db: kevin.db, source: 'agent', confirm: async () => false })).ok).toBe(false);
+    await ok(kevin, 'profile_update', { section: 'Family', delete: true });
+    expect((await view(kevin, 'system/profile')).sections).toEqual([]);
+    expect((await view(kevin, 'system/profile_history', { key: 'family' })).length).toBe(2);
   });
 
   it('uses the deep model only when asked', async () => {
