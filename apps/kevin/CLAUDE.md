@@ -16,14 +16,14 @@ apps/kevin/
   workspace/   persona.md rules.md people.md profile.md   -> the system prompt; Ben edits these with Claude Code
   server/      src/ (TypeScript, ESM)  test/ (vitest)
   web/         Vite + React + Tailwind + shadcn/ui, a PWA
-  deploy.sh    build, test, promote to /opt/kevin, restart
+  deploy.sh    build, test, promote to /opt/kevin, restart (run through benloe-promote)
 ```
 
 ## Where things live at runtime
 
 | | |
 |---|---|
-| Code that runs | `/opt/kevin/current` (root-owned release; `deploy.sh` promotes it) |
+| Code that runs | `/opt/kevin/current` (root-owned release, built by `deploy.sh` from a pushed commit) |
 | Data | `/var/lib/kevin/` (uid `kevin`, 0700): `kevin.db`, `documents/`, `uploads/`, `backups/`, `SUGGESTIONS.md` |
 | Shell sandbox | `/var/lib/kevin-sh/workspace` (uid `kevin-sh`, no network) |
 | Secrets | set `kevin` in benloe-secrets: `ANTHROPIC_API_KEY`, `KEVIN_VAPID_*`, optional `OPENAI_API_KEY` |
@@ -212,11 +212,20 @@ a space adds nothing.
 ```
 cd server && npm run typecheck && npm test      # vitest; no network, no API calls
 cd web && npm run typecheck && npm test
-./deploy.sh                                     # builds both, runs both suites, promotes, restarts
 ```
 
-Nothing that runs is loaded from this directory. `deploy.sh` is the promotion
-step; read the diff before running it.
+To ship: read the diff, commit, push, then
+
+```
+benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/kevin/deploy.sh
+```
+
+which fetches that exact commit from GitHub into a root-owned directory,
+installs dependencies from the lockfiles, runs both suites, builds a new
+release in `/opt/kevin/releases/` and restarts `kevin-api`. `deploy.sh
+rollback` (through `benloe-promote` the same way) returns to the previous
+release. `deploy.sh` and `setup.sh` refuse to run from the working tree: see
+"Promoting code that root runs" in `docs/CLAUDE.md`.
 
 ## Web map
 

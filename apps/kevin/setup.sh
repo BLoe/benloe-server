@@ -10,6 +10,13 @@
 # from the server's environment and the tax documents from its data folder.
 set -euo pipefail
 
+# Like deploy.sh, this is run from a root-owned checkout of a pushed commit:
+#   benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/kevin/setup.sh
+case "$(cd "$(dirname "$0")" && pwd)" in
+  /opt/benloe-src/*) ;;
+  *) echo "Run this through benloe-promote (see the comment above)." >&2; exit 1 ;;
+esac
+
 id kevin >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin kevin
 id kevin-sh >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin kevin-sh
 # kevin joins kevin-sh's group so the file tools can exchange files with the shell.

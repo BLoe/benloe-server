@@ -1,20 +1,31 @@
 #!/bin/bash
-# Build, test and promote Kevin. Run as root.
+# Build, test and promote Kevin. Run as root, through benloe-promote:
 #
-# What runs is a root-owned release under /opt/kevin, never this directory:
-# /srv/benloe is owned by another uid, and Kevin's process can read tax and
-# medical records and the API key. This script is the promotion step; what it
-# copies becomes trusted, so read the diff first.
+#   benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/kevin/deploy.sh
+#   benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/kevin/deploy.sh rollback
 #
-#   ./deploy.sh            typecheck + test + build + promote + restart
-#   ./deploy.sh rollback   point `current` at the previous release and restart
+# What runs is a root-owned release under /opt/kevin, built from a root-owned
+# checkout of one exact pushed commit. /srv/benloe is owned by another uid,
+# and Kevin's process can read tax and medical records and the API key, so
+# neither the code nor this script is ever taken from that working tree: read
+# the diff, commit, push, promote.
 #
 # Each release is built into its own new directory, so nothing stale from an
-# earlier build (a deleted domain file, say) can ride along. Old releases are
-# left in place; this script says when there are more than five.
+# earlier build can ride along. Dependencies are installed fresh from the
+# lockfiles. Old releases are left in place; this script says when there are
+# more than five.
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
 ROOT=/opt/kevin
+
+case "$SRC" in
+  /opt/benloe-src/*) ;;
+  *)
+    echo "Run this through benloe-promote, from a pushed commit:" >&2
+    echo "  benloe-promote \$(git -C /srv/benloe rev-parse HEAD) apps/kevin/deploy.sh" >&2
+    exit 1
+    ;;
+esac
 
 restart() {
   install -o root -g root -m 0644 "$SRC/ecosystem.config.cjs" /etc/benloe/ecosystem/kevin.config.js
@@ -50,12 +61,14 @@ mkdir -p "$REL/server" "$REL/web"
 
 echo "== server: typecheck, test, build"
 cd "$SRC/server"
+npm ci --silent --no-audit --no-fund
 npm run -s typecheck
 npm test --silent
 npx tsc -p tsconfig.build.json --outDir "$REL/server/dist"
 
 echo "== web: typecheck, test, build"
 cd "$SRC/web"
+npm ci --silent --no-audit --no-fund
 npm run -s typecheck
 npm test --silent
 npx vite build --outDir "$REL/web/dist" --emptyOutDir >/dev/null
@@ -65,7 +78,7 @@ cp "$SRC/server/package.json" "$SRC/server/package-lock.json" "$REL/server/"
 cp -r "$SRC/server/node_modules" "$REL/server/node_modules"
 (cd "$REL/server" && npm prune --omit=dev --silent >/dev/null 2>&1) || true
 cp -r "$SRC/workspace" "$REL/workspace"
-git -C "$SRC" rev-parse HEAD > "$REL/COMMIT" 2>/dev/null || true
+echo "${BENLOE_PROMOTED_COMMIT:-unknown}" > "$REL/COMMIT"
 chown -R root:root "$REL"
 chmod -R u=rwX,go=rX "$REL"
 ln -sfn "$REL" $ROOT/current

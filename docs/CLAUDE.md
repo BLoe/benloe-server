@@ -236,20 +236,43 @@ this includes security updates, deliberately).
 - Kernel updates set the reboot-required flag; reboots are manual (Ben's call).
   PM2 and Caddy are boot-enabled, so a plain `systemctl reboot` is safe.
 
+## Promoting code that root runs
+
+`/srv/benloe` is owned by `claude-worker`, the uid the Cabinet agent runs as,
+so nothing root executes or installs may be taken from this working tree: it
+can be swapped between reading a diff and running the script. Install and
+deploy scripts are run from a root-owned checkout of an exact pushed commit:
+
+```
+benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/relay/install.sh
+benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/kevin/deploy.sh
+```
+
+`/usr/local/sbin/benloe-promote` (source: `infra/scripts/benloe-promote.sh`)
+fetches that commit from GitHub into `/opt/benloe-src/<commit>/` and runs the
+script there. Read the diff, commit, push, promote. Old checkouts under
+`/opt/benloe-src` can be removed by hand.
+
 ## Database Backups
 
-Every SQLite database is snapshotted nightly (~09:15 UTC) to
+SQLite databases are snapshotted nightly (~09:15 UTC) to
 `/var/backups/benloe/<timestamp>/` — root-only, 14 days kept, each snapshot
-integrity-checked. Covers `/srv/benloe/data/*.db`, one level of subdirectories
-(`cabinet/`, `gavel/`), and the relay database in `/var/lib/benloe-relay`.
-Kevin backs himself up (database, documents and uploads) into
-`/var/lib/kevin/backups/`, nightly, seven days kept; see `apps/kevin`.
+integrity-checked. Covered: `/srv/benloe/data/*.db` and one level of
+subdirectories (`cabinet/`, `gavel/`), the relay database
+(`/var/lib/benloe-relay`), sign-in accounts (`/var/lib/artanis`) and the
+encrypted secret store (`/var/lib/benloe-secrets`; ciphertext only, the key
+in `/etc/benloe/benloe-secrets.key` is not in the backup). A database
+anywhere else is not covered until it is added to the script. Kevin backs
+himself up (database, documents and uploads) into `/var/lib/kevin/backups/`,
+nightly, seven days kept; see `apps/kevin`.
 
 - Script: `infra/scripts/backup-databases.sh`, run as the installed copy
   `/usr/local/sbin/benloe-db-backup.sh` — after editing, re-install it (the
   command is in the script's header).
 - Schedule: `benloe-db-backup.timer`; units in `infra/systemd/`, copied to
-  `/etc/systemd/system/`. Run one now: `systemctl start benloe-db-backup.service`.
+  `/etc/systemd/system/`. On a new box: copy both units, `systemctl
+  daemon-reload`, `systemctl enable --now benloe-db-backup.timer`. Run one
+  now: `systemctl start benloe-db-backup.service`.
 - Log: `/var/log/benloe-db-backup.log`. A failed database fails the unit:
   `systemctl status benloe-db-backup.service`.
 - These are on the same disk as the data. They cover a bad migration or a
