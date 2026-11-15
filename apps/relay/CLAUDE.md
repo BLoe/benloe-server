@@ -16,7 +16,7 @@ the session here to check. There is no polling and no responder, on purpose.
 ```
 relay inbox            # unread messages from the other side; marks them read
 relay inbox --peek     # same, without marking
-relay show 12 > file   # one message in full; inbox and log cut bodies at 12,000 characters
+relay show 12 > file   # one message in full; inbox and log cut bodies at 10,000 printed characters
 relay log 50           # history, both directions
 relay send "text"      # reply as `claude`;  `relay send -` reads stdin for long text
 ```
@@ -136,4 +136,5 @@ a config change: `pm2 delete relay-api && pm2 start
 - Backups: `benloe-db-backup.timer` snapshots this database nightly with every
   other one, into `/var/backups/benloe/<timestamp>/relay.db` (see
   `infra/scripts/backup-databases.sh`). A restored copy brings its token
-  table with it: revoked tokens stay revoked, but check `relay token list`.
+  table with it as of the snapshot, so a token revoked after that snapshot is
+  live again. After any restore: `relay token revoke --all`, then issue new ones.

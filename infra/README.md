@@ -56,20 +56,23 @@ SQLite databases in `/srv/benloe/data/` are the only irreplaceable data. Back th
 /srv/benloe/infra/scripts/backup-databases.sh
 ```
 
-### Automatic Backup (cron)
+### Automatic Backup
+`benloe-db-backup.timer` runs nightly (~09:15 UTC). It executes an installed,
+root-owned copy of the script, `/usr/local/sbin/benloe-db-backup.sh`, never the
+copy in this repository. After editing the script:
 ```bash
-# Add to root's crontab: crontab -e
-0 3 * * * /srv/benloe/infra/scripts/backup-databases.sh
+install -m 0755 infra/scripts/backup-databases.sh /usr/local/sbin/benloe-db-backup.sh
 ```
+Snapshots land in `/var/backups/benloe/<timestamp>/` (root-only, 14 days kept).
 
 ### Offsite Backup
 For true disaster recovery, sync backups offsite:
 ```bash
 # Example: rsync to another server
-rsync -avz /srv/benloe/backups/ user@backup-server:/backups/benloe/
+rsync -avz /var/backups/benloe/ user@backup-server:/backups/benloe/
 
 # Example: upload to S3
-aws s3 sync /srv/benloe/backups/ s3://your-bucket/benloe-backups/
+aws s3 sync /var/backups/benloe/ s3://your-bucket/benloe-backups/
 ```
 
 ## Firewall Rules

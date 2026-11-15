@@ -168,6 +168,19 @@ export function formatMessage(m, { maxChars = 0 } = {}) {
   return [`──── #${f(m.id)}  ${f(m.sender)}  ${f(m.created_at)}${via}`, ...lines, ...note, ''].join('\n');
 }
 
+/**
+ * One `relay inbox` call: the unread messages that fit the print budget, and
+ * the read marker moved past exactly those. What did not fit stays unread.
+ * -> { total, text: [...], left }
+ */
+export function inboxBatch(db, reader, limits, { peek = false } = {}) {
+  const msgs = unreadFor(db, reader);
+  if (!msgs.length) return { total: 0, text: [], left: 0 };
+  const { text, shown } = formatWithin(msgs, limits);
+  if (!peek) markRead(db, reader, shown.at(-1).id);
+  return { total: msgs.length, text, left: msgs.length - shown.length };
+}
+
 // Formats messages until `budget` printed characters are used (always at
 // least one). -> { text: [...], shown: [...messages] }
 export function formatWithin(msgs, { perMessage, budget }) {

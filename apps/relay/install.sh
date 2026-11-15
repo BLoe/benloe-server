@@ -37,7 +37,12 @@ exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent \
 SHIM
 chmod 755 /usr/local/lib/benloe/node-as-relay
 
-# The local command. env -i: the caller is a root session whose environment
+# The local command runs as the same `relay` uid as the server, on purpose: the
+# database is the one thing both must write, and a second uid sharing it by
+# group would hold exactly the same data. What keeps a compromised server from
+# reaching the root session that runs this command is that the code here is
+# root-owned, starts with an empty environment, and escapes every field it
+# prints. env -i: the caller is a root session whose environment
 # can hold credentials, and a process running as `relay` can read the
 # environment of any other.
 cat > /usr/local/bin/relay <<'WRAP'

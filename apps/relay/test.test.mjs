@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './server.mjs';
-import { createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, openDb, checkToken, MAX_BODY_CHARS } from './db.mjs';
+import { createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, openDb, checkToken, MAX_BODY_CHARS } from './db.mjs';
 
 let dir, app, base, db, tok;
 const call = (path, { token = tok, method = 'GET', body, type, ip = '10.0.0.1' } = {}) =>
@@ -265,4 +265,26 @@ test('local inbox: unread excludes own messages and the cursor only moves forwar
   markRead(db, 'claude', unread.at(-1).id);
   markRead(db, 'claude', 1);
   assert.deepEqual(unreadFor(db, 'claude'), []);
+});
+
+test('inbox marks read only what it printed; --peek marks nothing', () => {
+  const d = mkdtempSync(join(tmpdir(), 'relay-inbox-'));
+  const box = openDb(join(d, 'relay.db'));
+  const limits = { perMessage: 10_000, budget: 24_000 };
+  for (let i = 1; i <= 4; i++) addMessage(box, 'benji', `message ${i} ` + 'x'.repeat(9_000), { tokenId: 't', ip: '1.1.1.1' });
+  addMessage(box, 'claude', 'my own message never counts as unread');
+
+  const peeked = inboxBatch(box, 'claude', limits, { peek: true });
+  assert.deepEqual([peeked.total, peeked.text.length, peeked.left], [4, 2, 2]);
+  assert.equal(unreadFor(box, 'claude').length, 4, 'peek moved nothing');
+
+  const first = inboxBatch(box, 'claude', limits);
+  assert.deepEqual([first.total, first.text.length, first.left], [4, 2, 2]);
+  assert.match(first.text[0], /message 1 /);
+  const second = inboxBatch(box, 'claude', limits);
+  assert.deepEqual([second.total, second.text.length, second.left], [2, 2, 0]);
+  assert.match(second.text[0], /message 3 /);
+  assert.deepEqual(inboxBatch(box, 'claude', limits), { total: 0, text: [], left: 0 });
+  box.close();
+  rmSync(d, { recursive: true, force: true });
 });
