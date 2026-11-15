@@ -213,7 +213,7 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
     try {
       out = await handle(req, res);
     } catch (e) {
-      if (!e.status) log(JSON.stringify({ at: new Date().toISOString(), event: 'error', message: String(e?.stack || e) }));
+      if (!e.status) console.error(JSON.stringify({ at: new Date().toISOString(), event: 'error', message: String(e?.stack || e) }));
       out = { status: e.status || 500, json: { error: e.status ? e.message : 'internal error' } };
     }
     if (res.destroyed) return;

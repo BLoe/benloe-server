@@ -20,6 +20,15 @@ LIB=/usr/local/lib/benloe/relay
 id relay >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin relay
 install -d -o relay -g relay -m 0700 /var/lib/benloe-relay
 install -d -o root -g root -m 0755 "$LIB"
+# Only real, root-owned files are promoted. Root follows symlinks when it
+# copies, so a link planted here would publish whatever it points at as a
+# world-readable file in $LIB.
+for f in server.mjs cli.mjs db.mjs ecosystem.config.cjs; do
+  if [ -L "$SRC/$f" ] || [ ! -f "$SRC/$f" ] || [ "$(stat -c %u "$SRC/$f")" != "0" ]; then
+    echo "refusing to install $SRC/$f: not a regular root-owned file" >&2
+    exit 1
+  fi
+done
 install -o root -g root -m 0644 "$SRC/server.mjs" "$SRC/cli.mjs" "$SRC/db.mjs" "$LIB/"
 echo '{"type":"module"}' > "$LIB/package.json"
 install -o root -g root -m 0644 "$SRC/ecosystem.config.cjs" /etc/benloe/ecosystem/relay.config.js

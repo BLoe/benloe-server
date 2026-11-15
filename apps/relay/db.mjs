@@ -169,16 +169,17 @@ export function formatMessage(m, { maxChars = 0 } = {}) {
 }
 
 /**
- * One `relay inbox` call: the unread messages that fit the print budget, and
- * the read marker moved past exactly those. What did not fit stays unread.
- * -> { total, text: [...], left }
+ * One `relay inbox` call: the unread messages that fit the print budget.
+ * Nothing is marked here. The caller prints `text` and then calls
+ * markRead(db, reader, upTo), so a message is only ever marked read after it
+ * has been written out. What did not fit stays unread.
+ * -> { total, text: [...], left, upTo }
  */
-export function inboxBatch(db, reader, limits, { peek = false } = {}) {
+export function inboxBatch(db, reader, limits) {
   const msgs = unreadFor(db, reader);
-  if (!msgs.length) return { total: 0, text: [], left: 0 };
+  if (!msgs.length) return { total: 0, text: [], left: 0, upTo: null };
   const { text, shown } = formatWithin(msgs, limits);
-  if (!peek) markRead(db, reader, shown.at(-1).id);
-  return { total: msgs.length, text, left: msgs.length - shown.length };
+  return { total: msgs.length, text, left: msgs.length - shown.length, upTo: shown.at(-1).id };
 }
 
 // Formats messages until `budget` printed characters are used (always at
