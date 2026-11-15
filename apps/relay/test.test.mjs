@@ -267,24 +267,23 @@ test('local inbox: unread excludes own messages and the cursor only moves forwar
   assert.deepEqual(unreadFor(db, 'claude'), []);
 });
 
-test('inbox marks read only what it printed; --peek marks nothing', () => {
+test('inbox batches by print budget and marks nothing itself; the caller marks after printing', () => {
   const d = mkdtempSync(join(tmpdir(), 'relay-inbox-'));
   const box = openDb(join(d, 'relay.db'));
   const limits = { perMessage: 10_000, budget: 24_000 };
   for (let i = 1; i <= 4; i++) addMessage(box, 'benji', `message ${i} ` + 'x'.repeat(9_000), { tokenId: 't', ip: '1.1.1.1' });
   addMessage(box, 'claude', 'my own message never counts as unread');
 
-  const peeked = inboxBatch(box, 'claude', limits, { peek: true });
-  assert.deepEqual([peeked.total, peeked.text.length, peeked.left], [4, 2, 2]);
-  assert.equal(unreadFor(box, 'claude').length, 4, 'peek moved nothing');
-
   const first = inboxBatch(box, 'claude', limits);
   assert.deepEqual([first.total, first.text.length, first.left], [4, 2, 2]);
   assert.match(first.text[0], /message 1 /);
+  assert.equal(unreadFor(box, 'claude').length, 4, 'fetching a batch marks nothing (this is all --peek does)');
+  markRead(box, 'claude', first.upTo);
   const second = inboxBatch(box, 'claude', limits);
   assert.deepEqual([second.total, second.text.length, second.left], [2, 2, 0]);
   assert.match(second.text[0], /message 3 /);
-  assert.deepEqual(inboxBatch(box, 'claude', limits), { total: 0, text: [], left: 0 });
+  markRead(box, 'claude', second.upTo);
+  assert.deepEqual(inboxBatch(box, 'claude', limits), { total: 0, text: [], left: 0, upTo: null });
   box.close();
   rmSync(d, { recursive: true, force: true });
 });

@@ -42,6 +42,13 @@ const die = (msg) => {
   process.exit(1);
 };
 
+// A mistyped flag (--peak) must stop the command, not be ignored: on `inbox`
+// that would mark messages read that the caller meant only to look at.
+function noStrayFlags() {
+  const stray = args.find((x) => x.startsWith('--') && x !== '--all');
+  if (stray) die(`relay: unknown option ${stray}`);
+}
+
 function ttlMs(s) {
   const m = /^(\d+)([mhd])$/.exec(s);
   if (!m) die('--ttl looks like 90m, 12h or 7d');
@@ -57,12 +64,16 @@ const db = openDb();
 const [cmd, sub, ...rest] = args.length ? args : ['help'];
 
 if (cmd === 'inbox') {
-  const { total, text, left } = inboxBatch(db, ME, LIMITS, { peek: has('--peek') });
+  const peek = has('--peek');
+  noStrayFlags();
+  const { total, text, left, upTo } = inboxBatch(db, ME, LIMITS);
   if (!total) console.log('No new messages.');
   else {
     console.log(`${total} new message${total > 1 ? 's' : ''}:\n`);
     text.forEach((t) => console.log(t));
     if (left) console.log(`${left} more unread not shown yet. Run relay inbox again.`);
+    // Marked only now, after the text has been written out.
+    if (!peek) markRead(db, ME, upTo);
   }
 } else if (cmd === 'send') {
   const text = args.slice(1).join(' ');
@@ -111,7 +122,8 @@ if (cmd === 'inbox') {
 } else if (cmd === 'token' && sub === 'revoke') {
   if (!rest[0]) die('relay token revoke <id | agent | --all>');
   const n = revokeTokens(db, rest[0]);
-  console.log(n ? `Revoked ${n} token${n > 1 ? 's' : ''}. Effective immediately.` : 'Nothing live matched.');
+  if (!n) die('Nothing live matched; no token was revoked.');
+  console.log(`Revoked ${n} token${n > 1 ? 's' : ''}. Effective immediately.`);
 } else {
   console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(4, 12).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
   if (cmd !== 'help') process.exit(1);
