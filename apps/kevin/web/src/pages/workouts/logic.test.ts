@@ -285,3 +285,40 @@ describe('exercise search', () => {
     expect(isKnownExercise(all, 'bench')).toBe(false);
   });
 });
+
+describe('IRON PR matching', async () => {
+  const { liftKey, matchLift, recordLine, sameLift, shortDay, trainerLine } = await import('./logic');
+  it('sets aside case, plural and a leading equipment word', () => {
+    expect(liftKey('Barbell Squats')).toEqual({ equipment: 'barbell', base: 'squat' });
+    expect(sameLift('Bench Press', 'Barbell Bench Press')).toBe(true);
+    expect(sameLift('Squat', 'Barbell Squat')).toBe(true);
+    expect(sameLift('squats', 'BARBELL SQUAT')).toBe(true);
+    expect(sameLift('Dumbbell Curl', 'dumbbell curls')).toBe(true);
+    expect(sameLift('Pull-Up', 'Pull Ups')).toBe(true);
+    expect(sameLift('Overhead Press', 'Overhead Press')).toBe(true);
+  });
+  it('does not match different lifts', () => {
+    expect(sameLift('Barbell Row', 'Cable Row')).toBe(false);
+    expect(sameLift('Barbell bench - close grip', 'Bench Press')).toBe(false);
+    expect(sameLift('Bench Press', 'Incline Bench Press')).toBe(false);
+    expect(sameLift('Deadlift', 'Hex Bar Deadlift')).toBe(false);
+    expect(sameLift('Barbell', 'Cable')).toBe(false);
+    expect(sameLift('', '')).toBe(false);
+  });
+  it('picks the matching equipment when several fit', () => {
+    const list = [{ name: 'Cable Row' }, { name: 'Barbell Row' }, { name: 'Barbell Squat' }];
+    expect(matchLift('Barbell Row', list)?.name).toBe('Barbell Row');
+    expect(matchLift('Row', list)?.name).toBe('Cable Row'); // no equipment said: the list's first (most recent)
+    expect(matchLift('Squat', list)?.name).toBe('Barbell Squat');
+    expect(matchLift('Lunge', list)).toBeUndefined();
+  });
+  it('writes the trainer and record lines', () => {
+    const x = { entries: 4, best_weight_lbs: 215, best_reps: 1, best_date: '2026-11-03', last_weight_lbs: 215, last_reps: 1, last_date: '2026-11-03' };
+    expect(trainerLine(x, '2026-11-14')).toBe('With trainer: 215 lb × 1 on Nov 3 (IRON PR)');
+    expect(trainerLine({ ...x, last_weight_lbs: 205, last_reps: 3, last_date: '2026-11-10' }, '2026-11-14')).toBe('With trainer: 205 lb × 3 on Nov 10, best 215 lb (IRON PR)');
+    expect(trainerLine({ ...x, last_weight_lbs: null, last_date: null }, '2026-11-14')).toBeNull();
+    expect(shortDay('2025-09-03', '2026-11-14')).toBe('Sep 3, 2025');
+    expect(recordLine({ exercise: 'Barbell Squat', date: '2026-11-03', weight_lbs: 215, previous_weight_lbs: 205 }, '2026-11-14')).toBe('Barbell Squat 215 lb, up from 205, Nov 3');
+    expect(recordLine({ exercise: 'Hex Bar Deadlift', date: '2026-11-03', weight_lbs: 300, previous_weight_lbs: null }, '2026-11-14')).toBe('Hex Bar Deadlift 300 lb, first record, Nov 3');
+  });
+});

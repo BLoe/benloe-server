@@ -8,6 +8,7 @@ import { openChat } from '@/lib/chat';
 import { calendarDay } from '@/lib/format';
 import { useView } from '@/lib/useView';
 import { cn } from '@/lib/utils';
+import { IronPrSection, TrainerLine, useIronPr, type IronOverview } from './IronPr';
 import { LineChart } from './LineChart';
 import { fmtDuration, fmtNum, fmtPace, monthDay } from './logic';
 import { useExercises } from './parts';
@@ -42,7 +43,7 @@ function prLine(p: PrRow): string {
     .join(' · ');
 }
 
-function ExerciseProgress({ id, today }: { id: number; today: string }) {
+function ExerciseProgress({ id, today, iron }: { id: number; today: string; iron: IronOverview | undefined }) {
   const view = useView<ProgressionView>('workouts/progression', { exercise_id: id, limit: 60 });
   const data = view.data;
   if (!data) return view.error ? <ErrorState message={view.error} onRetry={view.refetch} /> : <LoadingRows rows={3} />;
@@ -89,6 +90,7 @@ function ExerciseProgress({ id, today }: { id: number; today: string }) {
           ))}
         </dl>
       )}
+      <TrainerLine name={data.exercise.name} iron={iron} today={today} />
       <Button variant="outline" className="self-start" onClick={() => openChat({ prefill: `How is my ${data.exercise!.name} progressing? ` })}>
         <MessageCircle />
         Ask Kevin about {data.exercise.name}
@@ -135,16 +137,20 @@ function Adherence() {
 export function Progress({ exercise, today, go }: { exercise: number | null; today: string; go: Go }) {
   const catalogue = useExercises();
   const prs = useView<{ prs: PrRow[] }>('workouts/prs');
+  const iron = useIronPr().data;
   if (!catalogue.data) return catalogue.error ? <ErrorState message={catalogue.error} onRetry={catalogue.refetch} /> : <LoadingRows rows={5} />;
   const used = catalogue.data.exercises.filter((e) => e.session_count > 0);
   if (!used.length) {
     return (
-      <EmptyState
-        icon={TrendingUp}
-        title="No progress to chart yet"
-        body="Once sets are logged, each exercise gets a chart of its top weight and estimated one-rep max, and your records are listed here."
-        action={<Button onClick={() => go('today')}>Go to today</Button>}
-      />
+      <div className="flex flex-col gap-7">
+        <EmptyState
+          icon={TrendingUp}
+          title="No progress to chart yet"
+          body="Once sets are logged, each exercise gets a chart of its top weight and estimated one-rep max, and your records are listed here."
+          action={<Button onClick={() => go('today')}>Go to today</Button>}
+        />
+        <IronPrSection today={today} />
+      </div>
     );
   }
   const selected = used.find((e) => e.id === exercise) ?? used[0]!;
@@ -164,7 +170,7 @@ export function Progress({ exercise, today, go }: { exercise: number | null; tod
           </Select>
         }
       >
-        <ExerciseProgress key={selected.id} id={selected.id} today={today} />
+        <ExerciseProgress key={selected.id} id={selected.id} today={today} iron={iron} />
       </Section>
 
       <Section title="Consistency" description="The last eight weeks.">
@@ -191,6 +197,8 @@ export function Progress({ exercise, today, go }: { exercise: number | null; tod
           <LoadingRows />
         )}
       </Section>
+
+      <IronPrSection today={today} />
     </div>
   );
 }

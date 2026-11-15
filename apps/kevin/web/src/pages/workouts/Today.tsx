@@ -11,6 +11,7 @@ import { calendarDay, longDate, plural } from '@/lib/format';
 import { useView } from '@/lib/useView';
 import { cn } from '@/lib/utils';
 import { dayPhrase, fmtDuration, logEntry, logTarget, prefill, restSeconds, setKind, setText, shownStatus, type LogEntry, type SetDraft, type SetKind } from './logic';
+import { TrainerLine, useIronPr, type IronOverview } from './IronPr';
 import { ExercisePicker, SetFields, SetRow, SetSheet, StatusBadge } from './parts';
 import { addRest, beginRest, clearRest, primeAlert, useRest } from './rest';
 import { DetailsSheet, SessionSheet, sessionFacts } from './SessionSheet';
@@ -76,13 +77,14 @@ function SetEntry({ card, kind, pending, onLog }: { card: ExerciseCard; kind: Se
   );
 }
 
-function CardView({ card, kind, open, canLog, pending, today, onToggle, onLog, onSet, onRemove, kindToggle }: {
+function CardView({ card, kind, open, canLog, pending, today, iron, onToggle, onLog, onSet, onRemove, kindToggle }: {
   card: ExerciseCard;
   kind: SetKind;
   open: boolean;
   canLog: boolean;
   pending: boolean;
   today: string;
+  iron: IronOverview | undefined;
   onToggle: () => void;
   onLog: (entry: LogEntry) => Promise<boolean>;
   onSet: (set: LoggedSet) => void;
@@ -125,6 +127,7 @@ function CardView({ card, kind, open, canLog, pending, today, onToggle, onLog, o
               <p className="text-muted-foreground">No history yet.</p>
             )}
             {card.suggestion && card.logged_sets.length === 0 && <p className="font-medium text-accent-foreground">{card.suggestion.text}</p>}
+            <TrainerLine name={card.exercise} iron={iron} today={today} />
             {p?.notes && <p className="text-muted-foreground">{p.notes}</p>}
           </div>
           {card.logged_sets.length > 0 && (
@@ -276,6 +279,7 @@ export function Today({ date, today, go }: { date: string | null; today: string;
   const data = view.data;
   const { run, pending } = useAct();
   const prs = usePrs(data?.session?.id);
+  const iron = useIronPr().data;
 
   const [manual, setManual] = useState<string | null>(null);
   const [extras, setExtras] = useState<Extra[]>([]);
@@ -323,6 +327,7 @@ export function Today({ date, today, go }: { date: string | null; today: string;
     canLog,
     pending,
     today,
+    iron,
     onToggle: () => setManual(openName === name ? '' : name),
   });
 
@@ -597,7 +602,7 @@ export function Today({ date, today, go }: { date: string | null; today: string;
 /** Binds an off-plan card's log call to the card it builds (the card only exists inside ExtraCard). */
 function ExtraCardHost({ extra, props, log, onRemove }: {
   extra: Extra;
-  props: { open: boolean; canLog: boolean; pending: boolean; today: string; onToggle: () => void };
+  props: { open: boolean; canLog: boolean; pending: boolean; today: string; iron: IronOverview | undefined; onToggle: () => void };
   log: (card: ExerciseCard, kind: SetKind, entry: LogEntry) => Promise<boolean>;
   onRemove: () => void;
 }) {

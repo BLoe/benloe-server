@@ -487,3 +487,55 @@ export function isKnownExercise(all: { name: string; aliases: string[] }[], q: s
   const k = key(q);
   return all.some((e) => key(e.name) === k || e.aliases.includes(k));
 }
+
+// ---- IRON PR (the trainer's log, mirrored read-only) --------------------------------------------
+
+const EQUIPMENT = ['barbell', 'dumbbell', 'cable'];
+
+/** "Barbell Squats" -> { equipment: 'barbell', base: 'squat' }; "Bench Press" -> { equipment: null, base: 'bench press' }. */
+export function liftKey(name: string): { equipment: string | null; base: string } {
+  const words = name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+  const equipment = words.length > 1 && EQUIPMENT.includes(words[0]!) ? words.shift()! : null;
+  const last = words.at(-1);
+  if (last && last.length > 2 && last.endsWith('s') && !last.endsWith('ss')) words[words.length - 1] = last.slice(0, -1);
+  return { equipment, base: words.join(' ') };
+}
+
+/**
+ * The same lift under two names: equal once case, a plural s and a leading
+ * "Barbell"/"Dumbbell"/"Cable" are set aside. The equipment word is only
+ * ignored when one side leaves it out: "Barbell Row" is not "Cable Row".
+ */
+export function sameLift(a: string, b: string): boolean {
+  const x = liftKey(a);
+  const y = liftKey(b);
+  if (!x.base || x.base !== y.base) return false;
+  return x.equipment === y.equipment || x.equipment == null || y.equipment == null;
+}
+
+/** The IRON PR exercise that is this lift: one with the same equipment word first, else the first match in the list's order. */
+export function matchLift<T extends { name: string }>(name: string, list: T[]): T | undefined {
+  const hits = list.filter((e) => sameLift(name, e.name));
+  const eq = liftKey(name).equipment;
+  return hits.find((e) => liftKey(e.name).equipment === eq) ?? hits[0];
+}
+
+/** "Nov 3", or "Nov 3, 2025" when it is not this year. */
+export function shortDay(date: string, today: string): string {
+  return date.slice(0, 4) === today.slice(0, 4) ? monthDay(date) : `${monthDay(date)}, ${date.slice(0, 4)}`;
+}
+
+interface TrainerLift { entries: number; best_weight_lbs: number | null; best_reps: number | null; best_date: string | null; last_weight_lbs: number | null; last_reps: number | null; last_date: string | null }
+
+/** "With trainer: 205 lb × 3 on Nov 10, best 215 lb (IRON PR)"; null when nothing was lifted. */
+export function trainerLine(x: TrainerLift, today: string): string | null {
+  if (x.last_weight_lbs == null || x.last_date == null) return null;
+  const last = `${fmtNum(x.last_weight_lbs)} lb × ${x.last_reps ?? 1} on ${shortDay(x.last_date, today)}`;
+  const best = x.best_weight_lbs != null && x.best_weight_lbs > x.last_weight_lbs ? `, best ${fmtNum(x.best_weight_lbs)} lb` : '';
+  return `With trainer: ${last}${best} (IRON PR)`;
+}
+
+/** "Barbell Squat 215 lb, up from 205, Nov 3" */
+export function recordLine(r: { exercise: string; date: string; weight_lbs: number; previous_weight_lbs: number | null }, today: string): string {
+  return `${r.exercise} ${fmtNum(r.weight_lbs)} lb, ${r.previous_weight_lbs != null ? `up from ${fmtNum(r.previous_weight_lbs)}` : 'first record'}, ${shortDay(r.date, today)}`;
+}
