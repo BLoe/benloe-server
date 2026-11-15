@@ -116,7 +116,7 @@ function SectionItem({ s, now, onEdit, onHistory, onDelete }: { s: ProfileSectio
           <ChevronRight className={cn('mt-1 size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
           <span className="min-w-0 flex-1">
             <span className="block font-medium leading-snug">{s.title}</span>
-            {!open && <span className="mt-0.5 line-clamp-2 block text-sm text-muted-foreground">{previewText(s.body)}</span>}
+            {!open && <span className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{previewText(s.body)}</span>}
           </span>
         </button>
         <DropdownMenu>

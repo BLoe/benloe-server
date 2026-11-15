@@ -37,7 +37,7 @@ export function ListRow({ title, subtitle, meta, leading, trailing, to, onClick,
       {leading && <span className="grid shrink-0 place-items-center text-muted-foreground [&_svg]:size-5">{leading}</span>}
       <span className="min-w-0 flex-1">
         <span className={cn('block font-medium leading-snug', muted && 'font-normal text-muted-foreground')}>{title}</span>
-        {subtitle && <span className={cn('mt-0.5 block text-sm text-muted-foreground', !wrap && 'line-clamp-2')}>{subtitle}</span>}
+        {subtitle && <span className={cn('mt-0.5 text-sm text-muted-foreground', wrap ? 'block' : 'line-clamp-2')}>{subtitle}</span>}
       </span>
       {meta && <span className="tabular shrink-0 text-right text-sm text-muted-foreground">{meta}</span>}
       {interactive && !trailing && <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />}

@@ -19,7 +19,7 @@ export function NotificationItem({ n, now, onOpen }: { n: NotificationRow; now: 
           {n.title}
           {unread && <span className="sr-only"> (unread)</span>}
         </span>
-        {n.body && <span className="mt-0.5 line-clamp-3 block text-sm break-words whitespace-pre-line text-muted-foreground">{n.body}</span>}
+        {n.body && <span className="mt-0.5 line-clamp-3 text-sm break-words whitespace-pre-line text-muted-foreground">{n.body}</span>}
         <span className="mt-0.5 block text-xs text-muted-foreground/80">{ago(n.at, now)}</span>
       </span>
     </button>
