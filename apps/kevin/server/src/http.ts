@@ -137,7 +137,7 @@ export function createHttp(kevin: Kevin): express.Express {
       return void res.status(400).json({ error: (e as Error).message });
     }
     a = await extract(kevin.db, a.id);
-    res.json({ id: a.id, filename: a.filename, mime: a.mime, kind: a.kind, size: a.size, extract_status: a.extract_status, extracted_preview: a.extracted_text?.slice(0, 500) ?? null });
+    res.json({ id: a.id, filename: a.filename, mime: a.mime, kind: a.kind, size: a.size, extract_status: a.extract_status, extracted_preview: a.extracted_text?.slice(0, 4000) ?? null });
   }));
   api.get('/attachments/:id/raw', (req, res) => {
     const a = getAttachment(kevin.db, Number(req.params.id));
