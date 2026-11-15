@@ -13,7 +13,7 @@ import { openChat } from '@/lib/chat';
 import { calendarDay, plural } from '@/lib/format';
 import { useView } from '@/lib/useView';
 import {
-  WEEK, WEEKDAY_LABEL, draftTarget, emptyExercise, emptyPlan, exerciseError, moveDay, moveItem, planDraft, planInput, sortDays,
+  WEEK, WEEKDAY_LABEL, dayPhrase, draftTarget, emptyExercise, emptyPlan, exerciseError, moveDay, moveItem, planDraft, planInput, sortDays,
   type DayDraft, type ExerciseDraft, type PlanDraft, type SetKind,
 } from './logic';
 import { useExercises } from './parts';
@@ -117,7 +117,7 @@ function PlanRead({ today, go }: { today: string; go: Go }) {
       {plan && active ? (
         <Section
           title={plan.name}
-          description={[plan.goal, plan.active_from ? `Following since ${calendarDay(plan.active_from, today).toLowerCase()}` : ''].filter(Boolean).join(' · ') || undefined}
+          description={[plan.goal, plan.active_from ? `Following since ${dayPhrase(calendarDay(plan.active_from, today))}` : ''].filter(Boolean).join(' · ') || undefined}
           action={
             <>
               <Button variant="outline" size="sm" onClick={() => go('plan', { edit: String(plan.id) })}>

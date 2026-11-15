@@ -118,4 +118,20 @@ export const migrations: Migration[] = [
       JOIN workouts_exercises e ON e.id = st.exercise_id;
     `,
   },
+  {
+    id: 'workouts-002',
+    sql: `
+    CREATE TABLE workouts_plan_periods (
+      -- Every stretch of dates during which a plan was the active one. A plan that is switched away
+      -- from and back has two rows; workouts_plans.active_from/active_until describe only the latest.
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id INTEGER NOT NULL REFERENCES workouts_plans(id) ON DELETE CASCADE,
+      from_date TEXT NOT NULL,                     -- YYYY-MM-DD, inclusive
+      until_date TEXT                              -- YYYY-MM-DD, exclusive; NULL = still active
+    );
+    CREATE INDEX workouts_plan_periods_from ON workouts_plan_periods(from_date);
+    INSERT INTO workouts_plan_periods (plan_id, from_date, until_date)
+      SELECT id, active_from, active_until FROM workouts_plans WHERE active_from IS NOT NULL;
+    `,
+  },
 ];

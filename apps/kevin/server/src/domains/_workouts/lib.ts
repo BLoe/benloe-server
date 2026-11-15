@@ -335,8 +335,9 @@ export const getSession = (db: DB, id: number): SessionRow | undefined => db.pre
 export function governingPlan(db: DB, date: string): PlanRow | undefined {
   return db
     .prepare(
-      `SELECT * FROM workouts_plans WHERE active_from IS NOT NULL AND active_from <= ? AND (active_until IS NULL OR active_until > ?)
-       ORDER BY active_from DESC, id DESC LIMIT 1`,
+      `SELECT p.* FROM workouts_plan_periods pp JOIN workouts_plans p ON p.id = pp.plan_id
+       WHERE pp.from_date <= ? AND (pp.until_date IS NULL OR pp.until_date > ?)
+       ORDER BY pp.from_date DESC, pp.id DESC LIMIT 1`,
     )
     .get(date, date) as PlanRow | undefined;
 }

@@ -217,14 +217,15 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
   const storedUser: Block[] = [{ type: 'text', text: ctxText }, { type: 'text', text: userText || '(no text)' }];
   const turnMessages: Msg[] = [{ role: 'user', content: [...att.images, ...storedUser] }];
 
+  const scope = kevin.scope();
   const facts = factsBlock(db, kevin.domains);
   const system: Anthropic.Beta.BetaTextBlockParam[] = [
     // The deep model is used a turn or two at a time; a one-hour cache write of this prefix at its
     // rates costs more than the reads it would save.
-    { type: 'text', text: kevin.stableSystem, cache_control: model === config.models.deep ? { type: 'ephemeral' } : { type: 'ephemeral', ttl: '1h' } },
+    { type: 'text', text: scope.system, cache_control: model === config.models.deep ? { type: 'ephemeral' } : { type: 'ephemeral', ttl: '1h' } },
     ...(facts ? [{ type: 'text' as const, text: facts }] : []),
   ];
-  const tools = [...(kevin.tools.apiTools((t) => opts.origin === 'chat' || t.name !== 'shell') as unknown as Anthropic.Beta.BetaToolUnion[]), ...WEB_TOOLS];
+  const tools = [...(kevin.tools.apiTools((t) => !scope.offTools.has(t.name) && (opts.origin === 'chat' || t.name !== 'shell')) as unknown as Anthropic.Beta.BetaToolUnion[]), ...WEB_TOOLS];
 
   const persist = (endNote?: string) => {
     const msgs = [...turnMessages];

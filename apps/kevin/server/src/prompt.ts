@@ -27,19 +27,26 @@ const read = (name: string): string => {
 // Tables the model has no business reading through `query`.
 const HIDDEN = new Set(['push_subscriptions', 'embeddings', 'messages', '_migrations', 'settings']);
 
-export function schemaText(db: DB): string {
+/** Does this table belong to one of the named domains? Tables are prefixed with their domain's name. */
+const ownedBy = (table: string, domains: string[]): boolean => domains.some((d) => table === d || table.startsWith(`${d}_`));
+
+export function schemaText(db: DB, omitDomains: string[] = []): string {
   const rows = db
     // Views too: a domain may define one so the model's common queries are trivially right.
     .prepare("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'search_index_%' ORDER BY type, name")
     .all() as { name: string; sql: string }[];
   return rows
-    .filter((r) => !HIDDEN.has(r.name))
+    .filter((r) => !HIDDEN.has(r.name) && !ownedBy(r.name, omitDomains))
     .map((r) => r.sql.replace(/\n\s+/g, '\n  ').trim() + ';')
     .join('\n');
 }
 
-export function buildStableSystem(db: DB, domains: Domain[]): string {
-  const notes = domains.filter((d) => d.promptNote).map((d) => `## ${d.name}\n${d.promptNote!.trim()}`).join('\n\n');
+/**
+ * `off` names the built-in areas Ben has switched off in Settings. Their notes, tools and tables are
+ * left out: an area he does not use should not cost tokens on every message.
+ */
+export function buildStableSystem(db: DB, domains: Domain[], off: string[] = []): string {
+  const notes = domains.filter((d) => d.promptNote && !off.includes(d.name)).map((d) => `## ${d.name}\n${d.promptNote!.trim()}`).join('\n\n');
   return [
     read('persona.md'),
     read('rules.md'),
@@ -47,7 +54,8 @@ export function buildStableSystem(db: DB, domains: Domain[]): string {
     read('profile.md'),
     `# The app\n\nBen uses you through a web app with these pages: Home (/), Pantry (/pantry), Cooking (/cooking), Workouts (/workouts), Money (/money), Taxes (/taxes), Documents (/documents), one page per space (/s/<slug>), Jobs (/jobs), Settings (/settings). Chat sits beside every page. Notifications you send appear in the app's inbox and as push notifications; give each a \`link\` to the page it is about.\n\nTimes in the database are UTC ISO strings unless a column says otherwise; dates Ben means are in ${config.timezone}.`,
     notes ? `# Areas\n\n${notes}` : '',
-    `# Database schema (SQLite)\n\n\`\`\`sql\n${schemaText(db)}\n\`\`\``,
+    off.length ? `# Areas switched off\n\nBen has switched these built-in areas off, so you have no tools or tables for them: ${off.join(', ')}. If he asks for one, tell him it can be turned back on in Settings, under Navigation.` : '',
+    `# Database schema (SQLite)\n\n\`\`\`sql\n${schemaText(db, off)}\n\`\`\``,
   ]
     .filter(Boolean)
     .join('\n\n');

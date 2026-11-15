@@ -156,6 +156,37 @@ describe('a turn', () => {
     expect((await send(kevin, t.id, { text: 'again' }))!.status).toBe('done');
   });
 
+  it('leaves an area Ben switched off out of the prompt and the tool list', async () => {
+    const pantry = (await import('../src/domains/pantry.js')).default;
+    const cooking = (await import('../src/domains/cooking.js')).default;
+    const money = (await import('../src/domains/money.js')).default;
+    const kevin = await makeKevin([pantry, cooking, money, toy]);
+    const t = createThread(kevin);
+    // The last chat request (the title request that follows a first turn has no tools).
+    const lastTurn = () => model.requests.filter((r) => Array.isArray(r.tools)).at(-1)!;
+    const names = () => lastTurn().tools.map((x: any) => x.name);
+    const system = () => lastTurn().system[0].text as string;
+
+    model.reply({ content: [text('ok')] }, { content: [text('T')] });
+    await send(kevin, t.id, { text: 'one' });
+    await settle();
+    expect(names()).toEqual(expect.arrayContaining(['money_import', 'pantry_update']));
+    const fullLength = system().length;
+
+    setSetting(kevin.db, 'hidden_pages', ['/money', '/pantry']);
+    model.reply({ content: [text('ok')] });
+    await send(kevin, t.id, { text: 'two' });
+    // Money goes. Pantry stays, because Cooking is on and reads the pantry.
+    expect(names()).not.toContain('money_import');
+    expect(names()).toContain('pantry_update');
+    expect(system()).not.toContain('CREATE TABLE money_transactions');
+    expect(system()).toContain('CREATE TABLE pantry_items');
+    expect(system()).toMatch(/switched these built-in areas off.*: money\./);
+    expect(system().length).toBeLessThan(fullLength - 5000);
+    // The data is untouched, and a call that slips through is still refused by nothing: the tool exists, it is only not offered.
+    expect(kevin.db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'money_transactions'").get()).toEqual({ n: 1 });
+  });
+
   it('uses the deep model only when asked', async () => {
     const kevin = await makeKevin();
     const t = createThread(kevin);

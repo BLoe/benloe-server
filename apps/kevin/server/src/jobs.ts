@@ -119,7 +119,20 @@ const prune: SystemJob = {
   },
 };
 
-export const systemJobs: SystemJob[] = [heartbeat, memory, backup, prune];
+const ironpr: SystemJob = {
+  name: 'ironpr',
+  description: 'Refreshes Kevin\'s read-only copy of IRON PR (weights.benloe.com) so he can see the lifts logged there. Never writes to that app.',
+  everyMinutes: 15,
+  run: async (kevin) => {
+    if (!kevin.domains.some((d) => d.name === 'ironpr')) return { outcome: 'nothing-to-do' };
+    const { syncIronPr } = await import('./domains/ironpr.js');
+    const r = syncIronPr(kevin.db);
+    if (!r.ok) return { outcome: 'errored', detail: r.error };
+    return r.changed ? { outcome: 'did-work', detail: `${r.entries} lifts, ${r.exercises} exercises, ${r.prs} records copied` } : { outcome: 'nothing-to-do' };
+  },
+};
+
+export const systemJobs: SystemJob[] = [heartbeat, memory, backup, prune, ironpr];
 
 // ---- schedules ---------------------------------------------------------------
 

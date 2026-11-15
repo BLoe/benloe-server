@@ -72,6 +72,9 @@ export function weekLabel(weekStart: string, today: string): string {
   return n < 0 ? `${-n} weeks ago` : `In ${n} weeks`;
 }
 
+/** A day mid-sentence: "today", "tomorrow", "yesterday" lose their capital; "Sat, Nov 7" keeps its own. */
+export const dayPhrase = (label: string): string => (/^(Today|Tomorrow|Yesterday)$/.test(label) ? label.toLowerCase() : label);
+
 export const WEEK: WeekdayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const WEEKDAY_LABEL: Record<WeekdayKey, string> = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
 

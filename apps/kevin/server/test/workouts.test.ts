@@ -667,4 +667,19 @@ describe('workouts: what Kevin sees', () => {
     expect(kevin.db.prepare("SELECT COUNT(*) AS n FROM tool_audit WHERE tool LIKE 'workout%' AND ok = 1").get()).toEqual({ n: 2 });
     expect(workouts.tools!.every((t) => t.touches?.includes('workouts'))).toBe(true);
   });
+
+  it('switching to another plan and back leaves earlier dates governed by the plan that was active then', async () => {
+    const kevin = await makeKevin([workouts]);
+    const day = (weekday: string, name: string) => ({ weekday, name, exercises: [{ exercise: 'Squat', sets: 3, reps: 5 }] });
+    const a = (await ok(kevin, 'workout_plan_save', { name: 'A', start_date: '2026-10-05', days: [day('mon', 'A-Monday')] })).plan;
+    const b = (await ok(kevin, 'workout_plan_save', { name: 'B', start_date: '2026-10-19', days: [day('mon', 'B-Monday')] })).plan;
+    await ok(kevin, 'workout_edit', { plan: { plan_id: a.id, action: 'activate' } });
+    const on = async (date: string) => (await view(kevin, 'workouts/today', { date })).plan?.name ?? null;
+    expect(await on('2026-10-12')).toBe('A'); // the first A period, before B existed
+    expect(await on('2026-10-26')).toBe('B'); // B's period
+    const periods = kevin.db.prepare('SELECT plan_id, from_date, until_date FROM workouts_plan_periods ORDER BY id').all() as any[];
+    expect(periods.length).toBe(3);
+    expect(periods[0]).toMatchObject({ plan_id: a.id, from_date: '2026-10-05', until_date: '2026-10-19' });
+    expect(periods[2]).toMatchObject({ plan_id: a.id, until_date: null });
+  });
 });

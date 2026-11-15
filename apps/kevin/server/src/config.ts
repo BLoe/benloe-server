@@ -19,6 +19,8 @@ export const config = {
   shellDir: resolve(env.KEVIN_SHELL_DIR ?? '/var/lib/kevin-sh/workspace'),
   /** How a shell command is launched. Production: sudo to the kevin-sh uid. */
   shellLauncher: (env.KEVIN_SHELL_LAUNCHER ?? 'sudo -n -u kevin-sh /usr/local/lib/benloe/kevin-shell').split(' '),
+  /** IRON PR (weights.benloe.com), Ben's lifting PR tracker. Read only, ever: see domains/ironpr.ts. */
+  ironPrDb: env.KEVIN_IRONPR_DB ?? '/srv/benloe/data/weights.db',
   ownerEmail: (env.KEVIN_OWNER_EMAIL ?? '').toLowerCase(),
   authUrl: env.AUTH_SERVICE_URL ?? 'http://localhost:3002',
   publicUrl: env.KEVIN_PUBLIC_URL ?? 'https://kevin.benloe.com',

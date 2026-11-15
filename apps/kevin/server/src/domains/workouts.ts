@@ -64,16 +64,23 @@ const setPatchInput = z.object({
 function setActive(db: DB, planId: number, from: string): string | null {
   const prev = activePlan(db);
   const now = nowIso();
-  if (prev && prev.id !== planId) db.prepare('UPDATE workouts_plans SET is_active = 0, active_until = ?, updated_at = ? WHERE id = ?').run(from, now, prev.id);
+  if (prev?.id === planId) return null;
+  if (prev) {
+    db.prepare('UPDATE workouts_plans SET is_active = 0, active_until = ?, updated_at = ? WHERE id = ?').run(from, now, prev.id);
+    db.prepare('UPDATE workouts_plan_periods SET until_date = ? WHERE plan_id = ? AND until_date IS NULL').run(from, prev.id);
+  }
+  // A new period each time: which plan governed an earlier date is history and must not move.
+  db.prepare('INSERT INTO workouts_plan_periods (plan_id, from_date) VALUES (?, ?)').run(planId, from);
   db.prepare(
     `UPDATE workouts_plans SET active_from = CASE WHEN is_active = 1 THEN active_from ELSE ? END,
        is_active = 1, active_until = NULL, archived_at = NULL, updated_at = ? WHERE id = ?`,
   ).run(from, now, planId);
-  return prev && prev.id !== planId ? prev.name : null;
+  return prev ? prev.name : null;
 }
 
 function deactivate(db: DB, planId: number, on: string): void {
   db.prepare('UPDATE workouts_plans SET is_active = 0, active_until = ?, updated_at = ? WHERE id = ? AND is_active = 1').run(on, nowIso(), planId);
+  db.prepare('UPDATE workouts_plan_periods SET until_date = ? WHERE plan_id = ? AND until_date IS NULL').run(on, planId);
 }
 
 function parseReps(reps: number | string | undefined): { min: number | null; max: number | null } {

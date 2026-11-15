@@ -10,7 +10,7 @@ import { openChat } from '@/lib/chat';
 import { calendarDay, longDate, plural } from '@/lib/format';
 import { useView } from '@/lib/useView';
 import { cn } from '@/lib/utils';
-import { fmtDuration, logEntry, logTarget, prefill, restSeconds, setKind, setText, shownStatus, type LogEntry, type SetDraft, type SetKind } from './logic';
+import { dayPhrase, fmtDuration, logEntry, logTarget, prefill, restSeconds, setKind, setText, shownStatus, type LogEntry, type SetDraft, type SetKind } from './logic';
 import { ExercisePicker, SetFields, SetRow, SetSheet, StatusBadge } from './parts';
 import { addRest, beginRest, clearRest, primeAlert, useRest } from './rest';
 import { DetailsSheet, SessionSheet, sessionFacts } from './SessionSheet';
@@ -331,7 +331,8 @@ export function Today({ date, today, go }: { date: string | null; today: string;
   const listed = new Set(others.flatMap((w) => w.session_ids));
   const sameWorkout = data.other_sessions.filter((s) => !listed.has(s.id));
 
-  const noPlan = !data.plan && data.status === 'rest';
+  // "No plan yet" is about now; an earlier date the plan does not reach is just a day with nothing planned.
+  const noPlan = isToday && !data.plan && data.status === 'rest';
   const resting = data.status === 'rest' && !pendingExtras.length;
 
   return (
@@ -428,7 +429,7 @@ export function Today({ date, today, go }: { date: string | null; today: string;
         <div className="flex flex-col items-center gap-1 rounded-xl border border-dashed px-6 py-8 text-center">
           <Moon className="mb-2 size-7 text-muted-foreground/70" strokeWidth={1.5} />
           <p className="font-medium">Nothing planned {dayWord}</p>
-          <p className="text-sm text-muted-foreground">{data.next ? `Next up: ${data.next.name}, ${calendarDay(data.next.date, today).toLowerCase()}.` : 'Nothing else is planned this week.'}</p>
+          {(data.next || isToday) && <p className="text-sm text-muted-foreground">{data.next ? `Next up: ${data.next.name}, ${dayPhrase(calendarDay(data.next.date, today))}.` : 'Nothing is planned for the coming week.'}</p>}
           {data.date <= today && (
             <Button variant="outline" className="mt-3" onClick={() => setPicking(true)}>
               <Plus />
@@ -442,7 +443,7 @@ export function Today({ date, today, go }: { date: string | null; today: string;
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
           <div className="min-w-0">
             <p className="font-medium">Skipped</p>
-            <p className="text-sm text-muted-foreground">{data.next ? `Next up: ${data.next.name}, ${calendarDay(data.next.date, today).toLowerCase()}.` : 'It stays out of this week’s count.'}</p>
+            <p className="text-sm text-muted-foreground">{data.next ? `Next up: ${data.next.name}, ${dayPhrase(calendarDay(data.next.date, today))}.` : 'It stays out of this week’s count.'}</p>
           </div>
           {session && (
             <Button variant="outline" disabled={pending} onClick={() => void run('workout_log', { session_id: session.id, status: 'planned' }, { success: 'Back on' })}>

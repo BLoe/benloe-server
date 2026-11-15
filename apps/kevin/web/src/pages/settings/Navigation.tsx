@@ -14,7 +14,7 @@ export function Navigation() {
   const archived = (all.data?.spaces ?? []).filter((s) => s.archived);
   return (
     <div className="flex flex-col gap-7">
-      <Section title="Built-in pages" description="Hide the ones you don’t use. A hidden page keeps its data and still opens from a link.">
+      <Section title="Built-in pages" description="Hide the ones you don’t use. A hidden page keeps its data, and Kevin stops carrying that area’s tools and tables in every message, which makes each one cheaper. Turn it back on any time.">
         <ViewState view={nav} rows={6}>
           {(d) => {
             const hidden = d.builtin.filter((b) => b.hidden).map((b) => b.path);

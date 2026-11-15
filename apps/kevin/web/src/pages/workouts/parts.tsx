@@ -12,7 +12,7 @@ import { useAct } from '@/lib/act';
 import { calendarDay } from '@/lib/format';
 import { useView } from '@/lib/useView';
 import { cn } from '@/lib/utils';
-import { fmtDuration, fmtNum, isKnownExercise, searchExercises, setPatch, setText, step, stepDuration, type SetDraft, type SetKind } from './logic';
+import { dayPhrase, fmtDuration, fmtNum, isKnownExercise, searchExercises, setPatch, setText, step, stepDuration, type SetDraft, type SetKind } from './logic';
 import type { CatalogueExercise, DayStatus, LoggedSet } from './types';
 
 const STATUS: Record<DayStatus, { label: string; variant: BadgeVariant }> = {
@@ -220,7 +220,7 @@ export function ExercisePicker({ title = 'Add an exercise', exclude = [], today,
                 key={e.id}
                 onClick={() => onPick(e.name, e)}
                 title={e.name}
-                subtitle={[e.muscle_group?.replace('_', ' ') ?? e.category, e.last_date ? `last ${calendarDay(e.last_date, today).toLowerCase()}` : 'not logged yet'].join(' · ')}
+                subtitle={[e.muscle_group?.replace('_', ' ') ?? e.category, e.last_date ? `last ${dayPhrase(calendarDay(e.last_date, today))}` : 'not logged yet'].join(' · ')}
               />
             ))}
           </ul>
