@@ -108,9 +108,17 @@ wrapper pass `--disable-warning=ExperimentalWarning`.
 
 **Nothing that runs is loaded from this directory.** After changing
 `server.mjs`, `cli.mjs`, `db.mjs` or `ecosystem.config.cjs`: read the diff,
-run `./install.sh`, and `pm2 restart relay-api` if the server changed (after
-a config change: `pm2 delete relay-api && pm2 start
-/etc/benloe/ecosystem/relay.config.js && pm2 save`).
+commit and push, then
+
+```
+benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/relay/install.sh
+pm2 restart relay-api        # if the server changed
+```
+
+`benloe-promote` fetches that exact commit from GitHub into a root-owned
+directory and runs the installer from there; `install.sh` refuses to run from
+the working tree. After a change to the PM2 config: `pm2 delete relay-api &&
+pm2 start /etc/benloe/ecosystem/relay.config.js && pm2 save`.
 
 ### Traps
 

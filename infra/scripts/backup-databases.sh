@@ -4,6 +4,8 @@
 #
 #   /srv/benloe/data/*.db and one level of subdirectories (cabinet/, ...)
 #   /var/lib/benloe-relay/relay.db   (the Benji <-> Claude message channel)
+#   /var/lib/artanis/artanis.db      (sign-in accounts)
+#   /var/lib/benloe-secrets/secrets.db (the encrypted secret store; ciphertext)
 #
 # Output: /var/backups/benloe/<timestamp>/, root-only, 14 days kept.
 # Restore: stop the service, copy the file back over the live one (remove
@@ -67,26 +69,44 @@ if [[ $count -eq 0 && $failed -eq 0 ]]; then
     failed=$((failed + 1))
 fi
 
-# The relay database is read as its own uid: root opening a WAL database can
-# leave root-owned -wal/-shm files that lock the service out of it.
-if [[ -f "$RELAY_DIR/relay.db" && ! -L "$RELAY_DIR/relay.db" ]]; then
-    tmp="$RELAY_DIR/.backup.tmp"
+# Databases that live outside the data folder, each owned by its service's
+# own uid. They are read AS that uid: root opening a WAL database can leave
+# root-owned -wal/-shm files that lock the service out of it. The snapshot is
+# written beside the database by that uid, then copied in by root, which
+# refuses anything but a regular file. Each read is capped at two minutes so a
+# stuck service cannot hang the backup.
+snapshot_owned() { # <user> <directory> <file> <name in the backup>
+    local user=$1 dir=$2 file=$3 out=$4
+    if [[ ! -f "$dir/$file" || -L "$dir/$file" ]]; then
+        echo "  FAIL  $dir/$file is missing or is a symlink"
+        failed=$((failed + 1))
+        return
+    fi
+    if [[ -e "$BACKUP_DIR/$out" ]]; then
+        echo "  FAIL  $dir/$file (would overwrite $out)"
+        failed=$((failed + 1))
+        return
+    fi
+    local tmp="$dir/.backup.tmp"
     rm -f "$tmp"
-    if setpriv --reuid=relay --regid=relay --init-groups --reset-env \
-        /usr/bin/sqlite3 "$RELAY_DIR/relay.db" ".timeout 5000" ".backup '$tmp'" \
-        && [[ -f "$tmp" && ! -L "$tmp" ]] && cp --no-dereference "$tmp" "$BACKUP_DIR/relay.db" \
-        && [[ -f "$BACKUP_DIR/relay.db" && ! -L "$BACKUP_DIR/relay.db" ]]; then
-        echo "  ok    relay.db"
+    if timeout 120 setpriv --reuid="$user" --regid="$user" --init-groups --reset-env \
+        /usr/bin/sqlite3 "$dir/$file" ".timeout 5000" ".backup '$tmp'" \
+        && [[ -f "$tmp" && ! -L "$tmp" ]] && cp --no-dereference "$tmp" "$BACKUP_DIR/$out" \
+        && [[ -f "$BACKUP_DIR/$out" && ! -L "$BACKUP_DIR/$out" ]]; then
+        echo "  ok    $out"
         count=$((count + 1))
     else
-        echo "  FAIL  $RELAY_DIR/relay.db"
+        echo "  FAIL  $dir/$file"
         failed=$((failed + 1))
     fi
     rm -f "$tmp"
-else
-    # The relay database is expected on this box; its absence is not a quiet skip.
-    echo "  FAIL  $RELAY_DIR/relay.db is missing or is a symlink"
-    failed=$((failed + 1))
+}
+
+snapshot_owned relay "$RELAY_DIR" relay.db relay.db
+if [[ -z "${BENLOE_DATA_DIR:-}" ]]; then
+    # Sign-in accounts, and the encrypted secret store (ciphertext only; its key is not in the backup).
+    snapshot_owned artanis /var/lib/artanis artanis.db artanis.db
+    snapshot_owned benloe-secrets /var/lib/benloe-secrets secrets.db benloe-secrets.db
 fi
 
 # Every snapshot must open and pass a check, or it is not a backup.

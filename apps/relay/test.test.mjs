@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './server.mjs';
@@ -285,5 +285,39 @@ test('inbox batches by print budget and marks nothing itself; the caller marks a
   markRead(box, 'claude', second.upTo);
   assert.deepEqual(inboxBatch(box, 'claude', limits), { total: 0, text: [], left: 0, upTo: null });
   box.close();
+  rmSync(d, { recursive: true, force: true });
+});
+
+// The command itself, end to end. It refuses to run as root, so this runs it as `nobody`.
+test('relay command: --peek leaves messages unread, a mistyped option stops, plain inbox marks after printing', { skip: process.getuid() !== 0 || !existsSync('/usr/local/bin/node') }, async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { chownSync, chmodSync, copyFileSync, writeFileSync } = await import('node:fs');
+  const d = mkdtempSync(join(tmpdir(), 'relay-cli-'));
+  chmodSync(d, 0o755);
+  const dbPath = join(d, 'relay.db');
+  const box = openDb(dbPath);
+  addMessage(box, 'benji', 'hello from benji', { tokenId: 't', ip: '1.1.1.1' });
+  box.close();
+  // The code is copied beside the database: wherever this checkout lives, `nobody` may not be able to read it.
+  for (const f of ['cli.mjs', 'db.mjs']) copyFileSync(new URL(`./${f}`, import.meta.url), join(d, f));
+  writeFileSync(join(d, 'package.json'), '{"type":"module"}');
+  for (const f of ['', 'relay.db', 'relay.db-wal', 'relay.db-shm']) if (existsSync(join(d, f))) chownSync(join(d, f), 65534, 65534);
+  const run = (...a) => {
+    try {
+      return { code: 0, out: execFileSync('/usr/local/bin/node', ['--disable-warning=ExperimentalWarning', join(d, 'cli.mjs'), ...a], { uid: 65534, gid: 65534, env: { RELAY_DB: dbPath, PATH: '/usr/bin:/bin' }, cwd: d, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
+    } catch (e) {
+      return { code: e.status, out: String(e.stdout) + String(e.stderr) };
+    }
+  };
+  for (const bad of [['inbox', '--peak'], ['inbox', '-p'], ['inbox', 'peek']]) {
+    const r = run(...bad);
+    assert.equal(r.code, 1, bad.join(' '));
+    assert.doesNotMatch(r.out, /hello from benji/);
+  }
+  assert.match(run('inbox', '--peek').out, /1 new message[\s\S]*hello from benji/);
+  assert.match(run('inbox', '--peek').out, /hello from benji/, 'still unread after a peek and three refused commands');
+  assert.match(run('inbox').out, /hello from benji/);
+  assert.match(run('inbox').out, /No new messages/);
+  assert.equal(run('token', 'revoke', 'nobody-here').code, 1);
   rmSync(d, { recursive: true, force: true });
 });

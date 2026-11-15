@@ -7,6 +7,8 @@ Description=Snapshot benloe SQLite databases to /var/backups/benloe
 
 [Service]
 Type=oneshot
+# A stuck database must end the run, not hold it open until tomorrow's.
+TimeoutStartSec=20min
 ExecStart=/usr/local/sbin/benloe-db-backup.sh
 StandardOutput=append:/var/log/benloe-db-backup.log
 StandardError=append:/var/log/benloe-db-backup.log

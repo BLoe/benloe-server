@@ -66,6 +66,8 @@ const [cmd, sub, ...rest] = args.length ? args : ['help'];
 if (cmd === 'inbox') {
   const peek = has('--peek');
   noStrayFlags();
+  // `inbox` takes nothing else. `inbox peek` or `inbox -p` must not quietly run as a plain inbox.
+  if (args.length > 1) die(`relay: inbox takes only --peek; got "${args.slice(1).join(' ')}"`);
   const { total, text, left, upTo } = inboxBatch(db, ME, LIMITS);
   if (!total) console.log('No new messages.');
   else {
