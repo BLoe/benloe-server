@@ -5,7 +5,8 @@
 # backups under its own /var/lib directory, say) is not covered by this
 # script until it is added below.
 #
-#   /srv/benloe/data/*.db and one level of subdirectories (cabinet/, ...)
+#   /srv/benloe/data: every file named *.db, *.sqlite or *.sqlite3 in it or
+#     one folder down (cabinet/, gavel/, ...), except under data/backups/
 #   /var/lib/benloe-relay/relay.db   (the Benji <-> Claude message channel)
 #   /var/lib/artanis/artanis.db      (sign-in accounts)
 #   /var/lib/benloe-secrets/secrets.db (the encrypted secret store; ciphertext)

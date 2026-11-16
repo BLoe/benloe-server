@@ -57,8 +57,10 @@ cp /path/to/backups/*.db /srv/benloe/data/
 ## Database Backups
 
 The irreplaceable data is in SQLite databases: those in `/srv/benloe/data/`, and those
-services keep under `/var/lib/`. `infra/scripts/backup-databases.sh` lists, at its top,
-exactly which ones the nightly backup covers.
+services keep under `/var/lib/`. The nightly backup takes every file named `*.db`,
+`*.sqlite` or `*.sqlite3` in `/srv/benloe/data` or one folder down, except under
+`/srv/benloe/data/backups/`, and three fixed files under `/var/lib`;
+`infra/scripts/backup-databases.sh` lists them at its top.
 
 ### Manual Backup
 ```bash

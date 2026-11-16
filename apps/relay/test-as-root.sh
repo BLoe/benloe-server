@@ -8,4 +8,4 @@
 # nothing of the installed relay.
 set -eu
 cd "$(dirname "$0")"
-exec /usr/local/bin/node --disable-warning=ExperimentalWarning --test
+exec /usr/local/bin/node --disable-warning=ExperimentalWarning --test test.test.mjs

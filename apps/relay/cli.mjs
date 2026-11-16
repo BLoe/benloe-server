@@ -47,6 +47,8 @@ function say(text = '') {
   }
 }
 
+// db.mjs, imported above, has already run its top level by here: it only
+// defines constants and functions, and opens nothing.
 if (process.getuid?.() === 0) die('relay: refusing to run as root; use /usr/local/bin/relay, which drops to the relay-cli user');
 
 const args = process.argv.slice(2);
@@ -162,8 +164,10 @@ function main() {
     say(`Revoked ${n} token${n > 1 ? 's' : ''}. Effective immediately.`);
   } else if (cmd === 'init') {
     nothingElse(1, 'relay init');
+    // One that is there is opened as any command opens it, so a file that is
+    // not a relay database is refused here too, not given the schema.
     const before = !!statSync(DEFAULT_DB, { throwIfNoEntry: false });
-    openDb(DEFAULT_DB, { create: true });
+    openDb(DEFAULT_DB, { create: !before });
     say(before ? `${DEFAULT_DB} is already there; nothing was changed.` : `Created ${DEFAULT_DB}.`);
   } else {
     say(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(4, 13).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));

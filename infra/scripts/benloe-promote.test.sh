@@ -16,6 +16,24 @@
 # nothing else differs.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+# Sourcing test-guard.sh runs it, so as root it is checked here first, the
+# way it then checks everything else: it, and every directory above it, must
+# be root-owned and not writable by group or other (sticky directories
+# aside). Until it passes, nothing from this tree but this script has run.
+if [[ $(id -u) -eq 0 ]]; then
+    p=$HERE/test-guard.sh
+    while :; do
+        if ! read -r u m < <(stat -c '%u %a' -- "$p" 2>/dev/null) || [[ "$u" -ne 0 ]] \
+            || { (( 0$m & 022 )) && ! { [[ -d "$p" ]] && (( 0$m & 01000 )); }; }; then
+            echo "Refusing to run as root: $p is not root's alone, so test-guard.sh is not sourced." >&2
+            echo "Run it from a checkout made by benloe-promote instead, with the commit id taken from GitHub:" >&2
+            echo "  benloe-promote \"\$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)\" <path of this test in the repo>" >&2
+            exit 1
+        fi
+        [[ "$p" == / ]] && break
+        p=$(dirname -- "$p")
+    done
+fi
 # shellcheck source=infra/scripts/test-guard.sh
 . "$HERE/test-guard.sh"
 refuse_unsafe_tree "$HERE/benloe-promote.test.sh" "$HERE/benloe-promote.sh" "$HERE/test-guard.sh"

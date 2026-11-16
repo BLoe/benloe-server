@@ -3,6 +3,7 @@
 // session on this box talks to). No dependencies: node:sqlite.
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { chmodSync, statSync } from 'node:fs';
 
 // Under /var/lib, not /srv/benloe/data, which claude-worker owns. /var/lib is
@@ -30,9 +31,15 @@ const now = () => new Date().toISOString();
 // replaced by an empty one, which would have no tokens and no messages and
 // look, to either side, like a quiet channel. Only a path that is not there
 // is "no database" (code RELAY_NO_DB); any other failure to look, such as
-// EACCES, is thrown as it is, because the file may well be intact.
+// EACCES, is thrown as it is, because the file may well be intact. Without
+// `create` the file is opened in a mode that cannot create it (SQLite's
+// mode=rw), so it cannot appear between that check and the open either, and
+// a file that is there but has no messages table (an empty file, or some
+// other database) is refused, not given the schema and taken for a quiet
+// channel.
 export function openDb(path = DEFAULT_DB, { create = false } = {}) {
-  if (!create && !statSync(path, { throwIfNoEntry: false })) throw Object.assign(new Error(`no database at ${path}`), { code: 'RELAY_NO_DB' });
+  const missing = () => Object.assign(new Error(`no database at ${path}`), { code: 'RELAY_NO_DB' });
+  if (!create && !statSync(path, { throwIfNoEntry: false })) throw missing();
   // The server and the local command are different uids sharing this file
   // through their group, so it must be writable by the group and closed to
   // everyone else. SQLite creates a database as 0644 less the umask (0640
@@ -42,7 +49,22 @@ export function openDb(path = DEFAULT_DB, { create = false } = {}) {
   // files, and they follow. A database the other uid owns is left alone:
   // only an owner can chmod, and that side has already done it.
   process.umask(0o007);
-  const db = new DatabaseSync(path);
+  let db;
+  if (create) db = new DatabaseSync(path);
+  else {
+    const url = pathToFileURL(path);
+    url.search = 'mode=rw';
+    try {
+      db = new DatabaseSync(url);
+    } catch (e) {
+      if (!statSync(path, { throwIfNoEntry: false })) throw missing();
+      throw e;
+    }
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'").get()) {
+      db.close();
+      throw new Error(`${path} is not a relay database (it has no messages table); nothing was written to it`);
+    }
+  }
   const st = statSync(path);
   if (st.uid === process.geteuid?.() && (st.mode & 0o777) !== 0o660) chmodSync(path, 0o660);
   db.exec(`

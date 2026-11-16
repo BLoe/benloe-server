@@ -78,16 +78,25 @@ Rotation is revoke + create. `pm2 stop relay-api` takes the whole door off;
 the local `relay` command keeps working with the server down.
 
 **What the server logs, and where.** To PM2's `relay-api-out.log`, one JSON
-line for each request under `/v1/` that either fails authentication
-(`auth_failed`: time, source address (an IP address or `?`), the reason, the
-route) or is authenticated and gets past the per-token rate limit
-(`request`: time, address, token id, agent name, method, route). The route
-is `/v1/whoami`, `/v1/messages` or `other`. Nothing is logged for the usage
-text (`/`, `/v1`), a request outside `/v1/` or whose target does not parse,
-or a 429 from the failed-attempt lockout or the per-token limit. Never the
-path or the query string, which the caller chooses; never a header or a
-body. The 503 for a database that is no longer at its path, and unexpected
-errors (with a stack trace), go to `relay-api-err.log`. Both files are in
+line for each authenticated request under `/v1/` that gets past the
+per-token rate limit (`request`: time, source address (an IP address or
+`?`), token id, agent name, method, route), and a line, also timed, for
+each refusal it makes on its own account: `auth_failed` (address, the reason, route),
+`locked_out` (the failed-attempt lockout's 429: address, route) and
+`rate_limited` (either per-token 429: address, agent, token id, which
+limit). The route is `/v1/whoami`, `/v1/messages` or `other`. To
+`relay-api-err.log`: `database_gone` (the 503 for a database that is no
+longer at its path), `database_full` (the 507 once it passes 200 MB) and
+`error` (an unexpected 500, with its stack trace). Every kind but `request`
+is written at most a fixed number of times a minute (60 for `auth_failed`
+across all addresses, 10 for each of the others), so a caller repeating one
+cannot fill the disk; the first line of that kind written after some were
+left out carries `suppressed_before`, how many. Nothing is logged for the usage text (`/`, `/v1`), a
+request outside `/v1/` or whose target does not parse, or the outcome of an
+authenticated request (a 400, 404, 405, 413 or 415 follows its `request`
+line; `request` lines are bounded by the per-token limit). Never
+the path or the query string, which the caller chooses; never a header or a
+body. Both files are in
 `/srv/benloe/logs`, like every other app's on this box: a directory
 claude-worker owns, written by PM2 as root. That is a property of the box,
 not something relay fixes; what relay does is keep caller-chosen text out of
@@ -140,7 +149,7 @@ Fill in the token and send it to Benji in Slack:
 
 ## Working on it
 
-`npm test` (node --test) runs the server on an ephemeral port against a temp
+`npm test` (`node --test test.test.mjs`) runs the server on an ephemeral port against a temp
 database. No dependencies; `node:sqlite` is why the PM2 config and the CLI
 wrapper pass `--disable-warning=ExperimentalWarning`.
 
@@ -155,9 +164,13 @@ not run code out of it, tests included:
   GitHub, never from here. `apps/relay/test-as-root.sh` is the script:
   `benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/test-as-root.sh`
   (before a merge: `benloe-promote --branch <name> <sha> apps/relay/test-as-root.sh`).
-  Started as root from this directory the test file refuses to run. The tests
-  work in directories of their own under `/tmp` and do not touch the
-  installed relay or its database.
+  Never run `npm test` or `node --test` here as root: npm runs whatever this
+  directory's `package.json` says, and a bare `node --test` runs every test
+  file it finds. What does hold is narrower: `test.test.mjs`, started as root
+  from a tree that is not root's alone, refuses before it loads any other
+  file of this directory (`db.mjs`, `server.mjs` and `cli.mjs` are imported
+  only after its check). The tests work in directories of their own under
+  `/tmp` and do not touch the installed relay or its database.
 
 **Nothing that runs is loaded from this directory.** After changing
 `server.mjs`, `cli.mjs`, `db.mjs` or `ecosystem.config.cjs`: read the diff,

@@ -1,9 +1,11 @@
 #!/bin/sh
 # Promotes relay's code to the root-owned copies that actually run. Run as
 # root, through benloe-promote, after any change to server.mjs, cli.mjs,
-# db.mjs or the ecosystem config; then `pm2 restart relay-api` if the server
-# changed:
+# db.mjs or the ecosystem config:
 #   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/install.sh
+# Then, if server.mjs or db.mjs changed: pm2 restart relay-api
+# If ecosystem.config.cjs changed, a restart does not read it; instead:
+#   pm2 delete relay-api && pm2 start /etc/benloe/ecosystem/relay.config.js && pm2 save
 #
 # Nothing relay executes is loaded from the repo. /srv/benloe is owned by
 # claude-worker, who can swap apps/ for a tree of its own and is allowed to
@@ -33,6 +35,18 @@ case "$SRC" in
     ;;
 esac
 [ "$(id -u)" = 0 ] || { echo "install.sh: must run as root" >&2; exit 1; }
+
+# The `relay` command runs as relay-cli on the caller's terminal, when there
+# is one (see the wrapper below). TIOCSTI, which pushes characters into a
+# terminal's input, would let a relay-cli process type a command into root's
+# shell. This kernel allows it only to CAP_SYS_ADMIN while
+# dev.tty.legacy_tiocsti is 0; a kernel without that setting allows it to
+# anyone on their own controlling terminal. Either way, nothing is installed.
+tiocsti=$(cat /proc/sys/dev/tty/legacy_tiocsti 2>/dev/null || echo "not there")
+if [ "$tiocsti" != 0 ]; then
+  echo "install.sh: dev.tty.legacy_tiocsti is $tiocsti, not 0, so a relay-cli process could type into root's terminal. Nothing was installed." >&2
+  exit 1
+fi
 
 LIB=/usr/local/lib/benloe/relay
 DATA=/var/lib/benloe-relay
@@ -105,6 +119,15 @@ install -o root -g root -m 0644 "$SRC/ecosystem.config.cjs" /etc/benloe/ecosyste
 # with five variables (PATH, HOME, NODE_ENV, and the two the server reads,
 # PORT and RELAY_DB), not the PM2 daemon's environment. Written literally
 # here, not rendered from a repo template.
+# What node does get from PM2 besides: uid and gid relay with no
+# supplementary groups and no capabilities (setpriv); the working directory
+# PM2 sets from the config (/usr/local/lib/benloe/relay); PM2's umask (db.mjs
+# sets its own, 007); PM2's resource limits and ignored signals; no
+# controlling terminal; and the descriptors PM2 opens for it: 0-2, sockets
+# to the PM2 daemon, which writes 1 and 2 to the log files, and 3, PM2's IPC
+# channel, which node does not take up as
+# one because NODE_CHANNEL_FD is not passed. A process of the server's uid
+# could still write messages to it, which PM2 hands to its event bus.
 cat > /usr/local/lib/benloe/node-as-relay <<'SHIM'
 #!/bin/sh
 # Installed by apps/relay/install.sh. Do not edit in place.
@@ -120,12 +143,26 @@ chmod 755 /usr/local/lib/benloe/node-as-relay
 # root session whose environment can hold credentials, and none of it should
 # reach a process that reads a database an internet-facing service writes.
 #
+# What it gets from the caller, exactly: an environment of PATH, HOME and
+# LANG only; / as its directory; uid relay-cli and gid relay, no supplementary
+# groups, no capabilities. Inherited unchanged: every descriptor the caller
+# left open (0-2 at least: a terminal, pipes or files), the caller's
+# controlling terminal, session and process group if it has them, its umask
+# (db.mjs sets its own, 007), resource limits and ignored signals.
+#
 # What the server's uid can still do to this command is whatever it can do
 # through the database, which it can write, replace or delete: put any text
 # in any row (cli.mjs escapes every string it prints for that reason), or
 # make the command fail or hang. Getting further than that would take a bug
 # in node or SQLite that a crafted database file can reach, and would land in
-# relay-cli, an unprivileged uid that owns nothing, not in root.
+# relay-cli, an unprivileged uid that owns nothing, not in root. But it would
+# land with the descriptors above. On a terminal it could then write raw
+# escape sequences past the escaping, read what is typed while it runs, and
+# change the terminal's settings, through 0-2 or /dev/tty; it could not type
+# into root's shell (TIOCSTI, checked at the top). Through pipes or files it
+# could write whatever it liked into the caller's output. It is not given a
+# session of its own (setsid) because then Ctrl-C would stop the wrapper and
+# leave it running, still reading the terminal.
 cat > /usr/local/bin/relay <<'WRAP'
 #!/bin/sh
 # Installed by apps/relay/install.sh. Do not edit in place.
@@ -142,4 +179,5 @@ chmod 755 /usr/local/bin/relay
 # there, as relay-cli, and changes nothing if it is.
 /usr/local/bin/relay init
 echo "relay installed: $LIB, /etc/benloe/ecosystem/relay.config.js, /usr/local/lib/benloe/node-as-relay, /usr/local/bin/relay"
-echo "Restart the server so it runs the new code: pm2 restart relay-api"
+echo "If server.mjs or db.mjs changed: pm2 restart relay-api"
+echo "If the ecosystem config changed (a restart does not read it): pm2 delete relay-api && pm2 start /etc/benloe/ecosystem/relay.config.js && pm2 save"

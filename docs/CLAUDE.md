@@ -293,8 +293,11 @@ any live database: they work in directories of their own under `/tmp` and
 
 The SQLite databases listed here, and no others, are snapshotted nightly
 (~09:15 UTC) to `/var/backups/benloe/<timestamp>/`, root-only, each snapshot
-integrity-checked: `/srv/benloe/data/*.db` and one level of subdirectories
-(`cabinet/`, `gavel/`), saved under `data/`; and, saved under `var-lib/`, the
+integrity-checked: every file named `*.db`, `*.sqlite` or `*.sqlite3` in
+`/srv/benloe/data` or one folder down (`cabinet/`, `gavel/`), except under
+`/srv/benloe/data/backups/`, saved under `data/` (one of those names that is
+not a regular file, or has characters other than letters, digits, `.`, `_`
+and `-`, fails the run); and, saved under `var-lib/`, the
 relay database (`/var/lib/benloe-relay`), sign-in accounts
 (`/var/lib/artanis`) and the encrypted secret store
 (`/var/lib/benloe-secrets`; ciphertext only, the key in

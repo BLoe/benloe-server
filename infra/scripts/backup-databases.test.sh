@@ -14,6 +14,24 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 SCRIPT=$HERE/backup-databases.sh
+# Sourcing test-guard.sh runs it, so as root it is checked here first, the
+# way it then checks everything else: it, and every directory above it, must
+# be root-owned and not writable by group or other (sticky directories
+# aside). Until it passes, nothing from this tree but this script has run.
+if [[ $(id -u) -eq 0 ]]; then
+    p=$HERE/test-guard.sh
+    while :; do
+        if ! read -r u m < <(stat -c '%u %a' -- "$p" 2>/dev/null) || [[ "$u" -ne 0 ]] \
+            || { (( 0$m & 022 )) && ! { [[ -d "$p" ]] && (( 0$m & 01000 )); }; }; then
+            echo "Refusing to run as root: $p is not root's alone, so test-guard.sh is not sourced." >&2
+            echo "Run it from a checkout made by benloe-promote instead, with the commit id taken from GitHub:" >&2
+            echo "  benloe-promote \"\$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)\" <path of this test in the repo>" >&2
+            exit 1
+        fi
+        [[ "$p" == / ]] && break
+        p=$(dirname -- "$p")
+    done
+fi
 # shellcheck source=infra/scripts/test-guard.sh
 . "$HERE/test-guard.sh"
 refuse_unsafe_tree "$HERE/backup-databases.test.sh" "$SCRIPT" "$HERE/test-guard.sh"
@@ -224,6 +242,19 @@ run retired
 is "$rc" 0 "exit status once the missing database is listed in RETIRED"
 has "$T/retired.log" "7 database(s), 0 failure(s)"
 [[ -f "$last/COMPLETE" ]] && ok || no "COMPLETE after retiring"
+
+echo "# 8. which names are taken: *.db, *.sqlite, *.sqlite3, one folder down at most, never data/backups/"
+mkdir -p "$T/data/backups"
+chown 61001 "$T/data/backups"
+mkdb "$T/data/x.sqlite" 61001 3
+mkdb "$T/data/sub/y.sqlite3" 61001 3
+mkdb "$T/data/backups/z.db" 61001 3
+run names
+is "$rc" 0 "exit status"
+has "$T/names.log" "ok    data/x.sqlite"
+has "$T/names.log" "ok    data/sub/y.sqlite3"
+hasnt "$T/names.log" "backups/z.db"
+has "$T/names.log" "9 database(s), 0 failure(s)"
 
 echo "$checks checks, $bad failed"
 [[ $bad -eq 0 ]]
