@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ago } from '@/lib/format';
+import { appPath } from '@/lib/links';
 import { useNow } from '@/lib/hooks';
 import { markRead, useNotifications } from '@/lib/notifications';
 import type { NotificationRow } from '@/lib/types';
@@ -31,7 +32,8 @@ export function useOpenNotification(): (n: Pick<NotificationRow, 'id' | 'link' |
   const navigate = useNavigate();
   return (n) => {
     if (!n.read_at) markRead([n.id]);
-    if (n.link) void navigate(n.link);
+    const path = appPath(n.link);
+    if (path !== null) void navigate(path);
   };
 }
 

@@ -203,6 +203,12 @@ function findAccount(db: DB, ref: string | number): AccountRow | undefined {
   return like.length === 1 ? like[0] : undefined;
 }
 
+/** Exact name or id only: the lookup for a call that may create the account, where a near match is a different account. */
+function findAccountExact(db: DB, ref: string | number): AccountRow | undefined {
+  if (typeof ref === 'number') return db.prepare('SELECT * FROM money_accounts WHERE id = ?').get(ref) as AccountRow | undefined;
+  return db.prepare('SELECT * FROM money_accounts WHERE name = ? COLLATE NOCASE').get(ref.trim()) as AccountRow | undefined;
+}
+
 const accountNames = (db: DB): string => {
   const names = (db.prepare('SELECT name FROM money_accounts ORDER BY name').all() as { name: string }[]).map((r) => r.name);
   return names.length ? `Accounts: ${names.join(', ')}.` : 'There are no accounts yet.';
@@ -464,6 +470,8 @@ const importInput = z.object({
 interface PlannedRow {
   row: number; date: string; amount: number; description: string; merchant: string; category: string | null; categorized_by: string | null;
   is_transfer: number; pending: boolean; hash: string; duplicate: boolean;
+  /** Already recorded as pending, and this file shows it posted: the stored row is marked posted instead of skipped. */
+  settles: boolean;
 }
 
 function runImport(input: z.infer<typeof importInput>, ctx: ToolCtx): unknown {
@@ -479,7 +487,9 @@ function runImport(input: z.infer<typeof importInput>, ctx: ToolCtx): unknown {
   }
   if (!text.trim()) throw new ToolError(`Attachment ${att.id} (${att.filename}) is empty.`);
 
-  const existing = findAccount(db, input.account);
+  // With create_account, "Chase" names a new account even when "Chase checking"
+  // exists, so only an exact name counts as the existing one.
+  const existing = input.create_account ? findAccountExact(db, input.account) : findAccount(db, input.account);
   if (!existing && (!input.create_account || typeof input.account !== 'string')) {
     throw new ToolError(`No single account matches "${input.account}". ${accountNames(db)} To import into a new account, pass create_account: { type, institution }.`);
   }
@@ -505,14 +515,15 @@ function runImport(input: z.infer<typeof importInput>, ctx: ToolCtx): unknown {
   const rules = loadRules(db);
   const plan = (accountId: number | null): PlannedRow[] => {
     const seen = new Map<string, number>();
-    const exists = db.prepare('SELECT 1 FROM money_transactions WHERE dedupe_hash = ?');
+    const stored = db.prepare('SELECT pending FROM money_transactions WHERE dedupe_hash = ?');
     return read.rows.map((r) => {
       const key = occurrenceKey(r.date, r.amount, r.description);
       const n = seen.get(key) ?? 0;
       seen.set(key, n + 1);
       const hash = accountId == null ? '' : dedupeHash(accountId, key, n);
       const c = categorize(rules, cats, r.description, { text: r.bankCategory, liability, amount: r.amount });
-      return { row: r.row, date: r.date, amount: r.amount, description: r.description, ...c, pending: r.pending, hash, duplicate: accountId != null && !!exists.get(hash) };
+      const prior = accountId == null ? undefined : (stored.get(hash) as { pending: number } | undefined);
+      return { row: r.row, date: r.date, amount: r.amount, description: r.description, ...c, pending: r.pending, hash, duplicate: !!prior, settles: !!prior && prior.pending === 1 && !r.pending };
     });
   };
 
@@ -523,6 +534,7 @@ function runImport(input: z.infer<typeof importInput>, ctx: ToolCtx): unknown {
       parsed_count: rows.length,
       new_count: fresh.length,
       duplicate_count: rows.length - fresh.length,
+      settled_count: rows.filter((r) => r.settles).length,
       skipped_count: read.skipped.length,
       skipped: read.skipped.slice(0, 20),
       date_from: dates[0] ?? null,
@@ -575,8 +587,16 @@ function runImport(input: z.infer<typeof importInput>, ctx: ToolCtx): unknown {
     const summary = summarize(rows);
     const fresh = rows.filter((r) => !r.duplicate);
     const accountInfo = { id: account.id, name: account.name, type: account.type, created: !existing };
+    // A row first imported as pending and now exported as posted has the same
+    // date, amount and description, so it is a duplicate; it is marked posted
+    // here so it starts counting in spending and income.
+    const settle = db.prepare('UPDATE money_transactions SET pending = 0, updated_at = ? WHERE dedupe_hash = ? AND pending = 1');
+    for (const r of rows) if (r.settles) settle.run(now, r.hash);
     if (!fresh.length) {
-      return { committed: true, batch_id: null, account: accountInfo, inserted: 0, ...summary, note: 'Every transaction in this file is already recorded; nothing was added.' };
+      const note = summary.settled_count
+        ? `No new transactions; ${summary.settled_count} that had been pending ${summary.settled_count === 1 ? 'is' : 'are'} now marked posted.`
+        : 'Every transaction in this file is already recorded; nothing was added.';
+      return { committed: true, batch_id: null, account: accountInfo, inserted: 0, ...summary, note };
     }
     const batchId = Number(
       db.prepare('INSERT INTO money_import_batches (account_id, attachment_id, filename, imported_at, row_count, inserted_count, duplicate_count, skipped_count, date_from, date_to) VALUES (?,?,?,?,?,?,?,?,?,?)')
@@ -1202,7 +1222,7 @@ export default defineDomain({
     defineTool({
       name: 'money_import',
       description:
-        "Import a bank or card CSV export that Ben uploaded into one account. Two steps with the same arguments: commit: false returns a preview (the columns it chose, row count, date range, how many rows are new versus already recorded, money in and out, the first 10 rows as they would be saved, rows it could not read); commit: true saves the new rows, applies the categorization rules, records an import batch and, when the file has a running balance, updates the account balance. Rows already recorded are skipped, so overlapping or repeated files are safe. Example: { attachment_id: 12, account: 'Chase checking', commit: false }. For an account that does not exist yet add create_account: { type: 'credit_card', institution: 'Amex' }. If the preview's purchases come out positive pass amount_sign; if it picked the wrong columns pass mapping.",
+        "Import a bank or card CSV export that Ben uploaded into one account. Two steps with the same arguments: commit: false returns a preview (the columns it chose, row count, date range, how many rows are new versus already recorded, money in and out, the first 10 rows as they would be saved, rows it could not read); commit: true saves the new rows, applies the categorization rules, records an import batch and, when the file has a running balance, updates the account balance. Rows already recorded are skipped, so overlapping or repeated files are safe; a recorded pending row that the file now shows as posted is marked posted (settled_count). With create_account the account name must match an existing account exactly to import into it; otherwise a new account is created under that name. Example: { attachment_id: 12, account: 'Chase checking', commit: false }. For an account that does not exist yet add create_account: { type: 'credit_card', institution: 'Amex' }. If the preview's purchases come out positive pass amount_sign; if it picked the wrong columns pass mapping.",
       input: importInput,
       touches: ['money'],
       run: runImport,

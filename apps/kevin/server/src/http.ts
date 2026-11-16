@@ -56,7 +56,9 @@ export function createHttp(kevin: Kevin): express.Express {
     if (who === 'owner') return next();
     if (req.path.startsWith('/api/')) return void res.status(who ? 403 : 401).json({ error: who ? 'not the owner' : 'sign in' });
     if (who) return void res.status(403).type('text/plain').send('Kevin is Ben’s private assistant.');
-    res.redirect(302, `https://auth.benloe.com/?redirect=${encodeURIComponent(config.publicUrl + req.originalUrl)}`);
+    // Back to the page that was asked for, on this site. A request line can carry a full URL instead of a path; that is not passed on.
+    const back = /^\/(?![/\\])/.test(req.originalUrl) ? req.originalUrl : '/';
+    res.redirect(302, `https://auth.benloe.com/?redirect=${encodeURIComponent(config.publicUrl + back)}`);
   });
 
   // Cross-site request forgery: a state-changing request must carry a header a
@@ -132,7 +134,8 @@ export function createHttp(kevin: Kevin): express.Express {
     if (!Buffer.isBuffer(req.body) || !req.body.length) return void res.status(400).json({ error: 'send the file as the request body' });
     let a;
     try {
-      a = saveUpload(kevin.db, req.body, decodeURIComponent(String(req.query.filename ?? 'upload')));
+      // Express has already decoded the query string; decoding again would reject a name with a "%" in it.
+      a = saveUpload(kevin.db, req.body, typeof req.query.filename === 'string' ? req.query.filename : 'upload');
     } catch (e) {
       return void res.status(400).json({ error: (e as Error).message });
     }

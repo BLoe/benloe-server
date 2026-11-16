@@ -3,7 +3,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import { useNavigate } from 'react-router';
 import remarkGfm from 'remark-gfm';
 import { leaveSheetForLink } from '@/lib/chat';
-import { remarkAppLinks } from '@/lib/links';
+import { appPath, remarkAppLinks } from '@/lib/links';
 import { cn } from '@/lib/utils';
 
 const plugins = [remarkGfm, remarkAppLinks];
@@ -18,12 +18,13 @@ function MarkdownImpl({ text, className }: { text: string; className?: string })
   const navigate = useNavigate();
   const components: Components = {
     a({ href, children }) {
-      const internal = !!href && href.startsWith('/') && !href.startsWith('//');
+      const path = appPath(href);
+      const internal = path !== null;
       const go = (e: MouseEvent) => {
-        if (!internal || e.metaKey || e.ctrlKey) return;
+        if (path === null || e.metaKey || e.ctrlKey) return;
         e.preventDefault();
         // On a phone the chat covers the page: get it out of the way of where the link goes.
-        void navigate(href, leaveSheetForLink());
+        void navigate(path, leaveSheetForLink());
       };
       return (
         <a href={href} onClick={go} {...(internal ? {} : { target: '_blank', rel: 'noopener noreferrer' })}>

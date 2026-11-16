@@ -18,10 +18,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bus, type UiItem } from './bus.js';
 import { config } from './config.js';
-import { nowIso } from './db.js';
+import { nowIso, parseJson } from './db.js';
 import type { Kevin } from './kevin.js';
 import { anthropic, record, spend } from './llm.js';
-import { keywordSearch } from './memory.js';
+import { type Hit, keywordSearch } from './memory.js';
 import { contextBlock, factsBlock, profileBlock } from './prompt.js';
 import type { ToolCtx } from './tools.js';
 
@@ -54,6 +54,8 @@ export interface TurnOpts {
 
 /** Live state of a running turn; threads.ts owns one per thread. */
 export interface TurnHandle {
+  /** What started the turn this handle is for. Only a chat turn takes Ben's mid-turn messages (threads.ts). */
+  origin: 'chat' | 'job';
   turnId: number;
   items: UiItem[];
   abort: AbortController;
@@ -77,11 +79,6 @@ export interface TurnResult {
 const MAX_ITERATIONS = 30;
 const DEEP_RE = /\b(think (?:hard|harder|deeply|carefully)|ultrathink|use opus)\b/i;
 const BETAS = ['thinking-display-updates-2026-08-18', 'server-side-fallback-2026-07-01'];
-
-const WEB_TOOLS = [
-  { type: 'web_search_20260209', name: 'web_search', max_uses: 6 },
-  { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 6, max_content_tokens: 25_000 },
-] as unknown as Anthropic.Beta.BetaToolUnion[];
 
 /** What is kept of a message once its turn is over (rule 2). */
 export function stripForHistory(role: 'user' | 'assistant', content: Msg['content']): Block[] {
@@ -111,13 +108,28 @@ const TRIM_TO_CHARS = 600;
  * cache from that point: once every five turns, not once a turn.
  */
 export function loadHistory(kevin: Kevin, threadId: string): { messages: Msg[]; summary: string | null } {
-  const t = kevin.db.prepare('SELECT summary, summary_upto FROM threads WHERE id = ?').get(threadId) as { summary: string | null; summary_upto: number };
-  const rows = kevin.db.prepare('SELECT turn_id, role, content FROM messages WHERE thread_id = ? AND id > ? ORDER BY id').all(threadId, t.summary_upto) as { turn_id: number; role: 'user' | 'assistant'; content: string }[];
-  const turnIds = [...new Set(rows.map((r) => r.turn_id))];
+  const t = kevin.db.prepare('SELECT summary, summary_upto FROM threads WHERE id = ?').get(threadId) as { summary: string | null; summary_upto: number } | undefined;
+  if (!t) throw new Error(`thread ${threadId} does not exist`);
+  const rows = kevin.db.prepare('SELECT id, turn_id, role, content FROM messages WHERE thread_id = ? AND id > ? ORDER BY id').all(threadId, t.summary_upto) as { id: number; turn_id: number; role: 'user' | 'assistant'; content: string }[];
+  // A stored message that no longer parses must not make every later turn in the thread fail. It is
+  // left out together with the rest of its turn (dropping one message alone could separate a tool
+  // call from its result, which the API rejects), and the rows stay in the database as they are.
+  const parsed = new Map<number, Block[]>();
+  const unreadable = new Set<number>();
+  for (const r of rows) {
+    const content = parseJson<unknown>(r.content, null);
+    if (Array.isArray(content) && content.every((b) => b && typeof b === 'object' && typeof (b as { type?: unknown }).type === 'string')) parsed.set(r.id, content as Block[]);
+    else {
+      unreadable.add(r.turn_id);
+      console.error(`thread ${threadId}: stored message ${r.id} (turn ${r.turn_id}) is unreadable; leaving that turn out of the history`);
+    }
+  }
+  const usable = rows.filter((r) => !unreadable.has(r.turn_id));
+  const turnIds = [...new Set(usable.map((r) => r.turn_id))];
   const trimCount = Math.max(0, Math.floor((turnIds.length - TRIM_AFTER_TURNS) / TRIM_BATCH) * TRIM_BATCH);
   const trimmed = new Set(turnIds.slice(0, trimCount));
-  const messages = rows.map((r) => {
-    const content = JSON.parse(r.content) as Block[];
+  const messages = usable.map((r) => {
+    const content = parsed.get(r.id)!;
     if (trimmed.has(r.turn_id)) {
       for (const b of content) {
         if (b.type === 'tool_result' && typeof b.content === 'string' && b.content.length > TRIM_TO_CHARS) {
@@ -165,12 +177,23 @@ function attachmentBlocks(kevin: Kevin, ids: number[]): { note: string; images: 
   return { note: notes.join('\n\n'), images, ui };
 }
 
+/**
+ * Runs one turn to its end. Once the turn's row exists this does not throw: whatever goes wrong,
+ * in setup or in the loop, the row is closed with a status and `turn_end` is published.
+ */
 export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, opts: TurnOpts, handle: TurnHandle): Promise<TurnResult> {
   const { db } = kevin;
   const deep = !!input.deep || DEEP_RE.test(input.text);
   const model = opts.model ?? (deep ? config.models.deep : config.models.main);
   const effort = opts.effort ?? (deep ? 'high' : 'low');
-  const att = attachmentBlocks(kevin, input.attachments ?? []);
+  // Read before the row is written because the row shows the attachments; a failure here is reported through the turn.
+  let att: ReturnType<typeof attachmentBlocks> = { note: '', images: [], ui: [] };
+  let attError: unknown = null;
+  try {
+    att = attachmentBlocks(kevin, input.attachments ?? []);
+  } catch (e) {
+    attError = e;
+  }
   const userUi = { text: input.text, attachments: att.ui, page: input.page ?? null };
 
   const turnId = Number(
@@ -188,49 +211,25 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
   const finish = (status: TurnResult['status'], error?: string): TurnResult => {
     const items = handle.items.filter((i) => i.type !== 'text' && i.type !== 'status' ? true : i.text.trim().length > 0);
     for (const i of items) if (i.type === 'tool' && i.state === 'running') i.state = 'error';
-    db.prepare('UPDATE turns SET ended_at = ?, status = ?, assistant_ui = ?, error = ? WHERE id = ?').run(nowIso(), status, JSON.stringify(items), error ?? null, turnId);
-    db.prepare('UPDATE threads SET updated_at = ? WHERE id = ?').run(nowIso(), threadId);
-    const costUsd = (db.prepare('SELECT cost_usd FROM turns WHERE id = ?').get(turnId) as { cost_usd: number }).cost_usd;
+    let costUsd = 0;
+    try {
+      db.prepare('UPDATE turns SET ended_at = ?, status = ?, assistant_ui = ?, error = ? WHERE id = ?').run(nowIso(), status, JSON.stringify(items), error ?? null, turnId);
+      db.prepare('UPDATE threads SET updated_at = ? WHERE id = ?').run(nowIso(), threadId);
+      costUsd = (db.prepare('SELECT cost_usd FROM turns WHERE id = ?').get(turnId) as { cost_usd: number }).cost_usd;
+    } catch (e) {
+      // The page must still stop waiting. The row is closed at the next start (index.ts marks running turns interrupted).
+      console.error(`turn ${turnId}: could not record its end (${status})`, e);
+    }
     bus.publish({ type: 'turn_end', threadId, turnId, status, costUsd, ...(error ? { error } : {}) });
     const text = items.filter((i): i is Extract<UiItem, { type: 'text' }> => i.type === 'text').map((i) => i.text).join('\n\n');
     return { turnId, status, text, costUsd, ...(error ? { error } : {}) };
   };
 
-  const s = spend(db);
-  if (s.blocked) {
-    const msg = `This month's spend cap is reached ($${s.monthUsd.toFixed(2)} of $${s.capUsd.toFixed(2)}). Raise it in Settings to continue.`;
-    handle.items.push({ type: 'text', text: msg });
-    return finish('blocked', msg);
-  }
-
-  // ---- the request, fixed for the whole turn (rule 1) ----
-  const { messages: history, summary } = loadHistory(kevin, threadId);
-  const hits = opts.origin === 'chat' ? keywordSearch(db, input.text, 5, ['log-summary', 'log-note', 'document', 'recipe', 'space-record']) : [];
-  const ctxText = contextBlock({ page: input.page, hits, origin: opts.origin });
-  const userText = [input.text, att.note].filter(Boolean).join('\n\n');
-  // A compaction summary rides in front of the first message after the cut
-  // (request only; the stored rows are untouched).
-  if (summary && history.length) {
-    const first = history[0]!;
-    history[0] = { role: first.role, content: [{ type: 'text', text: `<earlier_in_this_conversation>\n${summary}\n</earlier_in_this_conversation>` }, ...(first.content as Block[])] };
-  }
-  const storedUser: Block[] = [{ type: 'text', text: ctxText }, { type: 'text', text: userText || '(no text)' }];
-  const turnMessages: Msg[] = [{ role: 'user', content: [...att.images, ...storedUser] }];
-
-  const scope = kevin.scope();
-  const facts = factsBlock(db, kevin.domains);
-  const profile = profileBlock(db);
-  const system: Anthropic.Beta.BetaTextBlockParam[] = [
-    // The deep model is used a turn or two at a time; a one-hour cache write of this prefix at its
-    // rates costs more than the reads it would save.
-    { type: 'text', text: scope.system, cache_control: model === config.models.deep ? { type: 'ephemeral' } : { type: 'ephemeral', ttl: '1h' } },
-    // The profile is long and changes rarely: its own breakpoint, so saving a fact or making a space never rewrites it.
-    ...(profile ? [{ type: 'text' as const, text: profile, cache_control: model === config.models.deep ? { type: 'ephemeral' as const } : { type: 'ephemeral' as const, ttl: '1h' as const } }] : []),
-    ...(facts ? [{ type: 'text' as const, text: facts }] : []),
-  ];
-  const tools = [...(kevin.tools.apiTools((t) => !scope.offTools.has(t.name) && (opts.origin === 'chat' || t.name !== 'shell')) as unknown as Anthropic.Beta.BetaToolUnion[]), ...WEB_TOOLS];
-
+  // What this turn adds to the conversation. Empty until setup has built Ben's message.
+  const turnMessages: Msg[] = [];
+  let storedUser: Block[] = [];
   const persist = (endNote?: string) => {
+    if (!turnMessages.length) return;
     const msgs = [...turnMessages];
     // The first message is stored without this turn's image bytes.
     msgs[0] = { role: 'user', content: storedUser };
@@ -244,29 +243,96 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
     })();
   };
 
-  const ctx: ToolCtx = {
-    db, source: opts.origin === 'job' ? 'job' : 'agent', threadId, turnId, jobKey: opts.jobKey ?? null, signal: handle.abort.signal,
-    confirm: (summaryText) => {
-      if (opts.origin === 'job') return Promise.resolve(false);
-      const confirmId = randomUUID();
-      return new Promise<boolean>((resolve) => {
-        const done = (approved: boolean) => {
-          clearTimeout(timer);
-          handle.confirms.delete(confirmId);
-          handle.confirmSummaries.delete(confirmId);
-          bus.publish({ type: 'confirm_resolved', threadId, confirmId, approved });
-          resolve(approved);
-        };
-        const timer = setTimeout(() => done(false), 5 * 60_000);
-        handle.confirms.set(confirmId, done);
-        handle.confirmSummaries.set(confirmId, summaryText);
-        bus.publish({ type: 'confirm_request', threadId, turnId, confirmId, tool: 'confirm', summary: summaryText });
-      });
-    },
+  /** Checked before every request after the first, whichever path led to another request. */
+  const capReached = (): TurnResult | null => {
+    if (opts.spendCapUsd != null) {
+      const cost = (db.prepare('SELECT cost_usd FROM turns WHERE id = ?').get(turnId) as { cost_usd: number }).cost_usd;
+      if (cost >= opts.spendCapUsd) {
+        persist(`(Stopped: this run reached its spend cap of $${opts.spendCapUsd.toFixed(2)}.)`);
+        return finish('error', `spend cap of $${opts.spendCapUsd.toFixed(2)} reached`);
+      }
+    }
+    if (spend(db).blocked) {
+      handle.items.push({ type: 'text', text: 'Stopping here: this month’s spend cap is reached. Raise it in Settings to continue.' });
+      persist('(Stopped: the monthly spend cap was reached.)');
+      return finish('blocked', 'monthly spend cap reached');
+    }
+    return null;
   };
 
   try {
+    if (attError) throw attError;
+    const s = spend(db);
+    if (s.blocked) {
+      const msg = `This month's spend cap is reached ($${s.monthUsd.toFixed(2)} of $${s.capUsd.toFixed(2)}). Raise it in Settings to continue.`;
+      handle.items.push({ type: 'text', text: msg });
+      return finish('blocked', msg);
+    }
+
+    // ---- Ben's message: built first, so a failure in the rest of setup still stores what he said ----
+    let hits: Hit[] = [];
+    if (opts.origin === 'chat') {
+      try {
+        hits = keywordSearch(db, input.text, 5, ['log-summary', 'log-note', 'document', 'recipe', 'space-record']);
+      } catch (e) {
+        // Memory hits are a convenience; the turn runs without them.
+        console.error(`turn ${turnId}: memory search failed`, e);
+      }
+    }
+    const ctxText = contextBlock({ page: input.page, hits, origin: opts.origin });
+    const userText = [input.text, att.note].filter(Boolean).join('\n\n');
+    storedUser = [{ type: 'text', text: ctxText }, { type: 'text', text: userText || '(no text)' }];
+    turnMessages.push({ role: 'user', content: [...att.images, ...storedUser] });
+
+    // ---- the request, fixed for the whole turn (rule 1) ----
+    const { messages: history, summary } = loadHistory(kevin, threadId);
+    // A compaction summary rides in front of the first message after the cut
+    // (request only; the stored rows are untouched).
+    if (summary && history.length) {
+      const first = history[0]!;
+      history[0] = { role: first.role, content: [{ type: 'text', text: `<earlier_in_this_conversation>\n${summary}\n</earlier_in_this_conversation>` }, ...(first.content as Block[])] };
+    }
+
+    const scope = kevin.scope();
+    const facts = factsBlock(db, kevin.domains);
+    const profile = profileBlock(db);
+    const system: Anthropic.Beta.BetaTextBlockParam[] = [
+      // The deep model is used a turn or two at a time; a one-hour cache write of this prefix at its
+      // rates costs more than the reads it would save.
+      { type: 'text', text: scope.system, cache_control: model === config.models.deep ? { type: 'ephemeral' } : { type: 'ephemeral', ttl: '1h' } },
+      // The profile is long and changes rarely: its own breakpoint, so saving a fact or making a space never rewrites it.
+      ...(profile ? [{ type: 'text' as const, text: profile, cache_control: model === config.models.deep ? { type: 'ephemeral' as const } : { type: 'ephemeral' as const, ttl: '1h' as const } }] : []),
+      ...(facts ? [{ type: 'text' as const, text: facts }] : []),
+    ];
+    // Kevin's own tools only. Nothing here reads the web: that is `web_research`, which runs apart from this conversation.
+    const tools = kevin.tools.apiTools((t) => !scope.offTools.has(t.name) && (opts.origin === 'chat' || t.name !== 'shell')) as unknown as Anthropic.Beta.BetaToolUnion[];
+
+    const ctx: ToolCtx = {
+      db, source: opts.origin === 'job' ? 'job' : 'agent', threadId, turnId, jobKey: opts.jobKey ?? null, signal: handle.abort.signal,
+      confirm: (summaryText) => {
+        if (opts.origin === 'job') return Promise.resolve(false);
+        const confirmId = randomUUID();
+        return new Promise<boolean>((resolve) => {
+          const done = (approved: boolean) => {
+            clearTimeout(timer);
+            handle.confirms.delete(confirmId);
+            handle.confirmSummaries.delete(confirmId);
+            bus.publish({ type: 'confirm_resolved', threadId, confirmId, approved });
+            resolve(approved);
+          };
+          const timer = setTimeout(() => done(false), 5 * 60_000);
+          handle.confirms.set(confirmId, done);
+          handle.confirmSummaries.set(confirmId, summaryText);
+          bus.publish({ type: 'confirm_request', threadId, turnId, confirmId, tool: 'confirm', summary: summaryText });
+        });
+      },
+    };
+
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+      if (iter > 0) {
+        const stopped = capReached();
+        if (stopped) return stopped;
+      }
       const stream = anthropic().beta.messages.stream(
         {
           model, max_tokens: 32_000, system, tools,
@@ -287,13 +353,13 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
           let item: UiItem | null = null;
           const prev = handle.items.at(-1);
           if (b.type === 'text' && prev?.type === 'text') {
-            // A cited answer arrives as several adjacent text blocks; it is one piece of prose.
+            // Adjacent text blocks are one piece of prose.
             byIndex.set(e.index, prev);
             return;
           }
           if (b.type === 'text') item = { type: 'text', text: '' };
           else if (b.type === 'thinking') item = { type: 'status', text: '' };
-          else if (b.type === 'tool_use' || b.type === 'server_tool_use') {
+          else if (b.type === 'tool_use') {
             item = { type: 'tool', id: b.id!, name: b.name!, input: {}, state: 'running' };
             pub.tool(item);
           }
@@ -320,21 +386,12 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
       handle.lastPromptTokens = (msg.usage.input_tokens ?? 0) + (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0);
       record(db, { purpose: 'turn', threadId, turnId, jobKey: opts.jobKey }, msg.model || model, msg.usage);
 
-      // Fill in what the stream did not carry: tool inputs, and how server tools ended.
-      const blocks = msg.content as unknown as Record<string, unknown>[];
+      // The stream carried each tool call's name; its input is complete only now.
       const toolItems = new Map<string, ToolItem>(handle.items.filter((i): i is ToolItem => i.type === 'tool').map((i) => [i.id, i]));
-      for (const b of blocks) {
-        if (b.type === 'tool_use' || b.type === 'server_tool_use') {
-          const item = toolItems.get(b.id as string);
-          if (item) item.input = b.input ?? {};
-        } else if (typeof b.type === 'string' && b.type.endsWith('_tool_result') && typeof b.tool_use_id === 'string') {
-          const item = toolItems.get(b.tool_use_id);
-          if (item && item.state === 'running') {
-            const failed = !Array.isArray(b.content) && (b.content as { type?: string } | null)?.type?.endsWith('error');
-            item.state = failed ? 'error' : 'ok';
-            pub.tool(item);
-          }
-        }
+      for (const b of msg.content as unknown as Record<string, unknown>[]) {
+        if (b.type !== 'tool_use') continue;
+        const item = toolItems.get(b.id as string);
+        if (item) item.input = b.input ?? {};
       }
 
       if (msg.stop_reason === 'refusal') {
@@ -343,7 +400,8 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
         return finish('refused');
       }
       turnMessages.push({ role: 'assistant', content: msg.content as unknown as Block[] });
-      if (msg.stop_reason === 'pause_turn') continue; // a long server-tool call; send it back to continue
+      // The API paused a long reply: it is sent back as it stands and the model carries on (after the cap check above).
+      if (msg.stop_reason === 'pause_turn') continue;
 
       const calls = msg.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use');
       if (!calls.length) {
@@ -357,6 +415,7 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
         return finish('done');
       }
 
+      // tools.call never throws, so every call gets a result, including one cut short by Stop.
       const results: Block[] = await Promise.all(
         calls.map(async (call): Promise<Block> => {
           const item = toolItems.get(call.id) ?? { type: 'tool' as const, id: call.id, name: call.name, input: call.input, state: 'running' as const };
@@ -373,22 +432,15 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
           return { type: 'tool_result', tool_use_id: call.id, content: r.text, ...(r.ok ? {} : { is_error: true }) };
         }),
       );
-      if (handle.abort.signal.aborted) throw new DOMException('stopped', 'AbortError');
+      if (handle.abort.signal.aborted) {
+        // Ben pressed Stop while tools were running. What they did is done, so the calls and their
+        // results go into the history; a message he sent meanwhile stays pending and becomes its own turn.
+        turnMessages.push({ role: 'user', content: results });
+        persist('(Ben stopped this turn.)');
+        return finish('stopped');
+      }
       // Rule 3: Ben's mid-turn words go after the last tool result, as his.
       turnMessages.push({ role: 'user', content: [...results, ...(handle.pending.length ? drainPending(kevin, handle, threadId, turnId) : [])] });
-
-      if (opts.spendCapUsd != null) {
-        const cost = (db.prepare('SELECT cost_usd FROM turns WHERE id = ?').get(turnId) as { cost_usd: number }).cost_usd;
-        if (cost >= opts.spendCapUsd) {
-          persist(`(Stopped: this run reached its spend cap of $${opts.spendCapUsd.toFixed(2)}.)`);
-          return finish('error', `spend cap of $${opts.spendCapUsd.toFixed(2)} reached`);
-        }
-      }
-      if (spend(db).blocked) {
-        handle.items.push({ type: 'text', text: 'Stopping here: this month’s spend cap is reached. Raise it in Settings to continue.' });
-        persist('(Stopped: the monthly spend cap was reached.)');
-        return finish('blocked', 'monthly spend cap reached');
-      }
     }
     handle.items.push({ type: 'text', text: `I stopped after ${MAX_ITERATIONS} steps without finishing. Tell me to continue and I’ll pick it up.` });
     persist(`(Stopped after ${MAX_ITERATIONS} steps.)`);
@@ -400,13 +452,14 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
       console.error(`turn ${turnId} failed`, e);
       handle.items.push({ type: 'text', text: `Something went wrong on my side: ${message}` });
     }
-    // Keep only complete exchanges: drop an assistant message whose tool calls never got results.
+    // The stored history must hold only complete exchanges. Tool results are appended right after the
+    // calls run, so a trailing assistant message with tool calls means they did not run: drop it.
     const last = turnMessages.at(-1);
     if (last?.role === 'assistant' && Array.isArray(last.content) && (last.content as Block[]).some((b) => b.type === 'tool_use')) turnMessages.pop();
     try {
       persist(aborted ? '(Ben stopped this turn.)' : `(This turn failed: ${message})`);
     } catch (pe) {
-      console.error('could not persist failed turn', pe);
+      console.error(`turn ${turnId}: could not store the failed turn's messages`, pe);
     }
     return finish(aborted ? 'stopped' : 'error', aborted ? undefined : message);
   }

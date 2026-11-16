@@ -13,7 +13,9 @@ through `@anthropic-ai/sdk`.
 
 ```
 apps/kevin/
-  workspace/   persona.md rules.md people.md profile.md   -> the system prompt; Ben edits these with Claude Code
+  workspace/   persona.md rules.md   -> the fixed part of the system prompt; edited with Claude Code.
+               Nothing about Ben goes here: this repo is public. What Kevin knows about him
+               is the profile, in the database (Settings -> Memory).
   server/      src/ (TypeScript, ESM)  test/ (vitest)
   web/         Vite + React + Tailwind + shadcn/ui, a PWA
   deploy.sh    build, test, promote to /opt/kevin, restart (run through benloe-promote)
@@ -38,7 +40,8 @@ is writable by another uid, and this database holds tax and medical records.
 | File | What it owns |
 |---|---|
 | `agent.ts` | The loop: stream, run tool calls in parallel, feed back, repeat. Read its header before touching it. |
-| `threads.ts` | One turn at a time per thread; mid-turn messages fold into the running turn; titles; compaction. |
+| `threads.ts` | One turn at a time per thread; a message Ben sends mid-turn folds into the running turn when that turn is a chat turn, and otherwise runs as its own chat turn afterwards; titles; compaction. |
+| `process.ts` | Logs unhandled promise rejections instead of letting one end the process. |
 | `prompt.ts` | System prompt assembly and the per-message `<context>` block. |
 | `tools.ts` | Tool registry: validation, audit log, daily-log event, `data_changed` event. |
 | `core/index.ts` | Core tools (query, remember, recall, schedules, shell, files, web_research, ...) and the `system/*` views. |
@@ -59,10 +62,12 @@ is writable by another uid, and this database holds tax and medical records.
 - **Across turns, store only text, tool calls and tool results.** Kevin's
   history changes between turns (facts saved, old turns summarised), which
   would invalidate stored thinking blocks.
-- **The system prompt is two blocks.** The stable one (workspace files, schema,
-  domain notes) carries a 1-hour cache breakpoint and must be byte-identical
-  between requests: no timestamps, sorted tools. Facts are a second block.
-  Time, page and memory hits travel in the user message.
+- **The system prompt is three blocks.** The stable one (persona, rules,
+  schema, domain notes) carries a 1-hour cache breakpoint and must be
+  byte-identical between requests: no timestamps, sorted tools. The profile
+  is the second block, with its own cache breakpoint, so editing it rewrites
+  only what follows. Facts and current state are the third, uncached. Time,
+  page and memory hits travel in the user message.
 - **Ben's mid-turn message is a text block after the last `tool_result`** in the
   same user message. Text placed anywhere else near tool results reads to the
   model as an injection.
@@ -200,20 +205,27 @@ Kevin reads web pages and holds tax and medical records, so a page that
 talks the model into something is the threat to design for.
 
 - **The shell** runs as `kevin-sh`: no network (iptables owner rule, loopback
-  included), sees only its sandbox folder, cannot read `/var/lib/kevin` or the
-  secrets. Kevin's file tools work in that folder and refuse symlinks, because
-  the shell can plant them and the file tools run with Kevin's access.
+  included), an empty environment, resource limits, and its working directory
+  is `/var/lib/kevin-sh/workspace`. It is a separate uid, with no chroot or
+  mount namespace: it can read whatever is world-readable on this box. It
+  cannot read `/var/lib/kevin` (0700, uid `kevin`) or the rendered secrets.
   Scheduled turns get no shell.
-- **`web_research` reads the web in a sub-agent** that receives only the
-  question. `web_fetch` on the main loop fetches only URLs already in the
-  conversation.
+- **Kevin's file tools run as `kevin-sh` too**, through the same launcher, so
+  they can reach exactly what the shell can. The server process never opens a
+  path in the sandbox folder, and `kevin` is not in the `kevin-sh` group, so
+  the kernel refuses if it tried. The path check inside the file-tool script
+  catches mistakes; the uid is the boundary.
+- **The main loop has no web tools.** `web_research` is the only way Kevin
+  reads the web: a sub-call that receives only the question, searches and
+  fetches, and returns text that the main loop treats as data.
 - **Writes are typed tools**; `query` refuses anything but a single read.
   Deleting a space, raising the spend cap and hiding pages are Ben-only
   (`agent: false`).
-- **Not closed:** the main model can see Ben's records and can call
-  `web_search`, so a successful injection could leak a small amount through
-  search terms. Tool inputs are written to `tool_audit` and the daily log in
-  the same private database, so a summary Kevin passes to a tool is stored
+- **Not closed:** the main model can see Ben's records and writes the
+  question it hands to `web_research`, so a successful injection could leak
+  a small amount through that question and the searches made from it. Tool
+  inputs are written to `tool_audit` and the daily log in the same private
+  database, so a summary Kevin passes to a tool is stored
   there too.
 
 ## Costs
@@ -244,13 +256,14 @@ cd server && npm run typecheck && npm test      # vitest; no network, no API cal
 cd web && npm run typecheck && npm test
 ```
 
-To ship: read the diff, commit, push, then
+To ship: read the diff, commit, push, get it merged to `main`, then
 
 ```
-benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/kevin/deploy.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/kevin/deploy.sh
 ```
 
-which fetches that exact commit from GitHub into a root-owned directory,
+which takes the commit id from GitHub (never from this working tree), fetches
+that exact commit into a root-owned directory,
 installs dependencies from the lockfiles, runs both suites, builds a new
 release in `/opt/kevin/releases/` and restarts `kevin-api`. `deploy.sh
 rollback` (through `benloe-promote` the same way) returns to the previous

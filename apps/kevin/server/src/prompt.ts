@@ -1,10 +1,16 @@
 // Prompt assembly.
 //
-// The stable block (persona, rules, people, profile, schema, domain notes) is
-// read once at startup and carries a 1-hour cache breakpoint; with the sorted
-// tool list in front of it, that prefix is byte-identical across turns and
-// threads. Facts follow as a second, small block: saving a fact costs one
-// re-write of the conversation cache, never of the stable prefix.
+// The system prompt is up to three blocks (agent.ts puts them together):
+//
+//  1. The stable block: workspace/persona.md and rules.md, the app's pages,
+//     domain notes and the database schema. Built once at startup (and once
+//     per set of switched-off areas). With the sorted tool list in front of
+//     it, it is byte-identical across turns and threads, and it carries a
+//     cache breakpoint.
+//  2. The profile ("About Ben"), read from the database on every turn, with
+//     its own cache breakpoint. Left out when there is no profile.
+//  3. Facts and each domain's current state, uncached. Saving a fact rewrites
+//     the conversation cache after this point, never blocks 1 and 2.
 //
 // What changes every message (the time, the page, memory hits) travels inside
 // the user message, so history stays append-only.
@@ -19,7 +25,9 @@ import { localStamp } from './time.js';
 const read = (name: string): string => {
   try {
     return readFileSync(join(config.workspaceDir, name), 'utf8').trim();
-  } catch {
+  } catch (e) {
+    // Kevin still starts, with that part of his prompt missing; the log says which.
+    console.error(`workspace file ${name} could not be read`, e);
     return '';
   }
 };

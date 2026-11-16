@@ -54,7 +54,10 @@ describe('a turn', () => {
     const user = req.messages.at(-1);
     expect(user.content[0].text).toMatch(/<context>\nnow: .*\npage Ben is on: \/pantry/);
     expect(user.content.at(-1)).toMatchObject({ text: 'hi', cache_control: { type: 'ephemeral' } });
-    expect(req.tools.map((x: any) => x.name)).toEqual(expect.arrayContaining(['query', 'toy_add', 'web_search', 'web_fetch']));
+    expect(req.tools.map((x: any) => x.name)).toEqual(expect.arrayContaining(['query', 'toy_add', 'web_research']));
+    // The main loop holds Ben's records and every write tool, so it has no tool that reads the web itself.
+    expect(req.tools.every((x: any) => x.input_schema && !x.type)).toBe(true);
+    expect(req.tools.map((x: any) => x.name).filter((n: string) => /^web_(search|fetch)$/.test(n))).toEqual([]);
 
     expect(events.filter((e) => e.type === 'text_delta').map((e: any) => e.text).join('')).toBe('Hello Ben, the pantry is empty.');
     expect(events.map((e) => e.type)).toEqual(expect.arrayContaining(['turn_start', 'turn_end']));

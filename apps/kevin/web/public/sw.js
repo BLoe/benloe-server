@@ -61,6 +61,19 @@ self.addEventListener('fetch', (event) => {
   }
 });
 
+// A notification's link is text the model may have written. It is opened only if it is a path on
+// this origin: resolved against the app's own address, anything that lands on another origin
+// ("//host", "/\\host", a full URL) becomes the home page instead.
+function appPath(link) {
+  if (typeof link !== 'string' || !link.startsWith('/')) return '/';
+  try {
+    const url = new URL(link, self.location.origin);
+    return url.origin === self.location.origin ? url.pathname + url.search + url.hash : '/';
+  } catch {
+    return '/';
+  }
+}
+
 // Payload from the server: { id, title, body, link }.
 self.addEventListener('push', (event) => {
   let data = {};
@@ -75,14 +88,16 @@ self.addEventListener('push', (event) => {
       icon: '/icons/icon-192.png',
       badge: '/icons/badge-96.png',
       tag: data.id != null ? `kevin-${data.id}` : undefined,
-      data: { id: data.id ?? null, link: typeof data.link === 'string' && data.link.startsWith('/') ? data.link : '/' },
+      data: { id: data.id ?? null, link: appPath(data.link) },
     }),
   );
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const { link = '/', id = null } = event.notification.data || {};
+  const { id = null } = event.notification.data || {};
+  // Checked again here: this is the point where the link is acted on.
+  const link = appPath((event.notification.data || {}).link);
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });

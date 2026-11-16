@@ -918,3 +918,68 @@ describe('SQL a model would write', () => {
     expect(kevin.db.prepare('SELECT COUNT(*) AS n FROM money_transactions').get()).toEqual({ n: 0 });
   });
 });
+
+describe('money_import: account choice and pending rows', () => {
+  it('with create_account, a partial name creates a new account instead of importing into the near match', async () => {
+    const { kevin } = await withChase();
+    const before = (await rows(kevin, "SELECT COUNT(*) AS n FROM money_transactions t JOIN money_accounts a ON a.id = t.account_id WHERE a.name = 'Chase checking'"))[0]!.n;
+    const id = await upload(kevin, AMEX, 'card.csv');
+    const args = { attachment_id: id, account: 'Chase', create_account: { type: 'credit_card' as const, institution: 'Chase' } };
+    const preview = await ok(kevin, 'money_import', { ...args, commit: false });
+    expect(preview.account).toMatchObject({ id: null, name: 'Chase', type: 'credit_card', will_create: true });
+    expect(preview.amount_sign.applied).toBe('invert');
+    const r = await ok(kevin, 'money_import', { ...args, commit: true });
+    expect(r.account).toMatchObject({ name: 'Chase', type: 'credit_card', created: true });
+    expect(await rows(kevin, 'SELECT name, type FROM money_accounts ORDER BY name')).toEqual([
+      { name: 'Chase', type: 'credit_card' },
+      { name: 'Chase checking', type: 'checking' },
+    ]);
+    expect((await rows(kevin, "SELECT COUNT(*) AS n FROM money_transactions t JOIN money_accounts a ON a.id = t.account_id WHERE a.name = 'Chase checking'"))[0]!.n).toBe(before);
+  });
+
+  it('with create_account, an exact name (any case) imports into the existing account; without it a unique partial name still resolves', async () => {
+    const { kevin, attachment } = await withChase();
+    const exact = await ok(kevin, 'money_import', { attachment_id: attachment, account: 'chase CHECKING', create_account: { type: 'credit_card' }, commit: false });
+    expect(exact.account).toMatchObject({ name: 'Chase checking', type: 'checking', will_create: false });
+    const partial = await ok(kevin, 'money_import', { attachment_id: attachment, account: 'Chase', commit: false });
+    expect(partial.account).toMatchObject({ name: 'Chase checking', will_create: false });
+  });
+
+  it('marks a pending row posted when a later file shows it posted, and counts it in spending from then on', async () => {
+    const kevin = await makeKevin([money]);
+    const head = 'Date,Description,Amount,Status';
+    const first = await upload(kevin, `${head}\n10/20/2026,CORNER CAFE,-9.50,Pending\n10/19/2026,CITY PARKING,-4.00,Posted\n`, 'a.csv');
+    const args = { account: 'Everyday', create_account: { type: 'checking' as const } };
+    await ok(kevin, 'money_import', { ...args, attachment_id: first, commit: true });
+    const spent = async () => (await rows(kevin, "SELECT ROUND(SUM(spent), 2) AS s FROM money_spending WHERE month = '2026-10'"))[0]!.s;
+    expect(await spent()).toBe(4);
+
+    const second = await upload(kevin, `${head}\n10/20/2026,CORNER CAFE,-9.50,Posted\n10/19/2026,CITY PARKING,-4.00,Posted\n`, 'b.csv');
+    const preview = await ok(kevin, 'money_import', { ...args, attachment_id: second, commit: false });
+    expect(preview).toMatchObject({ new_count: 0, duplicate_count: 2, settled_count: 1 });
+    expect((await rows(kevin, 'SELECT SUM(pending) AS p FROM money_transactions'))[0]!.p).toBe(1);
+
+    const r = await ok(kevin, 'money_import', { ...args, attachment_id: second, commit: true });
+    expect(r).toMatchObject({ inserted: 0, settled_count: 1 });
+    expect(r.note).toMatch(/1 that had been pending is now marked posted/);
+    expect(await rows(kevin, 'SELECT description, pending FROM money_transactions ORDER BY date')).toEqual([
+      { description: 'CITY PARKING', pending: 0 },
+      { description: 'CORNER CAFE', pending: 0 },
+    ]);
+    expect(await spent()).toBe(13.5);
+
+    const again = await ok(kevin, 'money_import', { ...args, attachment_id: second, commit: true });
+    expect(again).toMatchObject({ inserted: 0, settled_count: 0 });
+    expect(again.note).toMatch(/already recorded/);
+  });
+
+  it('a posted row is not turned back into pending by an older file', async () => {
+    const kevin = await makeKevin([money]);
+    const head = 'Date,Description,Amount,Status';
+    const args = { account: 'Everyday', create_account: { type: 'checking' as const } };
+    await ok(kevin, 'money_import', { ...args, attachment_id: await upload(kevin, `${head}\n10/20/2026,CORNER CAFE,-9.50,Posted\n`, 'new.csv'), commit: true });
+    const r = await ok(kevin, 'money_import', { ...args, attachment_id: await upload(kevin, `${head}\n10/20/2026,CORNER CAFE,-9.50,Pending\n`, 'old.csv'), commit: true });
+    expect(r).toMatchObject({ inserted: 0, settled_count: 0 });
+    expect(await rows(kevin, 'SELECT pending FROM money_transactions')).toEqual([{ pending: 0 }]);
+  });
+});

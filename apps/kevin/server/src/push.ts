@@ -23,8 +23,20 @@ export const transport = {
   send: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }, payload: string) => webpush.sendNotification(sub, payload, { TTL: 24 * 3600 }),
 };
 
+/**
+ * A notification link is a path inside this app, or nothing. Tapping it navigates, and the text
+ * can come from the model, so anything a browser could read as another site is dropped:
+ * "//host" and "/\host" (browsers treat a backslash as a slash), any backslash, and control
+ * characters (browsers strip tabs and newlines from URLs before parsing them).
+ */
+export function appLink(link: unknown): string | null {
+  if (typeof link !== 'string' || link.length > 500) return null;
+  if (!/^\/(?![/\\])/.test(link) || /[\\\u0000-\u001f\u007f]/.test(link)) return null;
+  return link;
+}
+
 export async function notify(db: DB, n: NotifyInput): Promise<{ id: number; pushed: number }> {
-  const link = n.link && n.link.startsWith('/') ? n.link : null;
+  const link = appLink(n.link);
   const at = nowIso();
   const source = n.source ?? 'kevin';
   const id = Number(db.prepare('INSERT INTO notifications (at, title, body, link, source) VALUES (?,?,?,?,?)').run(at, n.title, n.body ?? '', link, source).lastInsertRowid);

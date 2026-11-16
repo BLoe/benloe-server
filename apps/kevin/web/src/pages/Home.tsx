@@ -5,6 +5,7 @@ import { NotificationItem, useOpenNotification } from '@/components/shell/Notifi
 import { List, ListRow, Page, Section } from '@/components/page';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { appPath } from '@/lib/links';
 import { api } from '@/lib/api';
 import { openChat, uploadFile } from '@/lib/chat';
 import { dateTime, greeting, longDate } from '@/lib/format';
@@ -86,7 +87,7 @@ function DomainCards({ domain }: { domain: string }) {
     <>
       {cards.map((c, i) => {
         const body = (
-          <Card className={c.link ? 'h-full transition-colors hover:bg-muted' : 'h-full'}>
+          <Card className={appPath(c.link) !== null ? 'h-full transition-colors hover:bg-muted' : 'h-full'}>
             <CardHeader>
               <CardTitle>{c.title}</CardTitle>
             </CardHeader>
@@ -101,8 +102,9 @@ function DomainCards({ domain }: { domain: string }) {
             </CardContent>
           </Card>
         );
-        return c.link?.startsWith('/') ? (
-          <Link key={`${domain}-${i}`} to={c.link} className="block rounded-xl">
+        const to = appPath(c.link);
+        return to !== null ? (
+          <Link key={`${domain}-${i}`} to={to} className="block rounded-xl">
             {body}
           </Link>
         ) : (

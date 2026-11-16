@@ -1,8 +1,9 @@
 // Threads: one turn at a time per thread, threads independent of each other.
-// A message sent while a turn is running is folded into that turn.
+// A message Ben sends while one of his own chat turns is running is folded into
+// that turn; anything else waits its turn in the thread's queue.
 import { randomUUID } from 'node:crypto';
 import { bus } from './bus.js';
-import { nowIso } from './db.js';
+import { nowIso, parseJson } from './db.js';
 import type { Kevin } from './kevin.js';
 import { small } from './llm.js';
 import { indexItem } from './memory.js';
@@ -44,9 +45,9 @@ export function getThread(kevin: Kevin, id: string) {
   const handle = states.get(id)?.handle ?? null;
   const turns = (kevin.db.prepare('SELECT id, started_at, ended_at, status, model, user_ui, assistant_ui, error, cost_usd FROM turns WHERE thread_id = ? ORDER BY id').all(id) as Record<string, unknown>[]).map((t) => ({
     id: t.id as number, started_at: t.started_at, ended_at: t.ended_at, status: t.status, model: t.model, error: t.error, cost_usd: t.cost_usd,
-    user: JSON.parse(t.user_ui as string) as unknown,
+    user: parseJson<unknown>(t.user_ui, { text: '', attachments: [], page: null }),
     // A running turn's items live in memory until it ends.
-    items: handle && handle.turnId === t.id ? handle.items : (JSON.parse(t.assistant_ui as string) as unknown),
+    items: handle && handle.turnId === t.id ? handle.items : parseJson<unknown>(t.assistant_ui, []),
   }));
   // Confirms waiting on Ben, so a page loaded mid-turn can still show the buttons.
   const confirms = handle ? [...handle.confirmSummaries].map(([confirmId, summary]) => ({ confirmId, summary, turnId: handle.turnId })) : [];
@@ -54,28 +55,35 @@ export function getThread(kevin: Kevin, id: string) {
 }
 
 /**
- * Sends a message into a thread. If a turn is running there, the message is
- * folded into it and this resolves with null; otherwise it resolves with the
- * new turn's result when that turn ends.
+ * Sends a message into a thread.
+ *
+ * A chat message that arrives while a chat turn is running there is folded into that turn, and this
+ * resolves with null. In every other case the message becomes its own turn, queued behind whatever
+ * the thread is doing, and this resolves with that turn's result. In particular a chat message is
+ * never folded into a turn a schedule started: that turn has no shell, denies every confirm and is
+ * charged to the schedule's spend cap, and none of that may apply to something Ben typed.
  */
 export function send(kevin: Kevin, threadId: string, input: TurnInput, opts: TurnOpts = { origin: 'chat' }): Promise<TurnResult | null> {
   const s = stateOf(threadId);
-  if (s.handle && opts.origin === 'chat') {
+  if (s.handle && s.handle.origin === 'chat' && opts.origin === 'chat') {
     s.handle.pending.push(input);
     return Promise.resolve(null);
   }
   const run = s.chain.then(async () => {
-    const handle: TurnHandle = { turnId: 0, items: [], abort: new AbortController(), pending: [], confirms: new Map(), confirmSummaries: new Map(), lastPromptTokens: 0 };
+    const handle: TurnHandle = { origin: opts.origin, turnId: 0, items: [], abort: new AbortController(), pending: [], confirms: new Map(), confirmSummaries: new Map(), lastPromptTokens: 0 };
     s.handle = handle;
     try {
       const result = await runTurn(kevin, threadId, input, opts, handle);
       // Titles and compaction are model calls: only after a turn that really ran.
       if (result.status === 'done' || result.status === 'stopped') void afterTurn(kevin, threadId, handle).catch((e) => console.error('afterTurn failed', e));
-      // Anything that arrived too late to fold becomes the next turn.
-      for (const late of handle.pending.splice(0)) queueMicrotask(() => void send(kevin, threadId, late, opts));
       return result;
     } finally {
       s.handle = null;
+      // Whatever Ben sent that the turn did not get to (it arrived too late to fold, or the turn was
+      // stopped or failed first) is sent again as his own chat turn, however this turn was started.
+      for (const late of handle.pending.splice(0)) {
+        send(kevin, threadId, late, { origin: 'chat' }).catch((e) => console.error(`thread ${threadId}: a message that arrived mid-turn could not be run`, e));
+      }
     }
   });
   s.chain = run.catch(() => undefined);
@@ -110,8 +118,8 @@ async function afterTurn(kevin: Kevin, threadId: string, handle: TurnHandle): Pr
   const turnCount = (db.prepare('SELECT COUNT(*) AS n FROM turns WHERE thread_id = ?').get(threadId) as { n: number }).n;
   if (t.title === 'New chat' && turnCount >= 1) {
     const first = db.prepare('SELECT user_ui, assistant_ui FROM turns WHERE thread_id = ? ORDER BY id LIMIT 1').get(threadId) as { user_ui: string; assistant_ui: string };
-    const user = (JSON.parse(first.user_ui) as { text: string }).text.slice(0, 600);
-    const reply = (JSON.parse(first.assistant_ui) as { type: string; text?: string }[]).filter((i) => i.type === 'text').map((i) => i.text).join(' ').slice(0, 600);
+    const user = String(parseJson<{ text?: string }>(first.user_ui, {}).text ?? '').slice(0, 600);
+    const reply = parseJson<{ type: string; text?: string }[]>(first.assistant_ui, []).filter((i) => i.type === 'text').map((i) => i.text).join(' ').slice(0, 600);
     try {
       const title = (await small(db, { purpose: 'title', threadId }, 'Write a title of at most five words for this conversation. Reply with the title only, no quotes.', `Ben: ${user}\n\nKevin: ${reply}`, 400))
         .replace(/^["'\s]+|["'\s.]+$/g, '').slice(0, 80);
@@ -151,7 +159,8 @@ export async function compact(kevin: Kevin, threadId: string, keepTurns = KEEP_T
   if (!rows.length) return false;
   const text = rows
     .map((r) => {
-      const blocks = JSON.parse(r.content) as Record<string, unknown>[];
+      const blocks = parseJson<Record<string, unknown>[]>(r.content, []);
+      if (!Array.isArray(blocks)) return '';
       return blocks
         .map((b) => {
           if (b.type === 'text') return `${r.role === 'user' ? 'Ben' : 'Kevin'}: ${b.text as string}`;

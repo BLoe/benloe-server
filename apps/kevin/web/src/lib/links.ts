@@ -10,6 +10,23 @@ const PATH = `/(?:${PAGES.join('|')})(?:\\?tab=[a-z]+)?|/s/[a-z0-9][a-z0-9-]*|/c
 const IN_TEXT = new RegExp(`(?<![\\w/.:~@#-])(${PATH})(?![\\w/-]|\\.\\w)`, 'g');
 const WHOLE = new RegExp(`^(?:${PATH})$`);
 
+/**
+ * A link that came from data (a notification, a markdown link Kevin wrote) as a path the router may
+ * navigate to, or null. Navigating to "//host" or "/\\host" would leave the app: the browser reads
+ * both as another site, and the router falls back to a full page load when it cannot push the URL.
+ * So the link is resolved the way the browser would resolve it and kept only if it stays on this origin.
+ */
+export function appPath(link: unknown, origin: string = globalThis.location?.origin ?? 'https://app.invalid'): string | null {
+  if (typeof link !== 'string' || !link.startsWith('/')) return null;
+  try {
+    const base = new URL(origin);
+    const url = new URL(link, base);
+    return url.origin === base.origin ? url.pathname + url.search + url.hash : null;
+  } catch {
+    return null;
+  }
+}
+
 /** True when the whole string is an in-app path (for inline code like `/pantry`). */
 export const isAppPath = (text: string): boolean => WHOLE.test(text);
 

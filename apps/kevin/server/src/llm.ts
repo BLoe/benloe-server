@@ -103,6 +103,14 @@ export function spend(db: DB): Spend {
   return { monthUsd, capUsd, remainingUsd: Math.max(0, capUsd - monthUsd), blocked: monthUsd >= capUsd };
 }
 
+/** The model declined. Asking again with the same input gets the same answer, so callers do not retry it. */
+export class RefusalError extends Error {
+  constructor() {
+    super('The model declined this request.');
+    this.name = 'RefusalError';
+  }
+}
+
 /** A one-shot text completion on the small model. Used for titles, summaries, extraction. */
 export async function small(db: DB, tag: UsageTag, system: string, user: string | Anthropic.ContentBlockParam[], maxTokens = 2000): Promise<string> {
   const res = await anthropic().messages.create({
@@ -113,6 +121,6 @@ export async function small(db: DB, tag: UsageTag, system: string, user: string 
     messages: [{ role: 'user', content: user }],
   });
   record(db, tag, config.models.small, res.usage);
-  if (res.stop_reason === 'refusal') throw new Error('The model declined this request.');
+  if (res.stop_reason === 'refusal') throw new RefusalError();
   return res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('').trim();
 }

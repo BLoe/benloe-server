@@ -71,23 +71,89 @@ function dayMatches(c: Cron, p: { d: number; dow: number }): boolean {
   return c.domStar || c.dowStar ? dom && dow : dom || dow;
 }
 
-/** The first minute strictly after `after` that matches, searching up to 366 days. */
+const MIN = 60_000;
+const DAY = 24 * 60 * MIN;
+
+/** A wall-clock time as a number: the UTC timestamp that would show these same fields. */
+const wallOf = (t: number, tz: string): number => {
+  const p = parts(new Date(t), tz);
+  return Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi);
+};
+/** The zone's offset from UTC at instant `t`, in milliseconds (negative west of Greenwich). */
+const offsetAt = (t: number, tz: string): number => wallOf(t, tz) - Math.floor(t / MIN) * MIN;
+
+/**
+ * The instant at which a wall-clock time happens in `tz`.
+ *
+ * - It happens once on almost every day: that instant.
+ * - It happens twice when clocks go back: the first of the two.
+ * - It never happens when clocks go forward over it: the first minute after
+ *   the gap (02:30 on a US spring-forward day gives 03:00 daylight time).
+ *
+ * Assumes at most one offset change within a day either side of the time.
+ */
+export function wallToInstant(wall: number, tz: string): number {
+  const before = offsetAt(wall - DAY, tz);
+  const after = offsetAt(wall + DAY, tz);
+  const hits = [wall - before, wall - after].filter((t) => wallOf(t, tz) === wall);
+  if (hits.length) return Math.min(...hits);
+  // In a gap. `lo` is still on the old offset and `hi` is on the new one; the change is between them.
+  let lo = Math.min(wall - before, wall - after);
+  let hi = Math.max(wall - before, wall - after);
+  const old = offsetAt(lo, tz);
+  while (hi - lo > MIN) {
+    const mid = lo + Math.floor((hi - lo) / MIN / 2) * MIN;
+    if (offsetAt(mid, tz) === old) lo = mid;
+    else hi = mid;
+  }
+  return hi;
+}
+
+/**
+ * The first minute strictly after `after` that matches, searching up to 366 days.
+ *
+ * Across a daylight-saving change, an expression that names its hours ("30 1 * * *")
+ * is matched against the wall clock and fires once per wall-clock time: at the first
+ * 01:30 when the hour repeats, and at the first minute after the gap when its time is
+ * skipped (several matches inside one gap are that same single minute). An expression
+ * whose hour field covers every hour ("0 * * * *", "0,30 * * * *") is an interval in
+ * disguise and is matched against real elapsed minutes, so it keeps its rhythm through
+ * a repeated hour.
+ */
 export function nextCron(expr: string, after: Date, tz = config.timezone): Date | null {
   const c = parseCron(expr);
-  const MIN = 60_000;
   let t = Math.floor(after.getTime() / MIN) * MIN + MIN;
   const end = t + 366 * 24 * 60 * MIN;
-  // Skips whole days and hours that cannot match, so an expression that never
+  if (c.hour.size < 24) {
+    const hours = [...c.hour].sort((a, b) => a - b);
+    const minutes = [...c.minute].sort((a, b) => a - b);
+    const start = parts(after, tz);
+    // Wall times more than a day before `after` cannot map to an instant after it.
+    const floor = wallOf(after.getTime(), tz) - DAY;
+    // One day before the local date of `after`, because `after` may sit in a repeated hour.
+    for (let i = -1; i <= 368; i++) {
+      const day = new Date(Date.UTC(start.y, start.mo - 1, start.d + i));
+      if (!c.month.has(day.getUTCMonth() + 1) || !dayMatches(c, { d: day.getUTCDate(), dow: day.getUTCDay() })) continue;
+      for (const h of hours) {
+        for (const mi of minutes) {
+          const wall = day.getTime() + (h * 60 + mi) * MIN;
+          if (wall < floor) continue;
+          const at = wallToInstant(wall, tz);
+          if (at > end) return null;
+          // Wall times are visited in order and map to instants in the same order, so the first one past `after` is the next.
+          if (at >= t) return new Date(at);
+        }
+      }
+    }
+    return null;
+  }
+  // Skips whole days that cannot match, so an expression that never
   // fires costs a few thousand steps, not half a million.
   while (t <= end) {
     const p = parts(new Date(t), tz);
     if (!c.month.has(p.mo) || !dayMatches(c, p)) {
       // To just before the next local midnight; an hour early, so a DST shift cannot carry us past it.
       t += Math.max(1, (23 - p.h) * 60 - p.mi) * MIN + (p.h === 23 ? (59 - p.mi) * MIN : 0);
-      continue;
-    }
-    if (!c.hour.has(p.h)) {
-      t += (60 - p.mi) * MIN;
       continue;
     }
     if (c.minute.has(p.mi)) return new Date(t);

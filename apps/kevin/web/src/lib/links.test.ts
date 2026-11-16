@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAppPath, remarkAppLinks, splitPaths } from './links';
+import { appPath, isAppPath, remarkAppLinks, splitPaths } from './links';
 
 const paths = (text: string) => splitPaths(text).flatMap((p) => (typeof p === 'string' ? [] : [p.path]));
 
@@ -69,5 +69,25 @@ describe('remarkAppLinks', () => {
   it('reaches text nested in emphasis and lists', () => {
     const out = run([{ type: 'strong', children: [text('see /jobs')] }]) as unknown as { children: { url?: string }[] }[];
     expect(out[0]!.children[1]).toMatchObject({ url: '/jobs' });
+  });
+});
+
+describe('appPath', () => {
+  const origin = 'https://kevin.example';
+  it('keeps a path on this site as it is', () => {
+    for (const ok of ['/', '/pantry', '/s/car-maintenance', '/money?tab=budgets', '/settings?tab=memory#facts', '/chat/0b7e6f1c-9d1e']) expect(appPath(ok, origin), ok).toBe(ok);
+  });
+
+  it('refuses anything the browser would open on another site', () => {
+    for (const bad of [
+      '//evil.example/signin', '/\\evil.example/signin', '/\\/evil.example', '\\\\evil.example', '/\t/evil.example', '/\n/evil.example', '/\r\n/evil.example',
+      'https://evil.example/', 'javascript:alert(1)', 'data:text/html,x', 'pantry', '', ' /pantry', null, undefined, 5, {},
+    ]) expect(appPath(bad, origin), JSON.stringify(bad)).toBeNull();
+  });
+
+  it('normalises what it keeps, so the router gets the path the browser would have used', () => {
+    expect(appPath('/a/../pantry', origin)).toBe('/pantry');
+    expect(appPath('/ok\\x', origin)).toBe('/ok/x');
+    expect(appPath('/pantry?next=//evil.example', origin)).toBe('/pantry?next=//evil.example');
   });
 });

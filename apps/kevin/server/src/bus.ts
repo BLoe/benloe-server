@@ -28,9 +28,17 @@ class Bus extends EventEmitter {
   publish(e: BusEvent): void {
     this.emit('event', e);
   }
+  /** A listener that throws is logged and skipped: one broken connection must not fail the turn that published. */
   subscribe(fn: (e: BusEvent) => void): () => void {
-    this.on('event', fn);
-    return () => this.off('event', fn);
+    const guarded = (e: BusEvent) => {
+      try {
+        fn(e);
+      } catch (err) {
+        console.error(`event listener failed on ${e.type}`, err);
+      }
+    };
+    this.on('event', guarded);
+    return () => this.off('event', guarded);
   }
 }
 

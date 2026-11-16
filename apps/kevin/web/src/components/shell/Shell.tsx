@@ -5,6 +5,7 @@ import { ChatPanel } from '@/components/chat/ChatPanel';
 import { LoadingRows } from '@/components/page/states';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { appPath } from '@/lib/links';
 import { getPage, openChat, setDocked, setPage, startChat, useChat } from '@/lib/chat';
 import { subscribe } from '@/lib/events';
 import { useIsDesktop, useVisualViewport } from '@/lib/hooks';
@@ -199,9 +200,10 @@ export function Shell() {
     if (!('serviceWorker' in navigator)) return;
     const onMessage = (e: MessageEvent) => {
       const d = e.data as { type?: string; link?: string; notificationId?: number | null } | null;
-      if (d?.type !== 'navigate' || typeof d.link !== 'string' || !d.link.startsWith('/')) return;
-      if (typeof d.notificationId === 'number') markRead([d.notificationId]);
-      void navigate(d.link);
+      const path = d?.type === 'navigate' ? appPath(d.link) : null;
+      if (path === null) return;
+      if (typeof d?.notificationId === 'number') markRead([d.notificationId]);
+      void navigate(path);
     };
     navigator.serviceWorker.addEventListener('message', onMessage);
     return () => navigator.serviceWorker.removeEventListener('message', onMessage);

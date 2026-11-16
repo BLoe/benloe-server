@@ -11,7 +11,7 @@ export const config = {
   production: env.NODE_ENV === 'production',
   /** DB, documents, uploads, suggestions. Outside the repo: see CLAUDE.md. */
   dataDir: resolve(env.KEVIN_DATA_DIR ?? '/var/lib/kevin'),
-  /** persona.md, rules.md, people.md, profile.md — shipped with the code. */
+  /** persona.md and rules.md, shipped with the code. Nothing about Ben is in them; his profile is in the database. */
   workspaceDir: resolve(env.KEVIN_WORKSPACE_DIR ?? join(here, '../../workspace')),
   /** Built frontend. */
   webDir: resolve(env.KEVIN_WEB_DIR ?? join(here, '../../web/dist')),

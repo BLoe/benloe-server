@@ -1,5 +1,6 @@
 import { CircleAlert, CircleCheck, X } from 'lucide-react';
 import { useNavigate } from 'react-router';
+import { appPath } from '@/lib/links';
 import { dismissToast, useToasts } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
@@ -10,10 +11,11 @@ export function Toaster() {
   return (
     <div className="pointer-events-none fixed inset-x-0 top-0 z-[60] flex flex-col items-center gap-2 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:inset-x-auto lg:top-auto lg:bottom-4 lg:left-4 lg:items-start lg:px-0 lg:pt-0" aria-live="polite">
       {toasts.map((t) => {
-        const clickable = !!t.link || !!t.onClick;
+        const path = appPath(t.link);
+        const clickable = path !== null || !!t.onClick;
         const open = () => {
           t.onClick?.();
-          if (t.link) void navigate(t.link);
+          if (path !== null) void navigate(path);
           dismissToast(t.id);
         };
         return (

@@ -2,8 +2,10 @@
 # One-time (idempotent) system setup for Kevin. Run as root; safe to re-run.
 #
 #   kevin      runs the server. Owns /var/lib/kevin (0700): database, documents, uploads.
-#   kevin-sh   runs the agent's shell tool. Owns only /var/lib/kevin-sh/workspace
-#              and has no network: an iptables owner rule rejects everything it sends.
+#   kevin-sh   runs the agent's shell tool and its sandbox file tools. Owns only
+#              /var/lib/kevin-sh/workspace and has no network: an iptables owner rule
+#              rejects everything it sends. It is an ordinary unprivileged uid, not a
+#              jail: it can read whatever on this box is world-readable.
 #
 # The split matters because the shell executes commands a model wrote, and the
 # model reads web pages. A command running as `kevin` could read the API key
@@ -11,7 +13,7 @@
 set -euo pipefail
 
 # Like deploy.sh, this is run from a root-owned checkout of a pushed commit:
-#   benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/kevin/setup.sh
+#   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/kevin/setup.sh
 case "$(cd "$(dirname "$0")" && pwd)" in
   /opt/benloe-src/*) ;;
   *) echo "Run this through benloe-promote (see the comment above)." >&2; exit 1 ;;
@@ -19,19 +21,23 @@ esac
 
 id kevin >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin kevin
 id kevin-sh >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin kevin-sh
-# kevin joins kevin-sh's group so the file tools can exchange files with the shell.
-usermod -a -G kevin-sh kevin
+# kevin is deliberately not in kevin-sh's group. The server never opens anything in the sandbox
+# folder itself: its file tools run through the launcher below, as kevin-sh, exactly like the shell.
+# With no group access the kernel enforces that. (Earlier versions of this script added kevin to
+# the group; this takes it out again. It applies to the server from its next restart.)
+case " $(id -nG kevin) " in *" kevin-sh "*) gpasswd -d kevin kevin-sh >/dev/null ;; esac
 
 install -d -o kevin -g kevin -m 0700 /var/lib/kevin
 install -d -o root -g root -m 0755 /var/lib/kevin-sh
-install -d -o kevin-sh -g kevin-sh -m 2770 /var/lib/kevin-sh/workspace
+install -d -o kevin-sh -g kevin-sh -m 0700 /var/lib/kevin-sh/workspace
 install -d -o root -g root -m 0755 /opt/kevin /opt/kevin/releases /usr/local/lib/benloe
 
 # The shell launcher: what `sudo -u kevin-sh` is allowed to run.
 cat > /usr/local/lib/benloe/kevin-shell <<'SH'
 #!/bin/sh
-# Installed by apps/kevin/setup.sh. Runs one command as kevin-sh, in its
-# workspace, with an empty environment and resource limits.
+# Installed by apps/kevin/setup.sh. Runs one bash script (its first argument) as
+# kevin-sh, in its workspace, with an empty environment and resource limits.
+# Standard input is passed through: the server's file tools send their request on it.
 set -eu
 cd /var/lib/kevin-sh/workspace
 umask 007

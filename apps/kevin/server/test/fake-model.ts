@@ -17,6 +17,8 @@ export const toolUse = (id: string, name: string, input: unknown) => ({ type: 't
 export class FakeModel {
   queue: Reply[] = [];
   requests: Record<string, any>[] = [];
+  /** When set and it returns a reply, that reply answers the request instead of the next queued one. */
+  route: ((params: Record<string, any>) => Reply | undefined) | null = null;
 
   constructor() {
     setAnthropicForTests({
@@ -33,7 +35,7 @@ export class FakeModel {
   private async next(params: Record<string, any>, signal?: AbortSignal) {
     // Snapshot: the caller keeps mutating its arrays after the request.
     this.requests.push(JSON.parse(JSON.stringify(params)));
-    const r = this.queue.shift();
+    const r = this.route?.(params) ?? this.queue.shift();
     if (!r) throw new Error(`FakeModel: no reply queued for request ${this.requests.length}`);
     await r.before?.();
     if (signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });

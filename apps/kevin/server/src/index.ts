@@ -5,7 +5,10 @@ import { runtime } from './core/index.js';
 import { createHttp } from './http.js';
 import { JobRunner } from './jobs.js';
 import { createKevin } from './kevin.js';
+import { logUnhandledRejections } from './process.js';
 
+logUnhandledRejections();
+// Everything this process creates (database, documents, uploads, backups) is for its own uid only.
 process.umask(0o077);
 for (const d of ['', 'documents', 'uploads', 'backups']) mkdirSync(join(config.dataDir, d), { recursive: true, mode: 0o700 });
 

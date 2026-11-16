@@ -1,12 +1,14 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { bus, type BusEvent } from '../src/bus.js';
+import { config } from '../src/config.js';
 import { defineDomain } from '../src/domains.js';
 import { costOf } from '../src/llm.js';
 import { ftsQuery, indexItem, keywordSearch } from '../src/memory.js';
 import { nextCron, nextRun, parseCron, localDay } from '../src/time.js';
 import { defineTool } from '../src/tools.js';
-import { sandboxPath } from '../src/core/index.js';
+import { sandboxRel } from '../src/core/index.js';
 import { call, makeKevin, ok, view } from './helpers.js';
 
 const toy = defineDomain({
@@ -34,6 +36,59 @@ describe('time', () => {
     expect(nextCron('0 18 * * 0', new Date('2026-07-01T00:00:00Z'), tz)!.toISOString()).toBe('2026-07-05T22:00:00.000Z');
     expect(nextCron('*/15 9-10 * * 1-5', new Date('2026-11-13T14:16:00Z'), tz)!.toISOString()).toBe('2026-11-13T14:30:00.000Z');
     expect(nextCron('0 0 31 2 *', new Date('2026-01-01T00:00:00Z'), tz)).toBeNull();
+  });
+  const next = (expr: string, after: string, zone = tz) => nextCron(expr, new Date(after), zone)?.toISOString() ?? null;
+  it('fires a wall-clock time once when the clocks go back and the hour happens twice', () => {
+    // 2026-11-01 in New York: 01:00-01:59 happens in daylight time (05:xxZ) and again in standard time (06:xxZ).
+    expect(next('30 1 * * *', '2026-10-31T12:00:00Z')).toBe('2026-11-01T05:30:00.000Z'); // the first 01:30
+    expect(next('30 1 * * *', '2026-11-01T05:30:00Z')).toBe('2026-11-02T06:30:00.000Z'); // not the second 01:30 an hour later
+    expect(next('30 1 * * *', '2026-11-01T06:10:00Z')).toBe('2026-11-02T06:30:00.000Z'); // asked from inside the repeated hour
+    expect(next('50 1 * * *', '2026-11-01T05:45:00Z')).toBe('2026-11-01T05:50:00.000Z');
+    expect(next('0,30 1 * * *', '2026-11-01T05:00:00Z')).toBe('2026-11-01T05:30:00.000Z');
+    expect(next('0,30 1 * * *', '2026-11-01T05:30:00Z')).toBe('2026-11-02T06:00:00.000Z');
+    expect(next('0 2 * * *', '2026-11-01T05:30:00Z')).toBe('2026-11-01T07:00:00.000Z'); // 02:00 EST, after both 01:xx hours
+    // An every-hour expression is an interval: it fires in each real hour, including both 01:00s.
+    expect(next('0 * * * *', '2026-11-01T04:00:00Z')).toBe('2026-11-01T05:00:00.000Z');
+    expect(next('0 * * * *', '2026-11-01T05:00:00Z')).toBe('2026-11-01T06:00:00.000Z');
+    expect(next('0 * * * *', '2026-11-01T06:00:00Z')).toBe('2026-11-01T07:00:00.000Z');
+  });
+  it('fires a wall-clock time once, just after the gap, when the clocks go forward over it', () => {
+    // 2027-03-14 in New York: 02:00-02:59 does not happen; 01:59 EST (06:59Z) is followed by 03:00 EDT (07:00Z).
+    expect(next('30 2 * * *', '2027-03-13T12:00:00Z')).toBe('2027-03-14T07:00:00.000Z');
+    expect(next('30 2 * * *', '2027-03-14T07:00:00Z')).toBe('2027-03-15T06:30:00.000Z'); // once, then the normal 02:30 EDT
+    // Four matches inside the gap are one firing.
+    expect(next('*/15 2 * * *', '2027-03-14T06:00:00Z')).toBe('2027-03-14T07:00:00.000Z');
+    expect(next('*/15 2 * * *', '2027-03-14T07:00:00Z')).toBe('2027-03-15T06:00:00.000Z');
+    // A time in the gap and the real 03:30 the same day are two firings, in order.
+    expect(next('30 2,3 * * *', '2027-03-14T06:00:00Z')).toBe('2027-03-14T07:00:00.000Z');
+    expect(next('30 2,3 * * *', '2027-03-14T07:00:00Z')).toBe('2027-03-14T07:30:00.000Z');
+    expect(next('30 1 * * *', '2027-03-14T00:00:00Z')).toBe('2027-03-14T06:30:00.000Z'); // the hour before is untouched
+    expect(next('0 * * * *', '2027-03-14T06:00:00Z')).toBe('2027-03-14T07:00:00.000Z');
+  });
+  it('is unaffected on those dates in a zone that does not change its clocks', () => {
+    // Phoenix is UTC-7 all year.
+    expect(next('30 1 * * *', '2026-10-31T12:00:00Z', 'America/Phoenix')).toBe('2026-11-01T08:30:00.000Z');
+    expect(next('30 1 * * *', '2026-11-01T08:30:00Z', 'America/Phoenix')).toBe('2026-11-02T08:30:00.000Z');
+    expect(next('30 2 * * *', '2027-03-13T12:00:00Z', 'America/Phoenix')).toBe('2027-03-14T09:30:00.000Z');
+    expect(next('30 2 * * *', '2027-03-14T09:30:00Z', 'America/Phoenix')).toBe('2027-03-15T09:30:00.000Z');
+    expect(next('30 2 * * *', '2027-03-13T12:00:00Z', 'UTC')).toBe('2027-03-14T02:30:00.000Z');
+  });
+  it('never fires a schedule twice for one wall-clock time, and never skips a day, through a whole year', () => {
+    for (const zone of [tz, 'America/Phoenix', 'Europe/London', 'Australia/Lord_Howe']) {
+      for (const expr of ['30 1 * * *', '30 2 * * *', '0 0 * * *', '59 23 * * *']) {
+        let at = new Date('2026-06-01T00:00:00Z');
+        const fired: number[] = [];
+        for (let i = 0; i < 365; i++) {
+          at = nextCron(expr, at, zone)!;
+          fired.push(at.getTime());
+        }
+        const gaps = fired.slice(1).map((t, i) => (t - fired[i]!) / 3600_000);
+        // One firing per calendar day: always within an hour and a half of 24 hours apart (the gap rule can move one by up to an hour).
+        expect(Math.min(...gaps), `${expr} ${zone}`).toBeGreaterThanOrEqual(22.5);
+        expect(Math.max(...gaps), `${expr} ${zone}`).toBeLessThanOrEqual(25.5);
+        expect(new Set(fired.map((t) => localDay(new Date(t), zone))).size, `${expr} ${zone}`).toBe(365);
+      }
+    }
   });
   it('treats day-of-month and day-of-week as either/or when both are set', () => {
     // The 1st, or any Monday. 2026-11-02 is a Monday.
@@ -139,40 +194,129 @@ describe('memory', () => {
 });
 
 describe('sandbox files', () => {
-  it('confines paths to the sandbox folder', () => {
-    expect(() => sandboxPath('../etc/passwd')).toThrow();
-    expect(() => sandboxPath('a/../../x')).toThrow();
-    expect(sandboxPath('/notes/a.txt')).toMatch(/sandbox\/notes\/a\.txt$/);
-    expect(() => sandboxPath('/etc/passwd/../../etc/shadow')).not.toThrow(); // stays inside: leading slashes are relative to the sandbox
+  const fs = () => import('node:fs');
+  const at = (...p: string[]) => join(config.shellDir, ...p);
+
+  it('turns a path from the model into one relative to the sandbox, as text only', () => {
+    expect(() => sandboxRel('../etc/passwd')).toThrow(/outside/);
+    expect(() => sandboxRel('a/../../x')).toThrow(/outside/);
+    expect(() => sandboxRel('a\0b')).toThrow();
+    expect(sandboxRel('/notes/a.txt')).toBe('notes/a.txt');
+    expect(sandboxRel('/etc/passwd/../../etc/shadow')).toBe('etc/shadow'); // leading slashes mean the sandbox folder
+    expect(sandboxRel('')).toBe('.');
   });
-  it('refuses symlinks the shell could plant, whether they point at a file or a folder', async () => {
+
+  it('refuses a path that leaves the sandbox through a symlink: the file itself, a parent folder, or a dangling link', async () => {
     const kevin = await makeKevin();
-    const { symlinkSync, writeFileSync, mkdirSync } = await import('node:fs');
-    const { join } = await import('node:path');
-    const { config } = await import('../src/config.js');
+    const { symlinkSync, writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync } = await fs();
     const secret = join(config.dataDir, 'secret.txt');
     writeFileSync(secret, 'tax return');
-    mkdirSync(join(config.shellDir, 'links'), { recursive: true });
-    symlinkSync(secret, join(config.shellDir, 'links', 'file'));
-    symlinkSync(config.dataDir, join(config.shellDir, 'links', 'dir'));
-    symlinkSync('/nonexistent/x', join(config.shellDir, 'links', 'dangling'));
-    for (const path of ['links/file', 'links/dir/secret.txt', 'links/dangling']) {
-      expect((await call(kevin, 'file_read', { path })).ok, path).toBe(false);
-      expect((await call(kevin, 'file_write', { path, content: 'x' })).ok, path).toBe(false);
+    mkdirSync(at('links', 'deep'), { recursive: true });
+    symlinkSync(secret, at('links', 'file'));
+    symlinkSync(config.dataDir, at('links', 'dir'));
+    symlinkSync(config.dataDir, at('links', 'deep', 'dir'));
+    symlinkSync('/nonexistent/x', at('links', 'dangling'));
+    for (const path of ['links/file', 'links/dir/secret.txt', 'links/deep/dir/secret.txt', 'links/dangling', 'links/dir/../dir/secret.txt']) {
+      expect((await call(kevin, 'file_read', { path })).text, path).toMatch(/outside the sandbox/);
+      expect((await call(kevin, 'file_write', { path, content: 'x' })).text, path).toMatch(/outside the sandbox/);
     }
     expect((await call(kevin, 'file_write', { path: 'links/dir/new.txt', content: 'x' })).ok).toBe(false);
-    const { readFileSync, existsSync } = await import('node:fs');
+    expect((await call(kevin, 'file_write', { path: 'links/dir/sub/new.txt', content: 'x' })).ok).toBe(false);
+    expect((await call(kevin, 'file_list', { path: 'links/dir' })).text).toMatch(/outside the sandbox/);
     expect(readFileSync(secret, 'utf8')).toBe('tax return');
-    expect(existsSync(join(config.dataDir, 'new.txt'))).toBe(false);
+    expect(readdirSync(config.dataDir)).not.toContain('new.txt');
+    expect(existsSync(join(config.dataDir, 'sub'))).toBe(false);
+    // The listing names a link as a link and does not follow it.
+    const listed = (await ok(kevin, 'file_list', { path: 'links' })).entries;
+    expect(listed.find((e: any) => e.name === 'dir')).toMatchObject({ symlink: true, dir: false });
+    // A link that stays inside the sandbox is the shell's own business and works.
+    writeFileSync(at('links', 'real.txt'), 'inside');
+    symlinkSync(at('links', 'real.txt'), at('links', 'alias'));
+    expect(await ok(kevin, 'file_read', { path: 'links/alias' })).toBe('inside');
   });
+
+  it('does every file operation through the launcher, never in the server process', async () => {
+    const kevin = await makeKevin();
+    const { writeFileSync, existsSync, mkdirSync } = await fs();
+    mkdirSync(at('direct'), { recursive: true });
+    writeFileSync(at('direct', 'there.txt'), 'already here');
+    const launcher = config.shellLauncher;
+    // A launcher that runs nothing: if the server touched the sandbox itself, these would still succeed.
+    config.shellLauncher = ['false'];
+    try {
+      expect((await call(kevin, 'file_read', { path: 'direct/there.txt' })).ok).toBe(false);
+      expect((await call(kevin, 'file_list', { path: 'direct' })).ok).toBe(false);
+      expect((await call(kevin, 'file_write', { path: 'direct/new.txt', content: 'x' })).ok).toBe(false);
+      expect((await call(kevin, 'file_write', { path: 'newdir/new.txt', content: 'x' })).ok).toBe(false);
+    } finally {
+      config.shellLauncher = launcher;
+    }
+    expect(existsSync(at('direct', 'new.txt'))).toBe(false);
+    expect(existsSync(at('newdir'))).toBe(false);
+  });
+
+  it('passes the path and the content as data: nothing the model writes is run or expanded by a shell', async () => {
+    const kevin = await makeKevin();
+    const { writeFileSync, existsSync, readFileSync, mkdirSync, chmodSync } = await fs();
+    // Records what the launcher was started with, then behaves like the test launcher.
+    const log = join(config.dataDir, 'launcher-args.log');
+    const spy = join(config.dataDir, 'spy-launcher.sh');
+    writeFileSync(spy, `#!/bin/bash\nprintf '%s\\n---\\n' "$#" "$@" >> ${JSON.stringify(log)}\nexec bash -c "$1"\n`);
+    chmodSync(spy, 0o755);
+    const launcher = config.shellLauncher;
+    config.shellLauncher = [spy];
+    const name = 'it\'s $(touch pwned-by-path) `touch pwned-by-tick`; touch pwned-by-semi & "q".txt';
+    const content = '$(touch pwned-by-content)\n`touch pwned-by-content`\n\0binary\ttab\n';
+    mkdirSync(at('data'), { recursive: true });
+    try {
+      await ok(kevin, 'file_write', { path: `data/${name}`, content });
+      expect(await ok(kevin, 'file_read', { path: `data/${name}` })).toBe(content);
+      expect((await ok(kevin, 'file_list', { path: 'data' })).entries).toEqual([{ name, dir: false, size: Buffer.byteLength(content) }]);
+    } finally {
+      config.shellLauncher = launcher;
+    }
+    expect(readFileSync(at('data', name), 'utf8')).toBe(content);
+    for (const dir of [config.shellDir, at('data'), process.cwd()]) {
+      for (const f of ['pwned-by-path', 'pwned-by-tick', 'pwned-by-semi', 'pwned-by-content']) expect(existsSync(join(dir, f)), `${dir}/${f}`).toBe(false);
+    }
+    // One argument each time (the fixed script), and neither the path nor the content is in it.
+    const args = readFileSync(log, 'utf8');
+    expect(args).not.toContain('pwned');
+    expect(args).not.toContain('binary');
+    expect(args.split('\n---\n').filter((x) => /^\d+$/.test(x.trim()))).toEqual(['1', '1', '1']);
+  });
+
   it('writes, lists, reads, and asks before overwriting or deleting', async () => {
     const kevin = await makeKevin();
+    const { readFileSync } = await fs();
     await ok(kevin, 'file_write', { path: 'calc/in.csv', content: 'a,b\n1,2\n' });
     expect((await ok(kevin, 'file_list', { path: 'calc' })).entries[0]).toMatchObject({ name: 'in.csv', size: 8 });
+    expect(await ok(kevin, 'file_list', { path: 'nowhere' })).toEqual({ entries: [] });
     expect(await ok(kevin, 'file_read', { path: 'calc/in.csv' })).toBe('a,b\n1,2\n');
+    expect((await call(kevin, 'file_read', { path: 'calc/none.csv' })).text).toMatch(/No file at/);
+    expect((await call(kevin, 'file_read', { path: 'calc' })).text).toMatch(/not a file/);
+    expect((await call(kevin, 'file_write', { path: 'calc', content: 'x' })).text).toMatch(/is a folder/);
+    // An existing file is replaced only with Ben's yes; a no leaves every byte of it.
     expect((await call(kevin, 'file_write', { path: 'calc/in.csv', content: 'x' }, { confirm: false })).text).toMatch(/declined/);
+    expect(readFileSync(at('calc', 'in.csv'), 'utf8')).toBe('a,b\n1,2\n');
+    await ok(kevin, 'file_write', { path: 'calc/in.csv', content: 'c\n3\n' });
+    expect(readFileSync(at('calc', 'in.csv'), 'utf8')).toBe('c\n3\n');
+    // What file_write made, the shell can read and change (in production both are the same uid).
+    expect(await ok(kevin, 'shell', { command: `cd ${JSON.stringify(config.shellDir)} && echo 4 >> calc/in.csv && cat calc/in.csv` })).toMatch(/exit code: 0\nc\n3\n4/);
     expect(await ok(kevin, 'shell', { command: 'echo $((6*7))' })).toMatch(/exit code: 0\n42/);
     expect((await call(kevin, 'shell', { command: 'rm -rf calc' }, { confirm: false })).text).toMatch(/declined/);
-    expect(await ok(kevin, 'file_read', { path: 'calc/in.csv' })).toBe('a,b\n1,2\n');
+    expect(await ok(kevin, 'file_read', { path: 'calc/in.csv' })).toBe('c\n3\n4\n');
+    expect(await ok(kevin, 'file_read', { path: 'calc/in.csv', max_chars: 100 })).toBe('c\n3\n4\n');
+    await ok(kevin, 'file_write', { path: 'calc/big.txt', content: 'é'.repeat(500) });
+    expect(await ok(kevin, 'file_read', { path: 'calc/big.txt', max_chars: 100 })).toBe(`${'é'.repeat(100)}\n[cut: file is 1000 bytes]`);
+  });
+
+  it('reports a failing shell command with its exit code and output, and ends one that Ben stops', async () => {
+    const kevin = await makeKevin();
+    expect(await ok(kevin, 'shell', { command: 'echo out; echo err >&2; exit 3' })).toBe('exit code: 3\nout\n\n[stderr]\nerr');
+    const abort = new AbortController();
+    const running = kevin.tools.call('shell', { command: 'sleep 30' }, { db: kevin.db, source: 'agent', confirm: () => Promise.resolve(true), signal: abort.signal });
+    setTimeout(() => abort.abort(), 50);
+    expect((await running).text).toMatch(/exit code: none/);
   });
 });

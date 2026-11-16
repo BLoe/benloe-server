@@ -189,6 +189,14 @@ const CORE: Migration[] = [
     CREATE INDEX profile_history_key ON profile_history(key, id);
     `,
   },
+  {
+    id: 'core-003',
+    sql: `
+    -- The memory job's retry state for a conversation whose summary failed.
+    ALTER TABLE threads ADD COLUMN memory_failures INTEGER NOT NULL DEFAULT 0;   -- failed attempts since the last success
+    ALTER TABLE threads ADD COLUMN memory_retry_at TEXT;                         -- UTC ISO; the job leaves the thread alone until then
+    `,
+  },
 ];
 
 export function openDb(path: string, extra: Migration[] = []): DB {
@@ -210,6 +218,16 @@ export function openDb(path: string, extra: Migration[] = []): DB {
 }
 
 export const nowIso = () => new Date().toISOString();
+
+/** JSON.parse for a stored column: a value that does not parse gives `fallback` instead of throwing. */
+export function parseJson<T>(text: unknown, fallback: T): T {
+  if (typeof text !== 'string') return fallback;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+}
 
 export function getSetting<T>(db: DB, key: string, fallback: T): T {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;

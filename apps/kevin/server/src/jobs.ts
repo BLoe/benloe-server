@@ -8,9 +8,9 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { bus } from './bus.js';
 import { config } from './config.js';
-import { nowIso } from './db.js';
+import { nowIso, parseJson } from './db.js';
 import type { Kevin } from './kevin.js';
-import { small, spend, monthStartIso } from './llm.js';
+import { RefusalError, small, spend, monthStartIso } from './llm.js';
 import { embedPending, logEvent } from './memory.js';
 import { notify } from './push.js';
 import { createThread, send } from './threads.js';
@@ -44,50 +44,99 @@ const heartbeat: SystemJob = {
   run: async () => ({ outcome: 'nothing-to-do' }),
 };
 
+/** Failed attempts after which the memory job stops trying a stretch of conversation. */
+export const MEMORY_MAX_ATTEMPTS = 5;
+/** Wait before attempt n+1: 20 min, 40 min, 80 min, 160 min (the job itself runs every 10). */
+const memoryBackoffMs = (failures: number): number => 10 * 60_000 * 2 ** failures;
+
+/** A short, stable name for why a model call failed: the same cause gives the same text on every attempt. */
+function failureCause(e: unknown): string {
+  const status = (e as { status?: unknown } | null)?.status;
+  if (typeof status === 'number') return `the model API answered ${status}`;
+  return e instanceof Error ? (e.name === 'Error' ? e.message : e.name).slice(0, 80) : 'unknown error';
+}
+
 const memory: SystemJob = {
   name: 'memory',
   description: 'Writes a summary of each conversation that has gone quiet into the daily log, and indexes it for recall.',
   everyMinutes: 10,
   run: async (kevin) => {
     const { db } = kevin;
-    const quietBefore = new Date(Date.now() - 10 * 60_000).toISOString();
+    const now = Date.now();
+    const quietBefore = new Date(now - 10 * 60_000).toISOString();
     const threads = db
       .prepare(
-        `SELECT t.id, t.title, t.memory_upto FROM threads t
-         WHERE t.updated_at < ? AND EXISTS (SELECT 1 FROM turns u WHERE u.thread_id = t.id AND u.id > t.memory_upto AND u.status != 'running')
+        `SELECT t.id, t.title, t.memory_upto, t.memory_failures FROM threads t
+         WHERE t.updated_at < ? AND (t.memory_retry_at IS NULL OR t.memory_retry_at <= ?)
+           AND EXISTS (SELECT 1 FROM turns u WHERE u.thread_id = t.id AND u.id > t.memory_upto AND u.status != 'running')
          LIMIT 10`,
       )
-      .all(quietBefore) as { id: string; title: string; memory_upto: number }[];
+      .all(quietBefore, new Date(now).toISOString()) as { id: string; title: string; memory_upto: number; memory_failures: number }[];
+    const settled = db.prepare('UPDATE threads SET memory_upto = ?, memory_failures = 0, memory_retry_at = NULL WHERE id = ?');
     let done = 0;
+    let declined = 0;
+    let abandoned = 0;
+    const retrying: string[] = [];
+    // Each conversation on its own: one that fails is put aside and the rest still get their summaries.
     for (const t of threads) {
       if (spend(db).blocked) break;
       const turns = db.prepare("SELECT id, user_ui, assistant_ui FROM turns WHERE thread_id = ? AND id > ? AND status != 'running' ORDER BY id").all(t.id, t.memory_upto) as { id: number; user_ui: string; assistant_ui: string }[];
-      const text = turns
-        .map((u) => {
-          const user = (JSON.parse(u.user_ui) as { text: string }).text;
-          const items = JSON.parse(u.assistant_ui) as { type: string; text?: string; name?: string }[];
-          const said = items.filter((i) => i.type === 'text').map((i) => i.text).join(' ');
-          const did = items.filter((i) => i.type === 'tool').map((i) => i.name).join(', ');
-          return `Ben: ${user}\nKevin${did ? ` (used ${did})` : ''}: ${said}`;
-        })
-        .join('\n\n')
-        .slice(0, 60_000);
-      const summary = await small(
-        db,
-        { purpose: 'memory', threadId: t.id, jobKey: 'system:memory' },
-        'Summarise this conversation between Ben and his assistant Kevin for Kevin\'s long-term memory. Keep what would matter weeks from now: what Ben wanted, what was decided or changed, facts and numbers, preferences he showed, anything left open. Two to six sentences. If nothing in it is worth remembering, reply with exactly: NOTHING',
-        `Conversation "${t.title}":\n\n${text}`,
-        1500,
-      );
-      if (summary && summary.trim() !== 'NOTHING') logEvent(db, `${t.title}: ${summary}`, t.id, 'summary');
-      db.prepare('UPDATE threads SET memory_upto = ? WHERE id = ?').run(turns.at(-1)!.id, t.id);
-      done++;
+      const upto = turns.at(-1)!.id;
+      try {
+        const text = turns
+          .map((u) => {
+            const user = String(parseJson<{ text?: string }>(u.user_ui, {}).text ?? '');
+            const parsed = parseJson<{ type: string; text?: string; name?: string }[]>(u.assistant_ui, []);
+            const items = Array.isArray(parsed) ? parsed : [];
+            const said = items.filter((i) => i.type === 'text').map((i) => i.text).join(' ');
+            const did = items.filter((i) => i.type === 'tool').map((i) => i.name).join(', ');
+            return `Ben: ${user}\nKevin${did ? ` (used ${did})` : ''}: ${said}`;
+          })
+          .join('\n\n')
+          .slice(0, 60_000);
+        const summary = await small(
+          db,
+          { purpose: 'memory', threadId: t.id, jobKey: 'system:memory' },
+          'Summarise this conversation between Ben and his assistant Kevin for Kevin\'s long-term memory. Keep what would matter weeks from now: what Ben wanted, what was decided or changed, facts and numbers, preferences he showed, anything left open. Two to six sentences. If nothing in it is worth remembering, reply with exactly: NOTHING',
+          `Conversation "${t.title}":\n\n${text}`,
+          1500,
+        );
+        if (summary && summary.trim() !== 'NOTHING') logEvent(db, `${t.title}: ${summary}`, t.id, 'summary');
+        settled.run(upto, t.id);
+        done++;
+      } catch (e) {
+        if (e instanceof RefusalError) {
+          // Asking again would be refused again (and billed again): these turns are passed over for good.
+          console.warn(`memory: the model declined to summarise thread ${t.id} (turns up to ${upto}); skipped`);
+          settled.run(upto, t.id);
+          declined++;
+          continue;
+        }
+        console.error(`memory: summarising thread ${t.id} failed (attempt ${t.memory_failures + 1} of ${MEMORY_MAX_ATTEMPTS})`, e);
+        if (t.memory_failures + 1 >= MEMORY_MAX_ATTEMPTS) {
+          settled.run(upto, t.id);
+          abandoned++;
+        } else {
+          db.prepare('UPDATE threads SET memory_failures = memory_failures + 1, memory_retry_at = ? WHERE id = ?').run(new Date(now + memoryBackoffMs(t.memory_failures + 1)).toISOString(), t.id);
+          const cause = failureCause(e);
+          if (!retrying.includes(cause)) retrying.push(cause);
+        }
+      }
     }
     const embedded = await embedPending(db).catch((e) => {
       console.error('embedding failed', e);
       return 0;
     });
-    return done || embedded ? { outcome: 'did-work', detail: `${done} conversation(s) summarised${embedded ? `, ${embedded} item(s) embedded` : ''}` } : { outcome: 'nothing-to-do' };
+    const parts = [
+      done ? `${done} conversation(s) summarised` : '',
+      declined ? `${declined} skipped (the model declined to summarise)` : '',
+      embedded ? `${embedded} item(s) embedded` : '',
+    ].filter(Boolean);
+    // A failure is the run's outcome, so the ledger shows it. The wording carries no counts or times, so a
+    // cause that keeps recurring produces the same notification, which the runner sends once a day.
+    if (abandoned) return { outcome: 'errored', detail: [`gave up summarising a conversation after ${MEMORY_MAX_ATTEMPTS} failed attempts; it is left out of long-term memory`, ...parts].join('; ') };
+    if (retrying.length) return { outcome: 'errored', detail: [`a conversation could not be summarised (${retrying.join('; ')}); it will be tried again later`, ...parts].join('; ') };
+    return parts.length ? { outcome: 'did-work', detail: parts.join(', ') } : { outcome: 'nothing-to-do' };
   },
 };
 
@@ -267,7 +316,9 @@ export class JobRunner {
     let next: Date | null = null;
     try {
       next = nextRun(s.trigger_type, s.trigger_value, now, now);
-    } catch {
+    } catch (e) {
+      // A stored trigger that no longer parses: this run still happens, and the schedule is switched off below.
+      console.error(`schedule ${s.id} has an unusable trigger (${s.trigger_type} "${s.trigger_value}"); disabling it`, e);
       next = null;
     }
     this.kevin.db.prepare('UPDATE schedules SET last_run_at = ?, next_run_at = ?, enabled = ? WHERE id = ?').run(now.toISOString(), next?.toISOString() ?? null, next ? s.enabled : 0, s.id);
@@ -298,7 +349,12 @@ export class JobRunner {
     // The Jobs page shows the ledger; idle heartbeats are not worth a refresh.
     if (result.outcome !== 'nothing-to-do') bus.publish({ type: 'data_changed', domains: ['system'] });
     if (result.outcome === 'errored' && key !== 'system:heartbeat') {
-      await notify(db, { title: `Job failed: ${key.startsWith('schedule:') ? this.scheduleName(key) : key.slice(7)}`, body: result.detail?.slice(0, 300), link: '/jobs', source: key }).catch(() => undefined);
+      const title = `Job failed: ${key.startsWith('schedule:') ? this.scheduleName(key) : key.slice(7)}`;
+      const body = result.detail?.slice(0, 300) ?? '';
+      // A job that fails every ten minutes for one reason is one piece of news. The ledger has every run;
+      // Ben is told again only when the reason changes or a day has passed.
+      const told = db.prepare('SELECT 1 FROM notifications WHERE source = ? AND title = ? AND body = ? AND at > ?').get(key, title, body, new Date(Date.now() - 24 * 3600_000).toISOString());
+      if (!told) await notify(db, { title, body, link: '/jobs', source: key }).catch((e) => console.error(`could not send the failure notification for ${key}`, e));
     }
     return result;
   }
