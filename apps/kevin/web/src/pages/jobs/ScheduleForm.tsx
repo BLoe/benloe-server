@@ -23,6 +23,7 @@ interface FormState {
   sql: string;
   prompt: string;
   deep: boolean;
+  writes: boolean;
   cap: string;
   triggerType: TriggerType;
   once: string;
@@ -40,7 +41,7 @@ function tomorrowAt9(): string {
 
 function initial(s: Schedule | null): FormState {
   const base: FormState = {
-    name: '', action: 'notify', title: '', body: '', link: '', sql: '', prompt: '', deep: false, cap: '1',
+    name: '', action: 'notify', title: '', body: '', link: '', sql: '', prompt: '', deep: false, writes: false, cap: '1',
     triggerType: 'once', once: tomorrowAt9(), cron: defaultCronForm, every: '2', unit: 'hours',
   };
   if (!s) return base;
@@ -56,6 +57,7 @@ function initial(s: Schedule | null): FormState {
     sql: s.payload.sql ?? '',
     prompt: s.payload.prompt ?? '',
     deep: !!s.payload.deep,
+    writes: !!s.payload.writes,
     cap: String(s.spend_cap_usd ?? 1),
     triggerType: s.trigger_type,
     once: s.trigger_type === 'once' ? isoToLocalInput(s.trigger_value) : base.once,
@@ -104,7 +106,7 @@ export function ScheduleForm({ schedule, onClose }: { schedule: Schedule | null;
     const payload =
       f.action === 'notify' ? { title: f.title.trim(), body: f.body.trim(), link: f.link }
       : f.action === 'check' ? { title: f.title.trim(), sql: f.sql.trim(), link: f.link }
-      : { prompt: f.prompt.trim(), deep: f.deep, spend_cap_usd: cap };
+      : { prompt: f.prompt.trim(), deep: f.deep, writes: f.writes, spend_cap_usd: cap };
     let r;
     if (schedule) {
       // Sending the trigger re-arms the schedule on the server, so it goes only when it changed.
@@ -171,6 +173,9 @@ export function ScheduleForm({ schedule, onClose }: { schedule: Schedule | null;
               {(id) => <Switch id={id} checked={f.deep} onCheckedChange={(deep) => up({ deep })} />}
             </Field>
           </FieldRow>
+          <Field label="May change your data" hint="Off: it can read, research and notify you, nothing more. On: it can also update your records while nobody is watching.">
+            {(id) => <Switch id={id} checked={f.writes} onCheckedChange={(writes) => up({ writes })} />}
+          </Field>
         </>
       )}
 

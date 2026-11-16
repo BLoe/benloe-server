@@ -411,7 +411,7 @@ describe('rules and recategorizing', () => {
     expect((await rows(kevin, "SELECT COUNT(*) AS n FROM money_transactions WHERE category = 'dining' AND categorized_by = 'rule'"))[0]!.n).toBe(3);
     expect((await rows(kevin, "SELECT COUNT(*) AS n FROM money_rules WHERE pattern = 'netflix'"))[0]!.n).toBe(0);
 
-    expect((await call(kevin, 'money_transactions_update', { rules: [{ pattern: '([a-z', match: 'regex', category: 'dining' }] })).text).toMatch(/not a valid regular expression/);
+    expect((await call(kevin, 'money_transactions_update', { rules: [{ pattern: '([a-z', match: 'regex', category: 'dining' }] })).text).toMatch(/cannot be used as a rule: "\(" has a special meaning/);
     expect((await call(kevin, 'money_transactions_update', { rules: [{ pattern: 'costco' }] })).text).toMatch(/needs a category/);
     expect((await call(kevin, 'money_transactions_update', { rules: [{ pattern: 'costco', category: 'grocery' }] })).text).toMatch(/no category "grocery".*groceries/);
     expect((await call(kevin, 'money_transactions_update', { rules: [{ pattern: 'nope', remove: true }] })).text).toMatch(/no contains rule/);

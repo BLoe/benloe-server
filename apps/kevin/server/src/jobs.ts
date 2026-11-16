@@ -176,7 +176,7 @@ export async function writeBackup(kevin: Kevin, day = localDay()): Promise<{ day
     try {
       // The copy leaves write-ahead mode, so the snapshot is one self-contained file with no side files.
       copy.pragma('journal_mode = DELETE');
-      const verdict = copy.pragma('quick_check', { simple: true });
+      const verdict = copy.pragma('integrity_check', { simple: true });
       if (verdict !== 'ok') throw new Error(`the database copy failed its integrity check: ${String(verdict).slice(0, 200)}`);
     } finally {
       copy.close();
@@ -237,10 +237,52 @@ export const systemJobs: SystemJob[] = [heartbeat, memory, backup, prune, ironpr
 
 export interface NotifyPayload { title: string; body?: string; link?: string }
 export interface CheckPayload { sql: string; title: string; link?: string }
-export interface AgentPayload { prompt: string; deep?: boolean; thread_id?: string }
+export interface AgentPayload {
+  prompt: string;
+  deep?: boolean;
+  thread_id?: string;
+  /** May the run change Ben's data? Off unless Ben turned it on: see runSchedule. */
+  writes?: boolean;
+}
 
+/**
+ * What a schedule's runs have cost this month. Summed from `usage`, where every model request is
+ * recorded as it happens with the job it belongs to, and not from the ledger's per-run totals, which
+ * a run that was cut off by a restart never gets to write.
+ */
 export function scheduleSpentThisMonth(kevin: Kevin, id: number): number {
-  return (kevin.db.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS s FROM job_runs WHERE job_key = ? AND started_at >= ?').get(`schedule:${id}`, monthStartIso()) as { s: number }).s;
+  return (kevin.db.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS s FROM usage WHERE job_key = ? AND at >= ?').get(`schedule:${id}`, monthStartIso()) as { s: number }).s;
+}
+
+/**
+ * Puts right what a stop of the process left half-done. Called once at startup, before the runner.
+ *
+ * - A turn still marked running can never finish: it is closed as an error.
+ * - A job run with no end was cut off: it is closed as errored, with what it had spent taken from
+ *   `usage`, and Ben is told, because the thing it was doing (a reminder, a backup) did not happen and
+ *   its timetable has already moved on.
+ * - An upload whose text was never extracted is marked failed, so it does not look as if it is still
+ *   being read.
+ * Returns what it found, for the startup log.
+ */
+export async function recoverFromRestart(kevin: Kevin): Promise<{ turns: number; jobRuns: string[]; attachments: number }> {
+  const { db } = kevin;
+  const now = nowIso();
+  const turns = db.prepare("UPDATE turns SET status = 'error', error = 'interrupted by a restart', ended_at = ? WHERE status = 'running'").run(now).changes;
+  const open = db.prepare('SELECT id, job_key, started_at FROM job_runs WHERE ended_at IS NULL ORDER BY id').all() as { id: number; job_key: string; started_at: string }[];
+  for (const r of open) {
+    const cost = (db.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS s FROM usage WHERE job_key = ? AND at >= ?').get(r.job_key, r.started_at) as { s: number }).s;
+    db.prepare("UPDATE job_runs SET ended_at = ?, outcome = 'errored', detail = 'interrupted by a restart', cost_usd = ? WHERE id = ?").run(now, cost, r.id);
+  }
+  const attachments = db.prepare("UPDATE attachments SET extract_status = 'failed' WHERE extract_status = 'pending'").run().changes;
+  // The heartbeat is not news. Everything else that was cut off is one notification.
+  const cut = [...new Set(open.map((r) => r.job_key).filter((k) => k !== 'system:heartbeat'))];
+  if (cut.length) {
+    const names = cut.map((k) => (k.startsWith('schedule:') ? ((db.prepare('SELECT name FROM schedules WHERE id = ?').get(Number(k.slice(9))) as { name: string } | undefined)?.name ?? k) : k.slice(7)));
+    await notify(db, { title: 'Interrupted by a restart', body: `These were running when Kevin restarted and did not finish: ${names.join(', ')}.${cut.some((k) => k.startsWith('schedule:')) ? ' A schedule among them did not do its work this time; it runs again at its next time, if it has one.' : ''}${cut.some((k) => k.startsWith('system:')) ? ' A system job runs again at its next time.' : ''}`, link: '/jobs', source: 'restart' })
+      .catch((e) => console.error('could not send the restart notification', e));
+  }
+  return { turns, jobRuns: cut, attachments };
 }
 
 async function runSchedule(kevin: Kevin, s: ScheduleRow): Promise<RunResult> {
@@ -266,7 +308,7 @@ async function runSchedule(kevin: Kevin, s: ScheduleRow): Promise<RunResult> {
     threadId = createThread(kevin, 'job', s.name).id;
     kevin.db.prepare('UPDATE schedules SET payload = ? WHERE id = ?').run(JSON.stringify({ ...p, thread_id: threadId }), s.id);
   }
-  const result = await send(kevin, threadId, { text: p.prompt, deep: p.deep }, { origin: 'job', jobKey: key, effort: p.deep ? 'high' : 'medium', spendCapUsd: remaining });
+  const result = await send(kevin, threadId, { text: p.prompt, deep: p.deep }, { origin: 'job', jobKey: key, effort: p.deep ? 'high' : 'medium', spendCapUsd: remaining, readOnly: p.writes !== true });
   if (!result) return { outcome: 'errored', detail: 'the turn did not start' };
   return {
     outcome: result.status === 'done' ? 'did-work' : 'errored',
@@ -334,23 +376,31 @@ export class JobRunner {
     return !!next && next <= now;
   }
 
+  /**
+   * One pass over everything that is due. Ticks may overlap (the timer does not wait for a slow one):
+   * a schedule is claimed in the database before it runs and a system job is held in `inflight`, so
+   * two ticks never run the same thing. Reminders go first, so a slow system job does not hold them up.
+   */
   async tick(now = new Date()): Promise<void> {
     this.lastTick = now.getTime();
-    for (const job of this.jobs) {
-      if (this.systemDue(job, now)) await this.execute(`system:${job.name}`, () => job.run(this.kevin));
-    }
     const due = this.kevin.db.prepare('SELECT * FROM schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at').all(now.toISOString()) as ScheduleRow[];
     for (const s of due) {
       // An agent turn can take minutes; it must not hold up the reminders behind it.
       const p = this.runScheduleNow(s, now);
-      if (s.action !== 'agent_turn') await p;
+      if (s.action === 'agent_turn') p.catch((e) => console.error(`schedule ${s.id} failed outside its run`, e));
+      else await p;
+    }
+    for (const job of this.jobs) {
+      if (this.systemDue(job, now)) await this.execute(`system:${job.name}`, () => job.run(this.kevin));
     }
   }
 
   async runScheduleNow(s: ScheduleRow, now = new Date()): Promise<RunResult | null> {
     const key = `schedule:${s.id}`;
     if (this.inflight.has(key)) return null;
-    // Advance first, so a crash mid-run cannot make it fire in a loop.
+    // Advance first, so a crash mid-run cannot make it fire in a loop. The update is also the claim:
+    // it only applies if the row is still as it was read, so a second tick holding the same stale row
+    // changes nothing and does not run it again.
     let next: Date | null = null;
     try {
       next = nextRun(s.trigger_type, s.trigger_value, now, now);
@@ -359,7 +409,10 @@ export class JobRunner {
       console.error(`schedule ${s.id} has an unusable trigger (${s.trigger_type} "${s.trigger_value}"); disabling it`, e);
       next = null;
     }
-    this.kevin.db.prepare('UPDATE schedules SET last_run_at = ?, next_run_at = ?, enabled = ? WHERE id = ?').run(now.toISOString(), next?.toISOString() ?? null, next ? s.enabled : 0, s.id);
+    const claimed = this.kevin.db
+      .prepare('UPDATE schedules SET last_run_at = ?, next_run_at = ?, enabled = ? WHERE id = ? AND next_run_at IS ? AND last_run_at IS ?')
+      .run(now.toISOString(), next?.toISOString() ?? null, next ? s.enabled : 0, s.id, s.next_run_at, s.last_run_at).changes;
+    if (!claimed) return null;
     return this.execute(key, () => runSchedule(this.kevin, s));
   }
 

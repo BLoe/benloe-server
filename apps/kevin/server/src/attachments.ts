@@ -62,19 +62,28 @@ const capped = (text: string): string =>
  * The text layer of a PDF, read by pdftotext. The PDF is an upload and pdftotext is a large parser, so it
  * does not run in this process's uid, which owns Ben's records: the bytes are piped to it inside the
  * extraction sandbox (no network, no writable folder, another uid; see setup.sh) and only its text comes back.
- * Returns '' when it could not be read; the reason is logged.
+ *
+ * Throws when the sandbox itself could not be reached or did not report: that is a fault of this
+ * server, not a property of the file, and the caller must not paper over it by sending the file to
+ * the paid model instead. Returns '' when pdftotext ran and could not read the file (damaged,
+ * encrypted); the reason is logged.
  */
 async function pdfText(bytes: Buffer, id: number): Promise<string> {
   const r = await runInSandbox(config.extractLauncher, 'exec pdftotext -layout -l 60 - -', { stdin: bytes, maxOut: 20 * 1024 * 1024, seconds: 60 });
   if (r.code === 0) return r.stdout.toString('utf8').trim();
-  console.error(`pdftotext failed for attachment ${id}: ${r.failure ?? (r.timedOut ? 'took longer than 60 seconds' : r.overflow ? 'produced more than 20 MB of text' : r.stderr.trim().slice(0, 300) || `exit code ${r.code}`)}`);
+  if (r.failure) throw new Error(`the extraction sandbox is not working: ${r.failure}`);
+  console.error(`pdftotext could not read attachment ${id}: ${r.timedOut ? 'took longer than 60 seconds' : r.overflow ? 'produced more than 20 MB of text' : r.stderr.trim().slice(0, 300) || `exit code ${r.code}`}`);
   return '';
 }
 
 const EXTRACT_SYSTEM =
   'You are reading a file for a personal assistant that will rely on your text instead of the file. Transcribe every piece of text and every number exactly, keeping tables as tables. For a photo of food, a fridge, a pantry shelf or a receipt, list each item with any visible quantity, size, brand, price and date. For a form or statement, start with one line saying what the document is, who issued it and its date. Describe anything visual that carries meaning. Output the content only.';
 
-/** Reads the file's content into text. Never throws; records the outcome on the row. */
+/**
+ * Reads the file's content into text. Never throws; records the outcome on the row:
+ * `done` only when there is text, `skipped` for a kind of file that is not read, `failed` otherwise
+ * (nothing could be read, or reading stopped on an error; whatever text was read before the error is kept).
+ */
 export async function extract(db: DB, id: number): Promise<Attachment> {
   const a = db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Attachment;
   const abs = join(config.dataDir, a.path);
@@ -102,6 +111,8 @@ export async function extract(db: DB, id: number): Promise<Attachment> {
     status = 'failed';
     console.error(`extraction failed for attachment ${id}`, e);
   }
+  // A file that was read and yielded nothing has not been read: a scan too large for the model, a damaged PDF, an empty file.
+  if (status === 'done' && !text.trim()) status = 'failed';
   db.prepare('UPDATE attachments SET extracted_text = ?, extract_status = ? WHERE id = ?').run(text || null, status, id);
   if (text) indexItem(db, 'attachment', id, a.filename, text, a.at);
   return db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Attachment;

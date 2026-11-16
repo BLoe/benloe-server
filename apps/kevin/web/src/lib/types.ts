@@ -96,7 +96,7 @@ export interface Schedule {
   trigger_type: TriggerType;
   trigger_value: string;
   action: ScheduleAction;
-  payload: { title?: string; body?: string; link?: string; sql?: string; prompt?: string; deep?: boolean; thread_id?: string };
+  payload: { title?: string; body?: string; link?: string; sql?: string; prompt?: string; deep?: boolean; writes?: boolean; thread_id?: string };
   enabled: boolean;
   next_run_at: string | null;
   last_run_at: string | null;

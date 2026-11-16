@@ -40,7 +40,13 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   ui?: boolean;
   /** Offered to the model. Default true; false for things only Ben may do (raising the spend cap). */
   agent?: boolean;
-  /** Usable in a turn a schedule started, where nobody is watching. Default true; false for the shell. */
+  /**
+   * Usable in a turn a schedule started, where nobody is watching. Default true. False for what an
+   * instruction smuggled into such a turn could turn into lasting harm: the shell, every tool that
+   * makes, changes, deletes, pauses or starts a schedule or job, and the tools that write what Kevin
+   * believes about Ben (facts and the profile, which are in every later prompt). A scheduled turn that
+   * wants any of these tells Ben with `notify`.
+   */
   job?: boolean;
   run(input: z.infer<S>, ctx: ToolCtx): unknown | Promise<unknown>;
 }

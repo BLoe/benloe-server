@@ -1,5 +1,6 @@
 // Categories, merchant clean-up and rules. Pure functions and seed data; the
 // database work is in ../money.ts.
+import { matchesPattern, parsePattern } from './pattern.js';
 
 export const CATEGORY_GROUPS = ['essentials', 'lifestyle', 'income', 'transfers'] as const;
 export type CategoryGroup = (typeof CATEGORY_GROUPS)[number];
@@ -40,7 +41,7 @@ export const SEED_CATEGORIES: [name: string, label: string, group: CategoryGroup
 /**
  * Starter rules, seeded once so a first import is not a wall of uncategorized
  * rows. They are ordinary rows in money_rules: visible on the page, editable
- * and removable. Short names that occur inside other words are regexes with
+ * and removable. Short names that occur inside other words are 'regex' patterns with
  * word boundaries.
  */
 export const SEED_RULES: [pattern: string, matchType: 'contains' | 'regex', category: string, merchant?: string][] = [
@@ -148,6 +149,7 @@ export function cleanMerchant(description: string): string {
   return allCaps ? titleCase(s) : s;
 }
 
+
 // ---- rules -----------------------------------------------------------------------
 
 export interface Rule {
@@ -163,127 +165,28 @@ export interface CompiledRule extends Rule {
   test(text: string): boolean;
 }
 
-/** A rule's regex is matched against at most this much of a transaction's text. */
-const REGEX_TEXT_CHARS = 200;
-/** A regex rule that takes longer than this on one transaction is switched off (see compileRule). */
-export const SLOW_RULE_MS = 100;
-const slowPatterns = new Set<string>();
-
 /**
- * Refuses a pattern that could take the regex engine a very long time. Rule patterns can be written by
- * the model, they run on the server's one thread against every imported transaction, and JavaScript
- * has no way to stop a match that has started: "(a+)+b" against thirty characters runs for a minute.
- *
- * What is refused is what makes matching time explode, not what is merely unusual:
- *   - a repeated group that itself contains a repeat or an alternative, such as (a+)+ or (a|ab)*;
- *   - back-references and look-around;
- *   - more than one repeat (*, +, {n,m}), more than four optional parts (?), or more than one
- *     optional group with a repeat or an alternative inside it: each further one multiplies the worst case;
- *   - patterns longer than 200 characters.
- * This is a screen, not a proof. compileRule adds the backstop: the text is capped at
- * REGEX_TEXT_CHARS, and a rule whose match ever takes longer than SLOW_RULE_MS is switched off.
- * Throws a plain Error that says which rule was broken.
+ * Makes a rule ready to match. A 'contains' rule looks for its text anywhere; a 'regex' rule is a
+ * pattern in the small language of pattern.ts, which is matched by string search and never by the
+ * regular-expression engine. Throws a plain Error with a readable message for a pattern outside it.
  */
-export function assertSafeRegex(pattern: string): void {
-  const no = (why: string): never => {
-    throw new Error(`"${pattern}" cannot be used as a rule: ${why}. Use a simpler pattern, or a "contains" rule.`);
-  };
-  if (pattern.length > 200) no('it is longer than 200 characters');
-  let repeats = 0;
-  let optionals = 0;
-  let optionalChoices = 0;
-  /** One entry per open group: does it contain a repeat or an alternative? */
-  const groups: boolean[] = [];
-  const markComplex = () => {
-    if (groups.length) groups[groups.length - 1] = true;
-  };
-  /** Reads a quantifier at `i`, if there is one. */
-  const quantifierAt = (i: number): { kind: 'repeat' | 'optional'; end: number } | null => {
-    const c = pattern[i];
-    let end = i;
-    let kind: 'repeat' | 'optional';
-    if (c === '*' || c === '+') kind = 'repeat';
-    else if (c === '?') kind = 'optional';
-    else if (c === '{') {
-      const m = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(i));
-      if (!m) return null; // a literal brace
-      // {1} and {0,1} repeat nothing; everything else in braces is a repeat.
-      kind = (m[2] === undefined && m[1] === '1') || (m[1] === '0' && m[3] === '1') ? 'optional' : 'repeat';
-      end = i + m[0].length - 1;
-    } else return null;
-    if (pattern[end + 1] === '?') end++; // lazy
-    return { kind, end };
-  };
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i]!;
-    if (c === '\\') {
-      const next = pattern[i + 1] ?? '';
-      if (/[1-9]/.test(next) || next === 'k') no('it uses a back-reference');
-      i++;
-    } else if (c === '[') {
-      // Skip the character class: nothing inside it repeats.
-      i++;
-      if (pattern[i] === '^') i++;
-      if (pattern[i] === ']') i++;
-      while (i < pattern.length && pattern[i] !== ']') i += pattern[i] === '\\' ? 2 : 1;
-    } else if (c === '(') {
-      if (/^\(\?<?[=!]/.test(pattern.slice(i))) no('it uses look-ahead or look-behind');
-      groups.push(false);
-      // "(?:" and "(?<name>" open a group; their "?" is not an optional part.
-      const prefix = /^\((\?:|\?<[^>]*>)/.exec(pattern.slice(i));
-      if (prefix) i += prefix[0].length - 1;
-    } else if (c === ')') {
-      const complex = groups.pop() ?? false;
-      const q = quantifierAt(i + 1);
-      if (q?.kind === 'repeat' && complex) no('it repeats a group that already contains a repeat or an alternative');
-      if (q?.kind === 'optional' && complex && ++optionalChoices > 1) no('it has more than one optional group that contains a repeat or an alternative');
-      // Seen from outside, a group that held a repeat still does.
-      if (complex) markComplex();
-    } else if (c === '|') {
-      markComplex();
-    } else {
-      const q = quantifierAt(i);
-      if (q) {
-        if (q.kind === 'repeat') {
-          repeats++;
-          markComplex();
-        } else optionals++;
-        i = q.end;
-      }
-    }
-  }
-  if (repeats > 1) no('it has more than one repeat (*, + or {n,m})');
-  if (optionals > 4) no('it has more than four optional parts (?)');
-}
-
-/** Throws a plain Error with a readable message when a regex pattern does not compile or is refused by assertSafeRegex. */
 export function compileRule(r: Rule): CompiledRule {
   if (r.match_type === 'regex') {
-    assertSafeRegex(r.pattern);
-    let re: RegExp;
-    try {
-      re = new RegExp(r.pattern, 'i');
-    } catch (e) {
-      throw new Error(`"${r.pattern}" is not a valid regular expression: ${(e as Error).message}`);
-    }
-    return {
-      ...r,
-      test: (text) => {
-        if (slowPatterns.has(r.pattern)) return false;
-        const started = performance.now();
-        const hit = re.test(text.length > REGEX_TEXT_CHARS ? text.slice(0, REGEX_TEXT_CHARS) : text);
-        if (performance.now() - started > SLOW_RULE_MS) {
-          // A match cannot be interrupted, but it can be the last slow one: the pattern matches nothing
-          // from here on, until the server restarts or the rule is rewritten.
-          slowPatterns.add(r.pattern);
-          console.error(`money rule ${r.id} ("${r.pattern}") took more than ${SLOW_RULE_MS} ms on one transaction and is switched off`);
-        }
-        return hit;
-      },
-    };
+    const alternatives = parsePattern(r.pattern);
+    return { ...r, test: (text) => matchesPattern(alternatives, text) };
   }
   const needle = r.pattern.toLowerCase();
   return { ...r, test: (text) => text.toLowerCase().includes(needle) };
+}
+
+/** Why a stored rule is not applied, or null when it is. */
+export function ruleProblem(r: Rule): string | null {
+  try {
+    compileRule(r);
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
 }
 
 /** Highest priority first, then the longest pattern (the most specific), then the oldest. */
@@ -293,7 +196,7 @@ export function orderRules(rules: Rule[]): CompiledRule[] {
       try {
         return compileRule(r);
       } catch (e) {
-        // A stored rule that cannot be used (it no longer compiles, or it predates the safety check) matches nothing.
+        // A stored rule written as a full regular expression, from before rules stopped being those, matches nothing.
         console.error(`money rule ${r.id} is skipped: ${(e as Error).message}`);
         return null;
       }

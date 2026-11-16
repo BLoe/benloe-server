@@ -28,7 +28,7 @@ export interface AccountsView { accounts: AccountDetail[]; totals: NetWorth; acc
 
 export interface Category { name: string; label: string; group: string; budget: number | null; transaction_count: number; rule_count: number }
 
-export interface Rule { id: number; pattern: string; match_type: 'contains' | 'regex'; category: string | null; category_label: string | null; merchant: string | null; priority: number; created_at: string }
+export interface Rule { id: number; pattern: string; match_type: 'contains' | 'regex'; problem?: string | null; category: string | null; category_label: string | null; merchant: string | null; priority: number; created_at: string }
 
 export interface CategoriesView { groups: string[]; categories: Category[]; rules: Rule[]; uncategorized_count: number }
 

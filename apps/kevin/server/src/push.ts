@@ -11,16 +11,32 @@ let configured = false;
 function setup(): boolean {
   if (configured) return true;
   if (!config.vapidPublic || !config.vapidPrivate) return false;
-  webpush.setVapidDetails(`mailto:${config.ownerEmail || 'owner@benloe.com'}`, config.vapidPublic, config.vapidPrivate);
+  // The contact a push service may use about these messages: the owner's address, or the app's own URL when none is set.
+  webpush.setVapidDetails(config.ownerEmail ? `mailto:${config.ownerEmail}` : config.publicUrl, config.vapidPublic, config.vapidPrivate);
   configured = true;
   return true;
 }
 
 export interface NotifyInput { title: string; body?: string; link?: string | null; source?: string | null }
 
+/**
+ * How long one push service gets to answer, in milliseconds. Reminders are sent one after another by
+ * the job runner; none may wait on a service that never replies. (An object so a test can shorten it.)
+ */
+export const pushLimits = { timeoutMs: 10_000 };
+
+/** Rejects if `p` has not settled after `ms`. */
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer after ${ms} ms`)), ms);
+    p.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 /** Tests replace the sender. */
 export const transport = {
-  send: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }, payload: string) => webpush.sendNotification(sub, payload, { TTL: 24 * 3600 }),
+  // The request has its own socket timeout; notify() adds a deadline around whatever sender is in place.
+  send: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }, payload: string): Promise<unknown> => webpush.sendNotification(sub, payload, { TTL: 24 * 3600, timeout: pushLimits.timeoutMs }),
 };
 
 /**
@@ -50,7 +66,7 @@ export async function notify(db: DB, n: NotifyInput): Promise<{ id: number; push
     await Promise.all(
       subs.map(async (s) => {
         try {
-          await transport.send({ endpoint: s.endpoint, keys: JSON.parse(s.keys) as { p256dh: string; auth: string } }, payload);
+          await withDeadline(transport.send({ endpoint: s.endpoint, keys: JSON.parse(s.keys) as { p256dh: string; auth: string } }, payload), pushLimits.timeoutMs + 2000);
           pushed++;
         } catch (e) {
           const status = (e as { statusCode?: number }).statusCode;

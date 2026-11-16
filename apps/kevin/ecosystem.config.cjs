@@ -4,11 +4,33 @@
 // passes through only the variables named in it.
 const fs = require('fs');
 
-const env = {};
-for (const line of fs.readFileSync('/run/benloe-secrets/kevin.env', 'utf8').split('\n')) {
-  const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-  if (m) env[m[1]] = m[2].trim();
+/** KEY=value lines of a file, values trimmed and unquoted. A file that cannot be read gives {}. */
+function readEnvFile(path) {
+  const out = {};
+  let text = '';
+  try {
+    text = fs.readFileSync(path, 'utf8');
+  } catch {
+    return out;
+  }
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (!m) continue;
+    let v = m[2];
+    if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) v = v.slice(1, -1);
+    out[m[1]] = v.trim();
+  }
+  return out;
 }
+
+const env = readEnvFile('/run/benloe-secrets/kevin.env');
+if (!Object.keys(env).length) throw new Error('kevin: /run/benloe-secrets/kevin.env is missing or empty');
+
+// Who may sign in. No address is kept in this file (it is in a public repository): it is
+// KEVIN_OWNER_EMAIL from the kevin secret set when that key is there, and otherwise the box
+// owner's address from the root-owned bootstrap file /etc/benloe/benloe-secrets.conf
+// (BENLOE_OWNER_EMAIL). If neither has one, the server refuses to start in production and says why.
+const ownerEmail = env.KEVIN_OWNER_EMAIL || readEnvFile('/etc/benloe/benloe-secrets.conf').BENLOE_OWNER_EMAIL || '';
 
 module.exports = {
   apps: [
@@ -23,7 +45,8 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3016,
         AUTH_SERVICE_URL: 'http://localhost:3002',
-        KEVIN_OWNER_EMAIL: 'below413@gmail.com',
+        // See ownerEmail above.
+        ...(ownerEmail ? { KEVIN_OWNER_EMAIL: ownerEmail } : {}),
         KEVIN_PUBLIC_URL: 'https://kevin.benloe.com',
         KEVIN_TZ: 'America/New_York',
         KEVIN_DATA_DIR: '/var/lib/kevin',

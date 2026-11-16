@@ -103,7 +103,8 @@ export function Categories() {
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
                     <span className="truncate font-mono text-[13px]">{r.pattern}</span>
-                    {r.match_type === 'regex' && <Badge variant="outline">regex</Badge>}
+                    {r.match_type === 'regex' && <Badge variant="outline">pattern</Badge>}
+                    {r.problem && <Badge variant="warning" title={r.problem}>not applied</Badge>}
                   </span>
                   <span className="mt-0.5 block truncate text-sm text-muted-foreground">
                     {[r.category ? `→ ${r.category_label ?? r.category}` : null, r.merchant ? `shown as ${r.merchant}` : null, r.priority ? `priority ${r.priority}` : null].filter(Boolean).join(' · ')}
@@ -237,13 +238,7 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
     const p = pattern.trim();
     if (p.length < 2) return setError('Enter at least two characters to look for.');
     if (!category && !merchant.trim()) return setError('Choose a category, a merchant name to show, or both.');
-    if (match === 'regex') {
-      try {
-        new RegExp(p, 'i');
-      } catch {
-        return setError('That is not a valid regular expression.');
-      }
-    }
+    // The server decides whether a pattern is one it can use, and says why not.
     const r = await run<{ rules_applied_to?: number }>('money_transactions_update', { rules: [{ pattern: p, match, ...(category ? { category } : {}), ...(merchant.trim() ? { merchant: merchant.trim() } : {}) }] }, { silent: true });
     if (!r.ok) return setError(r.error);
     toast.success('Rule added', r.result.rules_applied_to ? `${plural(r.result.rules_applied_to, 'existing transaction')} updated` : undefined);
@@ -252,14 +247,14 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
   return (
     <FormDialog open onOpenChange={(o) => !o && onClose()} title="Add a rule" description="It also applies now to existing transactions that were not categorized by hand." submitLabel="Add rule" pending={pending} onSubmit={() => void submit()}>
       <FieldRow>
-        <Field label="When the description has" hint={match === 'regex' ? 'A regular expression, e.g. \\bshell\\b' : 'Case does not matter: trader joe'}>
+        <Field label="When the description has" hint={match === 'regex' ? 'Text with \\b for a word edge, ^ or $ for the start or end, | between alternatives: \\bshell\\b' : 'Case does not matter: trader joe'}>
           {(id) => <Input id={id} value={pattern} maxLength={200} autoCapitalize="off" autoCorrect="off" onChange={(e) => setPattern(e.target.value)} autoFocus />}
         </Field>
         <Field label="Match">
           {(id) => (
             <Select id={id} value={match} onChange={(e) => setMatch(e.target.value as 'contains' | 'regex')}>
               <option value="contains">Contains the text</option>
-              <option value="regex">Regular expression</option>
+              <option value="regex">Whole word or start of line</option>
             </Select>
           )}
         </Field>

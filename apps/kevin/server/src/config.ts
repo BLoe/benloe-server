@@ -31,7 +31,8 @@ export const config = {
   sqlSeconds: 5,
   /** IRON PR (weights.benloe.com), Ben's lifting PR tracker. Read only, ever: see domains/ironpr.ts. */
   ironPrDb: env.KEVIN_IRONPR_DB ?? '/srv/benloe/data/weights.db',
-  ownerEmail: (env.KEVIN_OWNER_EMAIL ?? '').toLowerCase(),
+  /** Who may sign in. From the kevin secret set, else the box owner's bootstrap file: see ecosystem.config.cjs. */
+  ownerEmail: (env.KEVIN_OWNER_EMAIL ?? '').trim().toLowerCase(),
   authUrl: env.AUTH_SERVICE_URL ?? 'http://localhost:3002',
   publicUrl: env.KEVIN_PUBLIC_URL ?? 'https://kevin.benloe.com',
   timezone: env.KEVIN_TZ ?? 'America/New_York',
@@ -52,3 +53,17 @@ export const config = {
 };
 
 export type Config = typeof config;
+
+/**
+ * Reasons this configuration must not be run, as messages for the log; empty when it may.
+ * In production the owner's address has to be set (KEVIN_OWNER_EMAIL, which ecosystem.config.cjs takes
+ * from the kevin secret set, or else from BENLOE_OWNER_EMAIL in /etc/benloe/benloe-secrets.conf): it is
+ * who the auth check lets in, and without it nobody can sign in while the server looks healthy.
+ */
+export function startupProblems(c: Pick<Config, 'production' | 'ownerEmail'> = config): string[] {
+  const problems: string[] = [];
+  if (c.production && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c.ownerEmail)) {
+    problems.push('KEVIN_OWNER_EMAIL is not set to an email address. It is not kept in the repository: the PM2 config takes it from KEVIN_OWNER_EMAIL in the kevin set at secrets.benloe.com, or else from BENLOE_OWNER_EMAIL in /etc/benloe/benloe-secrets.conf. Set one of them and restart.');
+  }
+  return problems;
+}

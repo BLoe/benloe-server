@@ -75,7 +75,7 @@ export function send(kevin: Kevin, threadId: string, input: TurnInput, opts: Tur
     try {
       const result = await runTurn(kevin, threadId, input, opts, handle);
       // Titles and compaction are model calls: only after a turn that really ran.
-      if (result.status === 'done' || result.status === 'stopped') void afterTurn(kevin, threadId, handle).catch((e) => console.error('afterTurn failed', e));
+      if (result.status === 'done' || result.status === 'stopped') void afterTurn(kevin, threadId, handle, opts.jobKey).catch((e) => console.error('afterTurn failed', e));
       return result;
     } finally {
       s.handle = null;
@@ -112,7 +112,8 @@ export const isRunning = (threadId: string): boolean => !!states.get(threadId)?.
 const COMPACT_ABOVE_TOKENS = 60_000;
 const KEEP_TURNS = 4;
 
-async function afterTurn(kevin: Kevin, threadId: string, handle: TurnHandle): Promise<void> {
+/** `jobKey`: the schedule whose turn this was, so what compacting its thread costs is charged to it. */
+async function afterTurn(kevin: Kevin, threadId: string, handle: TurnHandle, jobKey?: string): Promise<void> {
   const { db } = kevin;
   // Titles and compaction are model requests too: none are made once the month's cap is reached.
   if (spend(db).blocked) return;
@@ -133,7 +134,7 @@ async function afterTurn(kevin: Kevin, threadId: string, handle: TurnHandle): Pr
       console.error('title failed', e);
     }
   }
-  if (handle.lastPromptTokens > COMPACT_ABOVE_TOKENS) await compact(kevin, threadId);
+  if (handle.lastPromptTokens > COMPACT_ABOVE_TOKENS) await compact(kevin, threadId, KEEP_TURNS, jobKey);
 }
 
 const KEEP_TAIL_CHARS = 60_000;
@@ -144,7 +145,7 @@ const KEEP_TAIL_CHARS = 60_000;
  * separated from its call. `keepTurns` is a maximum: when the recent turns are
  * large, fewer are kept verbatim, but always at least one.
  */
-export async function compact(kevin: Kevin, threadId: string, keepTurns = KEEP_TURNS): Promise<boolean> {
+export async function compact(kevin: Kevin, threadId: string, keepTurns = KEEP_TURNS, jobKey?: string): Promise<boolean> {
   const { db } = kevin;
   const t = db.prepare('SELECT title, summary, summary_upto FROM threads WHERE id = ?').get(threadId) as { title: string; summary: string | null; summary_upto: number };
   const sizes = db.prepare('SELECT turn_id, SUM(LENGTH(content)) AS chars FROM messages WHERE thread_id = ? AND id > ? GROUP BY turn_id ORDER BY turn_id').all(threadId, t.summary_upto) as { turn_id: number; chars: number }[];
@@ -177,7 +178,7 @@ export async function compact(kevin: Kevin, threadId: string, keepTurns = KEEP_T
     .slice(-200_000);
   const summary = await small(
     db,
-    { purpose: 'compaction', threadId },
+    { purpose: 'compaction', threadId, jobKey },
     'You are compressing the earlier part of a conversation between Ben and his assistant Kevin so the conversation can continue without it. Use these headings: Context, Decisions, Work completed, Open threads. Under Decisions, keep Ben\'s decisions, corrections and stated preferences word for word, in quotation marks. Paraphrase the rest: what he asked for, the facts and numbers that came up, what was changed in his data, what is still unresolved. At most 600 words.',
     `${t.summary ? `Summary of what came before this section:\n${t.summary}\n\n` : ''}The section to compress:\n${text}`,
     4000,

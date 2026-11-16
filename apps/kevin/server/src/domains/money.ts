@@ -17,7 +17,7 @@ import { type DB, nowIso } from '../db.js';
 import { defineDomain } from '../domains.js';
 import { localDay } from '../time.js';
 import { defineTool, ToolError, type ToolCtx } from '../tools.js';
-import { bankCategory, CATEGORY_GROUPS, cleanMerchant, compileRule, matchRule, orderRules, type CompiledRule, type Rule, SEED_CATEGORIES, SEED_RULES } from './_money/categorize.js';
+import { bankCategory, CATEGORY_GROUPS, cleanMerchant, compileRule, matchRule, orderRules, ruleProblem, type CompiledRule, type Rule, SEED_CATEGORIES, SEED_RULES } from './_money/categorize.js';
 import { CsvError, detectLayout, endingBalance, MAPPING_FIELDS, parseCsv, readRows } from './_money/csv.js';
 import { detectRecurring, type Outflow } from './_money/recurring.js';
 
@@ -154,7 +154,8 @@ const PROMPT_NOTE = `Ben's accounts, transactions, budgets and investment holdin
 - Net worth: \`SELECT ROUND(SUM(CASE WHEN is_liability = 1 THEN -balance ELSE balance END), 2) FROM money_accounts WHERE active = 1 AND balance IS NOT NULL\`. The trend is in \`money_balance_history\`.
 - Market value of a holding is \`quantity * last_price\`; \`cost_basis\` is the total paid.
 - Importing a CSV: call \`money_import\` with \`commit: false\`, check the preview (the sign of the sample amounts, the date range, new versus duplicate counts), tell Ben what it will add, then call it again with \`commit: true\`. Importing the same file twice adds nothing.
-- After an import, look at \`top_uncategorized\` in the result and offer rules for the merchants that repeat. When Ben says a merchant is always a category, add a rule; it recategorizes existing transactions too.`;
+- After an import, look at \`top_uncategorized\` in the result and offer rules for the merchants that repeat. When Ben says a merchant is always a category, add a rule; it recategorizes existing transactions too.
+- A rule with \`match_type = 'regex'\` is not a regular expression: its pattern is plain text with only \`\\b\`, \`^\`, \`$\` and \`|\` (see the tool). A stored one outside that, from before, is not applied and the Money page marks it; rewrite it in that form, or as a 'contains' rule, and remove the old one.`;
 
 // ---- small helpers ---------------------------------------------------------------
 
@@ -865,8 +866,8 @@ const transactionsInput = z.object({
   rules: z
     .array(
       z.object({
-        pattern: z.string().min(2).max(200).describe("Text to look for in the description or merchant, case-insensitive: 'trader joe'. With match: 'regex', a regular expression: '\\\\bshell\\\\b'."),
-        match: z.enum(['contains', 'regex']).default('contains'),
+        pattern: z.string().min(2).max(200).describe("Text to look for in the description or merchant, case-insensitive: 'trader joe'. With match: 'regex', a pattern in a small language (it is not a full regular expression): plain text, \\\\b for a word edge, ^ and $ for the start and end of the description, | between alternatives, e.g. '\\\\bshell\\\\b' or '^sq \\\\*|\\\\btst\\\\b'."),
+        match: z.enum(['contains', 'regex']).default('contains').describe("'contains' finds the text anywhere. 'regex' is for whole words and line starts, as described under pattern."),
         category: z.string().optional().describe('Category to assign.'),
         transfer: z.boolean().optional().describe("true: matching transactions are transfers (category 'transfer')."),
         merchant: z.string().min(1).max(80).optional().describe('Rename the merchant on matching transactions.'),
@@ -1487,7 +1488,9 @@ export default defineDomain({
                   FROM money_categories c LEFT JOIN money_budgets b ON b.category = c.name
                   ORDER BY CASE c.category_group WHEN 'essentials' THEN 0 WHEN 'lifestyle' THEN 1 WHEN 'income' THEN 2 ELSE 3 END, c.label`)
         .all(),
-      rules: db.prepare('SELECT r.id, r.pattern, r.match_type, r.category, c.label AS category_label, r.merchant, r.priority, r.created_at FROM money_rules r LEFT JOIN money_categories c ON c.name = r.category ORDER BY r.category, r.pattern').all(),
+      // `problem` is why a stored rule is not being applied (a pattern from when rules were full regular expressions), else null.
+      rules: (db.prepare('SELECT r.id, r.pattern, r.match_type, r.category, c.label AS category_label, r.merchant, r.priority, r.created_at FROM money_rules r LEFT JOIN money_categories c ON c.name = r.category ORDER BY r.category, r.pattern').all() as (Rule & { category_label: string | null; created_at: string })[])
+        .map((r) => ({ ...r, problem: ruleProblem(r) })),
       uncategorized_count: uncategorizedCount(db),
     }),
 

@@ -50,6 +50,12 @@ export interface TurnOpts {
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
   /** Stop the loop once this turn has cost this much (schedules). */
   spendCapUsd?: number;
+  /**
+   * A scheduled turn that may not change Ben's data: it is given no tool that writes to an area
+   * (`touches`). It can still read, research, take notes, use sandbox files and notify. This is what a
+   * schedule gets unless Ben has allowed it to make changes.
+   */
+  readOnly?: boolean;
 }
 
 /** Live state of a running turn; threads.ts owns one per thread. */
@@ -279,7 +285,7 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
         console.error(`turn ${turnId}: memory search failed`, e);
       }
     }
-    const ctxText = contextBlock({ page: input.page, hits, origin: opts.origin });
+    const ctxText = contextBlock({ page: input.page, hits, origin: opts.origin, readOnly: opts.readOnly });
     const userText = [input.text, att.note].filter(Boolean).join('\n\n');
     storedUser = [{ type: 'text', text: ctxText }, { type: 'text', text: userText || '(no text)' }];
     turnMessages.push({ role: 'user', content: [...att.images, ...storedUser] });
@@ -305,7 +311,7 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
       ...(facts ? [{ type: 'text' as const, text: facts }] : []),
     ];
     // Kevin's own tools only. Nothing here reads the web: that is `web_research`, which runs apart from this conversation.
-    const offeredTools = kevin.tools.apiTools((t) => !scope.offTools.has(t.name) && (opts.origin === 'chat' || t.job !== false));
+    const offeredTools = kevin.tools.apiTools((t) => !scope.offTools.has(t.name) && (opts.origin === 'chat' || (t.job !== false && !(opts.readOnly && t.touches))));
     const tools = offeredTools as unknown as Anthropic.Beta.BetaToolUnion[];
     // The same list is enforced when a call comes back: the model can name any tool, whatever it was given.
     const offered = new Set(offeredTools.map((t) => t.name));

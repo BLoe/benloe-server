@@ -91,10 +91,12 @@ export function factsBlock(db: DB, domains: Domain[] = []): string {
   return parts.join('\n\n');
 }
 
-export function contextBlock(o: { page?: string | null; hits?: Hit[]; summary?: string | null; now?: Date; origin?: 'chat' | 'job' }): string {
+export function contextBlock(o: { page?: string | null; hits?: Hit[]; summary?: string | null; now?: Date; origin?: 'chat' | 'job'; readOnly?: boolean }): string {
   const lines = [`now: ${localStamp(o.now ?? new Date())}`];
-  if (o.origin === 'job') lines.push('This turn was started by a schedule, with nobody watching. Do the work, then send what Ben should see with `notify`.');
-  else if (o.page) lines.push(`page Ben is on: ${o.page}`);
+  if (o.origin === 'job') {
+    lines.push('This turn was started by a schedule, with nobody watching. Do the work, then send what Ben should see with `notify`.');
+    if (o.readOnly) lines.push('This schedule is not allowed to change Ben\'s data, so you have no tools that do. Read, research and work things out, then tell Ben with `notify` what you found and what you would change.');
+  } else if (o.page) lines.push(`page Ben is on: ${o.page}`);
   if (o.hits?.length) {
     lines.push('possibly relevant from memory:');
     for (const h of o.hits) lines.push(`- (${h.kind}${h.at ? ' ' + h.at.slice(0, 10) : ''}) ${h.title ? h.title + ': ' : ''}${h.snippet.replace(/\s+/g, ' ').slice(0, 300)}`);
