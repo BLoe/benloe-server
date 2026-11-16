@@ -106,8 +106,40 @@ function readBody(req) {
 
 const fail = (status, error) => Object.assign(new Error(error), { status });
 
-export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes = MAX_DB_BYTES, create = false } = {}) {
+// A log line for something the server refuses on its own account (a limit, a
+// full or replaced database, an internal error), written at most `max` times
+// a minute for each kind, so that a caller repeating the thing cannot fill
+// the log. The first line of a kind written after some were left out carries
+// `suppressed_before`, how many. The kinds are a fixed few, so is the map.
+export function boundedLog(write, max = 10, windowMs = 60_000) {
+  const kinds = new Map();
+  return (kind, fields = {}) => {
+    const t = Date.now();
+    let k = kinds.get(kind);
+    if (!k || t - k.start >= windowMs) {
+      k = { start: t, n: 0, dropped: k?.dropped ?? 0 };
+      kinds.set(kind, k);
+    }
+    if (k.n >= max) {
+      k.dropped++;
+      return;
+    }
+    k.n++;
+    const extra = k.dropped ? { suppressed_before: k.dropped } : {};
+    k.dropped = 0;
+    write(JSON.stringify({ at: new Date(t).toISOString(), event: kind, ...fields, ...extra }));
+  };
+}
+
+// log: the out log; apps/relay/CLAUDE.md says what is written to each.
+// logError: the error log.
+export function createApp({ dbPath = DEFAULT_DB, log = console.log, logError = console.error, maxDbBytes = MAX_DB_BYTES, create = false } = {}) {
   const db = openDb(dbPath, { create });
+  // auth_failed is bounded across all addresses together: the per-address
+  // lockout alone does not bound it, since addresses are cheap.
+  const authFailed = boundedLog(log, 60);
+  const refused = boundedLog(log, 10); // locked_out, rate_limited
+  const alarm = boundedLog(logError, 10); // database_gone, database_full, error
   // The file this process has open. If that name later holds another file,
   // or none (deleted, renamed, restored over), writes here would go to a
   // file nobody else can see while the client was told 201. Checked on
@@ -155,17 +187,23 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
       ? checkToken(db, m[1])
       : { ok: false, reason: header ? 'Authorization header must be exactly: Bearer <token>' : 'missing header: Authorization: Bearer <token>' };
     if (!auth.ok) {
-      if (badAuth.over(ip)) throw fail(429, 'too many failed attempts; wait a minute');
+      if (badAuth.over(ip)) {
+        refused('locked_out', { ip, route });
+        throw fail(429, 'too many failed attempts; wait a minute');
+      }
       badAuth.hit(ip);
-      log(JSON.stringify({ at: new Date().toISOString(), ip, event: 'auth_failed', reason: auth.reason, route }));
+      authFailed('auth_failed', { ip, reason: auth.reason, route });
       throw fail(401, auth.reason);
     }
     const tok = auth.token;
     if (gone()) {
-      console.error(JSON.stringify({ at: new Date().toISOString(), event: 'error', message: 'the database file this process opened is no longer at its path; refusing requests until restarted' }));
+      alarm('database_gone', { status: 503, message: 'the database file this process opened is no longer at its path; refusing requests until restarted' });
       throw fail(503, 'the channel is out of service; tell Ben');
     }
-    if (!perToken.hit(tok.id)) throw fail(429, 'rate limit: 120 requests per minute');
+    if (!perToken.hit(tok.id)) {
+      refused('rate_limited', { ip, agent: tok.agent, token: tok.id, limit: 'requests' });
+      throw fail(429, 'rate limit: 120 requests per minute');
+    }
     touchToken(db, tok.id, ip);
     log(JSON.stringify({ at: new Date().toISOString(), ip, event: 'request', agent: tok.agent, token: tok.id, method: req.method, route }));
 
@@ -204,8 +242,14 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
     }
 
     if (url.pathname === '/v1/messages' && req.method === 'POST') {
-      if (!posts.hit(tok.id)) throw fail(429, 'rate limit: 20 posts per minute');
-      if (dbBytes(db) > maxDbBytes) throw fail(507, 'the channel is full; tell Ben');
+      if (!posts.hit(tok.id)) {
+        refused('rate_limited', { ip, agent: tok.agent, token: tok.id, limit: 'posts' });
+        throw fail(429, 'rate limit: 20 posts per minute');
+      }
+      if (dbBytes(db) > maxDbBytes) {
+        alarm('database_full', { status: 507, message: `the database is past ${maxDbBytes} bytes; posts are refused until it is trimmed` });
+        throw fail(507, 'the channel is full; tell Ben');
+      }
       const raw = (await readBody(req)).toString('utf8');
       const type = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
       let body;
@@ -235,7 +279,7 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
     try {
       out = await handle(req, res);
     } catch (e) {
-      if (!e.status) console.error(JSON.stringify({ at: new Date().toISOString(), event: 'error', message: String(e?.stack || e) }));
+      if (!e.status) alarm('error', { status: 500, message: String(e?.stack || e) });
       out = { status: e.status || 500, json: { error: e.status ? e.message : 'internal error' } };
     }
     if (res.destroyed) return;

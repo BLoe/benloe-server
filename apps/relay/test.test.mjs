@@ -1,17 +1,23 @@
+// This file is loaded first and runs before any other code from this
+// directory, and it may import nothing but node's built-in modules until the
+// check below has passed. Static imports are evaluated before a module's
+// body, so a static import of ./server.mjs or ./db.mjs here would run those
+// files before the check could refuse them: they are loaded with import()
+// further down, after it.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createApp } from './server.mjs';
-import { createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, openDb, checkToken, MAX_BODY_CHARS, MAX_TTL_MS } from './db.mjs';
 
 // A test is code like any other, and root must not run code out of a tree
-// another uid can write (/srv/benloe is claude-worker's). As root, this file
-// runs only if it, db.mjs, server.mjs, cli.mjs and every directory above
-// them are root-owned and not writable by group or other (a sticky directory
-// such as /tmp is accepted). A benloe-promote checkout passes:
+// another uid can write (/srv/benloe is claude-worker's). As root, nothing
+// else in this directory is loaded unless db.mjs, server.mjs and cli.mjs,
+// this file, and every directory above them are root-owned and not writable
+// by group or other (a sticky directory such as /tmp is accepted). This file
+// itself has necessarily run by then: a tree that replaced it could simply
+// leave the check out. A benloe-promote checkout passes:
 //   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/test-as-root.sh
 // An unprivileged user runs `npm test` from anywhere; the tests that need two
 // uids are then skipped. Like the installers' location check, this catches a
@@ -34,6 +40,9 @@ if (process.getuid() === 0) {
     process.exit(1);
   }
 }
+
+const { createApp, boundedLog } = await import('./server.mjs');
+const { createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, openDb, checkToken, MAX_BODY_CHARS, MAX_TTL_MS } = await import('./db.mjs');
 
 let dir, app, base, db, tok;
 const call = (path, { token = tok, method = 'GET', body, type, ip = '10.0.0.1' } = {}) =>
@@ -275,12 +284,16 @@ test('120 requests a minute per token, then 429', async () => {
 
 test('posts are refused with 507 once the database passes its cap; reads still work', async () => {
   const d = mkdtempSync(join(tmpdir(), 'relay-full-'));
-  const small = createApp({ dbPath: join(d, 'relay.db'), log: () => {}, maxDbBytes: 1, create: true });
+  const errors = [];
+  const small = createApp({ dbPath: join(d, 'relay.db'), log: () => {}, logError: (l) => errors.push(JSON.parse(l)), maxDbBytes: 1, create: true });
   await new Promise((r) => small.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${small.server.address().port}/v1/messages`;
   const headers = { Authorization: `Bearer ${createToken(small.db, 'benji', 60_000).token}`, 'Content-Type': 'text/plain' };
   try {
     assert.equal((await fetch(url, { method: 'POST', body: 'x', headers })).status, 507);
+    assert.deepEqual(errors.map((e) => [e.event, e.status]), [['database_full', 507]], 'the refusal is in the error log');
+    for (let i = 0; i < 15; i++) assert.equal((await fetch(url, { method: 'POST', body: 'x', headers })).status, 507);
+    assert.equal(errors.length, 10, 'and logged at most ten times a minute');
     assert.equal((await fetch(url, { headers })).status, 200);
   } finally {
     small.server.close();
@@ -414,7 +427,7 @@ test('revoke counts and stamps only tokens that were still live', async () => {
   rmSync(d, { recursive: true, force: true });
 });
 
-test('openDb and createApp refuse a path with no database unless told to create one', () => {
+test('openDb and createApp refuse a path with no database unless told to create one', async () => {
   const d = mkdtempSync(join(tmpdir(), 'relay-nodb-'));
   try {
     assert.throws(() => openDb(join(d, 'relay.db')), /no database at /);
@@ -422,6 +435,19 @@ test('openDb and createApp refuse a path with no database unless told to create 
     assert.equal(existsSync(join(d, 'relay.db')), false);
     openDb(join(d, 'relay.db'), { create: true }).close();
     openDb(join(d, 'relay.db')).close();
+    // A file at the path that is not a relay database is refused, and left as it was.
+    const { writeFileSync, readFileSync } = await import('node:fs');
+    const { DatabaseSync } = await import('node:sqlite');
+    writeFileSync(join(d, 'empty.db'), '');
+    assert.throws(() => openDb(join(d, 'empty.db')), /is not a relay database/);
+    assert.equal(readFileSync(join(d, 'empty.db')).length, 0, 'the empty file was given a schema');
+    const other = new DatabaseSync(join(d, 'other.db'));
+    other.exec('CREATE TABLE t (x)');
+    other.close();
+    assert.throws(() => createApp({ dbPath: join(d, 'other.db'), log: () => {} }), /is not a relay database/);
+    const check = new DatabaseSync(join(d, 'other.db'));
+    assert.deepEqual(check.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name), ['t']);
+    check.close();
   } finally {
     rmSync(d, { recursive: true, force: true });
   }
@@ -430,7 +456,8 @@ test('openDb and createApp refuse a path with no database unless told to create 
 test('the server stops answering once the database file it opened is no longer at its path', async () => {
   const { renameSync } = await import('node:fs');
   const d = mkdtempSync(join(tmpdir(), 'relay-gone-'));
-  const one = createApp({ dbPath: join(d, 'relay.db'), log: () => {}, create: true });
+  const errors = [];
+  const one = createApp({ dbPath: join(d, 'relay.db'), log: () => {}, logError: (l) => errors.push(JSON.parse(l)), create: true });
   await new Promise((r) => one.server.listen(0, '127.0.0.1', r));
   try {
     const url = `http://127.0.0.1:${one.server.address().port}/v1/messages`;
@@ -446,6 +473,57 @@ test('the server stops answering once the database file it opened is no longer a
     openDb(join(d, 'relay.db'), { create: true }).close();
     assert.equal((await fetch(url, { method: 'POST', body: 'still refused', headers })).status, 503);
     assert.equal(one.db.prepare('SELECT COUNT(*) AS n FROM messages').get().n, 1, 'nothing was accepted after the file went');
+    assert.deepEqual(errors.map((e) => [e.event, e.status]), Array(3).fill(['database_gone', 503]), 'each 503 is in the error log');
+  } finally {
+    one.server.close();
+    one.server.closeAllConnections();
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('boundedLog writes at most max lines a window per kind, then says how many it left out', async () => {
+  const lines = [];
+  const note = boundedLog((l) => lines.push(JSON.parse(l)), 2, 100);
+  for (let i = 0; i < 5; i++) note('a', { i });
+  note('b');
+  assert.deepEqual(lines.map((l) => [l.event, l.i, l.suppressed_before]), [['a', 0, undefined], ['a', 1, undefined], ['b', undefined, undefined]]);
+  await new Promise((r) => setTimeout(r, 120));
+  note('a', { i: 5 });
+  assert.deepEqual([lines.at(-1).i, lines.at(-1).suppressed_before], [5, 3]);
+  note('a', { i: 6 });
+  assert.equal(lines.at(-1).suppressed_before, undefined, 'counted once, then reset');
+});
+
+test('every refusal the server makes on its own account is logged: lockout, both rate limits, an internal error', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'relay-refusals-'));
+  const out = [];
+  const errors = [];
+  const one = createApp({ dbPath: join(d, 'relay.db'), log: (l) => out.push(JSON.parse(l)), logError: (l) => errors.push(JSON.parse(l)), create: true });
+  await new Promise((r) => one.server.listen(0, '127.0.0.1', r));
+  const at = `http://127.0.0.1:${one.server.address().port}`;
+  const get = (path, token, ip = '10.5.0.1', init = {}) => fetch(at + path, { ...init, headers: { Authorization: `Bearer ${token}`, 'X-Forwarded-For': ip, ...(init.headers || {}) } });
+  const events = (e) => out.filter((l) => l.event === e);
+  try {
+    for (let i = 0; i < 10; i++) assert.equal((await get('/v1/whoami', 'nope', '10.5.0.9')).status, 401);
+    assert.equal((await get('/v1/whoami', 'nope', '10.5.0.9')).status, 429);
+    assert.deepEqual(events('locked_out').map((l) => l.ip), ['10.5.0.9']);
+    for (let i = 0; i < 15; i++) assert.equal((await get('/v1/whoami', 'nope', '10.5.0.9')).status, 429);
+    assert.equal(events('locked_out').length, 10, 'locked_out: at most ten lines a minute');
+    for (let i = 0; i < 60; i++) assert.equal((await get('/v1/whoami', 'nope', `10.6.0.${i}`)).status, 401);
+    assert.equal(events('auth_failed').length, 60, 'auth_failed: at most sixty a minute, whatever the addresses');
+
+    const poster = createToken(one.db, 'poster', 60_000);
+    for (let i = 0; i < 21; i++) await get('/v1/messages', poster.token, undefined, { method: 'POST', body: 'x', headers: { 'Content-Type': 'text/plain' } });
+    assert.deepEqual(events('rate_limited').map((l) => [l.token, l.limit]), [[poster.id, 'posts']]);
+
+    const busy = createToken(one.db, 'busy', 60_000);
+    for (let i = 0; i < 121; i++) await get('/v1/whoami', busy.token);
+    assert.deepEqual(events('rate_limited').map((l) => [l.token, l.limit]), [[poster.id, 'posts'], [busy.id, 'requests']]);
+
+    assert.equal(errors.length, 0);
+    one.db.close(); // every query now throws: an internal error
+    assert.equal((await get('/v1/whoami', busy.token)).status, 500);
+    assert.deepEqual(errors.map((e) => [e.event, e.status]), [['error', 500]]);
   } finally {
     one.server.close();
     one.server.closeAllConnections();
@@ -608,6 +686,45 @@ test('relay command refuses to run as root, before it opens anything', asRoot, a
   assert.equal(existsSync(dbPath), false, 'no database was created by root');
 });
 
+test('as root, this file loads no other file of its directory unless the tree is root\'s alone', asRoot, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { chownSync, chmodSync, copyFileSync, writeFileSync } = await import('node:fs');
+  const d = mkdtempSync(join(tmpdir(), 'relay-guard-'));
+  try {
+    copyFileSync(new URL(import.meta.url), join(d, 'test.test.mjs'));
+    // A db.mjs that leaves a mark if it is ever executed, and stops there. It
+    // exports every name this file takes from the real one, so that importing
+    // it, statically or not, links and runs it.
+    const mark = join(d, 'executed');
+    const names = 'createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, openDb, checkToken, MAX_BODY_CHARS, MAX_TTL_MS';
+    writeFileSync(join(d, 'db.mjs'), `import { writeFileSync } from 'node:fs';\nexport const ${names.split(', ').map((n) => `${n} = 0`).join(', ')};\nwriteFileSync(${JSON.stringify(mark)}, String(process.getuid()));\nprocess.exit(0);\n`);
+    writeFileSync(join(d, 'server.mjs'), 'export const createApp = () => {};\n');
+    writeFileSync(join(d, 'cli.mjs'), '\n');
+    for (const f of ['test.test.mjs', 'db.mjs', 'server.mjs', 'cli.mjs']) chmodSync(join(d, f), 0o644);
+    const run = () => spawnSync(NODE, ['--disable-warning=ExperimentalWarning', join(d, 'test.test.mjs')], { cwd: d, encoding: 'utf8', timeout: 20_000 });
+
+    chownSync(join(d, 'db.mjs'), SERVER_UID, SHARED_GID); // as if another uid had put it there
+    const r = run();
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /^Refusing to run as root: .*db\.mjs is not root's alone/);
+    assert.equal(existsSync(mark), false, 'the foreign db.mjs was executed as root');
+
+    chownSync(join(d, 'db.mjs'), 0, 0);
+    chmodSync(d, 0o777); // now a directory another uid could write
+    const w = run();
+    assert.equal(w.status, 1, w.stderr);
+    assert.ok(w.stderr.startsWith(`Refusing to run as root: ${d} is not root's alone`), w.stderr);
+    assert.equal(existsSync(mark), false);
+
+    chmodSync(d, 0o700); // positive control: a root-only tree is loaded
+    const ok = run();
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(existsSync(mark), true, 'the check refused a tree that was root\'s alone');
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
 test('a missing database is never created except by relay init', asRoot, async (t) => {
   const { spawnSync } = await import('node:child_process');
   const { unlinkSync } = await import('node:fs');
@@ -737,6 +854,21 @@ test('relay command: text a hostile database puts in an error message is escaped
   assert.equal(list.code, 0);
   assert.ok(!list.out.includes('\u001b'), 'no raw escape character');
   assert.equal(list.out.trimEnd().split('\n').length, 1, list.out);
+});
+
+test('relay command: an empty file at the path is refused by every command, relay init included, and left empty', asRoot, async (t) => {
+  const { cli, dbPath } = await sandbox(t);
+  const { writeFileSync, chownSync, chmodSync } = await import('node:fs');
+  writeFileSync(dbPath, '');
+  chownSync(dbPath, SERVER_UID, SHARED_GID);
+  chmodSync(dbPath, 0o660);
+  for (const a of [['init'], ['inbox'], ['send', 'hello'], ['token', 'list']]) {
+    const r = cli(...a);
+    assert.equal(r.code, 1, a.join(' '));
+    assert.match(r.out, /is not a relay database/, a.join(' '));
+    assert.doesNotMatch(r.out, /No new messages|No tokens|Sent|Created|already there/, a.join(' '));
+    assert.equal(statSync(dbPath).size, 0, `${a.join(' ')} wrote to the empty file`);
+  }
 });
 
 test('relay command: a file that is not a database gives one line, not a stack trace', asRoot, async (t) => {

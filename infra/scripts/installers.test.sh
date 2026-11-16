@@ -16,6 +16,24 @@ set -euo pipefail
 [[ $(id -u) -eq 0 ]] || { echo "must run as root: the installers check for it, and files are given to other uids" >&2; exit 1; }
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 REPO=${HERE%/infra/scripts}
+# Sourcing test-guard.sh runs it, so as root it is checked here first, the
+# way it then checks everything else: it, and every directory above it, must
+# be root-owned and not writable by group or other (sticky directories
+# aside). Until it passes, nothing from this tree but this script has run.
+if [[ $(id -u) -eq 0 ]]; then
+    p=$HERE/test-guard.sh
+    while :; do
+        if ! read -r u m < <(stat -c '%u %a' -- "$p" 2>/dev/null) || [[ "$u" -ne 0 ]] \
+            || { (( 0$m & 022 )) && ! { [[ -d "$p" ]] && (( 0$m & 01000 )); }; }; then
+            echo "Refusing to run as root: $p is not root's alone, so test-guard.sh is not sourced." >&2
+            echo "Run it from a checkout made by benloe-promote instead, with the commit id taken from GitHub:" >&2
+            echo "  benloe-promote \"\$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)\" <path of this test in the repo>" >&2
+            exit 1
+        fi
+        [[ "$p" == / ]] && break
+        p=$(dirname -- "$p")
+    done
+fi
 # shellcheck source=infra/scripts/test-guard.sh
 . "$HERE/test-guard.sh"
 refuse_unsafe_tree "$HERE/installers.test.sh" "$HERE/test-guard.sh" "$HERE/install-promote.sh" "$HERE/install-db-backup.sh" \
@@ -94,6 +112,37 @@ for u in $(grep -ohE '^(OnFailure|Requires|Wants)=.*' "$REPO/infra/systemd/benlo
     [[ -f "$T/systemd/$u" ]] && ok || no "benloe-db-backup.service names $u, which the installer does not install"
 done
 
+echo "#    the installed failure unit's commands, run in order the way systemd runs them"
+# Each ExecStart= line of the installed copy, with a "-" prefix honoured (its
+# failure does not stop the next line) and "%%" unescaped, under the unit's
+# UMask; logger is replaced by a recorder and /var/backups moved under $T.
+# The shell's quoting stands in for systemd's, which these lines use alike.
+printf '#!/bin/sh\necho "$*" >> "%s/logger.calls"\n' "$T" > "$T/stub/logger"
+chmod 755 "$T/stub/logger"
+run_failure_unit() {
+    local line cmd ignore
+    while IFS= read -r line; do
+        cmd=${line#ExecStart=}
+        ignore=0
+        [[ "$cmd" == -* ]] && { ignore=1; cmd=${cmd#-}; }
+        cmd=${cmd//%%/%}
+        cmd=${cmd//\/usr\/bin\/logger/$T/stub/logger}
+        cmd=${cmd//\/var\/backups/$T/backups}
+        if ! (umask 0077 && eval "$cmd") 2>/dev/null && [[ $ignore -eq 0 ]]; then return 1; fi
+    done < <(grep '^ExecStart=' "$T/systemd/benloe-db-backup-failed.service")
+}
+touch "$T/backups" # a file where the directory should be: the marker cannot be written
+rc=0; run_failure_unit || rc=$?
+is "$(cat "$T/logger.calls" 2>/dev/null)" "-p daemon.err -t benloe-db-backup the nightly database backup failed; see /var/log/benloe-db-backup.log" \
+    "the journal line, when the marker cannot be written"
+is "$rc" 0 "the unit's result when only the marker failed"
+rm -f -- "$T/backups" "$T/logger.calls"
+run_failure_unit
+[[ -s "$T/logger.calls" ]] && ok || no "no journal line on a normal failure"
+grep -qE '^failed [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z; see /var/log/benloe-db-backup.log$' "$T/backups/benloe/LAST-RUN-FAILED" && ok \
+    || no "LAST-RUN-FAILED does not say when: $(cat "$T/backups/benloe/LAST-RUN-FAILED" 2>&1)"
+is "$(stat -c %a "$T/backups/benloe/LAST-RUN-FAILED")" 600 "the marker's mode under UMask=0077"
+
 echo "# 4. apps/relay/install.sh"
 # No command it gives to setpriv may inherit root's environment.
 if python3 -I -c '
@@ -106,6 +155,15 @@ if ! id relay > /dev/null 2>&1 || ! id relay-cli > /dev/null 2>&1 || [[ ! -x /us
     echo "SKIPPED: the rest of part 4 needs the relay and relay-cli users and /usr/local/bin/node"
 else
     mode() { stat -c '%U:%G %a' "$1"; }
+    echo "#    a kernel that lets anyone push input into their terminal (TIOCSTI) stops it first"
+    echo 1 > "$T/legacy_tiocsti"
+    sed "s|/proc/sys/dev/tty/legacy_tiocsti|$T/legacy_tiocsti|" "$CK/apps/relay/install.sh" > "$CK/apps/relay/install-tiocsti.sh"
+    cmp -s "$CK/apps/relay/install.sh" "$CK/apps/relay/install-tiocsti.sh" && no "the test could not point install.sh at its own legacy_tiocsti" || ok
+    run "$CK/apps/relay/install-tiocsti.sh"
+    is "$rc" 1 "exit status with dev.tty.legacy_tiocsti = 1"
+    has "$T/out.log" "dev.tty.legacy_tiocsti is 1, not 0"
+    [[ ! -e "$T/lib" && ! -e "$T/data" ]] && ok || no "something was installed although TIOCSTI is open"
+    rm -f -- "$CK/apps/relay/install-tiocsti.sh"
     echo "#    a new install"
     run "$CK/apps/relay/install.sh"
     is "$rc" 0 "exit status"
@@ -117,6 +175,53 @@ else
     "$T/bin/relay" send "written through the installed command" > "$T/send.log" 2>&1 || true
     has "$T/send.log" "Sent #1 as claude."
     is "$(mode "$T/data/relay.db")" "relay-cli:relay 660" "the database after a write"
+
+    echo "#    the server's shim, run for real: who node runs as, and what it inherits"
+    # Started the way PM2 starts it: by root, with an environment of its own.
+    (cd / && env SECRET_FROM_PM2=leak PORT=4999 "$T/shim/node-as-relay" -e '
+const env = Object.entries(process.env).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join(" ");
+const caps = require("fs").readFileSync("/proc/self/status", "utf8").match(/^CapEff:\s*(\S+)/m)[1];
+console.log(`${process.getuid()} ${process.getgid()} [${process.getgroups()}] caps=${caps} ${env}`);') > "$T/shim.log" 2>&1 || true
+    r=$(id -u relay); g=$(id -g relay)
+    is "$(cat "$T/shim.log")" "$r $g [$g] caps=0000000000000000 HOME=/nonexistent NODE_ENV=production PATH=/usr/bin:/bin PORT=4999 RELAY_DB=$T/data/relay.db" \
+        "uid, gid, groups and the whole environment node gets through the shim"
+    # And the installed server itself, through the shim, answering on a port of its own.
+    (cd / && PORT=0 exec "$T/shim/node-as-relay" --disable-warning=ExperimentalWarning "$T/lib/server.mjs") > "$T/server.log" 2>&1 &
+    spid=$!
+    for _ in $(seq 100); do grep -q 'relay listening' "$T/server.log" && break; sleep 0.1; done
+    is "$(awk '/^Uid:/ { print $2, $3, $4, $5 }' "/proc/$spid/status" 2>/dev/null)" "$r $r $r $r" "the server process's real, effective, saved and filesystem uid"
+    port=$(grep -o 'relay listening on 127.0.0.1:[0-9]*' "$T/server.log" | cut -d: -f2)
+    is "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port:-1}/v1/whoami")" 401 "the server, started through the shim, answers"
+    kill "$spid" 2>/dev/null || true
+    wait "$spid" 2>/dev/null || true
+
+    # What PM2 is told to run: the installed server, through the shim. Without
+    # the interpreter line PM2 would start relay-api as root.
+    is "$(/usr/local/bin/node -e '
+const [app, ...rest] = require(process.argv[1]).apps;
+console.log(rest.length, app.name, app.interpreter, app.script, app.cwd);' "$T/etc/relay.config.js")" \
+        "0 relay-api /usr/local/lib/benloe/node-as-relay /usr/local/lib/benloe/relay/server.mjs /usr/local/lib/benloe/relay" \
+        "the installed PM2 config: one app, run through the shim install.sh writes, from the code it installs"
+    grep -q '^SHIM=/usr/local/lib/benloe/node-as-relay$' <(sed -n 's|^cat > \(/usr/local/lib/benloe/node-as-relay\) <<.SHIM.$|SHIM=\1|p' "$REPO/apps/relay/install.sh") && ok \
+        || no "install.sh does not write the shim where the PM2 config expects it"
+
+    echo "#    the relay command's wrapper, run for real: the process it leaves behind"
+    # `relay send -` waits on its input, which holds it still to be looked at.
+    mkfifo "$T/fifo"
+    (cd /tmp && exec env SECRET_FROM_ROOT=leak "$T/bin/relay" send - < "$T/fifo" > "$T/wsend.log" 2>&1) &
+    wpid=$!
+    exec 8> "$T/fifo"
+    for _ in $(seq 100); do grep -q cli.mjs "/proc/$wpid/cmdline" 2>/dev/null && break; sleep 0.1; done
+    c=$(id -u relay-cli); g=$(id -g relay)
+    is "$(awk '/^(Uid|Gid|Groups|CapEff):/ { $1 = ""; printf "%s;", $0 }' "/proc/$wpid/status")" " $c $c $c $c; $g $g $g $g;; 0000000000000000;" \
+        "the command's uids, gids, groups and capabilities"
+    is "$(tr '\0' ' ' < "/proc/$wpid/environ")" "PATH=/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 RELAY_DB=$T/data/relay.db " "its whole environment"
+    is "$(readlink "/proc/$wpid/cwd")" / "its working directory"
+    echo "held still" >&8
+    exec 8>&-
+    wait "$wpid" || true
+    has "$T/wsend.log" "as claude."
+
     echo "#    again, over the install just made"
     run "$CK/apps/relay/install.sh"
     is "$rc" 0 "exit status of a second run"
@@ -180,6 +285,21 @@ for case in "the tree belongs to another uid" "one script in it belongs to anoth
         is "$(wc -l < "$T/guard.log")" 3 "$test when $case: lines printed (the refusal and nothing else)"
     done
 done
+echo "#    a test-guard.sh that another uid owns is refused before it is sourced"
+chown -R root:root "$G"; chmod -R go-w "$G"
+printf 'touch %q\nrefuse_unsafe_tree() { :; }\n' "$T/foreign-guard-ran" > "$G/infra/scripts/test-guard.sh"
+chown 61001 "$G/infra/scripts/test-guard.sh"
+# (Not this script itself, as above: were its check ever lost, it would
+# run this part again inside itself.)
+for test in benloe-promote.test.sh backup-databases.test.sh; do
+    rc=0
+    (cd / && bash "$G/infra/scripts/$test") > "$T/guard.log" 2>&1 || rc=$?
+    is "$rc" 1 "$test with a foreign test-guard.sh: exit status"
+    has "$T/guard.log" "test-guard.sh is not root's alone, so test-guard.sh is not sourced"
+    [[ ! -e "$T/foreign-guard-ran" ]] && ok || no "$test sourced a test-guard.sh that another uid owns"
+    rm -f -- "$T/foreign-guard-ran"
+done
+cp "$HERE/test-guard.sh" "$G/infra/scripts/test-guard.sh"
 chown -R root:root "$G"; chmod -R go-w "$G"
 rc=0
 (cd / && bash "$G/infra/scripts/benloe-promote.test.sh") > "$T/guard.log" 2>&1 || rc=$?

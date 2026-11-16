@@ -1,4 +1,6 @@
-# Sourced by the test scripts in this directory. Not run on its own.
+# Sourced by the test scripts in this directory. Not run on its own. Sourcing
+# it runs it, so each of them, as root, first checks this file and the
+# directories above it the same way, inline, before sourcing it.
 #
 # A test is code like any other, and root must not run code out of a tree
 # another uid can write (/srv/benloe is claude-worker's). So: when the caller
