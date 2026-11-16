@@ -1,0 +1,18 @@
+# Started by benloe-db-backup.service when it fails (OnFailure=). It does not
+# send anything to anyone: there is no alerting on this box to hand it to. It
+# writes an error-priority line to the journal and, if it can, leaves a file
+# that says the last backup failed, which the next clean run removes.
+#   ls /var/backups/benloe/LAST-RUN-FAILED
+#   journalctl -t benloe-db-backup -p err
+# Installed by infra/scripts/install-db-backup.sh, through benloe-promote.
+[Unit]
+Description=Record that the nightly database backup failed
+
+[Service]
+Type=oneshot
+UMask=0077
+# Each step is prefixed "-", so a failure in one never skips the other: a full
+# or read-only /var/backups, a likely reason the backup failed, must not also
+# silence the journal line. The journal line goes first.
+ExecStart=-/usr/bin/logger -p daemon.err -t benloe-db-backup "the nightly database backup failed; see /var/log/benloe-db-backup.log"
+ExecStart=-/bin/sh -c 'mkdir -p /var/backups/benloe && date -u +"failed %%FT%%TZ; see /var/log/benloe-db-backup.log" > /var/backups/benloe/LAST-RUN-FAILED'
