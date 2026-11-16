@@ -27,6 +27,9 @@
 # The branch is main unless --branch names another, and the one used is
 # printed.
 #
+# A commit that stores a symbolic link anywhere in its tree is refused (see
+# below, at the check).
+#
 # WHAT THAT DOES AND DOES NOT PROVE. With the default, the commit is part of
 # main's history on GitHub at that moment: it was merged or pushed there.
 # main is not a protected branch, so this is exactly as strong as "who can
@@ -91,6 +94,23 @@ if ! store cat-file -e "$sha^{commit}" 2>/dev/null || ! store merge-base --is-an
 fi
 echo "benloe-promote: $sha is on GitHub's $branch (tip ${tip})"
 
+# A commit can store symbolic links, and unpacking recreates them. One that
+# points into /srv/benloe would make an install script copy whatever
+# claude-worker has there at this moment instead of a file from the commit.
+# The repository has no symbolic links, so a commit that stores one, anywhere
+# in its tree, is refused outright. It is the commit that is examined, on
+# every run, not the unpacked directory: a deploy script that builds inside
+# its checkout leaves links of its own there (node_modules/.bin).
+tree=$(store ls-tree -r "$sha") || { echo "benloe-promote: could not list the files of $sha" >&2; exit 1; }
+if grep -q '^120000 ' <<<"$tree"; then
+    echo "benloe-promote: $sha stores a symbolic link. Nothing was run. The first:" >&2
+    grep -m 1 '^120000 ' <<<"$tree" >&2
+    exit 1
+fi
+
+# A checkout that already exists is used as it stands, with whatever an
+# earlier run of a script built or changed inside it; only root can write
+# there. Remove the directory to start again from the commit alone.
 dir=$ROOT/$sha
 if [[ ! -d "$dir" ]]; then
     mkdir -p "$ROOT"

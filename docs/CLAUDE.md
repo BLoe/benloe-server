@@ -271,14 +271,20 @@ same way, by the copy already installed: `infra/scripts/install-promote.sh`.
 
 ## Database Backups
 
-SQLite databases are snapshotted nightly (~09:15 UTC) to
-`/var/backups/benloe/<timestamp>/` — root-only, 14 days kept, each snapshot
-integrity-checked. Covered: `/srv/benloe/data/*.db` and one level of
-subdirectories (`cabinet/`, `gavel/`), the relay database
-(`/var/lib/benloe-relay`), sign-in accounts (`/var/lib/artanis`) and the
-encrypted secret store (`/var/lib/benloe-secrets`; ciphertext only, the key
-in `/etc/benloe/benloe-secrets.key` is not in the backup). A database
-anywhere else is not covered until it is added to the script.
+The SQLite databases listed here, and no others, are snapshotted nightly
+(~09:15 UTC) to `/var/backups/benloe/<timestamp>/`, root-only, each snapshot
+integrity-checked: `/srv/benloe/data/*.db` and one level of subdirectories
+(`cabinet/`, `gavel/`), saved under `data/`; and, saved under `var-lib/`, the
+relay database (`/var/lib/benloe-relay`), sign-in accounts
+(`/var/lib/artanis`) and the encrypted secret store
+(`/var/lib/benloe-secrets`; ciphertext only, the key in
+`/etc/benloe/benloe-secrets.key` is not in the backup). A database anywhere
+else, including one belonging to an app that keeps its data under its own
+`/var/lib` directory, is not covered until it is added to the script.
+
+A run that saved every one of them leaves a file `COMPLETE` in its folder. Runs
+older than 14 days are deleted after every run, except the newest three
+`COMPLETE` ones, which are kept however old they are.
 
 - Script: `infra/scripts/backup-databases.sh`, run as the installed copy
   `/usr/local/sbin/benloe-db-backup.sh`. Schedule: `benloe-db-backup.timer`;

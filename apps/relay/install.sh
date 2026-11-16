@@ -71,12 +71,19 @@ install -d -o relay -g relay -m 2770 "$DATA"
 # a chmod can only ever reach a file `relay` owns. Files `relay` does not own
 # (made by relay-cli) are left alone here; cli.mjs and server.mjs create them
 # 0660 themselves.
-/usr/bin/setpriv --reuid=relay --regid=relay --clear-groups /bin/sh -c '
+#
+# That shell is a process of the server's uid, which the server can inspect
+# (its environment) and signal. So it gets none of root's environment, no
+# terminal on its input, and / as its directory. If the server stops it
+# (SIGSTOP), this script waits there until interrupted, having copied no
+# code yet.
+cd /
+/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/setpriv --reuid=relay --regid=relay --clear-groups /bin/sh -c '
   cd "$1" || exit 1
   for f in relay.db relay.db-wal relay.db-shm; do
     if [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ]; then chmod 0660 "$f" || exit 1; fi
   done
-' sh "$DATA"
+' sh "$DATA" < /dev/null
 # Then root looks, without opening or changing anything (find does not follow
 # symlinks): each of the three that exists must now be a regular file, group
 # relay, mode 0660. If one is not, the two uids cannot share the database and

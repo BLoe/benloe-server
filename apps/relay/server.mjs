@@ -53,6 +53,8 @@ Messages you post appear with your token's agent name as sender; the other side 
 Nobody is listening live: a reply arrives when Ben asks the other side to read and answer.
 
 Errors are JSON: { error }. 401 = missing/unknown/expired/revoked token. 429 = slow down.
+413 = too large: a message over ${MAX_BODY_CHARS} characters or a request over 1 MiB. (A request
+over 2 MB is refused by the proxy in front of this server, with a 413 that is not JSON.)
 `;
 
 // Fixed-window counter. over() reads, hit() increments.
@@ -88,7 +90,9 @@ function readBody(req) {
     let size = 0;
     req.on('data', (c) => {
       // Past the cap, keep draining without keeping: the client then gets a
-      // real 413 instead of a reset. Caddy caps bodies at the same size, and
+      // real 413 instead of a reset. Caddy's own cap is 2 MB
+      // (infra/caddy/relay.benloe.com), above this one, so up to there it is
+      // this JSON 413 the client sees; past it Caddy answers instead.
       // requestTimeout bounds a slow sender.
       size += c.length;
       if (size <= MAX_BYTES) chunks.push(c);
