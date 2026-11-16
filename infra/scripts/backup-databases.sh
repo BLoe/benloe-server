@@ -34,8 +34,8 @@
 #
 # WHO HEARS ABOUT A FAILURE. Nobody is paged. A run with any failure exits 1,
 # which fails benloe-db-backup.service; that starts
-# benloe-db-backup-failed.service, which writes
-# /var/backups/benloe/LAST-RUN-FAILED and an error line in the journal. A
+# benloe-db-backup-failed.service, which writes an error line to the journal
+# and, if /var/backups is writable, /var/backups/benloe/LAST-RUN-FAILED. A
 # clean run removes the file. It is there to be looked for: `systemctl
 # is-failed benloe-db-backup.service`, or the file.
 #
@@ -151,7 +151,7 @@ except BaseException as e:
 sys.exit(0 if rows == [("ok",)] else "        quick_check: %.300r" % (rows[:3],))
 '
 
-# Runs a command with an empty environment and with no open files beyond 0,
+# Runs a command with only PATH in its environment and no open files beyond 0,
 # 1 and 2 (subprocess closes the rest; every call below redirects 0 itself,
 # to /dev/null or to the snapshot being checked), and kills it (SIGKILL, from
 # this root process) if it is still going after STEP_SECS; exits 124 then. KILL

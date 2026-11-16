@@ -309,9 +309,10 @@ older than 14 days are deleted after every run, except the newest three
 `COMPLETE` ones, which are kept however old they are.
 
 **Nobody is told when a backup fails.** There is no alerting on this box to
-hand it to. A failed run fails `benloe-db-backup.service`, which leaves
-`/var/backups/benloe/LAST-RUN-FAILED` (removed by the next clean run) and an
-error line in the journal. Look: `ls /var/backups/benloe/LAST-RUN-FAILED`,
+hand it to. A failed run fails `benloe-db-backup.service`, which leaves an
+error line in the journal (`journalctl -t benloe-db-backup -p err`) and, if
+`/var/backups` is writable, `/var/backups/benloe/LAST-RUN-FAILED` (removed by
+the next clean run). Look: `ls /var/backups/benloe/LAST-RUN-FAILED`,
 `systemctl is-failed benloe-db-backup.service`, and the newest folder with a
 `COMPLETE` file is the newest good backup.
 
@@ -324,11 +325,15 @@ path is added as a line to `/var/backups/benloe/RETIRED` (for example
   `/usr/local/sbin/benloe-db-backup.sh`. Schedule: `benloe-db-backup.timer`;
   the units are in `infra/systemd/` and run as installed copies in
   `/etc/systemd/system/`.
-- After editing the script or either unit, and on a new box: commit, push,
-  merge, then
+- After editing the script or any of its three units
+  (`benloe-db-backup.service`, `benloe-db-backup-failed.service`,
+  `benloe-db-backup.timer`), and on a new box: commit, push, merge, then
   `benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh`.
-  It copies all three from that commit, reloads systemd and enables the
-  timer. Do not copy them from the working tree.
+  It copies those four files from that commit, reloads systemd and enables
+  the timer. Do not copy them from the working tree.
+- An older README had root's crontab run `backup-databases.sh` straight out
+  of `/srv/benloe`. Nothing removes that line for you: `crontab -l` as root,
+  and delete any line naming `backup-databases.sh`.
 - Run one now: `systemctl start benloe-db-backup.service`.
 - Root does not open a database another uid owns. Each of those is read by a
   process running as the uid that owns the file, and every snapshot is checked

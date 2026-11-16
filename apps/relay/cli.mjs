@@ -23,7 +23,7 @@
 // clean() or cleanLine() before it is printed, and so is the message of any
 // error (a trigger in the database can put whatever text it likes into one).
 // The only other things printed from it are numbers: counts and row ids.
-import { existsSync, readFileSync, writeSync } from 'node:fs';
+import { readFileSync, statSync, writeSync } from 'node:fs';
 import { openDb, createToken, listTokens, revokeTokens, notExpired, addMessage, getMessages, getMessage, markRead, formatMessage, formatWithin, inboxBatch, cleanLine, DEFAULT_DB, LOCAL_SENDER as ME } from './db.mjs';
 
 // For this file's own messages. Nothing from the database goes through here.
@@ -162,7 +162,7 @@ function main() {
     say(`Revoked ${n} token${n > 1 ? 's' : ''}. Effective immediately.`);
   } else if (cmd === 'init') {
     nothingElse(1, 'relay init');
-    const before = existsSync(DEFAULT_DB);
+    const before = !!statSync(DEFAULT_DB, { throwIfNoEntry: false });
     openDb(DEFAULT_DB, { create: true });
     say(before ? `${DEFAULT_DB} is already there; nothing was changed.` : `Created ${DEFAULT_DB}.`);
   } else {
@@ -176,9 +176,11 @@ try {
 } catch (e) {
   // Not the stack, and not raw: the message can carry text from the database.
   console.error(cleanLine(`relay: ${e?.message ?? e}`));
-  if (!existsSync(DEFAULT_DB)) {
+  if (e?.code === 'RELAY_NO_DB') {
     console.error('The database is missing. On a new install, create it: relay init');
     console.error('Otherwise it has been deleted or moved: nothing was created in its place. Stop relay-api and restore it (apps/relay/CLAUDE.md, Backups).');
+  } else if (e?.code === 'EACCES' || e?.code === 'EPERM') {
+    console.error('This uid cannot reach the database; the file itself may be intact. Do not restore over it: check the owner, group and mode of it and its directory against install.sh.');
   }
   process.exit(1);
 }
