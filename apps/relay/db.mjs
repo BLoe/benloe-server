@@ -3,9 +3,13 @@
 // session on this box talks to). No dependencies: node:sqlite.
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
+import { chmodSync, existsSync } from 'node:fs';
 
-// Under /var/lib, not /srv/benloe/data: every parent directory is root-owned,
-// so no other uid on the box can swap the database out from under us.
+// Under /var/lib, not /srv/benloe/data, which claude-worker owns. /var/lib is
+// root-owned, and /var/lib/benloe-relay itself belongs to the `relay` user
+// with group `relay` and mode 2770 (install.sh), so the only uids that can
+// replace the database are the two that are meant to write it: `relay` (the
+// server) and `relay-cli` (the local command), plus root.
 export const DEFAULT_DB = process.env.RELAY_DB || '/var/lib/benloe-relay/relay.db';
 export const MAX_DB_BYTES = 200 * 1024 * 1024; // posts are refused past this
 // The sender name the local CLI posts under. A token may never carry it: its
@@ -18,8 +22,16 @@ const sha = (s) => createHash('sha256').update(s).digest('hex');
 const now = () => new Date().toISOString();
 
 export function openDb(path = DEFAULT_DB) {
-  process.umask(0o077);
+  // The server and the local command are different uids sharing this file
+  // through their group, so it must be writable by the group and closed to
+  // everyone else. SQLite creates a database as 0644 less the umask (0640
+  // here), and gives -wal and -shm the database file's own mode whatever the
+  // umask is. So whichever side creates the database opens it to the group
+  // here, before the first write makes those two files, and they follow.
+  process.umask(0o007);
+  const fresh = !existsSync(path);
   const db = new DatabaseSync(path);
+  if (fresh) chmodSync(path, 0o660);
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA busy_timeout = 3000;
@@ -72,7 +84,9 @@ export function checkToken(db, presented) {
   const row = db.prepare('SELECT * FROM tokens WHERE hash = ?').get(sha(presented));
   if (!row) return { ok: false, reason: 'unknown token' };
   if (row.revoked_at) return { ok: false, reason: 'token revoked' };
-  if (Date.parse(row.expires_at) <= Date.now()) return { ok: false, reason: 'token expired' };
+  // Accepted only if the expiry parses and is in the future: a value that
+  // does not parse (NaN) fails this test, it does not slip past it.
+  if (!(Date.parse(row.expires_at) > Date.now())) return { ok: false, reason: 'token expired' };
   return { ok: true, token: row };
 }
 
@@ -84,11 +98,16 @@ export function listTokens(db) {
   return db.prepare('SELECT id, agent, created_at, expires_at, revoked_at, last_used_at, last_ip, note FROM tokens ORDER BY created_at').all();
 }
 
-// `which` is a token id, an agent name, or '--all'. Returns how many were live.
+// `which` is a token id, an agent name, or '--all'. Revokes the matching
+// tokens that are neither revoked nor past their expiry, and returns how many
+// that was. An expired token is left as it is: it already cannot be used.
+// (createToken writes expires_at with toISOString, so comparing as text
+// compares the times.)
 export function revokeTokens(db, which) {
   const where = which === '--all' ? '1=1' : '(id = ? OR agent = ?)';
   const args = which === '--all' ? [] : [which, which];
-  return db.prepare(`UPDATE tokens SET revoked_at = ? WHERE revoked_at IS NULL AND ${where}`).run(now(), ...args).changes;
+  const at = now();
+  return db.prepare(`UPDATE tokens SET revoked_at = ? WHERE revoked_at IS NULL AND expires_at > ? AND ${where}`).run(at, at, ...args).changes;
 }
 
 // ---- messages -------------------------------------------------------------
@@ -136,9 +155,11 @@ export function markRead(db, reader, id) {
 // Bodies are written by the other side and read by a model in a terminal.
 // Control characters are shown as \xNN so nothing reaches the terminal as an
 // escape sequence, and every body line is prefixed, so a body cannot draw
-// something that reads as the header of another message: a real header is
-// the only line that starts at column 0.
+// something that reads as the header of another message: a line that begins
+// with ──── at column 0 is always a real header.
 export const clean = (s) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+// The same, on one line: for a value that must not be able to start a new line.
+export const cleanLine = (v) => clean(String(v)).replace(/\n/g, '\\n');
 // maxChars bounds the PRINTED size of the body (after escaping, with the line
 // prefixes), so a caller can budget on the length of what this returns.
 export function formatMessage(m, { maxChars = 0 } = {}) {

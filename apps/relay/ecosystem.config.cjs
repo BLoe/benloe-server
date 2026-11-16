@@ -1,10 +1,12 @@
 // Relay's only process. Internet-facing and it parses input from an outside
 // agent, so it runs as the unprivileged `relay` user, which owns nothing but
-// /var/lib/benloe-relay. No secrets: token hashes live in its database.
+// /var/lib/benloe-relay and the database files in it. No secrets: token
+// hashes live in its database.
 //
 // PM2 loads this from /etc/benloe/ecosystem/relay.config.js and runs the
-// installed copy of server.mjs, never the repo's; `./install.sh` promotes
-// both. See install.sh for why.
+// installed copy of server.mjs, never the repo's. install.sh copies both into
+// place, and is itself run through benloe-promote from a commit on GitHub
+// (it refuses to run from the working tree). See install.sh for why.
 module.exports = {
   apps: [
     {

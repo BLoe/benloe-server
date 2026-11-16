@@ -1,14 +1,18 @@
 # Nightly SQLite snapshots of every app database, including the relay's.
-# Source of truth is this file; it is COPIED to /etc/systemd/system/ — after
-# editing, re-copy and `systemctl daemon-reload`. The script is likewise an
-# installed copy of infra/scripts/backup-databases.sh.
+# This file and the script it runs are installed copies. After editing either
+# (or the timer), commit, push, and install them from GitHub:
+#   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh
 [Unit]
 Description=Snapshot benloe SQLite databases to /var/backups/benloe
 
 [Service]
 Type=oneshot
-# A stuck database must end the run, not hold it open until tomorrow's.
-TimeoutStartSec=20min
+# Backstop only. The script kills any read or check still running after 90
+# seconds and moves on, so a stuck database costs at most three minutes and
+# still gets its FAIL line; an hour is room for twenty of them. If this limit
+# is ever what ends the run, the summary line and the remaining databases are
+# lost.
+TimeoutStartSec=60min
 ExecStart=/usr/local/sbin/benloe-db-backup.sh
 StandardOutput=append:/var/log/benloe-db-backup.log
 StandardError=append:/var/log/benloe-db-backup.log
