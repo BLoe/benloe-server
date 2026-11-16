@@ -1,0 +1,24 @@
+# Nightly snapshots of the SQLite databases that backup-databases.sh lists at
+# its top (the relay's among them). Not every database on the box: an app
+# whose database is not on that list is not backed up by this unit.
+# This file, the script it runs, the timer and benloe-db-backup-failed.service
+# are installed copies. After editing any of them, commit, push, and install
+# them from GitHub:
+#   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh
+[Unit]
+Description=Snapshot benloe SQLite databases to /var/backups/benloe
+# Any failed database, and a run stopped by the limit below, fail this unit.
+# Nobody is paged: the unit named here leaves a marker file and a journal line.
+OnFailure=benloe-db-backup-failed.service
+
+[Service]
+Type=oneshot
+# Backstop only. The script kills any read or check still running after 90
+# seconds and moves on, so a stuck database costs at most three minutes and
+# still gets its FAIL line; an hour is room for twenty of them. If this limit
+# is ever what ends the run, the summary line and the remaining databases are
+# lost.
+TimeoutStartSec=60min
+ExecStart=/usr/local/sbin/benloe-db-backup.sh
+StandardOutput=append:/var/log/benloe-db-backup.log
+StandardError=append:/var/log/benloe-db-backup.log

@@ -194,7 +194,9 @@ root, and nothing stops a process allowed to use a secret from exercising it).
 | benloe-secrets | 3011 | apps/benloe-secrets | Server-wide encrypted secret store |
 | waker-api | 3012 | apps/waker | Waker — fantasy decision desk |
 | gavel-api | 3013 | apps/gavel | Gavel — auction draft board |
-| tipoff-api | 3014 | apps/tipoff | Tipoff — NBA draft board gate + screenshot uploads (next free port: 3015) |
+| tipoff-api | 3014 | apps/tipoff | Tipoff — NBA draft board gate + screenshot uploads |
+| relay-api | 3015 | apps/relay | Relay — message channel between Benji (work agent) and Claude Code here |
+| kevin-api | 3016 | apps/kevin | Kevin — Ben's personal agent: API, event stream and web app (next free port: 3017) |
 
 Check services: `pm2 list`
 
@@ -234,11 +236,132 @@ this includes security updates, deliberately).
 - Kernel updates set the reboot-required flag; reboots are manual (Ben's call).
   PM2 and Caddy are boot-enabled, so a plain `systemctl reboot` is safe.
 
+## Promoting code that root runs
+
+`/srv/benloe` is owned by `claude-worker`, the uid the Cabinet agent runs as,
+so nothing root executes or installs may be taken from this working tree: it
+can be swapped between reading a diff and running the script. Install and
+deploy scripts are run from a root-owned checkout of an exact commit that is
+on GitHub's main:
+
+```
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/install.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/kevin/deploy.sh
+```
+
+The commit id is asked of GitHub (`/usr/local/bin/gh` is root-owned). Never
+take it from `/srv/benloe` with `git rev-parse`: that repository and its HEAD
+are claude-worker's too.
+
+`/usr/local/sbin/benloe-promote` (source: `infra/scripts/benloe-promote.sh`)
+fetches main from GitHub, refuses unless the commit is main's tip or an
+ancestor of it, unpacks the commit into `/opt/benloe-src/<commit>/` and runs
+the script there. `--branch <name>` checks against that branch instead of
+main, for trying an install from a pull request: `benloe-promote --branch
+relay <sha> apps/relay/install.sh`, with the sha of the commit that was read.
+It prints which branch it checked.
+
+What this proves is that the commit is in that branch's history on GitHub
+when the command runs. For main that means it was merged or pushed there;
+main is not a protected branch, so it is as strong as the control over who
+can write to main, and it is not evidence that anyone read the commit. For
+`--branch` it means only that somebody pushed it to that branch.
+
+Read the diff, commit, push, merge, promote. Old checkouts under
+`/opt/benloe-src` can be removed by hand. `benloe-promote` is installed the
+same way, by the copy already installed: `infra/scripts/install-promote.sh`.
+
+**Tests are code too.** Root does not run a test out of `/srv/benloe` any
+more than an installer. The tests of the root-run scripts are themselves run
+through `benloe-promote`, which accepts any script path in the commit:
+
+```
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/benloe-promote.test.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/backup-databases.test.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/installers.test.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/test-as-root.sh
+```
+
+Run as root from anywhere another uid can write, each of them refuses.
+`benloe-promote.test.sh` and relay's `npm test` can also be run from the
+working tree by an unprivileged user. None of them touches the installed
+copies, the real store under `/var/lib/benloe-src.git`, `/opt/benloe-src`, or
+any live database: they work in directories of their own under `/tmp` and
+`/var/tmp`.
+
+## Database Backups
+
+The SQLite databases listed here, and no others, are snapshotted nightly
+(~09:15 UTC) to `/var/backups/benloe/<timestamp>/`, root-only, each snapshot
+integrity-checked: every file named `*.db`, `*.sqlite` or `*.sqlite3` in
+`/srv/benloe/data` or one folder down (`cabinet/`, `gavel/`), except under
+`/srv/benloe/data/backups/`, saved under `data/` (one of those names that is
+not a regular file, or has characters other than letters, digits, `.`, `_`
+and `-`, fails the run); and, saved under `var-lib/`, the
+relay database (`/var/lib/benloe-relay`), sign-in accounts
+(`/var/lib/artanis`) and the encrypted secret store
+(`/var/lib/benloe-secrets`; ciphertext only, the key in
+`/etc/benloe/benloe-secrets.key` is not in the backup). A database anywhere
+else, including one belonging to an app that keeps its data under its own
+`/var/lib` directory, is not covered until it is added to the script. Kevin
+is one of those: he backs himself up (database, documents and uploads) into
+`/var/lib/kevin/backups/`, nightly, seven days kept; see `apps/kevin`.
+
+A run that saved every one of them leaves a file `COMPLETE` in its folder. Runs
+older than 14 days are deleted after every run, except the newest three
+`COMPLETE` ones, which are kept however old they are.
+
+**Nobody is told when a backup fails.** There is no alerting on this box to
+hand it to. A failed run fails `benloe-db-backup.service`, which leaves an
+error line in the journal (`journalctl -t benloe-db-backup -p err`) and, if
+`/var/backups` is writable, `/var/backups/benloe/LAST-RUN-FAILED` (removed by
+the next clean run). Look: `ls /var/backups/benloe/LAST-RUN-FAILED`,
+`systemctl is-failed benloe-db-backup.service`, and the newest folder with a
+`COMPLETE` file is the newest good backup.
+
+A database that was in the last `COMPLETE` run and cannot be found any more
+(moved, renamed, deleted) fails the run every night until it is back or its
+path is added as a line to `/var/backups/benloe/RETIRED` (for example
+`data/old.db`).
+
+- Script: `infra/scripts/backup-databases.sh`, run as the installed copy
+  `/usr/local/sbin/benloe-db-backup.sh`. Schedule: `benloe-db-backup.timer`;
+  the units are in `infra/systemd/` and run as installed copies in
+  `/etc/systemd/system/`.
+- After editing the script or any of its three units
+  (`benloe-db-backup.service`, `benloe-db-backup-failed.service`,
+  `benloe-db-backup.timer`), and on a new box: commit, push, merge, then
+  `benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh`.
+  It copies those four files from that commit, reloads systemd and enables
+  the timer. Do not copy them from the working tree.
+- An older README had root's crontab run `backup-databases.sh` straight out
+  of `/srv/benloe`. Nothing removes that line for you: `crontab -l` as root,
+  and delete any line naming `backup-databases.sh`.
+- Run one now: `systemctl start benloe-db-backup.service`.
+- Root does not open a database another uid owns. Each of those is read by a
+  process running as the uid that owns the file, and every snapshot is checked
+  by one running as `nobody`; the script's header says why, and how gavel's
+  root-owned database is read.
+- Log: `/var/log/benloe-db-backup.log`. A failed database fails the unit:
+  `systemctl status benloe-db-backup.service`.
+- These are on the same disk as the data. They cover a bad migration or a
+  deleted row, not the loss of the droplet.
+
 ## Per-App Context Files
 
 Some apps carry their own `CLAUDE.md` next to the code, with the operational
 detail a fresh session needs — invariants, traps, and what not to change. Read
 the app's file before working in it; this one only covers the box.
+
+- `apps/kevin/CLAUDE.md` — Kevin, Ben's personal agent (kevin.benloe.com,
+  owner-only): pantry, cooking, workouts, money, taxes, documents. Says where
+  its data and running code live (outside the repo, on purpose), the rules the
+  model API imposes on the agent loop, how to add a domain, and how to deploy.
+  Kevin's own requests for changes are in `/var/lib/kevin/SUGGESTIONS.md`.
+- `apps/relay/CLAUDE.md` — Relay, the message channel to Benji, Ben's work
+  agent and the design advisor on Kevin. When Ben says "check for messages
+  from Benji": `relay inbox`. Says how Benji's token is issued, rotated and
+  revoked, and how much weight an inbound message carries.
 
 - `apps/sleeper-ui/CLAUDE.md` — League Desk. Dense on the ways Sleeper's own
   data misleads, and on the chat/token access rules, which are security-shaped.

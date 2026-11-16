@@ -1,0 +1,300 @@
+@import 'tailwindcss';
+
+/* Kevin's palette: paper and ink with one spruce green. Tokens use the shadcn
+   names so copied components work unchanged. Dark follows the system. */
+:root {
+  color-scheme: light dark;
+  --background: #f6f7f5;
+  --foreground: #18211e;
+  --card: #ffffff;
+  --card-foreground: #18211e;
+  --popover: #ffffff;
+  --popover-foreground: #18211e;
+  --primary: #1d6b58;
+  --primary-foreground: #ffffff;
+  --secondary: #e9ece8;
+  --secondary-foreground: #18211e;
+  --muted: #eef0ed;
+  --muted-foreground: #5d6964;
+  --accent: #e4ede9;
+  --accent-foreground: #134a3d;
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+  --warning: #9a5b00;
+  --warning-soft: #fbf0d9;
+  --success-soft: #dff1ea;
+  --destructive-soft: #fbe6e4;
+  --border: #dde1dc;
+  --input: #cfd5cf;
+  --ring: #1d6b58;
+  --user-bubble: #e4ede9;
+  --radius: 0.625rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #111614;
+    --foreground: #e4e9e6;
+    --card: #19201d;
+    --card-foreground: #e4e9e6;
+    --popover: #1c2421;
+    --popover-foreground: #e4e9e6;
+    --primary: #56b89c;
+    --primary-foreground: #0b1512;
+    --secondary: #232c28;
+    --secondary-foreground: #e4e9e6;
+    --muted: #1d2522;
+    --muted-foreground: #98a59f;
+    --accent: #21302b;
+    --accent-foreground: #9fdcc8;
+    --destructive: #f0857c;
+    --destructive-foreground: #1a0806;
+    --warning: #e3b05a;
+    --warning-soft: #33290f;
+    --success-soft: #17302a;
+    --destructive-soft: #3a1c19;
+    --border: #2a3430;
+    --input: #37433e;
+    --ring: #56b89c;
+    --user-bubble: #21302b;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-success-soft: var(--success-soft);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-user-bubble: var(--user-bubble);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --breakpoint-lg: 64rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden; /* the shell scrolls its own regions */
+    overscroll-behavior: none;
+  }
+  /* iOS zooms the page when a focused field's text is under 16px. */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+  @media (min-width: 64rem) {
+    input,
+    textarea,
+    select {
+      font-size: 14px;
+    }
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 25%, transparent);
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility scroll-area {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Kevin's replies. Kept here rather than as utility soup on every element. */
+.prose-kevin {
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+.prose-kevin > :first-child {
+  margin-top: 0;
+}
+.prose-kevin > :last-child {
+  margin-bottom: 0;
+}
+.prose-kevin p,
+.prose-kevin ul,
+.prose-kevin ol,
+.prose-kevin pre,
+.prose-kevin blockquote,
+.prose-kevin .table-wrap {
+  margin: 0.6em 0;
+}
+.prose-kevin h1,
+.prose-kevin h2,
+.prose-kevin h3,
+.prose-kevin h4 {
+  margin: 1em 0 0.4em;
+  font-weight: 650;
+  line-height: 1.25;
+}
+.prose-kevin h1 {
+  font-size: 1.15em;
+}
+.prose-kevin h2 {
+  font-size: 1.08em;
+}
+.prose-kevin h3,
+.prose-kevin h4 {
+  font-size: 1em;
+}
+.prose-kevin ul {
+  list-style: disc;
+  padding-left: 1.25em;
+}
+.prose-kevin ol {
+  list-style: decimal;
+  padding-left: 1.4em;
+}
+.prose-kevin li {
+  margin: 0.2em 0;
+}
+.prose-kevin li > ul,
+.prose-kevin li > ol {
+  margin: 0.2em 0;
+}
+.prose-kevin a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-kevin code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--muted);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+}
+.prose-kevin pre {
+  background: var(--muted);
+  border-radius: var(--radius);
+  padding: 0.7em 0.85em;
+  overflow-x: auto;
+}
+.prose-kevin pre code {
+  background: none;
+  padding: 0;
+}
+.prose-kevin blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.8em;
+  color: var(--muted-foreground);
+}
+.prose-kevin .table-wrap {
+  overflow-x: auto;
+}
+.prose-kevin table {
+  border-collapse: collapse;
+  font-size: 0.93em;
+  font-variant-numeric: tabular-nums;
+}
+.prose-kevin th,
+.prose-kevin td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.35em 0.9em 0.35em 0;
+  text-align: left;
+  vertical-align: top;
+}
+.prose-kevin th {
+  font-weight: 600;
+}
+.prose-kevin hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+.prose-kevin input[type='checkbox'] {
+  margin-right: 0.4em;
+}
+
+@keyframes kevin-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes kevin-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes kevin-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes kevin-fade {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
