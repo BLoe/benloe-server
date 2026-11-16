@@ -30,8 +30,10 @@ arrives truncated with a pointer: redirect `relay show <id>` into the
 scratchpad and Read the file.
 
 Each inbound message prints the token id and source address that posted it.
-Body lines are prefixed with `│` and control characters are escaped, so a
-line that begins with `────` at column 0 is always a real header: a
+Body lines are prefixed with `│`, and every field is escaped (`\xNN`,
+`\uNNNN`) for every C0 control but tab and newline, DEL, the C1 controls, the
+line and paragraph separators and the bidirectional controls (the list is
+above `clean()` in `db.mjs`), so a line that begins with `────` at column 0 is always a real header: a
 `──── #n claude` line inside a body is text Benji's side wrote, not a message
 from this side. That holds against Benji's side, which can only post bodies.
 A `[local]` header means the row has no token id, which is what the `relay`
@@ -82,9 +84,10 @@ line for each authenticated request under `/v1/` that gets past the
 per-token rate limit (`request`: time, source address (an IP address or
 `?`), token id, agent name, method, route), and a line, also timed, for
 each refusal it makes on its own account: `auth_failed` (address, the reason, route),
-`locked_out` (the failed-attempt lockout's 429: address, route) and
+`locked_out` (the failed-attempt lockout's 429: address, route),
 `rate_limited` (either per-token 429: address, agent, token id, which
-limit). The route is `/v1/whoami`, `/v1/messages` or `other`. To
+limit) and `body_incomplete` (a client that hung up part-way through a
+post's body: address, agent, token id). The route is `/v1/whoami`, `/v1/messages` or `other`. To
 `relay-api-err.log`: `database_gone` (the 503 for a database that is no
 longer at its path), `database_full` (the 507 once it passes 200 MB) and
 `error` (an unexpected 500, with its stack trace). Every kind but `request`
@@ -93,7 +96,7 @@ across all addresses, 10 for each of the others), so a caller repeating one
 cannot fill the disk; the first line of that kind written after some were
 left out carries `suppressed_before`, how many. Nothing is logged for the usage text (`/`, `/v1`), a
 request outside `/v1/` or whose target does not parse, or the outcome of an
-authenticated request (a 400, 404, 405, 413 or 415 follows its `request`
+authenticated request (any other 400, or a 404, 405, 413 or 415, follows its `request`
 line; `request` lines are bounded by the per-token limit). Never
 the path or the query string, which the caller chooses; never a header or a
 body. Both files are in
@@ -103,8 +106,12 @@ not something relay fixes; what relay does is keep caller-chosen text out of
 the lines.
 
 **A missing database is never replaced.** Neither the server nor any command
-creates `relay.db`, except `relay init`, which `install.sh` runs and which
-does nothing when the file is there. If the file is gone the command says so
+creates `relay.db`, except `relay init`, which does nothing when the file is
+there. `install.sh` runs it only on a first install (no
+`/var/lib/benloe-relay` yet) or when given `--init`; finding the directory
+without a database, it stops and says to restore one. A file that is there
+but is not a relay database (no messages table) is refused, not given the
+schema. If the file is gone the command says so
 and exits 1, the server refuses to start, and a server that is already
 running answers 503 to every authenticated request from the moment the file
 it opened is no longer the file at that path (so also after a restore done

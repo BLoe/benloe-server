@@ -50,6 +50,7 @@ ok() { checks=$((checks + 1)); }
 no() { checks=$((checks + 1)); bad=$((bad + 1)); echo "NOT OK: $1"; }
 is() { if [[ "$1" == "$2" ]]; then ok; else no "$3: got '$1', wanted '$2'"; fi; }
 has() { if grep -qF -- "$2" "$1"; then ok; else no "expected in $1: $2"; fi; }
+hasnt() { if grep -qF -- "$2" "$1"; then no "not expected in $1: $2"; else ok; fi; }
 
 # A stand-in for a promoted checkout, and one for the working tree.
 CK=$T/opt/benloe-src/0000000000000000000000000000000000000000
@@ -79,7 +80,7 @@ for f in infra/scripts/install-promote.sh infra/scripts/install-db-backup.sh app
     left=$(grep -nE '(/usr/local|/etc/|/var/lib|/opt/benloe-src)' "$CK/$f" | grep -vE "^[0-9]+:\s*#|echo |$T|/usr/local/bin/node" || true)
     if [[ -n "$left" ]]; then no "$f still names a real destination after rewriting: $left"; else ok; fi
 done
-run() { rc=0; (cd / && PATH="$T/stub:$PATH" bash "$1") > "$T/out.log" 2>&1 || rc=$?; }
+run() { rc=0; (cd / && PATH="$T/stub:$PATH" bash "$@") > "$T/out.log" 2>&1 || rc=$?; }
 
 echo "# 1. run from anywhere but a promoted checkout, each refuses before changing anything"
 for f in infra/scripts/install-promote.sh infra/scripts/install-db-backup.sh apps/relay/install.sh; do
@@ -156,14 +157,18 @@ if ! id relay > /dev/null 2>&1 || ! id relay-cli > /dev/null 2>&1 || [[ ! -x /us
 else
     mode() { stat -c '%U:%G %a' "$1"; }
     echo "#    a kernel that lets anyone push input into their terminal (TIOCSTI) stops it first"
-    echo 1 > "$T/legacy_tiocsti"
     sed "s|/proc/sys/dev/tty/legacy_tiocsti|$T/legacy_tiocsti|" "$CK/apps/relay/install.sh" > "$CK/apps/relay/install-tiocsti.sh"
     cmp -s "$CK/apps/relay/install.sh" "$CK/apps/relay/install-tiocsti.sh" && no "the test could not point install.sh at its own legacy_tiocsti" || ok
-    run "$CK/apps/relay/install-tiocsti.sh"
-    is "$rc" 1 "exit status with dev.tty.legacy_tiocsti = 1"
-    has "$T/out.log" "dev.tty.legacy_tiocsti is 1, not 0"
-    [[ ! -e "$T/lib" && ! -e "$T/data" ]] && ok || no "something was installed although TIOCSTI is open"
-    rm -f -- "$CK/apps/relay/install-tiocsti.sh"
+    # Every value but 0 refuses, and so does a kernel that has no such setting.
+    for value in 1 2 "" missing; do
+        rm -f -- "$T/legacy_tiocsti"
+        [[ $value == missing ]] || echo "$value" > "$T/legacy_tiocsti"
+        run "$CK/apps/relay/install-tiocsti.sh"
+        is "$rc" 1 "exit status with legacy_tiocsti '$value'"
+        has "$T/out.log" "dev.tty.legacy_tiocsti is $([[ $value == missing ]] && echo "not there" || echo "$value"), not 0"
+        [[ ! -e "$T/lib" && ! -e "$T/data" ]] && ok || no "something was installed with legacy_tiocsti '$value'"
+    done
+    rm -f -- "$CK/apps/relay/install-tiocsti.sh" "$T/legacy_tiocsti"
     echo "#    a new install"
     run "$CK/apps/relay/install.sh"
     is "$rc" 0 "exit status"
@@ -225,9 +230,36 @@ console.log(rest.length, app.name, app.interpreter, app.script, app.cwd);' "$T/e
     echo "#    again, over the install just made"
     run "$CK/apps/relay/install.sh"
     is "$rc" 0 "exit status of a second run"
-    has "$T/out.log" "is already there; nothing was changed"
+    hasnt "$T/out.log" "Created"
     "$T/bin/relay" log > "$T/log.log" 2>&1 || true
     has "$T/log.log" "written through the installed command"
+
+    echo "#    a re-install that finds the data directory but no database refuses, and creates nothing"
+    for f in relay.db relay.db-wal relay.db-shm; do rm -f -- "${T:?}/data/$f"; done
+    rm -f -- "$T/lib/cli.mjs" # to see whether any code is copied
+    run "$CK/apps/relay/install.sh"
+    is "$rc" 1 "exit status with the database gone"
+    has "$T/out.log" "holds no relay.db. relay has been installed on this box"
+    has "$T/out.log" "Restore it from the newest backup"
+    [[ ! -e "$T/data/relay.db" ]] && ok || no "a database was created in place of the lost one"
+    [[ ! -e "$T/lib/cli.mjs" ]] && ok || no "code was installed although the database was missing"
+    run "$CK/apps/relay/install.sh" --init --init
+    is "$rc" 2 "exit status with two arguments"
+    run "$CK/apps/relay/install.sh" --inti
+    is "$rc" 2 "exit status with a mistyped --init"
+    [[ ! -e "$T/data/relay.db" ]] && ok || no "a refused argument created a database"
+    echo "#    --init says there never was one: it is created"
+    run "$CK/apps/relay/install.sh" --init
+    is "$rc" 0 "exit status with --init"
+    has "$T/out.log" "Created $T/data/relay.db"
+    is "$(mode "$T/data/relay.db")" "relay-cli:relay 660" "the database --init created"
+    echo "#    --init over a database that is there changes nothing"
+    "$T/bin/relay" send "kept through --init" > /dev/null 2>&1 || true
+    run "$CK/apps/relay/install.sh" --init
+    is "$rc" 0 "exit status"
+    has "$T/out.log" "is already there; nothing was changed"
+    "$T/bin/relay" log > "$T/log.log" 2>&1 || true
+    has "$T/log.log" "kept through --init"
 
     echo "#    over an install made before relay-cli existed: 0700, files 0600, owned by relay"
     rm -rf -- "${T:?}/data" "${T:?}/lib"
@@ -247,7 +279,8 @@ os._exit(0)   # like a server that was killed: -wal and -shm stay behind
     is "$rc" 0 "exit status of the migration"
     is "$(mode "$T/data")" "relay:relay 2770" "the data directory after"
     is "$(mode "$T/data/relay.db")" "relay:relay 660" "relay.db after"
-    # (relay init, at the end of the install, opened and closed the database, which removes -wal and -shm.)
+    # (-wal and -shm are still there: the install does not open the database.)
+    [[ -f "$T/data/relay.db-wal" && -f "$T/data/relay.db-shm" ]] && ok || no "-wal or -shm is gone: something opened the database"
     is "$(find "$T/data" -type f ! -perm 0660 | wc -l)" 0 "files in the data directory that are not 0660"
     "$T/bin/relay" inbox --peek > "$T/inbox.log" 2>&1 || true
     has "$T/inbox.log" "from before the migration"

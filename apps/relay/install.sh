@@ -3,6 +3,8 @@
 # root, through benloe-promote, after any change to server.mjs, cli.mjs,
 # db.mjs or the ecosystem config:
 #   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/install.sh
+# It creates the database only on a first install (no /var/lib/benloe-relay
+# yet) or with --init at the end; the comment above `init=` says why.
 # Then, if server.mjs or db.mjs changed: pm2 restart relay-api
 # If ecosystem.config.cjs changed, a restart does not read it; instead:
 #   pm2 delete relay-api && pm2 start /etc/benloe/ecosystem/relay.config.js && pm2 save
@@ -50,6 +52,34 @@ fi
 
 LIB=/usr/local/lib/benloe/relay
 DATA=/var/lib/benloe-relay
+
+# First install or not, decided here, before anything is changed, by whether
+# the data directory exists. Only a first install creates the database
+# (relay init, at the end). On a box that has had relay, a missing database
+# has been lost, and an empty one in its place would hide that: the server
+# would start on it, and the nightly backup would save it as a complete run
+# and, 14 days on, prune every run that held the real one. So that stops
+# here, unless --init says there never was a database to lose.
+init=
+case $# in
+  0) ;;
+  1) [ "$1" = --init ] && init=1 ;;
+esac
+if [ $# -gt 1 ] || { [ $# -eq 1 ] && [ -z "$init" ]; }; then
+  echo "usage: install.sh [--init]" >&2
+  exit 2
+fi
+if [ ! -e "$DATA" ] && [ ! -L "$DATA" ]; then
+  init=1
+elif [ -z "$init" ] && [ -z "$(find "$DATA" -maxdepth 1 -name relay.db -print)" ]; then
+  echo "install.sh: $DATA is there but holds no relay.db. relay has been installed on this box" >&2
+  echo "before, so its database has been lost (deleted or moved). Nothing was installed or created." >&2
+  echo "Restore it from the newest backup (apps/relay/CLAUDE.md, Backups): stop relay-api, write" >&2
+  echo "/var/backups/benloe/<timestamp>/var-lib/benloe-relay/relay.db back as the relay uid, then run this again." >&2
+  echo "Only if there has never been a database here (a first install that stopped before making it)," >&2
+  echo "run this again with --init at the end." >&2
+  exit 1
+fi
 
 # Two uids, one group.
 #   relay      the internet-facing server.
@@ -173,11 +203,14 @@ exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 \
 WRAP
 chmod 755 /usr/local/bin/relay
 
-# A new install has no database, and neither the server nor any other command
-# will make one (an empty database appearing where the real one went missing
-# would look like a quiet channel). `relay init` creates it if it is not
-# there, as relay-cli, and changes nothing if it is.
-/usr/local/bin/relay init
+# A first install has no database, and neither the server nor any other
+# command will make one (an empty database appearing where the real one went
+# missing would look like a quiet channel). On a first install, or with
+# --init, `relay init` creates it as relay-cli; it changes nothing if one is
+# there. On any other install this was checked at the top.
+if [ -n "$init" ]; then
+  /usr/local/bin/relay init
+fi
 echo "relay installed: $LIB, /etc/benloe/ecosystem/relay.config.js, /usr/local/lib/benloe/node-as-relay, /usr/local/bin/relay"
 echo "If server.mjs or db.mjs changed: pm2 restart relay-api"
 echo "If the ecosystem config changed (a restart does not read it): pm2 delete relay-api && pm2 start /etc/benloe/ecosystem/relay.config.js && pm2 save"

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 # Runs an install or deploy script from a root-owned checkout of one exact
 # commit that is on GitHub's main (or, when asked, on another named branch).
 #
@@ -43,10 +43,73 @@
 #   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-promote.sh
 #
 # Tests: infra/scripts/benloe-promote.test.sh (its header says how to run it).
-# The three paths below are fixed on purpose: nothing in the environment can
-# point an installed benloe-promote at another repository or store. The test
-# runs a copy of this file with those three lines rewritten.
+# The three paths below are fixed on purpose, and the environment is not
+# consulted for them. The test runs a copy of this file with those three
+# lines rewritten.
+#
+# THE ENVIRONMENT. The caller's environment is not used. The first thing this
+# script does is run itself again under `env -i`, carrying only the caller's
+# PATH, set aside for the script it promotes. So git and tar never see the
+# caller's GIT_* variables (GIT_CONFIG_COUNT and the like, which can rewrite
+# the URL fetched; GIT_DIR, GIT_ALTERNATE_OBJECT_DIRECTORIES, ...), and no
+# BASH_ENV, exported function, SHELLOPTS or BASHOPTS reaches anything after
+# that first step. Up to it, the caller's bash has done what bash does at
+# start-up: run through its #! line it is `bash -p`, which reads no BASH_ENV
+# and imports no functions; started as `bash benloe-promote`, it does both,
+# before this file's first line. After it, for its own work this script has
+# PATH=/usr/bin:/bin and GIT_CONFIG_GLOBAL=/dev/null and no other variable
+# (bash adds PWD and SHLVL); / as its directory; umask 022; and no
+# descriptor but 0, 1, 2 and the one bash reads this file through. git's
+# configuration is the store's own and /etc/gitconfig (root's). Not changed:
+# the caller's uid, resource limits, ignored signals, terminal, session and
+# process group, and what descriptors 0-2 are.
+#
+# The promoted script is started under `env -i` too, in the same directory,
+# with the same umask and descriptors 0-2 only, and with these variables:
+# PATH, the caller's, without any entry that is not an absolute path to a
+# directory that is root's alone (root-owned and not writable by group or
+# other, it and every directory above it; each entry left out is named on
+# stderr), since deploy scripts find pm2 and npm there; HOME=/root; LANG=C.UTF-8; and BENLOE_PROMOTED_COMMIT, the commit
+# id.
 set -euo pipefail
+
+if [[ "$(compgen -e | sort | tr '\n' ' ')" != "BENLOE_PROMOTE_PATH PWD SHLVL " || -n "$(declare -F)" ]]; then
+    exec /usr/bin/env -i BENLOE_PROMOTE_PATH="${PATH:-}" /bin/bash -p -- "${BASH_SOURCE[0]}" "$@"
+fi
+cd /
+umask 022
+export PATH=/usr/bin:/bin
+# (Not the one bash itself reads this file through.)
+for fd in /proc/self/fd/*; do
+    fd=${fd##*/}
+    [[ "$fd" =~ ^[0-9]+$ ]] && (( fd > 2 )) || continue
+    [[ /proc/self/fd/$fd -ef "${BASH_SOURCE[0]}" ]] && continue
+    { exec {fd}>&-; } 2>/dev/null || true
+done
+# Each entry of the caller's PATH that is root's alone, for the promoted script.
+root_only() { # <directory>: it and every directory above it root-owned and not writable by group or other
+    local d=$1 u m
+    while :; do
+        read -r u m < <(stat -L -c '%u %a' -- "$d" 2>/dev/null) || return 1
+        [[ "$u" == 0 ]] && (( (0$m & 022) == 0 )) || return 1
+        [[ "$d" == / ]] && return 0
+        d=$(dirname -- "$d")
+    done
+}
+script_path=
+IFS=: read -ra entries <<<"$BENLOE_PROMOTE_PATH"
+for d in "${entries[@]}"; do
+    [[ "$d" == /* && -d "$d" ]] || continue
+    if root_only "$d"; then
+        script_path=${script_path:+$script_path:}$d
+    else
+        # Said out loud: a deploy script that then cannot find a command
+        # should not leave anyone guessing why.
+        echo "benloe-promote: left out of the script's PATH, not root's alone: $(printf '%q' "$d")" >&2
+    fi
+done
+export -n BENLOE_PROMOTE_PATH
+unset BENLOE_PROMOTE_PATH
 
 REPO_URL=https://github.com/BLoe/benloe-server.git
 STORE=/var/lib/benloe-src.git
@@ -76,10 +139,9 @@ if [[ ! "$branch" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ || "$branch" == *..* ]]; then
     exit 2
 fi
 
-umask 022
 # --git-dir names the store outright, so no repository is discovered from the
-# current directory, and root's ~/.gitconfig is not read either: the only
-# configuration in play is the store's own and /etc/gitconfig.
+# current directory, and no ~/.gitconfig is read: the only configuration in
+# play is the store's own and /etc/gitconfig.
 export GIT_CONFIG_GLOBAL=/dev/null
 store() { git --git-dir="$STORE" "$@"; }
 
@@ -99,7 +161,23 @@ store fetch -q "${deepen[@]}" "$REPO_URL" "+refs/heads/$branch:refs/promote/bran
     || { echo "benloe-promote: could not fetch branch $branch from GitHub" >&2; exit 1; }
 tip=$(store rev-parse --verify -q "refs/promote/branch^{commit}") \
     || { echo "benloe-promote: branch $branch did not resolve to a commit" >&2; exit 1; }
-if ! store cat-file -e "$sha^{commit}" 2>/dev/null || ! store merge-base --is-ancestor "$sha" "$tip"; then
+# rev-parse -q exits 1 for an object that is not there; merge-base exits 1
+# for a commit that is not an ancestor. Anything else is git failing, which
+# says nothing about where the commit is.
+git_failed() { # <what> <status>
+    echo "benloe-promote: git failed (status $2) while $1. Nothing was run." >&2
+    echo "  This is not a verdict on the commit: look at the store, $STORE." >&2
+    exit 1
+}
+rc=0
+store rev-parse --verify -q "$sha^{commit}" > /dev/null || rc=$?
+if [[ $rc -eq 0 ]]; then
+    store merge-base --is-ancestor "$sha" "$tip" || rc=$?
+    [[ $rc -le 1 ]] || git_failed "checking whether $sha is an ancestor of $branch" "$rc"
+elif [[ $rc -ne 1 ]]; then
+    git_failed "looking $sha up" "$rc"
+fi
+if [[ $rc -ne 0 ]]; then
     echo "benloe-promote: $sha is not on GitHub's $branch (tip ${tip})." >&2
     echo "  Nothing was run. Merge it, or name the branch it is on with --branch." >&2
     exit 1
@@ -140,5 +218,5 @@ fi
 
 echo "benloe-promote: running $script from $dir"
 exec 9>&-
-export BENLOE_PROMOTED_COMMIT=$sha
-exec bash "$dir/$script" "$@"
+exec /usr/bin/env -i PATH="$script_path" HOME=/root LANG=C.UTF-8 BENLOE_PROMOTED_COMMIT="$sha" \
+    /bin/bash -p -- "$dir/$script" "$@"

@@ -259,6 +259,14 @@ main, for trying an install from a pull request: `benloe-promote --branch
 relay <sha> apps/relay/install.sh`, with the sha of the commit that was read.
 It prints which branch it checked.
 
+It does not run in the caller's environment. git and tar run with only
+`PATH=/usr/bin:/bin` and `GIT_CONFIG_GLOBAL=/dev/null`; the script gets `PATH` (the caller's, less any entry
+that is not a directory only root can write; each one left out is named),
+`HOME=/root`, `LANG=C.UTF-8`
+and `BENLOE_PROMOTED_COMMIT`, and starts in `/` with umask 022 and no
+descriptor beyond 0-2. The header of `infra/scripts/benloe-promote.sh` lists
+exactly what is and is not carried over.
+
 What this proves is that the commit is in that branch's history on GitHub
 when the command runs. For main that means it was merged or pushed there;
 main is not a protected branch, so it is as strong as the control over who

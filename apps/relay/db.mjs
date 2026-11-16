@@ -196,11 +196,20 @@ export function markRead(db, reader, id) {
 // ---- display (the local CLI) ----------------------------------------------
 
 // Bodies are written by the other side and read by a model in a terminal.
-// Control characters are shown as \xNN so nothing reaches the terminal as an
-// escape sequence, and every body line is prefixed, so a body cannot draw
-// something that reads as the header of another message: a line that begins
-// with ──── at column 0 is always a real header.
-export const clean = (s) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+// These are shown as \xNN or \uNNNN instead of themselves: every C0 control
+// but tab and newline (so \r, which returns to column 0, among them), DEL, the
+// C1 controls U+0080-U+009F (U+009B is an 8-bit CSI), the line and paragraph
+// separators U+2028 and U+2029, and the bidirectional controls (U+061C,
+// U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), which reorder how a line
+// is displayed. Tab only moves right. Newline is kept here and dealt with by
+// the callers: formatMessage prefixes every body line, so a body cannot draw
+// something that reads as the header of another message (a line that begins
+// with ──── at column 0 is always a real header); cleanLine escapes it.
+const HOSTILE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+export const clean = (s) => s.replace(HOSTILE, (c) => {
+  const n = c.charCodeAt(0);
+  return n > 0xff ? `\\u${n.toString(16).padStart(4, '0')}` : `\\x${n.toString(16).padStart(2, '0')}`;
+});
 // The same, on one line: for a value that must not be able to start a new line.
 export const cleanLine = (v) => clean(String(v)).replace(/\n/g, '\\n');
 // maxChars bounds the PRINTED size of the body (after escaping, with the line

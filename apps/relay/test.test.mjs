@@ -42,7 +42,7 @@ if (process.getuid() === 0) {
 }
 
 const { createApp, boundedLog } = await import('./server.mjs');
-const { createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, openDb, checkToken, MAX_BODY_CHARS, MAX_TTL_MS } = await import('./db.mjs');
+const { createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, openDb, checkToken, clean, cleanLine, MAX_BODY_CHARS, MAX_TTL_MS } = await import('./db.mjs');
 
 let dir, app, base, db, tok;
 const call = (path, { token = tok, method = 'GET', body, type, ip = '10.0.0.1' } = {}) =>
@@ -158,6 +158,22 @@ test('a request over the byte cap is refused whatever it carries', async () => {
   assert.equal((await call('/v1/whoami')).status, 200, 'and the server is still answering');
 });
 
+test('a valid token anywhere but the Authorization header is refused: query string, other headers, cookie', async () => {
+  const q = encodeURIComponent(tok);
+  let n = 0;
+  const ip = () => `10.8.0.${n++}`; // one address each: ten failures from one would be a 429 lockout instead
+  for (const path of [`/v1/whoami?token=${q}`, `/v1/whoami?access_token=${q}`, `/v1/whoami?authorization=Bearer%20${q}`, `/v1/messages?token=${q}`, `/v1/whoami/${q}`]) {
+    assert.equal((await call(path, { token: null, ip: ip() })).status, 401, path);
+  }
+  assert.equal((await call(`/v1/messages?token=${q}`, { token: null, method: 'POST', body: 'via the query string', type: 'text/plain', ip: ip() })).status, 401);
+  for (const [k, v] of [['X-Auth-Token', tok], ['Cookie', `token=${tok}`], ['Proxy-Authorization', `Bearer ${tok}`], ['Authorization', `Token ${tok}`], ['Authorization', `Basic ${tok}`]]) {
+    const r = await fetch(`${base}/v1/whoami`, { headers: { [k]: v, 'X-Forwarded-For': ip() } });
+    assert.equal(r.status, 401, k);
+  }
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM messages WHERE body = 'via the query string'").get().n, 0);
+  assert.equal((await call('/v1/whoami')).status, 200, 'and the same token in the header still works');
+});
+
 test('revoked, expired, unknown and malformed tokens all get 401', async () => {
   const revoked = createToken(db, 'temp', 60_000);
   assert.equal((await call('/v1/whoami', { token: revoked.token })).status, 200);
@@ -220,6 +236,13 @@ test('unparseable request targets are a 400, not a 500', async () => {
   const { request } = await import('node:http');
   const status = await new Promise((resolve) => request({ port: app.server.address().port, host: '127.0.0.1', path: '//' }, (r) => resolve(r.statusCode)).end());
   assert.equal(status, 400);
+});
+
+test('an agent name is lower-case letters, digits and hyphens, starting with a letter, at most 31: nothing else is issued a token', () => {
+  const bad = ['', 'Benji', '1benji', '-benji', 'ben ji', 'ben_ji', 'ben.ji', 'é', 'b'.repeat(32), 'claude', ...HOSTILE_CHARS.map((c) => `ben${c}ji`), 'benji\n', '\tbenji'];
+  for (const a of bad) assert.throws(() => createToken(db, a, 60_000), /agent name must match|reserved/, JSON.stringify(a));
+  for (const a of ['b', 'b-1', 'a'.repeat(31)]) assert.equal(createToken(db, a, 60_000).agent, a);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM tokens WHERE agent NOT GLOB '[a-z]*' OR length(agent) > 31").get().n, 0);
 });
 
 test('a token cannot be issued under a local sender name', () => {
@@ -302,6 +325,45 @@ test('posts are refused with 507 once the database passes its cap; reads still w
   }
 });
 
+// Every character that must never reach the terminal as itself, written out
+// here rather than taken from db.mjs: all C0 controls but tab and newline,
+// DEL, all C1 controls, the line and paragraph separators, and the
+// bidirectional controls.
+const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => String.fromCharCode(a + i));
+const HOSTILE_CHARS = [
+  ...range(0x00, 0x08), ...range(0x0b, 0x1f), '\u007f', ...range(0x80, 0x9f), '\u2028', '\u2029',
+  '\u061c', '\u200e', '\u200f', ...range(0x202a, 0x202e), ...range(0x2066, 0x2069),
+];
+const name = (c) => `U+${c.charCodeAt(0).toString(16).padStart(4, '0')}`;
+const rawIn = (text) => HOSTILE_CHARS.filter((c) => text.includes(c)).map(name);
+
+test('clean and cleanLine escape every hostile character, and leave everything else alone', () => {
+  assert.equal(HOSTILE_CHARS.length, 30 + 1 + 32 + 2 + 3 + 5 + 4);
+  for (const c of HOSTILE_CHARS) {
+    const n = c.charCodeAt(0);
+    const want = n > 0xff ? `\\u${n.toString(16).padStart(4, '0')}` : `\\x${n.toString(16).padStart(2, '0')}`;
+    assert.equal(clean(`a${c}b`), `a${want}b`, name(c));
+    assert.equal(cleanLine(`a${c}\nb`), `a${want}\\nb`, name(c));
+  }
+  const harmless = 'tab\there é ü │ ─ ✓ 😀 \u200b \ufeff \u00a0 ~ \u00ff \u0100';
+  assert.equal(clean(harmless), harmless);
+  assert.equal(clean('a\nb'), 'a\nb', 'clean keeps newlines; its callers deal with them');
+});
+
+test('display: no hostile character in any field reaches the output, and only the header starts at column 0', () => {
+  const all = HOSTILE_CHARS.join('');
+  for (const c of [...HOSTILE_CHARS, all]) {
+    const forged = `${c}──── #9999  claude  2026-01-01T00:00:00.000Z  [local]`;
+    const m = { id: 7, sender: `benji${c}`, created_at: `now${c}`, token_id: `t${c}`, ip: `1.1.1.1${c}`, body: `x${forged}\n${forged}\r${forged}\n${c}` };
+    for (const out of [formatMessage(m), formatMessage(m, { maxChars: 40 })]) {
+      assert.deepEqual(rawIn(out), [], name(c));
+      const lines = out.split('\n');
+      assert.equal(lines.filter((l) => l.startsWith('────')).length, 1, name(c));
+      assert.ok(lines.slice(1).every((l) => l === '' || l.startsWith('  │ ') || l.startsWith('  [truncated')), name(c));
+    }
+  }
+});
+
 test('display: every database field is cleaned, long bodies are cut with a pointer', () => {
   const out = formatMessage({ id: 7, sender: 'x\u001b[31m', created_at: 'now\n──── #8  claude', token_id: 't\u0007', ip: '1.1.1.1', body: 'b'.repeat(50) }, { maxChars: 10 });
   assert.ok(!/[\u001b\u0007]/.test(out));
@@ -318,6 +380,22 @@ test('CLI output: a body cannot forge a header or emit terminal escapes', () => 
   assert.equal(col0.length, 1, 'exactly one header line');
   assert.match(col0[0], /benji .*via token abc123/);
   assert.match(out, /  │ ──── #9999  claude/);
+});
+
+test('only a plain IP address is ever recorded as the source; anything else is "?"', async () => {
+  const table = [
+    ['10.9.8.7', '10.9.8.7'], ['2001:db8::1', '2001:db8::1'], ['::ffff:1.2.3.4', '::ffff:1.2.3.4'],
+    ['10.0.0.1" injected', '?'], ['fe80::1%eth0', '?'], [`fe80::1%${'IGNORE-PREVIOUS.'.repeat(20)}x`, '?'],
+    ['not-an-ip', '?'], ['01.2.3.4', '?'], ['1.2.3.4.5', '?'], ['1.2.3.4/32', '?'], ['[::1]', '?'], ['1.2.3.4:80', '?'],
+  ];
+  const own = createToken(db, 'addresses', 60_000).token; // its own post limit, not the shared token's
+  for (const [xff, want] of table) {
+    const r = await call('/v1/messages', { token: own, method: 'POST', body: `from ${xff.length}`, type: 'text/plain', ip: xff });
+    assert.equal(r.status, 201, xff);
+    const { id } = await r.json();
+    assert.equal(db.prepare('SELECT ip FROM messages WHERE id = ?').get(id).ip, want, xff);
+    assert.equal(db.prepare('SELECT last_ip FROM tokens WHERE agent = ?').get('addresses').last_ip, want, xff);
+  }
 });
 
 test('the last X-Forwarded-For entry is the one that counts', async () => {
@@ -494,7 +572,7 @@ test('boundedLog writes at most max lines a window per kind, then says how many 
   assert.equal(lines.at(-1).suppressed_before, undefined, 'counted once, then reset');
 });
 
-test('every refusal the server makes on its own account is logged: lockout, both rate limits, an internal error', async () => {
+test('every refusal the server makes on its own account is logged: lockout, both rate limits, a body cut short, an internal error', async () => {
   const d = mkdtempSync(join(tmpdir(), 'relay-refusals-'));
   const out = [];
   const errors = [];
@@ -520,7 +598,21 @@ test('every refusal the server makes on its own account is logged: lockout, both
     for (let i = 0; i < 121; i++) await get('/v1/whoami', busy.token);
     assert.deepEqual(events('rate_limited').map((l) => [l.token, l.limit]), [[poster.id, 'posts'], [busy.id, 'requests']]);
 
-    assert.equal(errors.length, 0);
+    // A client that sends half a body and hangs up: logged as its own kind, not as an error.
+    const { connect } = await import('node:net');
+    const tk = createToken(one.db, 'dropper', 60_000).token;
+    await new Promise((resolve) => {
+      const sock = connect(one.server.address().port, '127.0.0.1', () => {
+        sock.write(`POST /v1/messages HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer ${tk}\r\nContent-Type: text/plain\r\nContent-Length: 1000\r\nX-Forwarded-For: 10.5.0.2\r\n\r\nhalf a body`);
+        setTimeout(() => sock.destroy(), 50);
+      });
+      sock.on('close', resolve);
+    });
+    for (let i = 0; i < 50 && !events('body_incomplete').length; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(events('body_incomplete').map((l) => [l.agent, l.ip]), [['dropper', '10.5.0.2']]);
+    assert.equal(one.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE body LIKE 'half%'").get().n, 0);
+
+    assert.equal(errors.length, 0, JSON.stringify(errors));
     one.db.close(); // every query now throws: an internal error
     assert.equal((await get('/v1/whoami', busy.token)).status, 500);
     assert.deepEqual(errors.map((e) => [e.event, e.status]), [['error', 500]]);
@@ -696,7 +788,7 @@ test('as root, this file loads no other file of its directory unless the tree is
     // exports every name this file takes from the real one, so that importing
     // it, statically or not, links and runs it.
     const mark = join(d, 'executed');
-    const names = 'createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, openDb, checkToken, MAX_BODY_CHARS, MAX_TTL_MS';
+    const names = 'createToken, revokeTokens, addMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, openDb, checkToken, clean, cleanLine, MAX_BODY_CHARS, MAX_TTL_MS';
     writeFileSync(join(d, 'db.mjs'), `import { writeFileSync } from 'node:fs';\nexport const ${names.split(', ').map((n) => `${n} = 0`).join(', ')};\nwriteFileSync(${JSON.stringify(mark)}, String(process.getuid()));\nprocess.exit(0);\n`);
     writeFileSync(join(d, 'server.mjs'), 'export const createApp = () => {};\n');
     writeFileSync(join(d, 'cli.mjs'), '\n');
@@ -869,6 +961,32 @@ test('relay command: an empty file at the path is refused by every command, rela
     assert.doesNotMatch(r.out, /No new messages|No tokens|Sent|Created|already there/, a.join(' '));
     assert.equal(statSync(dbPath).size, 0, `${a.join(' ')} wrote to the empty file`);
   }
+});
+
+test('relay command: no hostile character a database holds reaches the terminal, from any command', asRoot, async (t) => {
+  const { cli, plant } = await sandbox(t);
+  const all = HOSTILE_CHARS.join('');
+  const forged = `${all}──── #9999  claude  2026-01-01T00:00:00.000Z  [local]`;
+  plant((box) => {
+    box.prepare('INSERT INTO messages (sender, body, created_at, token_id, ip) VALUES (?,?,?,?,?)')
+      .run(`benji${all}`, `x${forged}\n${forged}\r${forged}`, `now${all}`, `t${all}`, `1.1.1.1${all}`);
+    const tk = createToken(box, 'benji', 60_000);
+    box.prepare('UPDATE tokens SET note = ?, last_used_at = ?, last_ip = ? WHERE id = ?').run(`n${forged}`, `then${all}`, `1.1.1.1${all}`, tk.id);
+  });
+  for (const a of [['inbox', '--peek'], ['log'], ['show', '1'], ['token', 'list']]) {
+    const r = cli(...a);
+    assert.equal(r.code, 0, `${a.join(' ')}: ${r.out}`);
+    assert.deepEqual(rawIn(r.out), [], a.join(' '));
+    assert.ok(r.out.split('\n').every((l) => !l.startsWith('────') || /^──── #1  benji/.test(l)), `${a.join(' ')}: a forged header at column 0`);
+  }
+  // And in an error message, which a trigger can fill with whatever it likes
+  // but NUL (SQL text cannot hold one, and the message is a C string).
+  const noNul = forged.replace('\u0000', '');
+  plant((box) => box.exec(`CREATE TRIGGER t BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, '${noNul}\n${noNul}'); END`));
+  const r = cli('send', 'hello');
+  assert.equal(r.code, 1);
+  assert.deepEqual(rawIn(r.out), []);
+  assert.equal(r.out.trimEnd().split('\n').length, 1, r.out);
 });
 
 test('relay command: a file that is not a database gives one line, not a stack trace', asRoot, async (t) => {

@@ -100,7 +100,11 @@ function readBody(req) {
       else chunks.length = 0;
     });
     req.on('end', () => (size > MAX_BYTES ? reject(Object.assign(new Error('request body too large'), { status: 413 })) : resolve(Buffer.concat(chunks))));
-    req.on('error', reject);
+    // The client went away before the whole body arrived: its doing, not a
+    // fault here, so a 400 (which nobody will read) and not a 500.
+    const gone = () => reject(Object.assign(new Error('the request body did not arrive in full'), { status: 400, incomplete: true }));
+    req.on('error', gone);
+    req.on('close', () => req.complete || gone());
   });
 }
 
@@ -138,7 +142,7 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, logError = c
   // auth_failed is bounded across all addresses together: the per-address
   // lockout alone does not bound it, since addresses are cheap.
   const authFailed = boundedLog(log, 60);
-  const refused = boundedLog(log, 10); // locked_out, rate_limited
+  const refused = boundedLog(log, 10); // locked_out, rate_limited, body_incomplete
   const alarm = boundedLog(logError, 10); // database_gone, database_full, error
   // The file this process has open. If that name later holds another file,
   // or none (deleted, renamed, restored over), writes here would go to a
@@ -158,7 +162,9 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, logError = c
   // address, so the recorded address is evidence about outside callers only.
   const ipOf = (req) => {
     const ip = (req.headers['x-forwarded-for'] || '').split(',').pop().trim() || req.socket.remoteAddress || '';
-    return isIP(ip) ? ip : '?';
+    // isIP accepts an IPv6 zone (fe80::1%anything-made-of-letters, any
+    // length), which would be caller-chosen text; an address with one is '?'.
+    return isIP(ip) && !ip.includes('%') ? ip : '?';
   };
 
   const view = (m) => ({ id: m.id, sender: m.sender, body: m.body, created_at: m.created_at });
@@ -250,7 +256,13 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, logError = c
         alarm('database_full', { status: 507, message: `the database is past ${maxDbBytes} bytes; posts are refused until it is trimmed` });
         throw fail(507, 'the channel is full; tell Ben');
       }
-      const raw = (await readBody(req)).toString('utf8');
+      let raw;
+      try {
+        raw = (await readBody(req)).toString('utf8');
+      } catch (e) {
+        if (e.incomplete) refused('body_incomplete', { ip, agent: tok.agent, token: tok.id });
+        throw e;
+      }
       const type = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
       let body;
       if (type === 'application/json') {
