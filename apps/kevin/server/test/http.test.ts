@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { config } from '../src/config.js';
+import { getSetting, OWNER_ACCOUNT_KEY } from '../src/db.js';
 import { createHttp } from '../src/http.js';
 import type { Kevin } from '../src/kevin.js';
 import { makeKevin, view } from './helpers.js';
@@ -12,6 +13,8 @@ import { makeKevin, view } from './helpers.js';
 const SESSIONS: Record<string, string> = { 'owner-session': 'Ben@Example.com', 'owner-session-2': 'ben@example.com', 'stranger-session': 'mallory@example.com' };
 let authCalls = 0;
 let authUp = true;
+/** When set, the auth service answers every request with this status (an outage that still answers). */
+let authStatus: number | null = null;
 let auth: Server;
 let app: Server;
 let kevin: Kevin;
@@ -24,10 +27,11 @@ beforeAll(async () => {
   auth = createServer((req, res) => {
     authCalls++;
     if (!authUp) return void req.socket.destroy();
+    if (authStatus) return void res.writeHead(authStatus).end('{"error":"down"}');
     const token = /(?:^|;\s*)token=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
     const email = token ? SESSIONS[token] : undefined;
     if (req.url !== '/api/auth/me' || !email) return void res.writeHead(401).end('{}');
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ user: { email } }));
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ user: { id: `acct-${email.toLowerCase()}`, email } }));
   });
   config.authUrl = await listen(auth);
   config.publicUrl = 'https://kevin.example';
@@ -44,6 +48,7 @@ beforeEach(() => {
   // Production has no test user: every request is checked against the auth service.
   config.testUser = '';
   authUp = true;
+  authStatus = null;
 });
 
 const req = (path: string, o: { method?: string; cookie?: string; headers?: Record<string, string>; body?: unknown } = {}) =>
@@ -94,6 +99,32 @@ describe('owner-only access', () => {
     const calls = authCalls;
     expect((await req('/api/me', { cookie: 'token=owner-session-2' })).status).toBe(200);
     expect(authCalls).toBe(calls);
+  });
+
+  it('does not remember an auth service that answers with an error as "not signed in"', async () => {
+    authStatus = 503;
+    expect((await req('/api/me', { cookie: 'token=owner-session-3' })).status).toBe(401);
+    expect((await req('/api/me', { cookie: 'token=owner-session-3' })).status).toBe(401);
+    const calls = authCalls;
+    authStatus = null;
+    // Asked again at once, not after 30 seconds.
+    SESSIONS['owner-session-3'] = 'ben@example.com';
+    expect((await req('/api/me', { cookie: 'token=owner-session-3' })).status).toBe(200);
+    expect(authCalls).toBe(calls + 1);
+    // A refusal (401) is an answer about the session, and is remembered.
+    expect((await req('/api/me', { cookie: 'token=refused-session' })).status).toBe(401);
+    const after = authCalls;
+    expect((await req('/api/me', { cookie: 'token=refused-session' })).status).toBe(401);
+    expect(authCalls).toBe(after);
+  });
+
+  it('learns the owner\'s account id from his own sign-in, and never from anyone else\'s', async () => {
+    kevin.db.prepare('DELETE FROM settings WHERE key = ?').run(OWNER_ACCOUNT_KEY);
+    await req('/api/me', { cookie: 'token=stranger-session' });
+    expect(getSetting(kevin.db, OWNER_ACCOUNT_KEY, null)).toBeNull();
+    SESSIONS['owner-session-4'] = 'BEN@example.com';
+    expect((await req('/api/me', { cookie: 'token=owner-session-4' })).status).toBe(200);
+    expect(getSetting(kevin.db, OWNER_ACCOUNT_KEY, null)).toBe('acct-ben@example.com');
   });
 
   it('serves only the install files without a session', async () => {

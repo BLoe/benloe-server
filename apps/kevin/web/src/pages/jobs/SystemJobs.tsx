@@ -16,9 +16,11 @@ const title = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
 
 export function SystemJobs() {
   const view = useView<SystemJob[]>('system/jobs', undefined, { pollMs: 60_000 });
+  const backup = useView<{ problem: string | null }>('system/backup', undefined, { pollMs: 60_000 });
   const now = useNow();
   return (
     <Section title="Housekeeping" description="Jobs Kevin runs on his own to stay healthy.">
+      {backup.data?.problem && <p className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm" role="alert">{backup.data.problem}</p>}
       <ViewState view={view} rows={4}>
         {(jobs) => (
           <List>

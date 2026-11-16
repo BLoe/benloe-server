@@ -125,8 +125,11 @@ const memory: SystemJob = {
         }
       }
     }
-    const embedded = await embedPending(db).catch((e) => {
+    let embedFailure: string | null = null;
+    const embedded = await embedPending(db).catch((e: unknown) => {
       console.error('embedding failed', e);
+      // Worded without counts or times, like the causes below, so a failure that persists is one notification a day.
+      embedFailure = `embedding for recall failed (${e instanceof Error ? (e.name === 'Error' ? e.message : e.name).slice(0, 80) : 'unknown error'}); the items stay keyword-searchable and are tried again next run`;
       return 0;
     });
     const parts = [
@@ -136,8 +139,9 @@ const memory: SystemJob = {
     ].filter(Boolean);
     // A failure is the run's outcome, so the ledger shows it. The wording carries no counts or times, so a
     // cause that keeps recurring produces the same notification, which the runner sends once a day.
-    if (abandoned) return { outcome: 'errored', detail: [`gave up summarising a conversation after ${MEMORY_MAX_ATTEMPTS} failed attempts; it is left out of long-term memory`, ...parts].join('; ') };
-    if (retrying.length) return { outcome: 'errored', detail: [`a conversation could not be summarised (${retrying.join('; ')}); it will be tried again later`, ...parts].join('; ') };
+    if (abandoned) return { outcome: 'errored', detail: [`gave up summarising a conversation after ${MEMORY_MAX_ATTEMPTS} failed attempts; it is left out of long-term memory`, ...(embedFailure ? [embedFailure] : []), ...parts].join('; ') };
+    if (retrying.length) return { outcome: 'errored', detail: [`a conversation could not be summarised (${retrying.join('; ')}); it will be tried again later`, ...(embedFailure ? [embedFailure] : []), ...parts].join('; ') };
+    if (embedFailure) return { outcome: 'errored', detail: [embedFailure, ...parts].join('; ') };
     return parts.length ? { outcome: 'did-work', detail: parts.join(', ') } : { outcome: 'nothing-to-do' };
   },
 };
@@ -232,6 +236,26 @@ const ironpr: SystemJob = {
 };
 
 export const systemJobs: SystemJob[] = [heartbeat, memory, backup, prune, ironpr];
+
+/** Hours without a complete snapshot after which Ben is told: the nightly backup, plus half a day of slack. */
+export const BACKUP_STALE_HOURS = 36;
+
+/**
+ * Is Kevin's only backup working? `problem` is a sentence for Ben, or null when the last complete
+ * snapshot is recent and the job is not paused. A paused backup is a problem at once: nothing else
+ * would ever say so, because a paused job records no runs and so never fails.
+ * Before the first snapshot, the age is counted from the oldest run in the ledger (Kevin's first start).
+ */
+export function backupHealth(db: Kevin['db'], now = new Date()): { paused: boolean; last_ok_at: string | null; problem: string | null } {
+  const paused = !!(db.prepare("SELECT paused FROM job_state WHERE job_key = 'system:backup'").get() as { paused: number } | undefined)?.paused;
+  const lastOk = (db.prepare("SELECT MAX(started_at) AS at FROM job_runs WHERE job_key = 'system:backup' AND outcome = 'did-work'").get() as { at: string | null }).at;
+  const since = lastOk ?? (db.prepare('SELECT MIN(started_at) AS at FROM job_runs').get() as { at: string | null }).at;
+  const hours = since ? (now.getTime() - Date.parse(since)) / 3600_000 : 0;
+  let problem: string | null = null;
+  if (paused) problem = `The nightly backup is paused, so no snapshots are being made${lastOk ? ` (the last one is from ${localDay(new Date(lastOk))})` : ''}. Resume it on the Jobs page.`;
+  else if (hours > BACKUP_STALE_HOURS) problem = lastOk ? `No backup has completed since ${localDay(new Date(lastOk))}. The Jobs page shows why.` : 'No backup has completed yet. The Jobs page shows why.';
+  return { paused, last_ok_at: lastOk, problem };
+}
 
 // ---- schedules ---------------------------------------------------------------
 
@@ -331,13 +355,28 @@ export class JobRunner {
   start(tickMs = 30_000): void {
     this.timer = setInterval(() => void this.tick().catch((e) => console.error('job tick failed', e)), tickMs);
     // Deliberately a separate timer from the one it watches.
-    this.watchdog = setInterval(() => void this.checkAlive().catch((e) => console.error('watchdog failed', e)), 5 * 60_000);
+    this.watchdog = setInterval(() => {
+      void this.checkAlive().catch((e) => console.error('watchdog failed', e));
+      void this.checkBackup().catch((e) => console.error('backup check failed', e));
+    }, 5 * 60_000);
     setTimeout(() => void this.tick().catch((e) => console.error('job tick failed', e)), 5_000);
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     if (this.watchdog) clearInterval(this.watchdog);
+  }
+
+  /**
+   * Tells Ben, at most once a day, when the backup is paused or has not completed for
+   * BACKUP_STALE_HOURS. Runs with the watchdog, on its own timer, so it does not depend on the job it checks.
+   */
+  async checkBackup(now = new Date()): Promise<string | null> {
+    const { problem } = backupHealth(this.kevin.db, now);
+    if (!problem) return null;
+    const told = this.kevin.db.prepare("SELECT 1 FROM notifications WHERE source = 'watchdog:backup' AND at > ?").get(new Date(now.getTime() - 24 * 3600_000).toISOString());
+    if (!told) await notify(this.kevin.db, { title: 'Kevin’s backup is not running', body: problem, link: '/jobs', source: 'watchdog:backup' });
+    return problem;
   }
 
   /** Alerts Ben once when the ledger has gone quiet for 30 minutes, then restarts the tick. */
@@ -366,12 +405,19 @@ export class JobRunner {
 
   systemDue(job: SystemJob, now: Date): boolean {
     const key = `system:${job.name}`;
-    const state = this.kevin.db.prepare('SELECT paused FROM job_state WHERE job_key = ?').get(key) as { paused: number } | undefined;
+    const state = this.kevin.db.prepare('SELECT paused, last_due FROM job_state WHERE job_key = ?').get(key) as { paused: number; last_due: string | null } | undefined;
     if (state?.paused) return false;
     const last = this.lastRun(key);
     if (job.everyMinutes) return !last || now.getTime() - Date.parse(last) >= job.everyMinutes * 60_000;
-    // First sighting of a cron job: wait for its next slot.
-    const since = last ? new Date(last) : new Date(now.getTime() - 60_000);
+    // A cron job that has never run counts from when it was first seen (kept in job_state.last_due), so
+    // its first slot is not missed when no tick happens to land in the minute after it.
+    let since: Date;
+    if (last) since = new Date(last);
+    else if (state?.last_due) since = new Date(state.last_due);
+    else {
+      since = new Date(now.getTime() - 60_000);
+      this.kevin.db.prepare('INSERT INTO job_state (job_key, last_due) VALUES (?, ?) ON CONFLICT(job_key) DO UPDATE SET last_due = COALESCE(job_state.last_due, excluded.last_due)').run(key, since.toISOString());
+    }
     const next = nextCron(job.cron!, since);
     return !!next && next <= now;
   }
@@ -391,7 +437,8 @@ export class JobRunner {
       else await p;
     }
     for (const job of this.jobs) {
-      if (this.systemDue(job, now)) await this.execute(`system:${job.name}`, () => job.run(this.kevin));
+      // Recorded as started at the tick's time, which is what systemDue measures the next slot from.
+      if (this.systemDue(job, now)) await this.execute(`system:${job.name}`, () => job.run(this.kevin), now.toISOString());
     }
   }
 
@@ -422,11 +469,11 @@ export class JobRunner {
     return this.execute(`system:${job.name}`, () => job.run(this.kevin));
   }
 
-  private async execute(key: string, fn: () => Promise<RunResult>): Promise<RunResult | null> {
+  private async execute(key: string, fn: () => Promise<RunResult>, startedAt = nowIso()): Promise<RunResult | null> {
     if (this.inflight.has(key)) return null;
     this.inflight.add(key);
     const { db } = this.kevin;
-    const id = db.prepare('INSERT INTO job_runs (job_key, started_at) VALUES (?, ?)').run(key, nowIso()).lastInsertRowid;
+    const id = db.prepare('INSERT INTO job_runs (job_key, started_at) VALUES (?, ?)').run(key, startedAt).lastInsertRowid;
     let result: RunResult;
     try {
       result = await fn();

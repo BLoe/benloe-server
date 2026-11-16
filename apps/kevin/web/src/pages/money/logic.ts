@@ -500,9 +500,12 @@ export function headerCandidates(text: string): string[] {
 /** The server words its import errors for the model; the part telling it which argument to pass is not for Ben. */
 export const importError = (message: string): string => message.replace(/\s*Pass (mapping|amount_sign)\b[\s\S]*$/, '').replace(/\s*To import into a new account, pass[\s\S]*$/, '').trim();
 
-/** One categorize tap in the import summary: recategorize that merchant's rows from this import and keep doing it. */
+/**
+ * One categorize tap in the import summary: recategorize that merchant's rows from this import and keep
+ * doing it. Exactly that merchant: "Uber" must not sweep in "Uber Eats" (the server's `q` would).
+ */
 export function categorizeMerchantInput(batchId: number, merchant: string, category: string): Record<string, unknown> {
-  return { update: [{ filter: { batch_id: batchId, q: merchant }, set: { category }, make_rule: true }] };
+  return { update: [{ filter: { batch_id: batchId, merchant }, set: { category }, make_rule: true }] };
 }
 
 // ---- holdings ------------------------------------------------------------------

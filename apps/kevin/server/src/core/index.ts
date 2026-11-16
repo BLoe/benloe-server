@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { getSetting, nowIso, parseJson, setSetting } from '../db.js';
 import type { View } from '../domains.js';
-import { scheduleSpentThisMonth, systemJobs, type ScheduleRow } from '../jobs.js';
+import { backupHealth, scheduleSpentThisMonth, systemJobs, type ScheduleRow } from '../jobs.js';
 import type { Kevin } from '../kevin.js';
 import { anthropic, deltaChars, monthStartIso, record, recordPartial, spend, usageOf } from '../llm.js';
 import { addFact, deleteFact, deleteProfileSection, findProfileSection, listFacts, listProfile, logEvent, profileKey, saveProfileSection, search, updateFact } from '../memory.js';
@@ -218,6 +218,11 @@ const payloadShape = {
 };
 
 const WRITES_QUESTION = (name: string): string => `Let the schedule "${name}" change your data when it runs, with nobody watching? Without this it can only read, research and notify.`;
+
+const PAUSE_QUESTION = (name: string): string =>
+  name === 'backup'
+    ? 'Pause the nightly backup? It is Kevin\'s only backup: while it is paused no snapshot of your records is made. Home will say so until it is resumed.'
+    : `Pause the system job "${name}"? It will not run until it is resumed on the Jobs page.`;
 
 /** The model is told when its link is unusable, instead of the link being dropped without a word. */
 function checkedLink(link: string | undefined): string | undefined {
@@ -470,6 +475,8 @@ export function coreTools(kevin: Kevin): ToolDef[] {
         const name = job_key.replace(/^system:/, '');
         if (!systemJobs.some((j) => j.name === name)) throw new ToolError(`No system job "${name}". There are: ${systemJobs.map((j) => j.name).join(', ')}.`);
         if (action === 'run_now') return (await runner.runSystemNow(name)) ?? { note: 'already running' };
+        // Switching a system job off is Ben's decision: they are what keeps Kevin safe and tidy (the backup above all).
+        if (action === 'pause' && !(await ctx.confirm(PAUSE_QUESTION(name)))) throw new ToolError(`Ben declined to pause ${name}.`);
         db.prepare('INSERT INTO job_state (job_key, paused) VALUES (?, ?) ON CONFLICT(job_key) DO UPDATE SET paused = excluded.paused').run(`system:${name}`, action === 'pause' ? 1 : 0);
         return { job_key: `system:${name}`, paused: action === 'pause' };
       },
@@ -621,6 +628,13 @@ export function coreViews(kevin: Kevin): Record<string, View> {
     /** ?key= → earlier versions of a section, newest first. */
     profile_history: (p) => db.prepare('SELECT id, key, title, body, replaced_at, replaced_by FROM profile_history WHERE key = ? ORDER BY id DESC LIMIT 50').all(p.key ?? ''),
     schedules: () => (db.prepare('SELECT * FROM schedules ORDER BY enabled DESC, next_run_at IS NULL, next_run_at').all() as ScheduleRow[]).map((s) => scheduleView(kevin, s)),
+    /** Home: a card when the backup is paused or has not completed lately. */
+    home: () => {
+      const { problem } = backupHealth(db);
+      return { cards: problem ? [{ title: 'Backup not running', lines: [problem], link: '/jobs' }] : [] };
+    },
+    /** The backup's state, for the Jobs and Settings pages. */
+    backup: () => backupHealth(db),
     /** System jobs with their last run and whether they are paused. */
     jobs: () =>
       systemJobs.map((j) => {

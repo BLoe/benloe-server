@@ -92,3 +92,16 @@ export function matchesPattern(alternatives: Alternative[], text: string): boole
   }
   return false;
 }
+
+/**
+ * The pattern that matches exactly this text as a whole line: a merchant name as it is stored, and not
+ * any longer name that contains it ("Uber" and not "Uber Eats"). Null when the text cannot be one
+ * (too long, or nothing to match).
+ */
+export function exactLinePattern(text: string): string | null {
+  const t = text.trim().toLowerCase();
+  if (t.length < 1 || /\n/.test(t)) return null;
+  const escaped = [...t].map((c) => (SPECIAL.includes(c) ? `\\${c}` : c)).join('');
+  const pattern = `^${escaped}$`;
+  return pattern.length <= 200 ? pattern : null;
+}

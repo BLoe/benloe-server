@@ -70,8 +70,6 @@ export interface TurnHandle {
   confirms: Map<string, (approved: boolean) => void>;
   /** What each open confirm is asking, so a reloaded page can show the card again. */
   confirmSummaries: Map<string, string>;
-  /** Prompt size of the last request, for the compaction decision. */
-  lastPromptTokens: number;
 }
 
 export interface TurnResult {
@@ -398,7 +396,6 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
         recordPartial(db, { purpose: 'turn', threadId, turnId, jobKey: opts.jobKey }, model, stream.currentMessage, streamedChars);
         throw e;
       });
-      handle.lastPromptTokens = (msg.usage.input_tokens ?? 0) + (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0);
       record(db, { purpose: 'turn', threadId, turnId, jobKey: opts.jobKey }, msg.model || model, msg.usage);
 
       // The stream carried each tool call's name; its input is complete only now.

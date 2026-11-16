@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { attachmentPath, extract, getAttachment, MAX_UPLOAD_BYTES, saveUpload } from './attachments.js';
 import { bus } from './bus.js';
 import { config } from './config.js';
+import { type DB, getSetting, OWNER_ACCOUNT_KEY, setSetting } from './db.js';
 import type { Kevin } from './kevin.js';
 import { notify, subscribe } from './push.js';
 import { createThread, getThread, listThreads, resolveConfirm, send, stop } from './threads.js';
@@ -16,22 +17,40 @@ import { createThread, getThread, listThreads, resolveConfirm, send, stop } from
 type Who = 'owner' | 'other' | null;
 const authCache = new Map<string, { who: Who; at: number }>();
 
-async function whoIs(req: Request): Promise<Who> {
+/**
+ * Who sent this request, by asking artanis about its session cookie. Only an answer is cached (signed
+ * in as someone, or the session refused with 401/403), for 30 seconds. An unreachable or failing auth
+ * service is logged and not cached: it says nothing about the session, and remembering it as "not
+ * signed in" would send Ben round the sign-in page until it expired.
+ */
+export async function whoIs(req: Request, db: DB): Promise<Who> {
   if (config.testUser) return 'owner';
   const token = (req.headers.cookie ?? '').split(';').map((p) => p.trim().split('=')).find(([k]) => k === 'token')?.[1];
   if (!token || !config.ownerEmail) return null;
   const hit = authCache.get(token);
   if (hit && Date.now() - hit.at < 30_000) return hit.who;
+  let who: Who;
   try {
     const res = await fetch(`${config.authUrl}/api/auth/me`, { headers: { Cookie: `token=${token}` }, signal: AbortSignal.timeout(5000) });
-    const email = res.ok ? (((await res.json()) as { user?: { email?: string } }).user?.email ?? '').toLowerCase() : '';
-    const who: Who = !email ? null : email === config.ownerEmail ? 'owner' : 'other';
-    if (authCache.size > 500) authCache.clear();
-    authCache.set(token, { who, at: Date.now() });
-    return who;
-  } catch {
-    return null; // not cached: an auth-service blip should not lock Ben out for 30 seconds
+    if (res.status === 401 || res.status === 403) who = null;
+    else if (!res.ok) {
+      console.error(`auth service answered ${res.status} to a session check; not treated as an answer`);
+      return null;
+    } else {
+      const user = ((await res.json()) as { user?: { id?: unknown; email?: unknown } }).user;
+      const email = typeof user?.email === 'string' ? user.email.toLowerCase() : '';
+      who = !email ? null : email === config.ownerEmail ? 'owner' : 'other';
+      if (who === 'owner' && typeof user?.id === 'string' && user.id && getSetting<string | null>(db, OWNER_ACCOUNT_KEY, null) !== user.id) {
+        setSetting(db, OWNER_ACCOUNT_KEY, user.id);
+      }
+    }
+  } catch (e) {
+    console.error(`auth service could not be asked about a session: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
   }
+  if (authCache.size > 500) authCache.clear();
+  authCache.set(token, { who, at: Date.now() });
+  return who;
 }
 
 // Fetched by the browser without credentials when installing the PWA.
@@ -52,7 +71,7 @@ export function createHttp(kevin: Kevin): express.Express {
 
   app.use(async (req: Request, res: Response, next: NextFunction) => {
     if (req.method === 'GET' && PUBLIC.test(req.path)) return next();
-    const who = await whoIs(req);
+    const who = await whoIs(req, kevin.db);
     if (who === 'owner') return next();
     if (req.path.startsWith('/api/')) return void res.status(who ? 403 : 401).json({ error: who ? 'not the owner' : 'sign in' });
     if (who) return void res.status(403).type('text/plain').send('Kevin is Ben’s private assistant.');

@@ -386,9 +386,9 @@ describe('rules and recategorizing', () => {
   it('recategorizes by filter and by id, and can turn a recategorization into a rule', async () => {
     const { kevin } = await withChase();
     const byFilter = await ok(kevin, 'money_transactions_update', { update: [{ filter: { q: 'blue bottle' }, set: { category: 'dining' }, make_rule: true }] });
-    expect(byFilter).toMatchObject({ updated: [{ matched: 2, rules: ['blue bottle coffee oakland ca'] }] });
+    expect(byFilter).toMatchObject({ updated: [{ matched: 2, rules: ['^blue bottle coffee oakland ca$'] }] });
     expect(await rows(kevin, "SELECT DISTINCT category, categorized_by FROM money_transactions WHERE description LIKE '%BLUE BOTTLE%'")).toEqual([{ category: 'dining', categorized_by: 'manual' }]);
-    expect(await rows(kevin, "SELECT pattern, match_type, category FROM money_rules WHERE pattern LIKE 'blue bottle%'")).toEqual([{ pattern: 'blue bottle coffee oakland ca', match_type: 'contains', category: 'dining' }]);
+    expect(await rows(kevin, "SELECT pattern, match_type, category, priority FROM money_rules WHERE pattern LIKE '%blue bottle%'")).toEqual([{ pattern: '^blue bottle coffee oakland ca$', match_type: 'regex', category: 'dining', priority: 1 }]);
 
     const [costco] = await rows(kevin, "SELECT id FROM money_transactions WHERE description LIKE 'COSTCO%'");
     await ok(kevin, 'money_transactions_update', { update: [{ ids: [costco!.id], set: { category: 'shopping', notes: 'TV' } }] });
@@ -399,6 +399,43 @@ describe('rules and recategorizing', () => {
     // Clearing the category hands it back to the rules.
     await ok(kevin, 'money_transactions_update', { update: [{ ids: [costco!.id], set: { category: null } }], reapply_rules: 'uncategorized' });
     expect(await rows(kevin, `SELECT category, categorized_by FROM money_transactions WHERE id = ${costco!.id}`)).toEqual([{ category: 'groceries', categorized_by: 'rule' }]);
+  });
+
+  it('categorizes exactly one merchant from the import summary, and not the merchants whose names contain it', async () => {
+    const { kevin } = await withChase();
+    const csv = 'Date,Description,Amount\n11/05/2026,KITEWORKS,-18.00\n11/06/2026,KITEWORKS,-22.00\n11/06/2026,KITEWORKS CAFE,-31.00\n11/07/2026,SPAR AND SAIL,-9.00\n';
+    const done = await ok(kevin, 'money_import', { attachment_id: await upload(kevin, csv, 'kites.csv'), account: 'Chase checking', commit: true });
+    const batch = async () => rows(kevin, `SELECT merchant, category, categorized_by FROM money_transactions WHERE import_batch_id = ${done.batch_id} ORDER BY id`);
+    const [shop, , cafe] = (await batch()).map((r: any) => r.merchant as string);
+    expect(shop).not.toBe(cafe);
+    expect(cafe!.toLowerCase()).toContain(shop!.toLowerCase());
+    // The café was already dining (by a rule) before the tap.
+    await ok(kevin, 'money_transactions_update', { rules: [{ pattern: 'kiteworks cafe', category: 'dining' }] });
+    // The page's tap, as categorizeMerchantInput builds it, on the shorter name.
+    const r = await ok(kevin, 'money_transactions_update', { update: [{ filter: { batch_id: done.batch_id, merchant: shop }, set: { category: 'shopping' }, make_rule: true }] });
+    expect(r.updated[0].matched).toBe(2);
+    expect(await batch()).toEqual([
+      { merchant: shop, category: 'shopping', categorized_by: 'manual' },
+      { merchant: shop, category: 'shopping', categorized_by: 'manual' },
+      { merchant: cafe, category: 'dining', categorized_by: 'rule' },
+      { merchant: expect.any(String), category: null, categorized_by: null },
+    ]);
+    // The rule it made is for that merchant alone, and is ahead of the general rules.
+    expect(await rows(kevin, "SELECT pattern, match_type, priority FROM money_rules WHERE category = 'shopping' AND priority = 1")).toEqual([{ pattern: `^${shop!.toLowerCase()}$`, match_type: 'regex', priority: 1 }]);
+    const next = await ok(kevin, 'money_import', { attachment_id: await upload(kevin, 'Date,Description,Amount\n11/09/2026,KITEWORKS,-15.00\n11/09/2026,KITEWORKS ANNEX,-12.00\n', 'more.csv'), account: 'Chase checking', commit: true });
+    const after = await rows(kevin, `SELECT merchant, category FROM money_transactions WHERE import_batch_id = ${next.batch_id} ORDER BY id`);
+    expect(after[0]).toEqual({ merchant: shop, category: 'shopping' });
+    expect(after[1]!.category).toBeNull();
+  });
+
+  it('changes the rule that names a merchant when that merchant is categorized, instead of adding one that would lose to it', async () => {
+    const { kevin } = await withChase();
+    const done = await ok(kevin, 'money_import', { attachment_id: await upload(kevin, 'Date,Description,Amount\n11/05/2026,UBER   TRIP 8821,-18.00\n', 'ride.csv'), account: 'Chase checking', commit: true });
+    expect(await rows(kevin, `SELECT merchant, category FROM money_transactions WHERE import_batch_id = ${done.batch_id}`)).toEqual([{ merchant: 'Uber', category: 'transport' }]);
+    const before = (await rows(kevin, 'SELECT COUNT(*) AS n FROM money_rules'))[0]!.n;
+    await ok(kevin, 'money_transactions_update', { update: [{ filter: { batch_id: done.batch_id, merchant: 'Uber' }, set: { category: 'travel' }, make_rule: true }] });
+    expect((await rows(kevin, 'SELECT COUNT(*) AS n FROM money_rules'))[0]!.n).toBe(before);
+    expect(await rows(kevin, "SELECT category FROM money_rules WHERE merchant = 'Uber'")).toEqual([{ category: 'travel' }]);
   });
 
   it('re-applies rules in bulk after a rule changes, and removes rules', async () => {

@@ -8,14 +8,15 @@ import { extract, MAX_EXTRACT_CHARS, saveUpload } from '../src/attachments.js';
 import { bus } from '../src/bus.js';
 import { config, startupProblems } from '../src/config.js';
 import { MAX_SCHEDULES, MAX_SUGGESTIONS_BYTES, runtime } from '../src/core/index.js';
-import { setSetting } from '../src/db.js';
+import { OWNER_ACCOUNT_KEY, setSetting } from '../src/db.js';
 import { defineDomain } from '../src/domains.js';
 import { compileRule, orderRules, SEED_RULES } from '../src/domains/_money/categorize.js';
 import { matchesPattern, parsePattern } from '../src/domains/_money/pattern.js';
 import money from '../src/domains/money.js';
 import spaces from '../src/domains/spaces.js';
-import { BACKUPS_KEPT, backupTools, JobRunner, recoverFromRestart, writeBackup } from '../src/jobs.js';
+import { BACKUPS_KEPT, backupHealth, backupTools, JobRunner, recoverFromRestart, systemJobs, writeBackup } from '../src/jobs.js';
 import { notify, pushLimits, subscribe, transport } from '../src/push.js';
+import { indexItem } from '../src/memory.js';
 import { readOnlyQuery } from '../src/sql.js';
 import { createThread, send, stop } from '../src/threads.js';
 import { defineTool, type ToolCtx } from '../src/tools.js';
@@ -155,8 +156,8 @@ describe('what a scheduled turn may not do, whatever the model asks for', () => 
       expect(kevin.db.prepare('SELECT COUNT(*) AS n FROM job_state').get()).toEqual({ n: 0 });
       expect(kevin.db.prepare('SELECT COUNT(*) AS n FROM job_runs').get()).toEqual({ n: 0 });
       expect((await view(kevin, 'system/notifications')).items).toEqual([]);
-      // In chat it can.
-      expect((await kevin.tools.call('job_control', { job_key: 'system:backup', action: 'pause' }, as(kevin, 'agent'))).ok).toBe(true);
+      // In chat it can, with Ben's yes.
+      expect((await kevin.tools.call('job_control', { job_key: 'system:backup', action: 'pause' }, as(kevin, 'agent', true))).ok).toBe(true);
     } finally {
       runtime.runner = null;
     }
@@ -813,6 +814,162 @@ describe('what a restart leaves half-done', () => {
     kevin.db.prepare("INSERT INTO usage (at, purpose, job_key, model, cost_usd) VALUES (?, 'research', ?, 'x', 0.25), (?, 'turn', ?, 'x', 0.5), (?, 'turn', 'schedule:999', 'x', 9)")
       .run(new Date().toISOString(), `schedule:${s.id}`, new Date().toISOString(), `schedule:${s.id}`, new Date().toISOString());
     expect((await view(kevin, 'system/schedules'))[0].spent_this_month_usd).toBeCloseTo(0.75, 6);
+  });
+});
+
+describe('the nightly backup and the other protective jobs', () => {
+  it('runs a cron system job at its slot: not on first sight, once after the slot, once to catch up after missed slots', async () => {
+    const kevin = await makeKevin();
+    const runs: string[] = [];
+    // 03:30 in New York; in January that is 08:30 UTC.
+    const runner = new JobRunner(kevin, [{ name: 'nightly', description: '', cron: '30 3 * * *', run: async () => { runs.push('ran'); return { outcome: 'did-work' }; } }]);
+    const at = (iso: string) => runner.tick(new Date(iso));
+    await at('2026-01-10T12:00:00Z'); // first sighting, mid-day: waits for the next slot
+    await at('2026-01-11T08:29:00Z');
+    expect(runs.length).toBe(0);
+    await at('2026-01-11T08:31:00Z');
+    expect(runs.length).toBe(1);
+    await at('2026-01-11T08:45:00Z'); // same slot
+    await at('2026-01-11T20:00:00Z');
+    expect(runs.length).toBe(1);
+    await at('2026-01-12T08:30:30Z');
+    expect(runs.length).toBe(2);
+    // Down for three nights: one catch-up run, not three.
+    await at('2026-01-15T12:00:00Z');
+    expect(runs.length).toBe(3);
+    await at('2026-01-15T12:05:00Z');
+    await at('2026-01-16T08:29:00Z');
+    expect(runs.length).toBe(3);
+    await at('2026-01-16T08:31:00Z');
+    expect(runs.length).toBe(4);
+    expect((kevin.db.prepare("SELECT started_at FROM job_runs WHERE job_key = 'system:nightly' ORDER BY id").all() as { started_at: string }[]).map((r) => r.started_at)).toEqual([
+      '2026-01-11T08:31:00.000Z', '2026-01-12T08:30:30.000Z', '2026-01-15T12:00:00.000Z', '2026-01-16T08:31:00.000Z',
+    ]);
+    // The real backup job is on this path.
+    expect(systemJobs.find((j) => j.name === 'backup')).toMatchObject({ cron: expect.any(String) });
+  });
+
+  it('prune removes only old idle ledger rows and year-old audit rows', async () => {
+    const kevin = await makeKevin();
+    const days = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+    const ins = kevin.db.prepare('INSERT INTO job_runs (job_key, started_at, ended_at, outcome) VALUES (?, ?, ?, ?)');
+    ins.run('system:heartbeat', days(20), days(20), 'nothing-to-do');
+    ins.run('system:heartbeat', days(2), days(2), 'nothing-to-do');
+    ins.run('system:backup', days(40), days(40), 'did-work');
+    ins.run('system:backup', days(30), days(30), 'errored');
+    const audit = kevin.db.prepare("INSERT INTO tool_audit (at, source, tool, input, ok, result, ms) VALUES (?, 'agent', 'note', '{}', 1, '', 1)");
+    audit.run(days(400));
+    audit.run(days(100));
+    const r = await new JobRunner(kevin, systemJobs.filter((j) => j.name === 'prune')).runSystemNow('prune');
+    expect(r).toMatchObject({ outcome: 'did-work', detail: '1 ledger rows, 1 audit rows removed' });
+    expect(kevin.db.prepare("SELECT job_key, outcome FROM job_runs WHERE job_key != 'system:prune' ORDER BY id").all()).toEqual([
+      { job_key: 'system:heartbeat', outcome: 'nothing-to-do' }, { job_key: 'system:backup', outcome: 'did-work' }, { job_key: 'system:backup', outcome: 'errored' },
+    ]);
+    expect(kevin.db.prepare('SELECT COUNT(*) AS n FROM tool_audit').get()).toEqual({ n: 1 });
+  });
+
+  it('the IRON PR job fails, and says why, until Kevin knows Ben\'s account; then it copies', async () => {
+    const { default: ironpr } = await import('../src/domains/ironpr.js');
+    const { default: Database } = await import('better-sqlite3');
+    const path = join(config.dataDir, `ironpr-job-${Date.now()}.db`);
+    const src = new Database(path);
+    src.exec('CREATE TABLE exercises (id TEXT PRIMARY KEY, name TEXT, userId TEXT, createdAt INTEGER); CREATE TABLE workouts (id TEXT PRIMARY KEY, userId TEXT, exerciseId TEXT, weight REAL, reps INTEGER, oneRM REAL, createdAt INTEGER); CREATE TABLE pr_history (id TEXT PRIMARY KEY, userId TEXT, exerciseId TEXT, weight REAL, previousWeight REAL, createdAt INTEGER);');
+    src.prepare("INSERT INTO exercises VALUES ('e1', 'Kite Pull', 'acct-1', ?)").run(Date.now());
+    src.prepare("INSERT INTO workouts VALUES ('w1', 'acct-1', 'e1', 50, 5, 58, ?)").run(Date.now());
+    src.close();
+    const saved = config.ironPrDb;
+    config.ironPrDb = path;
+    try {
+      const kevin = await makeKevin([ironpr]);
+      const runner = new JobRunner(kevin, systemJobs.filter((j) => j.name === 'ironpr'));
+      expect(await runner.runSystemNow('ironpr')).toMatchObject({ outcome: 'errored', detail: expect.stringMatching(/which IRON PR account is Ben's/) });
+      setSetting(kevin.db, OWNER_ACCOUNT_KEY, 'acct-1');
+      expect(await runner.runSystemNow('ironpr')).toMatchObject({ outcome: 'did-work', detail: '1 lifts, 1 exercises, 0 records copied' });
+      expect(await runner.runSystemNow('ironpr')).toMatchObject({ outcome: 'nothing-to-do' });
+    } finally {
+      config.ironPrDb = saved;
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('asks Ben before a chat turn pauses any system job, and the page can', async () => {
+    const kevin = await makeKevin();
+    runtime.runner = new JobRunner(kevin, []);
+    try {
+      const paused = () => (kevin.db.prepare("SELECT paused FROM job_state WHERE job_key = 'system:backup'").get() as { paused: number } | undefined)?.paused ?? 0;
+      const declined = await kevin.tools.call('job_control', { job_key: 'system:backup', action: 'pause' }, as(kevin, 'agent', false));
+      expect(declined).toMatchObject({ ok: false, text: 'Ben declined to pause backup.' });
+      expect(paused()).toBe(0);
+      for (const name of ['prune', 'heartbeat', 'memory', 'ironpr']) expect((await kevin.tools.call('job_control', { job_key: `system:${name}`, action: 'pause' }, as(kevin, 'agent', false))).ok, name).toBe(false);
+      // The question says what is at stake.
+      let asked = '';
+      const r = await kevin.tools.call('job_control', { job_key: 'system:backup', action: 'pause' }, { ...as(kevin, 'agent'), confirm: (q: string) => ((asked = q), Promise.resolve(true)) });
+      expect(r.ok).toBe(true);
+      expect(asked).toMatch(/only backup/);
+      expect(paused()).toBe(1);
+      // Resuming does not ask.
+      expect((await kevin.tools.call('job_control', { job_key: 'system:backup', action: 'resume' }, as(kevin, 'agent', false))).ok).toBe(true);
+      expect(paused()).toBe(0);
+      // Ben's tap on the Jobs page is his decision.
+      expect((await kevin.tools.call('job_control', { job_key: 'system:backup', action: 'pause' }, as(kevin, 'ui', true))).ok).toBe(true);
+      expect(paused()).toBe(1);
+    } finally {
+      runtime.runner = null;
+    }
+  });
+
+  it('says so on Home, on the Jobs page and by notification when the backup is paused or has not completed lately', async () => {
+    const kevin = await makeKevin();
+    const runner = new JobRunner(kevin, []);
+    const now = new Date();
+    const hoursAgo = (h: number) => new Date(now.getTime() - h * 3600_000).toISOString();
+    const home = async () => (await view(kevin, 'system/home')).cards;
+    // A fresh install with no ledger: nothing to say.
+    expect(backupHealth(kevin.db, now).problem).toBeNull();
+    // Running for a day without a backup yet: still within the window.
+    kevin.db.prepare("INSERT INTO job_runs (job_key, started_at, ended_at, outcome) VALUES ('system:heartbeat', ?, ?, 'nothing-to-do')").run(hoursAgo(24), hoursAgo(24));
+    expect(backupHealth(kevin.db, now).problem).toBeNull();
+    expect(await runner.checkBackup(now)).toBeNull();
+    // A good snapshot 20 hours ago, then failed nights: fine until 36 hours, then a problem.
+    kevin.db.prepare("INSERT INTO job_runs (job_key, started_at, ended_at, outcome) VALUES ('system:backup', ?, ?, 'did-work'), ('system:backup', ?, ?, 'errored')").run(hoursAgo(40), hoursAgo(40), hoursAgo(16), hoursAgo(16));
+    expect(backupHealth(kevin.db, now).problem).toMatch(/No backup has completed since \d{4}-\d{2}-\d{2}\./);
+    expect(await runner.checkBackup(now)).toMatch(/No backup has completed/);
+    await runner.checkBackup(new Date(now.getTime() + 5 * 60_000));
+    const alerts = () => kevin.db.prepare("SELECT title, body FROM notifications WHERE source = 'watchdog:backup'").all() as { title: string; body: string }[];
+    expect(alerts().length).toBe(1); // once a day, not every five minutes
+    kevin.db.prepare("INSERT INTO job_runs (job_key, started_at, ended_at, outcome) VALUES ('system:backup', ?, ?, 'did-work')").run(hoursAgo(2), hoursAgo(2));
+    expect(backupHealth(kevin.db, now)).toMatchObject({ paused: false, problem: null });
+    // Paused: a problem at once, though the last snapshot is recent, because a paused job never fails.
+    kevin.db.prepare("INSERT INTO job_state (job_key, paused) VALUES ('system:backup', 1)").run();
+    expect(backupHealth(kevin.db, now)).toMatchObject({ paused: true, problem: expect.stringMatching(/backup is paused/) });
+    expect(await home()).toEqual([{ title: 'Backup not running', lines: [expect.stringMatching(/backup is paused/)], link: '/jobs' }]);
+    expect((await view(kevin, 'system/backup')).problem).toMatch(/paused/);
+    expect(await runner.checkBackup(new Date(now.getTime() + 25 * 3600_000))).toMatch(/paused/);
+    expect(alerts().length).toBe(2);
+    kevin.db.prepare("UPDATE job_state SET paused = 0 WHERE job_key = 'system:backup'").run();
+    expect(backupHealth(kevin.db, now).problem).toBeNull();
+  });
+});
+
+describe('embeddings', () => {
+  it('records a failed embedding as the memory job\'s outcome, so the ledger and Ben see it', async () => {
+    const kevin = await makeKevin();
+    indexItem(kevin.db, 'log-note', 'kite-1', 'Kite note', 'The box kite needs a new spar.');
+    const key = config.openaiKey;
+    config.openaiKey = 'sk-test-not-real';
+    vi.stubGlobal('fetch', async () => new Response('{"error":"down"}', { status: 503 }));
+    try {
+      const runner = new JobRunner(kevin, systemJobs.filter((j) => j.name === 'memory'));
+      const r = await runner.runSystemNow('memory');
+      expect(r).toMatchObject({ outcome: 'errored', detail: expect.stringMatching(/^embedding for recall failed \(embeddings 503\)/) });
+      expect((await view(kevin, 'system/notifications')).items.map((n: any) => n.title)).toEqual(['Job failed: memory']);
+      // The same failure on the next run is the same news: not a second notification.
+      await runner.runSystemNow('memory');
+      expect((await view(kevin, 'system/notifications')).items.length).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+      config.openaiKey = key;
+    }
   });
 });
 

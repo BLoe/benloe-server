@@ -247,7 +247,9 @@ describe('the import flow', () => {
     expect(importError('Attachment 3 (x.csv) is empty.')).toBe('Attachment 3 (x.csv) is empty.');
   });
   it('one tap categorizes that merchant in the batch and keeps doing it', () => {
-    expect(categorizeMerchantInput(3, 'Local Hardware Co', 'home')).toEqual({ update: [{ filter: { batch_id: 3, q: 'Local Hardware Co' }, set: { category: 'home' }, make_rule: true }] });
+    expect(categorizeMerchantInput(3, 'Local Hardware Co', 'home')).toEqual({ update: [{ filter: { batch_id: 3, merchant: 'Local Hardware Co' }, set: { category: 'home' }, make_rule: true }] });
+    // Never a containment search, which would also take in longer names.
+    expect(JSON.stringify(categorizeMerchantInput(3, 'Uber', 'transport'))).not.toMatch(/"q"/);
   });
 });
 

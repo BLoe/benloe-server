@@ -43,8 +43,14 @@ is writable by another uid, and this database holds tax and medical records.
 
 | File | What it owns |
 |---|---|
+| `index.ts` | Startup: refuses a configuration it must not run (`startupProblems`), recovers what a stop left half-done, starts the runner and HTTP. |
+| `kevin.ts` | Assembles one Kevin: database, domains, tools, views, the fixed prompt. Tests build their own. |
+| `config.ts` | Everything environment-shaped. |
+| `db.ts` | Schema and migrations, settings, small helpers. |
+| `bus.ts` | The event shapes sent over SSE. |
+| `time.ts` | Ben's timezone, the schedule triggers, cron. |
 | `agent.ts` | The loop: stream, run tool calls in parallel, feed back, repeat. Read its header before touching it. |
-| `threads.ts` | One turn at a time per thread; a message Ben sends mid-turn folds into the running turn when that turn is a chat turn, and otherwise runs as its own chat turn afterwards; titles; compaction. |
+| `threads.ts` | One turn at a time per thread; a message Ben sends mid-turn folds into the running turn when that turn is a chat turn, and otherwise runs as its own chat turn afterwards; titles; compaction, once the thread's own stored history passes `COMPACT_ABOVE_CHARS` (measured on the conversation, never on the request's token count, which includes the fixed prompt). |
 | `process.ts` | Logs unhandled promise rejections instead of letting one end the process. |
 | `prompt.ts` | System prompt assembly and the per-message `<context>` block. |
 | `tools.ts` | Tool registry: who may call what (checked at the call, not by what a turn was shown), validation, audit log, daily-log event, `data_changed` event. |
@@ -180,7 +186,8 @@ export default defineDomain({
   `time.ts`).
 - Text worth finding later goes in the search index: `indexItem(db, kind, ref,
   title, body)` from `memory.ts` (`unindexItem` on delete). Kinds in use:
-  `document`, `recipe`, `attachment`, `log-*`.
+  `profile`, `log-event`, `log-note`, `log-summary`, `document`,
+  `attachment`, `recipe`, `space-record`.
 - Uploaded files are `attachments` rows (`getAttachment`, `attachmentPath` in
   `attachments.ts`), already text-extracted. `notify(db, {...})` in `push.ts`
   sends a notification.
@@ -258,6 +265,18 @@ talks the model into something is the threat to design for.
   In chat, raising a schedule's spend cap or turning `writes` on asks Ben.
   The same list check refuses, in any turn, the tools of an area Ben
   switched off.
+- **The protective jobs cannot be switched off quietly.** Pausing a system
+  job (backup, prune, heartbeat, memory, ironpr) from chat asks Ben; the
+  Jobs page does it at his tap. A paused backup, or none completed for 36
+  hours, is a card on Home, a line on the Jobs page, and a watchdog
+  notification once a day.
+- **Other apps' data comes in as Ben's rows only.** IRON PR (`domains/ironpr.ts`,
+  a read-only mirror of `/srv/benloe/data/weights.db`) has an account per
+  person. Kevin copies only the rows whose `userId` is Ben's account id at
+  artanis, which he learns from Ben's own signed-in requests
+  (`settings.owner_account_id`). Until he knows it the mirror is empty and the
+  sync reports why; anyone else's lifts and exercise names never reach a page
+  or the model.
 - **Kevin's file tools run in the same sandbox**, as a fixed script with the
   path and content on its input, so they can reach exactly what the shell
   can. The server process never opens a path in the workspace, and `kevin` is
@@ -388,8 +407,9 @@ web/src/
                           dropdown-menu, popover, tabs, switch, badge, card, skeleton, label
   components/chat/        the chat panel: transcript, tool rows, composer, thread list
   components/shell/       left nav, tab bar, More sheet, notification bell, toasts
-  lib/                    api, events, useView, act, chat (openChat), transcript,
-                          nav, spaces, links, format, trigger, image, push, toast, hooks, types
+  lib/                    api, events, useView, act, chat (openChat), transcript, notifications,
+                          nav, spaces, links, format, trigger, image, push, toast, hooks, profile,
+                          utils (cn), types
   public/                 manifest.webmanifest, sw.js, icons/ (npm run icons regenerates)
 ```
 

@@ -7,7 +7,7 @@ import { nowIso, parseJson } from './db.js';
 import type { Kevin } from './kevin.js';
 import { small, spend } from './llm.js';
 import { indexItem } from './memory.js';
-import { runTurn, type TurnHandle, type TurnInput, type TurnOpts, type TurnResult } from './agent.js';
+import { loadHistory, runTurn, type TurnHandle, type TurnInput, type TurnOpts, type TurnResult } from './agent.js';
 
 interface ThreadState {
   /** Tail of this thread's queue. */
@@ -70,12 +70,12 @@ export function send(kevin: Kevin, threadId: string, input: TurnInput, opts: Tur
     return Promise.resolve(null);
   }
   const run = s.chain.then(async () => {
-    const handle: TurnHandle = { origin: opts.origin, turnId: 0, items: [], abort: new AbortController(), pending: [], confirms: new Map(), confirmSummaries: new Map(), lastPromptTokens: 0 };
+    const handle: TurnHandle = { origin: opts.origin, turnId: 0, items: [], abort: new AbortController(), pending: [], confirms: new Map(), confirmSummaries: new Map() };
     s.handle = handle;
     try {
       const result = await runTurn(kevin, threadId, input, opts, handle);
       // Titles and compaction are model calls: only after a turn that really ran.
-      if (result.status === 'done' || result.status === 'stopped') void afterTurn(kevin, threadId, handle, opts.jobKey).catch((e) => console.error('afterTurn failed', e));
+      if (result.status === 'done' || result.status === 'stopped') void afterTurn(kevin, threadId, opts.jobKey).catch((e) => console.error('afterTurn failed', e));
       return result;
     } finally {
       s.handle = null;
@@ -109,11 +109,23 @@ export const isRunning = (threadId: string): boolean => !!states.get(threadId)?.
 
 // ---- after a turn: title, compaction ---------------------------------------
 
-const COMPACT_ABOVE_TOKENS = 60_000;
+/**
+ * A thread is compacted once the history it sends (the messages after the last summary, as loadHistory
+ * builds them, old tool results already trimmed) is more than this many characters, about 40,000
+ * tokens. Measured on the conversation and not on the request's token count: that also counts the
+ * tools, the system prompt and the profile (tens of thousands of tokens on every request), and
+ * compacting on it would summarise, and break the prompt cache, on nearly every turn.
+ */
+export const COMPACT_ABOVE_CHARS = 160_000;
 const KEEP_TURNS = 4;
 
+/** Characters of history this thread sends with its next request, the summary aside. */
+export function conversationChars(kevin: Kevin, threadId: string): number {
+  return JSON.stringify(loadHistory(kevin, threadId).messages).length;
+}
+
 /** `jobKey`: the schedule whose turn this was, so what compacting its thread costs is charged to it. */
-async function afterTurn(kevin: Kevin, threadId: string, handle: TurnHandle, jobKey?: string): Promise<void> {
+async function afterTurn(kevin: Kevin, threadId: string, jobKey?: string): Promise<void> {
   const { db } = kevin;
   // Titles and compaction are model requests too: none are made once the month's cap is reached.
   if (spend(db).blocked) return;
@@ -134,7 +146,7 @@ async function afterTurn(kevin: Kevin, threadId: string, handle: TurnHandle, job
       console.error('title failed', e);
     }
   }
-  if (handle.lastPromptTokens > COMPACT_ABOVE_TOKENS) await compact(kevin, threadId, KEEP_TURNS, jobKey);
+  if (conversationChars(kevin, threadId) > COMPACT_ABOVE_CHARS) await compact(kevin, threadId, KEEP_TURNS, jobKey);
 }
 
 const KEEP_TAIL_CHARS = 60_000;

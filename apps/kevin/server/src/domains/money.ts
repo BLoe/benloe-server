@@ -18,6 +18,7 @@ import { defineDomain } from '../domains.js';
 import { localDay } from '../time.js';
 import { defineTool, ToolError, type ToolCtx } from '../tools.js';
 import { bankCategory, CATEGORY_GROUPS, cleanMerchant, compileRule, matchRule, orderRules, ruleProblem, type CompiledRule, type Rule, SEED_CATEGORIES, SEED_RULES } from './_money/categorize.js';
+import { exactLinePattern } from './_money/pattern.js';
 import { CsvError, detectLayout, endingBalance, MAPPING_FIELDS, parseCsv, readRows } from './_money/csv.js';
 import { detectRecurring, type Outflow } from './_money/recurring.js';
 
@@ -366,7 +367,8 @@ const dedupeHash = (accountId: number, key: string, occurrence: number): string 
 const filterShape = {
   account: accountRef.optional().describe('Account name or id.'),
   category: z.string().optional().describe("A category name, or 'uncategorized'."),
-  q: z.string().min(1).optional().describe("Text contained in the description or merchant, case-insensitive: 'costco'."),
+  q: z.string().min(1).optional().describe("Text contained in the description or merchant, case-insensitive: 'costco'. It also matches longer names that contain it ('uber' matches 'Uber Eats'); use merchant for one merchant."),
+  merchant: z.string().min(1).optional().describe("Exactly this merchant name, ignoring case: 'Uber' and not 'Uber Eats'."),
   month: monthStr.optional().describe('YYYY-MM.'),
   date_from: day.optional().describe('First day, inclusive.'),
   date_to: day.optional().describe('Last day, inclusive.'),
@@ -393,6 +395,10 @@ function txWhere(db: DB, f: TxFilter, lookup: (ref: string | number) => AccountR
       cond.push('t.category = ?');
       params.push(f.category.trim().toLowerCase());
     }
+  }
+  if (f.merchant) {
+    cond.push('t.merchant = ? COLLATE NOCASE');
+    params.push(f.merchant.trim());
   }
   if (f.q) {
     const like = `%${f.q.replace(/[\\%_]/g, '\\$&')}%`;
@@ -852,7 +858,7 @@ const transactionsInput = z.object({
         ids: z.array(z.number().int()).max(1000).optional().describe('money_transactions.id values.'),
         filter: filterSchema.optional().describe('Every transaction matching all the conditions given. With ids as well, only those ids that also match.'),
         set: setShape.describe('The fields to change on every selected transaction.'),
-        make_rule: z.boolean().optional().describe("Also add a rule sending each selected transaction's merchant to set.category from now on."),
+        make_rule: z.boolean().optional().describe("Also send each selected transaction's merchant to set.category from now on: a rule for exactly that merchant name (or, where a rule already gives that name, that rule's category is changed). Select with ids or filter.merchant, not q, so similar names are not swept in."),
       }),
     )
     .max(50)
@@ -1010,10 +1016,21 @@ async function runTransactionsUpdate(input: z.infer<typeof transactionsInput>, c
           const merchants = (db.prepare(`SELECT DISTINCT merchant FROM money_transactions WHERE id IN (${inList(ids)})`).all() as { merchant: string }[]).map((m) => m.merchant);
           if (merchants.length > 10) throw new ToolError(`The selection covers ${merchants.length} different merchants, too many for make_rule. Pass rules: [{ pattern, category }] with the text they share.`);
           entry.rules = merchants.map((m) => {
-            const id = upsertRule(db, cats, { pattern: m.toLowerCase(), match: 'contains', category: patch.category! });
+            // A merchant name another rule gives (that rule renames what it matches to it): that rule is the
+            // one that decides these transactions, so it is the one whose category changes.
+            const renaming = db.prepare('SELECT pattern, match_type FROM money_rules WHERE merchant = ? COLLATE NOCASE ORDER BY priority DESC, LENGTH(pattern) DESC, id LIMIT 1').get(m) as { pattern: string; match_type: 'contains' | 'regex' } | undefined;
+            // Otherwise a rule for exactly this merchant, not for every longer name that contains it ("Uber"
+            // and not "Uber Eats"); ahead of the general rules, as Ben's own choice.
+            const exact = exactLinePattern(m);
+            const rule = renaming
+              ? { pattern: renaming.pattern, match: renaming.match_type }
+              : exact
+                ? { pattern: exact, match: 'regex' as const, priority: 1 }
+                : { pattern: m.toLowerCase(), match: 'contains' as const };
+            const id = upsertRule(db, cats, { ...rule, category: patch.category! });
             ruleIds.add(id);
-            rulesOut.push({ id, pattern: m.toLowerCase() });
-            return m.toLowerCase();
+            rulesOut.push({ id, pattern: rule.pattern });
+            return rule.pattern;
           });
         }
         updates.push(entry);

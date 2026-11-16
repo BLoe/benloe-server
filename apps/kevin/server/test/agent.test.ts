@@ -6,7 +6,7 @@ import { defineDomain } from '../src/domains.js';
 import { loadHistory } from '../src/agent.js';
 import { JobRunner } from '../src/jobs.js';
 import { notify, subscribe, transport } from '../src/push.js';
-import { compact, createThread, getThread, isRunning, resolveConfirm, send, stop } from '../src/threads.js';
+import { COMPACT_ABOVE_CHARS, compact, conversationChars, createThread, getThread, isRunning, resolveConfirm, send, stop } from '../src/threads.js';
 import { defineTool } from '../src/tools.js';
 import { FakeModel, text, thinking, toolUse } from './fake-model.js';
 import { makeKevin, ok, view } from './helpers.js';
@@ -295,6 +295,34 @@ describe('a turn', () => {
     const first = model.requests.at(-1)!.messages[0];
     expect(first.role).toBe('user');
     expect(first.content[0].text).toMatch(/<earlier_in_this_conversation>\nBen asked six questions/);
+  });
+
+  it('compacts on the size of the conversation, not on the fixed prompt every request carries', async () => {
+    const kevin = await makeKevin();
+    const t = createThread(kevin);
+    // A short conversation whose requests are large because of the tools, system prompt and profile.
+    const big = { input_tokens: 2_000, cache_read_input_tokens: 70_000, cache_creation_input_tokens: 0, output_tokens: 50 };
+    model.reply({ content: [text('T')] });
+    for (let i = 0; i < 6; i++) {
+      model.reply({ content: [text(`answer ${i}`)], usage: big });
+      await send(kevin, t.id, { text: `question ${i}` });
+      await settle();
+    }
+    expect(model.requests.filter((r) => /word for word/.test(String(r.system))).length).toBe(0);
+    expect(conversationChars(kevin, t.id)).toBeLessThan(5_000);
+    // Grow the conversation itself past the limit: the next turn is followed by one compaction.
+    const ins = kevin.db.prepare("INSERT INTO messages (thread_id, turn_id, role, content) VALUES (?, (SELECT MAX(id) FROM turns WHERE thread_id = ?), 'user', ?)");
+    ins.run(t.id, t.id, JSON.stringify([{ type: 'text', text: 'kite '.repeat(COMPACT_ABOVE_CHARS / 5) }]));
+    model.reply({ content: [text('answer 6')] }, { content: [text('Summary of the kites.')] });
+    await send(kevin, t.id, { text: 'question 6' });
+    await settle();
+    expect(model.requests.filter((r) => /word for word/.test(String(r.system))).length).toBe(1);
+    expect(conversationChars(kevin, t.id)).toBeLessThan(COMPACT_ABOVE_CHARS);
+    // And it does not happen again on the turn after.
+    model.reply({ content: [text('answer 7')], usage: big });
+    await send(kevin, t.id, { text: 'question 7' });
+    await settle();
+    expect(model.requests.filter((r) => /word for word/.test(String(r.system))).length).toBe(1);
   });
 });
 

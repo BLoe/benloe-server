@@ -10,10 +10,17 @@
 //
 // There are no write tools here and there must never be one: anything Ben
 // wants changed in IRON PR, he changes in IRON PR.
+//
+// IRON PR has an account per person (its rows carry the artanis user id), so
+// only Ben's rows are copied: those whose userId is his account's id, which
+// Kevin learns from his own signed-in requests (OWNER_ACCOUNT_KEY in http.ts).
+// Until Kevin knows it, nothing is mirrored and the mirror is emptied: another
+// person's lifts, and their free-text exercise names, must never reach Ben's
+// pages or the model.
 import Database from 'better-sqlite3';
 import { readFileSync, statSync } from 'node:fs';
 import { config } from '../config.js';
-import { type DB, getSetting, nowIso, setSetting } from '../db.js';
+import { type DB, getSetting, nowIso, OWNER_ACCOUNT_KEY, setSetting } from '../db.js';
 import { defineDomain } from '../domains.js';
 import { localDay } from '../time.js';
 
@@ -26,24 +33,41 @@ const text = (s: unknown, max = 120): string => String(s ?? '').replace(/[\u0000
 
 export interface SyncResult { ok: boolean; changed: boolean; exercises?: number; entries?: number; prs?: number; error?: string }
 
-/** Copies IRON PR's current contents into the ironpr_* tables. Never throws; a failed read leaves the last good mirror in place. */
+/** Where the mirror's state is kept: the source file's stamp and whose rows it holds, so a change of either re-reads it. */
+const STAMP_KEY = 'ironpr_stamp';
+
+/**
+ * Copies Ben's rows in IRON PR into the ironpr_* tables. Never throws. A failed read leaves the last good
+ * mirror in place; not knowing which account is Ben's empties it, so it never holds anyone else's rows.
+ */
 export function syncIronPr(db: DB, path = config.ironPrDb, force = false): SyncResult {
+  const owner = getSetting<string | null>(db, OWNER_ACCOUNT_KEY, null);
+  if (typeof owner !== 'string' || !owner) {
+    if (getSetting<string>(db, STAMP_KEY, '') !== 'no-owner') {
+      db.transaction(() => {
+        db.exec('DELETE FROM ironpr_prs; DELETE FROM ironpr_entries; DELETE FROM ironpr_exercises;');
+        setSetting(db, STAMP_KEY, 'no-owner');
+      })();
+    }
+    return { ok: false, changed: false, error: 'Kevin does not know yet which IRON PR account is Ben\'s. He learns it the next time Ben opens Kevin while signed in.' };
+  }
   let stamp: string;
   try {
     const st = statSync(path);
-    stamp = `${st.mtimeMs}:${st.size}`;
+    stamp = `${st.mtimeMs}:${st.size}:${owner}`;
   } catch {
     return { ok: false, changed: false, error: 'IRON PR database not found' };
   }
-  if (!force && getSetting(db, 'ironpr_stamp', '') === stamp) return { ok: true, changed: false };
+  if (!force && getSetting<string>(db, STAMP_KEY, '') === stamp) return { ok: true, changed: false };
   let src: Database.Database | null = null;
   try {
     // From bytes, not from the path: no lock, no journal, no way to write back.
     src = new Database(readFileSync(path));
     if ((src.pragma('quick_check', { simple: true }) as string) !== 'ok') throw new Error('copy was mid-write');
-    const exercises = src.prepare('SELECT id, name, userId, createdAt FROM exercises').all() as SrcExercise[];
-    const entries = src.prepare('SELECT id, userId, exerciseId, weight, reps, oneRM, createdAt FROM workouts').all() as SrcEntry[];
-    const prs = src.prepare('SELECT id, userId, exerciseId, weight, previousWeight, createdAt FROM pr_history').all() as SrcPr[];
+    // Ben's rows only. An entry or record must be his and be for an exercise that is his.
+    const exercises = src.prepare('SELECT id, name, userId, createdAt FROM exercises WHERE userId = ?').all(owner) as SrcExercise[];
+    const entries = src.prepare('SELECT id, userId, exerciseId, weight, reps, oneRM, createdAt FROM workouts WHERE userId = ?').all(owner) as SrcEntry[];
+    const prs = src.prepare('SELECT id, userId, exerciseId, weight, previousWeight, createdAt FROM pr_history WHERE userId = ?').all(owner) as SrcPr[];
     const names = new Map(exercises.map((e) => [e.id, text(e.name)]));
     db.transaction(() => {
       db.exec('DELETE FROM ironpr_prs; DELETE FROM ironpr_entries; DELETE FROM ironpr_exercises;');
@@ -61,10 +85,11 @@ export function syncIronPr(db: DB, path = config.ironPrDb, force = false): SyncR
         const at = iso(p.createdAt);
         insP.run(text(p.id, 64), text(p.exerciseId, 64), names.get(p.exerciseId), localDay(new Date(at)), Number(p.weight), p.previousWeight == null ? null : Number(p.previousWeight), at);
       }
-      setSetting(db, 'ironpr_stamp', stamp);
+      setSetting(db, STAMP_KEY, stamp);
       setSetting(db, 'ironpr_synced_at', nowIso());
     })();
-    return { ok: true, changed: true, exercises: exercises.length, entries: entries.length, prs: prs.length };
+    const kept = (rows: { exerciseId: string }[]) => rows.filter((r) => names.has(r.exerciseId)).length;
+    return { ok: true, changed: true, exercises: exercises.length, entries: kept(entries), prs: kept(prs) };
   } catch (e) {
     return { ok: false, changed: false, error: e instanceof Error ? e.message : String(e) };
   } finally {

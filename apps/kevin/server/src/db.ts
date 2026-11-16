@@ -229,6 +229,13 @@ export function parseJson<T>(text: unknown, fallback: T): T {
   }
 }
 
+/**
+ * Settings key: the owner's account id at the auth service (artanis), learned from his own signed-in
+ * requests (http.ts). Other apps on the box key their rows by that id (IRON PR does), and it is how
+ * Kevin tells Ben's rows there from anyone else's.
+ */
+export const OWNER_ACCOUNT_KEY = 'owner_account_id';
+
 export function getSetting<T>(db: DB, key: string, fallback: T): T {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
   if (!row) return fallback;

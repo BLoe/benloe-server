@@ -120,7 +120,8 @@ function useDomainsWithHome(): string[] {
   useEffect(() => {
     let live = true;
     api.get<DomainInfo[]>('/domains').then(
-      (ds) => live && setNames(ds.filter((d) => d.views.includes('home')).map((d) => d.name)),
+      // Kevin's own state (a backup that is not running) comes first.
+      (ds) => live && setNames(['system', ...ds.filter((d) => d.views.includes('home')).map((d) => d.name)]),
       () => undefined,
     );
     return () => {
