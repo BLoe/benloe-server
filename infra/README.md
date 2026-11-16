@@ -20,10 +20,13 @@ infra/
 ├── scripts/
 │   ├── bootstrap.sh         # Full server setup from scratch
 │   ├── backup-databases.sh  # SQLite database backup (runs as an installed copy)
-│   ├── backup-databases.test.sh # Its tests (run as root)
+│   ├── backup-databases.test.sh # Its tests (root, through benloe-promote)
 │   ├── install-db-backup.sh # Installs it and its timer; run through benloe-promote
 │   ├── benloe-promote.sh    # Runs an install script from a root-owned checkout of a commit on GitHub
-│   └── install-promote.sh   # Installs benloe-promote; run through benloe-promote
+│   ├── benloe-promote.test.sh # Its tests (any user; root only through benloe-promote)
+│   ├── install-promote.sh   # Installs benloe-promote; run through benloe-promote
+│   ├── installers.test.sh   # Tests the installers (root, through benloe-promote)
+│   └── test-guard.sh        # What makes those tests refuse to run as root from a tree another uid can write
 └── README.md                # This file
 ```
 
@@ -79,8 +82,16 @@ systemd and enables the timer. See "Promoting code that root runs" in
 
 Snapshots land in `/var/backups/benloe/<timestamp>/` (root-only; 14 days kept, and
 the newest three complete runs for as long as they are the newest three).
-`bash infra/scripts/backup-databases.test.sh`, as root, tests the script against
-throwaway databases.
+Nobody is alerted when a run fails; it leaves `/var/backups/benloe/LAST-RUN-FAILED`.
+
+The script's tests need root, and root does not run anything out of this
+repository's working tree, tests included. They are run from a promoted
+checkout, against throwaway databases:
+```bash
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/backup-databases.test.sh
+```
+The same goes for `benloe-promote.test.sh` and `installers.test.sh`; see
+"Promoting code that root runs" in `docs/CLAUDE.md`.
 
 ### Offsite Backup
 For true disaster recovery, sync backups offsite:

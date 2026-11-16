@@ -16,12 +16,28 @@
 #   var-lib/<directory>/<file>              e.g. var-lib/benloe-relay/relay.db
 # A run in which every one of them was saved leaves a file named COMPLETE there.
 #
+# A database that was in the last COMPLETE run and is simply not found this
+# time (moved deeper than one folder, renamed with another suffix, deleted)
+# is a failure, not a smaller backup. If it was retired on purpose, add its
+# path as it appears in the backup (data/old.db) as a line of
+# /var/backups/benloe/RETIRED, and the run stops asking for it.
+#
 # Kept: 14 days. Older runs are deleted at the end of every run, whether or
 # not it had failures, except that the newest three COMPLETE runs are kept
 # however old they are. So through a long stretch of failing nights the
 # backups stop growing after 14 days, and the last good copies are still
-# there. (Runs made by the version before this one have no COMPLETE file and
-# simply age out at 14 days.)
+# there. Only folders in the backup root named like a run (YYYYMMDD_HHMMSS)
+# are ever deleted; that includes runs left there by earlier revisions of
+# this script, which have no COMPLETE file and go at 14 days. Nothing outside
+# the backup root is touched: the script this one replaced wrote its runs to
+# /srv/benloe/backups, and any still there are not cleaned up by this one.
+#
+# WHO HEARS ABOUT A FAILURE. Nobody is paged. A run with any failure exits 1,
+# which fails benloe-db-backup.service; that starts
+# benloe-db-backup-failed.service, which writes
+# /var/backups/benloe/LAST-RUN-FAILED and an error line in the journal. A
+# clean run removes the file. It is there to be looked for: `systemctl
+# is-failed benloe-db-backup.service`, or the file.
 #
 # Restore: stop the service; as the uid that owns the live database, remove
 # its -wal and -shm and write the snapshot over it, keeping the live file's
@@ -167,7 +183,10 @@ as_uid() { # <uid> <gid> <command...>
 # Renaming or replacing things under /srv/benloe/data afterwards does not
 # change what is mounted. It is then read only if it is root-owned and not
 # writable by group or other, which means every name in it (the database, its
-# -wal and -shm) is one that only root could have put there.
+# -wal and -shm) is one that only root could have put there; and only if each
+# of those three that exists is itself a regular file, root-owned and not
+# writable by group or other, so that what root parses is something only
+# root could have written.
 read_root_owned() {
     local mnt rc=0
     mnt=$(mktemp -d "$BACKUP_DIR/.mnt.XXXXXX") || return 1
@@ -178,6 +197,11 @@ read_root_owned() {
             [[ "$(stat -L -c %d:%i /proc/self/fd/3)" == "$(stat -c %d:%i "$2")" ]] || exit 1
             [[ "$(stat -c %u "$2")" == 0 ]] || { echo "        its directory is not root-owned" >&2; exit 1; }
             (( (0$(stat -c %a "$2") & 022) == 0 )) || { echo "        its directory is writable by group or other" >&2; exit 1; }
+            for f in "$2/$3" "$2/$3-wal" "$2/$3-shm"; do
+                [[ -e "$f" || -L "$f" ]] || continue
+                [[ "$(stat -c "%u %F" "$f")" == "0 regular"* ]] || { echo "        ${f##*/} is not a regular file owned by root" >&2; exit 1; }
+                (( (0$(stat -c %a "$f") & 022) == 0 )) || { echo "        ${f##*/} is writable by group or other" >&2; exit 1; }
+            done
             exec /usr/bin/python3 -I -c "$4" "$2/$3" "$5"
         ' _ "$1" "$mnt" "$2" "$READER" "$MEM_LIMIT_MB" < /dev/null || rc=$?
     # Empty again once the namespace is gone. If it will not go, say so: the
@@ -186,8 +210,12 @@ read_root_owned() {
     return "$rc"
 }
 
+# Every path this run looked for, saved or not.
+declare -A attempted=()
+
 snapshot() { # <path of the database> <its path inside the backup, which is also its name in the log>
     local path=$1 label=$2 dest="$BACKUP_DIR/$2" uid gid size kind
+    attempted[$label]=1
     # Cannot happen while the two source roots have their own folders in the
     # backup; if it ever does, nothing is overwritten.
     if [[ -e "$dest" || -L "$dest" ]]; then
@@ -279,10 +307,40 @@ snapshot "$LIB_DIR/benloe-relay/relay.db" var-lib/benloe-relay/relay.db
 snapshot "$LIB_DIR/artanis/artanis.db" var-lib/artanis/artanis.db
 snapshot "$LIB_DIR/benloe-secrets/secrets.db" var-lib/benloe-secrets/secrets.db
 
+# ---- what the last complete run had that this one did not look for ----------
+
+# Folders named like runs sort oldest first; the newest COMPLETE one before
+# this run is what this run is compared with.
+previous=
+for d in "$BACKUP_ROOT"/[0-9]*_[0-9]*; do
+    [[ "${d##*/}" =~ ^[0-9]{8}_[0-9]{6}$ && "$d" != "$BACKUP_DIR" && -f "$d/COMPLETE" && ! -L "$d" ]] && previous=$d
+done
+if [[ -n "$previous" ]]; then
+    was="$BACKUP_DIR/.previous"
+    # Its snapshots, and not the -wal, -shm or -journal that SQLite leaves
+    # beside one when somebody opens it to look.
+    if ! (cd "$previous" && find . -type f ! -name COMPLETE ! -name '*-wal' ! -name '*-shm' ! -name '*-journal' -printf '%P\0') > "$was" \
+        || ! sort -z -o "$was" "$was"; then
+        fail "listing the last complete backup, $previous"
+    fi
+    while IFS= read -r -d '' -u 3 rel; do
+        [[ -n "${attempted[$rel]:-}" ]] && continue
+        if [[ -f "$BACKUP_ROOT/RETIRED" ]] && grep -qxF -- "$rel" "$BACKUP_ROOT/RETIRED"; then
+            continue
+        fi
+        fail "$(printf '%q' "$rel") was in the last complete backup (${previous##*/}) and was not found this time; if it was retired on purpose, add that path as a line to $BACKUP_ROOT/RETIRED"
+    done 3< "$was"
+    rm -f -- "$was" || fail "removing $was"
+fi
+
 # ---- mark, prune, report -----------------------------------------------------
 
 if [[ $failed -eq 0 ]]; then
     echo "$count database(s) at $(date -u +%FT%TZ)" > "$BACKUP_DIR/COMPLETE" || fail "writing $BACKUP_DIR/COMPLETE"
+fi
+if [[ $failed -eq 0 ]]; then
+    # Left by benloe-db-backup-failed.service after a run that failed.
+    rm -f -- "$BACKUP_ROOT/LAST-RUN-FAILED" || fail "removing $BACKUP_ROOT/LAST-RUN-FAILED"
 fi
 
 # Runs are folders named by their UTC start time, so names compare as times.

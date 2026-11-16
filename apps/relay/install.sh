@@ -134,5 +134,11 @@ exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 \
   /usr/local/bin/node --disable-warning=ExperimentalWarning /usr/local/lib/benloe/relay/cli.mjs "$@"
 WRAP
 chmod 755 /usr/local/bin/relay
+
+# A new install has no database, and neither the server nor any other command
+# will make one (an empty database appearing where the real one went missing
+# would look like a quiet channel). `relay init` creates it if it is not
+# there, as relay-cli, and changes nothing if it is.
+/usr/local/bin/relay init
 echo "relay installed: $LIB, /etc/benloe/ecosystem/relay.config.js, /usr/local/lib/benloe/node-as-relay, /usr/local/bin/relay"
 echo "Restart the server so it runs the new code: pm2 restart relay-api"

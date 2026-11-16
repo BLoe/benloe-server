@@ -269,6 +269,24 @@ Read the diff, commit, push, merge, promote. Old checkouts under
 `/opt/benloe-src` can be removed by hand. `benloe-promote` is installed the
 same way, by the copy already installed: `infra/scripts/install-promote.sh`.
 
+**Tests are code too.** Root does not run a test out of `/srv/benloe` any
+more than an installer. The tests of the root-run scripts are themselves run
+through `benloe-promote`, which accepts any script path in the commit:
+
+```
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/benloe-promote.test.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/backup-databases.test.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/installers.test.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/test-as-root.sh
+```
+
+Run as root from anywhere another uid can write, each of them refuses.
+`benloe-promote.test.sh` and relay's `npm test` can also be run from the
+working tree by an unprivileged user. None of them touches the installed
+copies, the real store under `/var/lib/benloe-src.git`, `/opt/benloe-src`, or
+any live database: they work in directories of their own under `/tmp` and
+`/var/tmp`.
+
 ## Database Backups
 
 The SQLite databases listed here, and no others, are snapshotted nightly
@@ -285,6 +303,18 @@ else, including one belonging to an app that keeps its data under its own
 A run that saved every one of them leaves a file `COMPLETE` in its folder. Runs
 older than 14 days are deleted after every run, except the newest three
 `COMPLETE` ones, which are kept however old they are.
+
+**Nobody is told when a backup fails.** There is no alerting on this box to
+hand it to. A failed run fails `benloe-db-backup.service`, which leaves
+`/var/backups/benloe/LAST-RUN-FAILED` (removed by the next clean run) and an
+error line in the journal. Look: `ls /var/backups/benloe/LAST-RUN-FAILED`,
+`systemctl is-failed benloe-db-backup.service`, and the newest folder with a
+`COMPLETE` file is the newest good backup.
+
+A database that was in the last `COMPLETE` run and cannot be found any more
+(moved, renamed, deleted) fails the run every night until it is back or its
+path is added as a line to `/var/backups/benloe/RETIRED` (for example
+`data/old.db`).
 
 - Script: `infra/scripts/backup-databases.sh`, run as the installed copy
   `/usr/local/sbin/benloe-db-backup.sh`. Schedule: `benloe-db-backup.timer`;

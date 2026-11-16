@@ -41,6 +41,11 @@
 # Installed copy: /usr/local/sbin/benloe-promote. After editing this file,
 # the installed copy promotes its own replacement:
 #   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-promote.sh
+#
+# Tests: infra/scripts/benloe-promote.test.sh (its header says how to run it).
+# The three paths below are fixed on purpose: nothing in the environment can
+# point an installed benloe-promote at another repository or store. The test
+# runs a copy of this file with those three lines rewritten.
 set -euo pipefail
 
 REPO_URL=https://github.com/BLoe/benloe-server.git
@@ -79,6 +84,13 @@ export GIT_CONFIG_GLOBAL=/dev/null
 store() { git --git-dir="$STORE" "$@"; }
 
 [[ -d "$STORE" ]] || git init -q --bare "$STORE"
+# One run at a time from here to the point where the script starts. Every run
+# fetches into the same ref and may unpack into the same directory; without
+# this, a second run fetching another branch in between could have this one
+# compare its commit against the wrong branch. The lock is let go just before
+# the script is started, so a long install does not hold up the next promote.
+exec 9> "$STORE/promote.lock"
+flock 9
 # A store left shallow by an earlier version has history cut off at the
 # commits it fetched, which would make an ancestor look unrelated. Complete it.
 deepen=()
@@ -127,5 +139,6 @@ fi
 [[ -f "$dir/$script" && ! -L "$dir/$script" ]] || { echo "benloe-promote: no $script in $sha" >&2; exit 1; }
 
 echo "benloe-promote: running $script from $dir"
+exec 9>&-
 export BENLOE_PROMOTED_COMMIT=$sha
 exec bash "$dir/$script" "$@"

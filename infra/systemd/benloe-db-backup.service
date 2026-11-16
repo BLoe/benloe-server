@@ -6,6 +6,9 @@
 #   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh
 [Unit]
 Description=Snapshot benloe SQLite databases to /var/backups/benloe
+# Any failed database, and a run stopped by the limit below, fail this unit.
+# Nobody is paged: the unit named here leaves a marker file and a journal line.
+OnFailure=benloe-db-backup-failed.service
 
 [Service]
 Type=oneshot

@@ -1,6 +1,10 @@
 #!/bin/bash
-# Tests backup-databases.sh against throwaway trees. Run as root, from
-# anywhere:   bash infra/scripts/backup-databases.test.sh
+# Tests backup-databases.sh against throwaway trees. It has to run as root
+# (it gives files to other uids and drops to them), and root does not run
+# code out of a tree another uid can write, so run it from a checkout made by
+# benloe-promote:
+#   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/backup-databases.test.sh
+# Started from /srv/benloe it refuses (see test-guard.sh).
 #
 # It reads nothing outside the directory it creates under /var/tmp (a place
 # the unprivileged test uids can reach) and removes that directory on exit.
@@ -8,7 +12,11 @@
 set -euo pipefail
 [[ $(id -u) -eq 0 ]] || { echo "must run as root: it gives files to other uids" >&2; exit 1; }
 
-SCRIPT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/backup-databases.sh
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+SCRIPT=$HERE/backup-databases.sh
+# shellcheck source=infra/scripts/test-guard.sh
+. "$HERE/test-guard.sh"
+refuse_unsafe_tree "$HERE/backup-databases.test.sh" "$SCRIPT" "$HERE/test-guard.sh"
 T=$(mktemp -d /var/tmp/backup-test.XXXXXX)
 trap 'rm -rf -- "${T:?}"' EXIT
 chmod 711 "$T"
@@ -56,8 +64,10 @@ chown 61001 "$T/data"
 echo "# 1. a clean run saves everything, each source under its own folder"
 for old in 20200101_000000 20200102_000000 20200103_000000 20200104_000000; do mkdir "$T/out/$old"; touch "$T/out/$old/COMPLETE"; done
 mkdir "$T/out/20200105_000000" "$T/out/keep-me" "$T/out/$(date -u +%Y%m%d)_000000"   # incomplete old, not a run, incomplete recent
+echo "left by an earlier failure" > "$T/out/LAST-RUN-FAILED"
 run clean
 is "$rc" 0 "exit status of a clean run"
+[[ ! -e "$T/out/LAST-RUN-FAILED" ]] && ok || no "a clean run removes LAST-RUN-FAILED"
 has "$T/clean.log" "8 database(s), 0 failure(s)"
 [[ -f "$last/COMPLETE" ]] && ok || no "a clean run leaves COMPLETE"
 is "$(rows "$last/data/a.db")" 300 "rows in data/a.db"
@@ -101,8 +111,11 @@ cp "$last/data/a.db" "$T/data/rootfile.db"           # root-owned, in a folder a
 chown 61001 "$T/data/empty.db" "$T/data/garbage.db" "$T/data/corrupt.db" "$T/data/huge.db" "$T/data/odd name.db" "$T/data/forger.db"
 mv "$T/lib/artanis/artanis.db" "$T/lib/artanis/gone"
 mkdir "$T/out/20200106_000000"                        # old and incomplete
+echo "left by an earlier failure" > "$T/out/LAST-RUN-FAILED"
 run hostile
 is "$rc" 1 "exit status of a run with failures"
+[[ -e "$T/out/LAST-RUN-FAILED" ]] && ok || no "a failed run leaves LAST-RUN-FAILED alone"
+rm "$T/out/LAST-RUN-FAILED"
 has "$T/hostile.log" "FAIL  data/link.db is not a database file (it is a symbolic link)"
 has "$T/hostile.log" "FAIL  data/link2.db is not a database file (it is a symbolic link)"
 has "$T/hostile.log" "FAIL  data/fifo.db is not a database file (it is a fifo)"
@@ -136,6 +149,21 @@ run groupwritable
 has "$T/groupwritable.log" "its directory is writable by group or other"
 has "$T/groupwritable.log" "FAIL  data/rootdir/r.db"
 chmod 755 "$T/data/rootdir"
+echo "#    nor a database, -wal or -shm that somebody else could have written"
+for f in r.db r.db-wal r.db-shm; do
+    [[ -e "$T/data/rootdir/$f" ]] || { no "the test expected $f to exist"; continue; }
+    chmod 664 "$T/data/rootdir/$f"
+    run "writable-$f"
+    has "$T/writable-$f.log" "$f is writable by group or other"
+    has "$T/writable-$f.log" "FAIL  data/rootdir/r.db"
+    chmod 644 "$T/data/rootdir/$f"
+    [[ $f == r.db ]] && continue   # a database another uid owns is simply read as that uid
+    chown 61001 "$T/data/rootdir/$f"
+    run "owned-$f"
+    has "$T/owned-$f.log" "$f is not a regular file owned by root"
+    has "$T/owned-$f.log" "FAIL  data/rootdir/r.db"
+    chown 0 "$T/data/rootdir/$f"
+done
 
 echo "# 4. find failing is a failure, and what it did list is still saved"
 mkdir "$T/fakebin"
@@ -172,7 +200,30 @@ echo "# 6. no data folder, or a symlink where it should be"
 ln -s "$T/data" "$T/datalink"
 run nodata BENLOE_DATA_DIR="$T/datalink"
 has "$T/nodata.log" "FAIL  $T/datalink is missing or is not a directory"
-has "$T/nodata.log" "3 database(s), 1 failure(s)"
+has "$T/nodata.log" "FAIL  data/a.db was in the last complete backup"
+has "$T/nodata.log" "3 database(s), 6 failure(s)"
+
+echo "# 7. a database the last complete run had, and this run cannot find, is a failure until it is retired"
+rm -f "$T/data/locked.db"*
+run again
+is "$rc" 0 "exit status of a clean run after the failures"
+has "$T/again.log" "8 database(s), 0 failure(s)"
+complete_before=$last
+mkdir "$T/data/sub/deeper"
+mv "$T/data/sub/"b.db* "$T/data/sub/deeper/"          # two folders down: outside what the script looks at
+chown 61001 "$T/data/sub/deeper"
+run moved
+is "$rc" 1 "exit status when a database has gone missing from the list"
+has "$T/moved.log" "FAIL  data/sub/b.db was in the last complete backup (${complete_before##*/}) and was not found this time"
+has "$T/moved.log" "7 database(s), 1 failure(s)"
+[[ ! -e "$last/COMPLETE" ]] && ok || no "a run that lost a database must not be COMPLETE"
+run moved-again
+has "$T/moved-again.log" "FAIL  data/sub/b.db was in the last complete backup (${complete_before##*/})"
+echo "data/sub/b.db" > "$T/out/RETIRED"
+run retired
+is "$rc" 0 "exit status once the missing database is listed in RETIRED"
+has "$T/retired.log" "7 database(s), 0 failure(s)"
+[[ -f "$last/COMPLETE" ]] && ok || no "COMPLETE after retiring"
 
 echo "$checks checks, $bad failed"
 [[ $bad -eq 0 ]]

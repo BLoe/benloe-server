@@ -17,6 +17,7 @@
 // No dependencies.
 import { createServer } from 'node:http';
 import { isIP } from 'node:net';
+import { statSync } from 'node:fs';
 import { openDb, checkToken, touchToken, addMessage, getMessages, dbBytes, MAX_BODY_CHARS, MAX_DB_BYTES, DEFAULT_DB } from './db.mjs';
 
 const MAX_BYTES = 1024 * 1024; // request cap; the message cap is MAX_BODY_CHARS
@@ -105,8 +106,17 @@ function readBody(req) {
 
 const fail = (status, error) => Object.assign(new Error(error), { status });
 
-export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes = MAX_DB_BYTES } = {}) {
-  const db = openDb(dbPath);
+export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes = MAX_DB_BYTES, create = false } = {}) {
+  const db = openDb(dbPath, { create });
+  // The file this process has open. If that name later holds another file,
+  // or none (deleted, renamed, restored over), writes here would go to a
+  // file nobody else can see while the client was told 201. Checked on
+  // every authenticated request; see gone() below.
+  const opened = statSync(dbPath);
+  const gone = () => {
+    const now = statSync(dbPath, { throwIfNoEntry: false });
+    return !now || now.ino !== opened.ino || now.dev !== opened.dev;
+  };
   const badAuth = limiter(10, 60_000); // failed auth attempts per IP
   const perToken = limiter(120, 60_000); // requests per token
   const posts = limiter(20, 60_000); // posts per token
@@ -129,6 +139,10 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
       throw fail(400, 'bad request target');
     }
     const ip = ipOf(req);
+    // What goes in the log in place of the path. The path is chosen by
+    // whoever sends the request, authenticated or not, so it is never
+    // written out: only which of these it was.
+    const route = url.pathname === '/v1/whoami' || url.pathname === '/v1/messages' ? url.pathname : 'other';
 
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/v1')) return { status: 200, text: HELP };
     if (!url.pathname.startsWith('/v1/')) throw fail(404, 'not found');
@@ -143,13 +157,17 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
     if (!auth.ok) {
       if (badAuth.over(ip)) throw fail(429, 'too many failed attempts; wait a minute');
       badAuth.hit(ip);
-      log(JSON.stringify({ at: new Date().toISOString(), ip, event: 'auth_failed', reason: auth.reason, path: url.pathname }));
+      log(JSON.stringify({ at: new Date().toISOString(), ip, event: 'auth_failed', reason: auth.reason, route }));
       throw fail(401, auth.reason);
     }
     const tok = auth.token;
+    if (gone()) {
+      console.error(JSON.stringify({ at: new Date().toISOString(), event: 'error', message: 'the database file this process opened is no longer at its path; refusing requests until restarted' }));
+      throw fail(503, 'the channel is out of service; tell Ben');
+    }
     if (!perToken.hit(tok.id)) throw fail(429, 'rate limit: 120 requests per minute');
     touchToken(db, tok.id, ip);
-    log(JSON.stringify({ at: new Date().toISOString(), ip, event: 'request', agent: tok.agent, token: tok.id, method: req.method, path: url.pathname }));
+    log(JSON.stringify({ at: new Date().toISOString(), ip, event: 'request', agent: tok.agent, token: tok.id, method: req.method, route }));
 
     if (url.pathname === '/v1/whoami' && req.method === 'GET') {
       return { status: 200, json: { agent: tok.agent, token_id: tok.id, expires_at: tok.expires_at } };
@@ -237,6 +255,13 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.PORT || 3015);
-  const { server } = createApp();
+  let server;
+  try {
+    ({ server } = createApp());
+  } catch (e) {
+    // Most likely: no database. This process does not create one (relay init does).
+    console.error(`relay: cannot start: ${e.message}`);
+    process.exit(1);
+  }
   server.listen(port, '127.0.0.1', () => console.log(`relay listening on 127.0.0.1:${server.address().port}`));
 }

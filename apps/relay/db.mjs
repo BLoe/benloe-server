@@ -3,7 +3,7 @@
 // session on this box talks to). No dependencies: node:sqlite.
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, statSync } from 'node:fs';
 
 // Under /var/lib, not /srv/benloe/data, which claude-worker owns. /var/lib is
 // root-owned, and /var/lib/benloe-relay itself belongs to the `relay` user
@@ -25,7 +25,12 @@ const AGENT = /^[a-z][a-z0-9-]{0,30}$/;
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const now = () => new Date().toISOString();
 
-export function openDb(path = DEFAULT_DB) {
+// Opens the database. It is created only when the caller says so (`relay
+// init`, and the tests): a database that has gone missing must not be quietly
+// replaced by an empty one, which would have no tokens and no messages and
+// look, to either side, like a quiet channel.
+export function openDb(path = DEFAULT_DB, { create = false } = {}) {
+  if (!create && !existsSync(path)) throw new Error(`no database at ${path}`);
   // The server and the local command are different uids sharing this file
   // through their group, so it must be writable by the group and closed to
   // everyone else. SQLite creates a database as 0644 less the umask (0640

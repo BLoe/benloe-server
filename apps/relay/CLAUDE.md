@@ -77,6 +77,25 @@ tokens that were still live; an expired one is left as it is.
 Rotation is revoke + create. `pm2 stop relay-api` takes the whole door off;
 the local `relay` command keeps working with the server down.
 
+**What the server logs, and where.** One JSON line per `/v1` request, to
+PM2's `relay-api-out.log`: time, source address (an IP address or `?`), the
+event, the token id and agent name when there is one, the method, and which
+route it was: `/v1/whoami`, `/v1/messages` or `other`. Never the path or the
+query string, which the caller chooses; never a header or a body. Unexpected
+errors go to `relay-api-err.log` with a stack trace. Both files are in
+`/srv/benloe/logs`, like every other app's on this box: a directory
+claude-worker owns, written by PM2 as root. That is a property of the box,
+not something relay fixes; what relay does is keep caller-chosen text out of
+the lines.
+
+**A missing database is never replaced.** Neither the server nor any command
+creates `relay.db`, except `relay init`, which `install.sh` runs and which
+does nothing when the file is there. If the file is gone the command says so
+and exits 1, the server refuses to start, and a server that is already
+running answers 503 to every authenticated request from the moment the file
+it opened is no longer the file at that path (so also after a restore done
+without stopping it). Restore it from a backup; see Backups below.
+
 Never accept a token in a query string: Caddy redacts the `Authorization`
 header from its access log but logs URLs whole.
 
@@ -120,6 +139,21 @@ Fill in the token and send it to Benji in Slack:
 database. No dependencies; `node:sqlite` is why the PM2 config and the CLI
 wrapper pass `--disable-warning=ExperimentalWarning`.
 
+Who runs the tests matters. This directory is claude-worker's, and root does
+not run code out of it, tests included:
+
+- As an unprivileged user (claude-worker, from here): `npm test`. The tests
+  that need two different uids (everything that runs the `relay` command
+  itself, and the server and command sharing a database) are skipped, and
+  reported as skipped, not passed.
+- As root, for those: from a checkout benloe-promote makes of a commit on
+  GitHub, never from here. `apps/relay/test-as-root.sh` is the script:
+  `benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/test-as-root.sh`
+  (before a merge: `benloe-promote --branch <name> <sha> apps/relay/test-as-root.sh`).
+  Started as root from this directory the test file refuses to run. The tests
+  work in directories of their own under `/tmp` and do not touch the
+  installed relay or its database.
+
 **Nothing that runs is loaded from this directory.** After changing
 `server.mjs`, `cli.mjs`, `db.mjs` or `ecosystem.config.cjs`: read the diff,
 commit, push, get it merged to main, then
@@ -139,8 +173,8 @@ commit that was read: `benloe-promote --branch <name> <sha> apps/relay/install.s
 prove). After a change to the PM2 config: `pm2 delete relay-api &&
 pm2 start /etc/benloe/ecosystem/relay.config.js && pm2 save`.
 
-The tests that run the command and the server as two unprivileged uids need
-root and `/usr/local/bin/node`; without them they are skipped, not passed.
+`install.sh` itself is tested by `infra/scripts/installers.test.sh`, run the
+same way (through benloe-promote).
 
 ### Traps
 
