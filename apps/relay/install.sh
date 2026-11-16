@@ -10,8 +10,8 @@
 # restart PM2 apps; code run from there as the `relay` uid could forge local
 # messages and read every bearer token, and code root invokes from there would
 # simply be root. So: root-owned copies outside the repo, a PM2 config in
-# /etc/benloe/ecosystem, and wrappers that drop privileges and empty the
-# environment before node starts.
+# /etc/benloe/ecosystem, and wrappers that drop privileges and replace the
+# environment with a fixed few variables before node starts.
 #
 # THIS SCRIPT IS THE PROMOTION STEP. What it copies becomes trusted.
 set -eu
@@ -102,8 +102,9 @@ echo '{"type":"module"}' > "$LIB/package.json"
 install -o root -g root -m 0644 "$SRC/ecosystem.config.cjs" /etc/benloe/ecosystem/relay.config.js
 
 # PM2's interpreter for relay-api: root execs this, it drops, then node starts
-# with only the three variables the server reads, not the PM2 daemon's
-# environment. Written literally here, not rendered from a repo template.
+# with five variables (PATH, HOME, NODE_ENV, and the two the server reads,
+# PORT and RELAY_DB), not the PM2 daemon's environment. Written literally
+# here, not rendered from a repo template.
 cat > /usr/local/lib/benloe/node-as-relay <<'SHIM'
 #!/bin/sh
 # Installed by apps/relay/install.sh. Do not edit in place.

@@ -1,8 +1,9 @@
 # Nightly snapshots of the SQLite databases that backup-databases.sh lists at
 # its top (the relay's among them). Not every database on the box: an app
 # whose database is not on that list is not backed up by this unit.
-# This file and the script it runs are installed copies. After editing either
-# (or the timer), commit, push, and install them from GitHub:
+# This file, the script it runs, the timer and benloe-db-backup-failed.service
+# are installed copies. After editing any of them, commit, push, and install
+# them from GitHub:
 #   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh
 [Unit]
 Description=Snapshot benloe SQLite databases to /var/backups/benloe

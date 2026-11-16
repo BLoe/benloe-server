@@ -112,8 +112,12 @@ test('bad posts are refused', async () => {
   assert.equal((await post('{"body": 5}', 'application/json')).status, 400);
   assert.equal((await post('{"body": "   "}', 'application/json')).status, 400);
   assert.equal((await post('a=b', 'application/x-www-form-urlencoded')).status, 415);
+  const count = () => db.prepare('SELECT COUNT(*) AS n FROM messages').get().n;
+  const before = count();
   assert.equal((await post('x'.repeat(MAX_BODY_CHARS + 1), 'text/plain')).status, 413);
+  assert.equal(count(), before, 'the over-long post stored nothing');
   assert.equal((await post('x'.repeat(MAX_BODY_CHARS), 'text/plain')).status, 201);
+  assert.equal(count(), before + 1, 'the post at the limit was stored');
   assert.equal((await call('/v1/messages?limit=0')).status, 400);
   assert.equal((await call('/v1/messages?after=-1')).status, 400);
   assert.equal((await call('/v1/messages?after=1%20OR%201=1')).status, 400);
@@ -123,6 +127,8 @@ test('bad posts are refused', async () => {
 test('a request over the byte cap is refused whatever it carries', async () => {
   // A short message inside a request padded past 1 MiB: only the byte cap can refuse this one.
   const body = JSON.stringify({ body: 'short', pad: 'x'.repeat(1024 * 1024) });
+  const count = () => db.prepare('SELECT COUNT(*) AS n FROM messages').get().n;
+  const before = count();
   const { request } = await import('node:http');
   const res = await new Promise((resolve, reject) => {
     const req = request({ port: app.server.address().port, host: '127.0.0.1', path: '/v1/messages', method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Forwarded-For': '10.0.0.1' } }, (r) => {
@@ -135,11 +141,11 @@ test('a request over the byte cap is refused whatever it carries', async () => {
   assert.equal(res.status, 413);
   assert.deepEqual(JSON.parse(res.text), { error: 'request body too large' });
   assert.equal(res.headers.connection, 'close');
-  const before = db.prepare('SELECT COUNT(*) AS n FROM messages').get().n;
+  assert.equal(count(), before, 'the refused request stored nothing');
   // Just under the cap, the same shape of request is accepted.
   const fits = JSON.stringify({ body: 'short', pad: 'x'.repeat(1024 * 1024 - 100) });
   assert.equal((await call('/v1/messages', { method: 'POST', body: fits, type: 'application/json' })).status, 201);
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM messages').get().n, before + 1, 'the refused request stored nothing');
+  assert.equal(count(), before + 1, 'the request under the cap was stored');
   assert.equal((await call('/v1/whoami')).status, 200, 'and the server is still answering');
 });
 
@@ -539,6 +545,44 @@ test('relay command: --peek leaves messages unread, a mistyped option stops, pla
   assert.match(cli('inbox', '--peek').out, /hello from benji/, 'still unread after a peek and four refused commands');
   assert.match(cli('inbox').out, /hello from benji/);
   assert.match(cli('inbox').out, /No new messages/);
+});
+
+test('relay inbox over several batches: each call marks only what it printed, and the next shows the rest', asRoot, async (t) => {
+  const { cli, plant } = await sandbox(t);
+  // About 9,000 printed characters each against a 24,000 budget: two a call.
+  plant((box) => {
+    for (let i = 1; i <= 5; i++) addMessage(box, 'benji', `msg-${i}-start ${'x'.repeat(9000)}`, { tokenId: 't', ip: '1.1.1.1' });
+  });
+  const shown = (out) => [...out.matchAll(/msg-(\d)-start/g)].map((m) => +m[1]);
+  const r1 = cli('inbox');
+  assert.deepEqual(shown(r1.out), [1, 2]);
+  assert.match(r1.out, /^5 new messages/);
+  assert.match(r1.out, /3 more unread not shown yet/);
+  const r2 = cli('inbox');
+  assert.deepEqual(shown(r2.out), [3, 4], 'the messages the first call did not print are still unread');
+  assert.match(r2.out, /1 more unread not shown yet/);
+  const r3 = cli('inbox');
+  assert.deepEqual(shown(r3.out), [5]);
+  assert.doesNotMatch(r3.out, /more unread/);
+  assert.match(cli('inbox').out, /No new messages/);
+});
+
+test('relay command: a database it may not reach is not reported as missing', asRoot, async (t) => {
+  const { chmodSync } = await import('node:fs');
+  const { cli, data, dbPath } = await sandbox(t);
+  assert.match(cli('init').out, /^Created /);
+  chmodSync(data, 0o2700); // the CLI's uid is only in the group, so it can no longer look inside
+  const r = cli('inbox');
+  assert.equal(r.code, 1);
+  assert.match(r.out, /EACCES/);
+  assert.match(r.out, /may be intact\. Do not restore over it/);
+  assert.doesNotMatch(r.out, /missing|deleted or moved|restore it/);
+  const i = cli('init');
+  assert.equal(i.code, 1);
+  assert.doesNotMatch(i.out, /Created|already there|missing/);
+  chmodSync(data, 0o2770);
+  assert.ok(existsSync(dbPath));
+  assert.match(cli('inbox').out, /No new messages/, 'reachable again, and untouched');
 });
 
 test('relay inbox: output that could not be written is not marked read', asRoot, async (t) => {

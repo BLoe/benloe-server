@@ -77,12 +77,17 @@ tokens that were still live; an expired one is left as it is.
 Rotation is revoke + create. `pm2 stop relay-api` takes the whole door off;
 the local `relay` command keeps working with the server down.
 
-**What the server logs, and where.** One JSON line per `/v1` request, to
-PM2's `relay-api-out.log`: time, source address (an IP address or `?`), the
-event, the token id and agent name when there is one, the method, and which
-route it was: `/v1/whoami`, `/v1/messages` or `other`. Never the path or the
-query string, which the caller chooses; never a header or a body. Unexpected
-errors go to `relay-api-err.log` with a stack trace. Both files are in
+**What the server logs, and where.** To PM2's `relay-api-out.log`, one JSON
+line for each request under `/v1/` that either fails authentication
+(`auth_failed`: time, source address (an IP address or `?`), the reason, the
+route) or is authenticated and gets past the per-token rate limit
+(`request`: time, address, token id, agent name, method, route). The route
+is `/v1/whoami`, `/v1/messages` or `other`. Nothing is logged for the usage
+text (`/`, `/v1`), a request outside `/v1/` or whose target does not parse,
+or a 429 from the failed-attempt lockout or the per-token limit. Never the
+path or the query string, which the caller chooses; never a header or a
+body. The 503 for a database that is no longer at its path, and unexpected
+errors (with a stack trace), go to `relay-api-err.log`. Both files are in
 `/srv/benloe/logs`, like every other app's on this box: a directory
 claude-worker owns, written by PM2 as root. That is a property of the box,
 not something relay fixes; what relay does is keep caller-chosen text out of
@@ -185,7 +190,8 @@ same way (through benloe-promote).
   from here by root would be root. So `install.sh` copies the code to
   root-owned `/usr/local/lib/benloe/relay/` and the PM2 config to
   `/etc/benloe/ecosystem/relay.config.js`; the `relay` wrapper drops to the
-  `relay-cli` user with an empty environment before node starts, and `cli.mjs`
+  `relay-cli` user, with only PATH, HOME and LANG in its environment, before
+  node starts, and `cli.mjs`
   refuses to run as root. The database is under `/var/lib` for the same
   reason. `install.sh` is the promotion step: what it copies becomes trusted.
 - **Two uids, one group.** The server is `relay`; the command is `relay-cli`;
