@@ -19,7 +19,10 @@ infra/
 │       └── 99-hardening.conf # SSH hardening → /etc/ssh/sshd_config.d/
 ├── scripts/
 │   ├── bootstrap.sh         # Full server setup from scratch
-│   └── backup-databases.sh  # SQLite database backup
+│   ├── backup-databases.sh  # SQLite database backup (runs as an installed copy)
+│   ├── install-db-backup.sh # Installs it and its timer; run through benloe-promote
+│   ├── benloe-promote.sh    # Runs an install script from a root-owned checkout of a commit on GitHub
+│   └── install-promote.sh   # Installs benloe-promote; run through benloe-promote
 └── README.md                # This file
 ```
 
@@ -53,16 +56,24 @@ SQLite databases in `/srv/benloe/data/` are the only irreplaceable data. Back th
 
 ### Manual Backup
 ```bash
-/srv/benloe/infra/scripts/backup-databases.sh
+systemctl start benloe-db-backup.service   # runs the installed copy; log in /var/log/benloe-db-backup.log
 ```
 
 ### Automatic Backup
 `benloe-db-backup.timer` runs nightly (~09:15 UTC). It executes an installed,
 root-owned copy of the script, `/usr/local/sbin/benloe-db-backup.sh`, never the
-copy in this repository. After editing the script:
+copy in this repository: `/srv/benloe` is owned by `claude-worker`, and root
+must not run or install anything out of it. After editing
+`infra/scripts/backup-databases.sh` or the `benloe-db-backup` units in
+`infra/systemd/`, and on a new box: commit, push, merge to main, then
 ```bash
-install -m 0755 infra/scripts/backup-databases.sh /usr/local/sbin/benloe-db-backup.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh
 ```
+`benloe-promote` runs that installer from a root-owned checkout of the commit,
+fetched from GitHub; the installer copies the script and both units, reloads
+systemd and enables the timer. See "Promoting code that root runs" in
+`docs/CLAUDE.md`.
+
 Snapshots land in `/var/backups/benloe/<timestamp>/` (root-only, 14 days kept).
 
 ### Offsite Backup

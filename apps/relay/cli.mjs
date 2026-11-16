@@ -13,23 +13,35 @@
 // Reads and writes the SQLite file directly, so it works with the server down.
 //
 // This file runs from a root-owned installed copy, never from the repo: see
-// install.sh. The /usr/local/bin/relay wrapper drops to the `relay` user with
-// setpriv before node starts, so nothing here ever executes as root.
+// install.sh. The /usr/local/bin/relay wrapper drops to the `relay-cli` user
+// with setpriv before node starts, so nothing here ever executes as root, and
+// nothing here runs as `relay`, the uid of the internet-facing server.
+//
+// The server's uid can write this database, so everything read from it is
+// untrusted here. Every string that comes out of it is passed through
+// clean() or cleanLine() before it is printed, and so is the message of any
+// error (a trigger in the database can put whatever text it likes into one).
+// The only other things printed from it are numbers: counts and row ids.
 import { readFileSync } from 'node:fs';
-import { openDb, createToken, listTokens, revokeTokens, addMessage, getMessages, getMessage, unreadFor, markRead, formatMessage, formatWithin, inboxBatch, clean, LOCAL_SENDER as ME } from './db.mjs';
+import { openDb, createToken, listTokens, revokeTokens, addMessage, getMessages, getMessage, markRead, formatMessage, formatWithin, inboxBatch, cleanLine, LOCAL_SENDER as ME } from './db.mjs';
 
-if (process.getuid?.() === 0) {
-  console.error('relay: refusing to run as root; use /usr/local/bin/relay, which drops to the relay user');
+// For this file's own messages. Nothing from the database goes through here.
+const die = (msg) => {
+  console.error(msg);
   process.exit(1);
-}
+};
+
+if (process.getuid?.() === 0) die('relay: refusing to run as root; use /usr/local/bin/relay, which drops to the relay-cli user');
 
 const args = process.argv.slice(2);
+// --name <value>. A missing value is an error, not an empty string.
 const flag = (name) => {
   const i = args.indexOf(name);
   if (i === -1) return null;
   const v = args[i + 1];
+  if (v === undefined || v.startsWith('--')) die(`relay: ${name} needs a value`);
   args.splice(i, 2);
-  return v ?? '';
+  return v;
 };
 const has = (name) => {
   const i = args.indexOf(name);
@@ -37,16 +49,18 @@ const has = (name) => {
   args.splice(i, 1);
   return true;
 };
-const die = (msg) => {
-  console.error(msg);
-  process.exit(1);
-};
 
-// A mistyped flag (--peak) must stop the command, not be ignored: on `inbox`
-// that would mark messages read that the caller meant only to look at.
-function noStrayFlags() {
-  const stray = args.find((x) => x.startsWith('--') && x !== '--all');
-  if (stray) die(`relay: unknown option ${stray}`);
+// Called by every command once it has taken the options and arguments it
+// knows. Anything left over stops the command: a mistyped option that was
+// quietly ignored would mark messages read that the caller meant only to
+// look at (inbox --peak), or issue a token with the default lifetime instead
+// of the short one asked for (token create --tll 1h).
+//   words: how many arguments the command line may have, the command's own
+//          name(s) included.
+function nothingElse(words, usage) {
+  const stray = args.find((x) => x.startsWith('--'));
+  if (stray) die(`relay: unknown option ${stray}\nusage: ${usage}`);
+  if (args.length > words) die(`relay: unexpected "${args.slice(words).join(' ')}"\nusage: ${usage}`);
 }
 
 function ttlMs(s) {
@@ -60,73 +74,85 @@ function ttlMs(s) {
 // and a message that scrolled away unseen must not count as read.
 const LIMITS = { perMessage: 10_000, budget: 24_000 };
 
-const db = openDb();
-const [cmd, sub, ...rest] = args.length ? args : ['help'];
+function main() {
+  const [cmd, sub] = args.length ? args : ['help'];
 
-if (cmd === 'inbox') {
-  const peek = has('--peek');
-  noStrayFlags();
-  // `inbox` takes nothing else. `inbox peek` or `inbox -p` must not quietly run as a plain inbox.
-  if (args.length > 1) die(`relay: inbox takes only --peek; got "${args.slice(1).join(' ')}"`);
-  const { total, text, left, upTo } = inboxBatch(db, ME, LIMITS);
-  if (!total) console.log('No new messages.');
-  else {
-    console.log(`${total} new message${total > 1 ? 's' : ''}:\n`);
-    text.forEach((t) => console.log(t));
-    if (left) console.log(`${left} more unread not shown yet. Run relay inbox again.`);
-    // Marked only now, after the text has been written out.
-    if (!peek) markRead(db, ME, upTo);
-  }
-} else if (cmd === 'send') {
-  const text = args.slice(1).join(' ');
-  const body = !text || text === '-' ? readFileSync(0, 'utf8') : text;
-  try {
-    const r = addMessage(db, ME, body);
-    console.log(`Sent #${r.id} as ${ME}.`);
-  } catch (e) {
-    die(e.message);
-  }
-} else if (cmd === 'show') {
-  const m = /^\d+$/.test(sub || '') ? getMessage(db, Number(sub)) : null;
-  if (!m) die('relay show <id>: no such message');
-  console.log(formatMessage(m));
-} else if (cmd === 'log') {
-  const n = Number(sub || 20);
-  if (!(n >= 1)) die('relay log [n]');
-  const msgs = getMessages(db, { limit: Math.min(n, 1000) });
-  if (!msgs.length) console.log('No messages yet.');
-  // Newest first into the budget, printed oldest first.
-  const { text } = formatWithin(msgs.toReversed(), LIMITS);
-  if (text.length < msgs.length) console.log(`(${msgs.length - text.length} older not shown; relay show <id> prints one in full)\n`);
-  text.reverse().forEach((t) => console.log(t));
-} else if (cmd === 'token' && sub === 'create') {
-  const ttl = flag('--ttl') ?? '7d';
-  const note = flag('--note');
-  const agent = args[2];
-  if (!agent) die('relay token create <agent> [--ttl 7d] [--note "..."]');
-  try {
-    const t = createToken(db, agent, ttlMs(ttl), note);
+  if (cmd === 'inbox') {
+    const peek = has('--peek');
+    nothingElse(1, 'relay inbox [--peek]');
+    const db = openDb();
+    const { total, text, left, upTo } = inboxBatch(db, ME, LIMITS);
+    if (!total) console.log('No new messages.');
+    else {
+      console.log(`${total} new message${total > 1 ? 's' : ''}:\n`);
+      text.forEach((t) => console.log(t));
+      if (left) console.log(`${left} more unread not shown yet. Run relay inbox again.`);
+      // Marked only now, after the text has been written out.
+      if (!peek) markRead(db, ME, upTo);
+    }
+  } else if (cmd === 'send') {
+    // The rest of the line is the message, so only its first word is checked:
+    // `relay send --peek` is far more likely a slip than a message.
+    if ((args[1] ?? '').startsWith('--')) die('relay: send takes no options. For text that begins with "--", pipe it: relay send -');
+    const text = args.slice(1).join(' ');
+    const body = !text || text === '-' ? readFileSync(0, 'utf8') : text;
+    const r = addMessage(openDb(), ME, body);
+    console.log(`Sent #${Number(r.id)} as ${ME}.`);
+  } else if (cmd === 'show') {
+    nothingElse(2, 'relay show <id>');
+    const m = /^\d+$/.test(sub || '') ? getMessage(openDb(), Number(sub)) : null;
+    if (!m) die('relay show <id>: no such message');
+    console.log(formatMessage(m));
+  } else if (cmd === 'log') {
+    nothingElse(2, 'relay log [n]');
+    if (sub !== undefined && !/^[1-9]\d{0,8}$/.test(sub)) die('relay log [n]: n is a whole number, 1 or more');
+    const n = Number(sub ?? 20);
+    const msgs = getMessages(openDb(), { limit: Math.min(n, 1000) });
+    if (!msgs.length) console.log('No messages yet.');
+    // Newest first into the budget, printed oldest first.
+    const { text } = formatWithin(msgs.toReversed(), LIMITS);
+    if (text.length < msgs.length) console.log(`(${msgs.length - text.length} older not shown; relay show <id> prints one in full)\n`);
+    text.reverse().forEach((t) => console.log(t));
+  } else if (cmd === 'token' && sub === 'create') {
+    const usage = 'relay token create <agent> [--ttl 7d] [--note "..."]';
+    const ttl = flag('--ttl') ?? '7d';
+    const note = flag('--note');
+    nothingElse(3, usage);
+    const agent = args[2];
+    if (!agent) die(usage);
+    const t = createToken(openDb(), agent, ttlMs(ttl), note);
     console.log(`Token ${t.id} for ${t.agent}, expires ${t.expires_at}.`);
     console.log('This is the only time it is shown:\n');
     console.log(t.token);
-  } catch (e) {
-    die(e.message);
+  } else if (cmd === 'token' && sub === 'list') {
+    nothingElse(2, 'relay token list');
+    const rows = listTokens(openDb());
+    if (!rows.length) console.log('No tokens.');
+    for (const t of rows) {
+      // Same test as checkToken: live only if the expiry parses and is in the future.
+      const state = t.revoked_at ? `REVOKED ${t.revoked_at}` : Date.parse(t.expires_at) > Date.now() ? `live until ${t.expires_at}` : `EXPIRED ${t.expires_at}`;
+      const used = t.last_used_at ? `last used ${t.last_used_at} from ${t.last_ip}` : 'never used';
+      console.log(cleanLine(`${t.id}  ${String(t.agent).padEnd(10)} ${state}; ${used}${t.note ? `; ${t.note}` : ''}`));
+    }
+  } else if (cmd === 'token' && sub === 'revoke') {
+    const usage = 'relay token revoke <id | agent | --all>';
+    const all = has('--all');
+    nothingElse(all ? 2 : 3, usage);
+    const which = all ? '--all' : args[2];
+    if (!which) die(usage);
+    const n = revokeTokens(openDb(), which);
+    if (!n) die('Nothing live matched; no token was revoked.');
+    console.log(`Revoked ${n} token${n > 1 ? 's' : ''}. Effective immediately.`);
+  } else {
+    console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(4, 12).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+    if (cmd !== 'help') process.exit(1);
   }
-} else if (cmd === 'token' && sub === 'list') {
-  const rows = listTokens(db);
-  if (!rows.length) console.log('No tokens.');
-  for (const t of rows) {
-    const state = t.revoked_at ? `REVOKED ${t.revoked_at}` : Date.parse(t.expires_at) <= Date.now() ? `EXPIRED ${t.expires_at}` : `live until ${t.expires_at}`;
-    const used = t.last_used_at ? `last used ${t.last_used_at} from ${t.last_ip}` : 'never used';
-    // Every field comes from a database the server's uid can write; none reaches the terminal raw.
-    console.log(clean(`${t.id}  ${String(t.agent).padEnd(10)} ${state}; ${used}${t.note ? `; ${t.note}` : ''}`).replace(/\n/g, ' '));
-  }
-} else if (cmd === 'token' && sub === 'revoke') {
-  if (!rest[0]) die('relay token revoke <id | agent | --all>');
-  const n = revokeTokens(db, rest[0]);
-  if (!n) die('Nothing live matched; no token was revoked.');
-  console.log(`Revoked ${n} token${n > 1 ? 's' : ''}. Effective immediately.`);
-} else {
-  console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(4, 12).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
-  if (cmd !== 'help') process.exit(1);
+}
+
+try {
+  main();
+} catch (e) {
+  // Not the stack, and not raw: the message can carry text from the database.
+  console.error(cleanLine(`relay: ${e?.message ?? e}`));
+  process.exit(1);
 }

@@ -9,10 +9,10 @@
 //   GET  /                 plain-text usage, no auth
 //   GET  /v1/whoami        -> { agent, token_id, expires_at }
 //   GET  /v1/messages      ?after=<id>&limit=<n>  -> { messages, next_after, has_more }
+//   POST /v1/messages      {"body": "..."} as JSON, or the raw text as text/plain
 //
 // PM2 runs a root-owned installed copy of this file, not the repo's: see
 // install.sh.
-//   POST /v1/messages      {"body": "..."} as JSON, or the raw text as text/plain
 //
 // No dependencies.
 import { createServer } from 'node:http';
@@ -233,5 +233,6 @@ export function createApp({ dbPath = DEFAULT_DB, log = console.log, maxDbBytes =
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.PORT || 3015);
-  createApp().server.listen(port, '127.0.0.1', () => console.log(`relay listening on 127.0.0.1:${port}`));
+  const { server } = createApp();
+  server.listen(port, '127.0.0.1', () => console.log(`relay listening on 127.0.0.1:${server.address().port}`));
 }

@@ -240,16 +240,34 @@ this includes security updates, deliberately).
 `/srv/benloe` is owned by `claude-worker`, the uid the Cabinet agent runs as,
 so nothing root executes or installs may be taken from this working tree: it
 can be swapped between reading a diff and running the script. Install and
-deploy scripts are run from a root-owned checkout of an exact pushed commit:
+deploy scripts are run from a root-owned checkout of an exact commit that is
+on GitHub's main:
 
 ```
-benloe-promote $(git -C /srv/benloe rev-parse HEAD) apps/relay/install.sh
+benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/install.sh
 ```
+
+The commit id is asked of GitHub (`/usr/local/bin/gh` is root-owned). Never
+take it from `/srv/benloe` with `git rev-parse`: that repository and its HEAD
+are claude-worker's too.
 
 `/usr/local/sbin/benloe-promote` (source: `infra/scripts/benloe-promote.sh`)
-fetches that commit from GitHub into `/opt/benloe-src/<commit>/` and runs the
-script there. Read the diff, commit, push, promote. Old checkouts under
-`/opt/benloe-src` can be removed by hand.
+fetches main from GitHub, refuses unless the commit is main's tip or an
+ancestor of it, unpacks the commit into `/opt/benloe-src/<commit>/` and runs
+the script there. `--branch <name>` checks against that branch instead of
+main, for trying an install from a pull request: `benloe-promote --branch
+relay <sha> apps/relay/install.sh`, with the sha of the commit that was read.
+It prints which branch it checked.
+
+What this proves is that the commit is in that branch's history on GitHub
+when the command runs. For main that means it was merged or pushed there;
+main is not a protected branch, so it is as strong as the control over who
+can write to main, and it is not evidence that anyone read the commit. For
+`--branch` it means only that somebody pushed it to that branch.
+
+Read the diff, commit, push, merge, promote. Old checkouts under
+`/opt/benloe-src` can be removed by hand. `benloe-promote` is installed the
+same way, by the copy already installed: `infra/scripts/install-promote.sh`.
 
 ## Database Backups
 
@@ -263,12 +281,19 @@ in `/etc/benloe/benloe-secrets.key` is not in the backup). A database
 anywhere else is not covered until it is added to the script.
 
 - Script: `infra/scripts/backup-databases.sh`, run as the installed copy
-  `/usr/local/sbin/benloe-db-backup.sh` — after editing, re-install it (the
-  command is in the script's header).
-- Schedule: `benloe-db-backup.timer`; units in `infra/systemd/`, copied to
-  `/etc/systemd/system/`. On a new box: copy both units, `systemctl
-  daemon-reload`, `systemctl enable --now benloe-db-backup.timer`. Run one
-  now: `systemctl start benloe-db-backup.service`.
+  `/usr/local/sbin/benloe-db-backup.sh`. Schedule: `benloe-db-backup.timer`;
+  the units are in `infra/systemd/` and run as installed copies in
+  `/etc/systemd/system/`.
+- After editing the script or either unit, and on a new box: commit, push,
+  merge, then
+  `benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh`.
+  It copies all three from that commit, reloads systemd and enables the
+  timer. Do not copy them from the working tree.
+- Run one now: `systemctl start benloe-db-backup.service`.
+- Root does not open a database another uid owns. Each of those is read by a
+  process running as the uid that owns the file, and every snapshot is checked
+  by one running as `nobody`; the script's header says why, and how gavel's
+  root-owned database is read.
 - Log: `/var/log/benloe-db-backup.log`. A failed database fails the unit:
   `systemctl status benloe-db-backup.service`.
 - These are on the same disk as the data. They cover a bad migration or a
