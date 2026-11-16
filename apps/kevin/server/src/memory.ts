@@ -53,8 +53,12 @@ async function embed(texts: string[]): Promise<Float32Array[]> {
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new Error(`embeddings ${res.status}`);
-  const json = (await res.json()) as { data: { embedding: number[] }[] };
-  return json.data.map((d) => Float32Array.from(d.embedding));
+  // An answer from the network is checked before it is stored: one vector per text, all of one size, all numbers.
+  const json = (await res.json()) as { data?: { embedding?: unknown }[] } | null;
+  const data = Array.isArray(json?.data) ? json.data : [];
+  const vecs = data.map((d) => (Array.isArray(d?.embedding) && d.embedding.length > 0 && d.embedding.length <= 8192 && d.embedding.every((x) => typeof x === 'number' && Number.isFinite(x)) ? Float32Array.from(d.embedding as number[]) : null));
+  if (vecs.length !== texts.length || vecs.some((v) => !v || v.length !== vecs[0]!.length)) throw new Error('embeddings: unexpected answer');
+  return vecs as Float32Array[];
 }
 
 const toBlob = (v: Float32Array) => Buffer.from(v.buffer, v.byteOffset, v.byteLength);

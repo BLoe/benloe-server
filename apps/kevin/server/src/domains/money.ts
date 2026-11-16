@@ -19,7 +19,7 @@ import { localDay } from '../time.js';
 import { defineTool, ToolError, type ToolCtx } from '../tools.js';
 import { bankCategory, CATEGORY_GROUPS, cleanMerchant, compileRule, matchRule, orderRules, ruleProblem, type CompiledRule, type Rule, SEED_CATEGORIES, SEED_RULES } from './_money/categorize.js';
 import { exactLinePattern } from './_money/pattern.js';
-import { CsvError, detectLayout, endingBalance, MAPPING_FIELDS, parseCsv, readRows } from './_money/csv.js';
+import { CsvError, detectLayout, endingBalance, liabilityOwed, MAPPING_FIELDS, parseCsv, readRows } from './_money/csv.js';
 import { detectRecurring, type Outflow } from './_money/recurring.js';
 
 const ACCOUNT_TYPES = ['checking', 'savings', 'credit_card', 'brokerage', 'retirement', 'hsa', 'loan', 'mortgage', 'cash', 'other'] as const;
@@ -148,7 +148,7 @@ ${SEED_RULES.map(([pattern, matchType, category, merchant]) => `INSERT INTO mone
 
 const PROMPT_NOTE = `Ben's accounts, transactions, budgets and investment holdings. Transactions arrive as bank CSV exports; balances and holdings are entered by hand.
 
-- Dollars are REAL, rounded to cents. \`money_transactions.amount\` is signed: negative = money out, positive = money in, on every account type. A liability's \`balance\` (credit_card, loan, mortgage) is the amount owed as a positive number.
+- Dollars are REAL, rounded to cents. \`money_transactions.amount\` is signed: negative = money out, positive = money in, on every account type. A liability's \`balance\` (credit_card, loan, mortgage) is the amount owed as a positive number; below zero, the account is in credit (overpaid).
 - Transfers between Ben's own accounts and credit-card payments have \`is_transfer = 1\` and count as neither spending nor income. A transaction Ben calls a transfer gets \`set: { transfer: true }\`.
 - Two SQL views at the end of the schema carry the rules for totals; use them for every spending or income question. \`money_spending\` is posted, non-transfer, non-income transactions: \`spent\` is positive dollars for a purchase and negative for a refund, so SUM nets refunds; \`month\` is 'YYYY-MM'; \`category\` is 'uncategorized' where none is set. \`money_income\` is posted, non-transfer money in under an income category or uncategorized, as \`received\`.
   Spending in a month: \`SELECT ROUND(SUM(spent), 2) FROM money_spending WHERE month = '2026-10'\`; add \`AND category = 'dining'\`, or \`GROUP BY category\` or \`merchant\`. The same clause on the base table is \`WHERE is_transfer = 0 AND pending = 0 AND date >= '2026-10-01' AND date < '2026-11-01'\`.
@@ -566,7 +566,15 @@ function runImport(input: z.infer<typeof importInput>, ctx: ToolCtx): unknown {
   const amountSign = { applied: read.inverted ? 'invert' : 'as_is', decided_by: read.signSource, explanation: signExplanation } as const;
 
   const ending = endingBalance(read.rows);
-  const endBalance = ending ? { balance: r2(liability ? Math.abs(ending.balance) : ending.balance), date: ending.date } : null;
+  // A liability's balance is stored as the amount owed: negative when the card is in credit.
+  const owed = ending && liability ? liabilityOwed(read.rows, ending.balance) : null;
+  const endBalance = ending
+    ? {
+        balance: r2(owed ? owed.owed : ending.balance),
+        date: ending.date,
+        ...(owed?.convention === 'unknown' ? { note: 'The file does not show whether its balance column is the amount owed or the account value; it was read as the amount owed. A card in credit would show as owing.' } : {}),
+      }
+    : null;
   const file = { attachment_id: att.id, filename: att.filename, headers: layout.headers.filter(Boolean), header_row: layout.headerRow < 0 ? null : layout.headerRow + 1 };
 
   if (!input.commit) {

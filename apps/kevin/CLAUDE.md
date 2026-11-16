@@ -59,7 +59,7 @@ is writable by another uid, and this database holds tax and medical records.
 | `core/index.ts` | Core tools (query, remember, recall, schedules, shell, files, web_research, ...) and the `system/*` views. |
 | `domains/spaces.ts` | Spaces: runtime-created areas, their records, the data-driven nav. |
 | `domains.ts`, `domains/*.ts` | One file per life area. Dropping a file in `domains/` registers it. |
-| `jobs.ts` | System jobs (in code), Kevin's schedules (in the DB), one runner, one ledger (`job_runs`), the watchdog, the nightly backup, and `recoverFromRestart` (closes the turns, job runs and unread uploads a stop left half-done, and tells Ben what was cut off). |
+| `jobs.ts` | System jobs (in code), Kevin's schedules (in the DB), one runner, one ledger (`job_runs`), the watchdog, the nightly backup, and `recoverFromRestart` (closes the turns, job runs and unread uploads a stop left half-done, and tells Ben what was cut off). A reminder's run is an error when devices are subscribed and every push failed; with no device it succeeds and says "inbox only". Each notification row records its `delivery`. |
 | `memory.ts` | Daily log, FTS5 search index, facts, optional embeddings. |
 | `llm.ts` | Client, price table, usage recording, spend cap. |
 | `attachments.ts` | Uploads and one-time text extraction (pdftotext, run in the extraction sandbox; then vision). |
@@ -229,15 +229,19 @@ talks the model into something is the threat to design for.
     through which another daemon could make a lookup on its behalf (the
     system resolver's, D-Bus) are not there. An iptables rule for the uid
     stays as a second lock;
-  - `/var`, `/srv`, `/opt`, `/home`, `/root`, `/boot` are empty for it, as are
-    `/etc/benloe`, `/etc/caddy` and `/etc/ssh`. It sees its workspace, a
-    private `/tmp`, and the rest of `/etc` and `/usr` read-only;
+  - `/var`, `/srv`, `/opt`, `/home`, `/root`, `/boot`, `/mnt` and `/media` are
+    empty for it, as are `/etc/benloe`, `/etc/caddy` and `/etc/ssh`. It reads
+    the rest of `/etc` and `/usr`, read-only;
+  - it writes only to its workspace (a 2 GB filesystem of its own) and to a
+    `/tmp` and `/dev/shm` that are memory filesystems of its own, gone when
+    the command ends (`/tmp` at most 256 MB). Both count against its memory
+    cap, so nothing it writes can fill the disk;
   - 115 seconds per command, then the command's whole session is killed; at
     130 seconds, and whenever the runner exits, systemd kills every process
     left in the unit, whatever they did about signals or sessions. Stop does
-    the same at once. Memory, CPU and process count are capped, and the
-    workspace is a 2 GB filesystem, so filling it does not fill the disk.
-  `setup.sh` ends by running `sandbox/selfcheck.py` against the real socket
+    the same at once. Memory (2 GB), CPU (two cores) and process count (128)
+    are capped.
+  `setup.sh` ends by running `sandbox/selfcheck.py` against both real sockets
   and fails if any of this does not hold.
   What it can still do: use its CPU and memory share for its time limit, and
   read world-readable files under `/etc` and `/usr`.
@@ -276,16 +280,26 @@ talks the model into something is the threat to design for.
   artanis, which he learns from Ben's own signed-in requests
   (`settings.owner_account_id`). Until he knows it the mirror is empty and the
   sync reports why; anyone else's lifts and exercise names never reach a page
-  or the model.
+  or the model. The file is writable by another uid, so it is never opened in
+  the server process: a child process refuses a symlink or anything over
+  64 MB, opens a copy from memory, checks the three tables are tables (not
+  views), reads at most 50,000 rows of each, and is killed after 10 seconds.
+  Each row is checked for shape before it is stored.
 - **Kevin's file tools run in the same sandbox**, as a fixed script with the
   path and content on its input, so they can reach exactly what the shell
   can. The server process never opens a path in the workspace, and `kevin` is
   not in the `kevin-sh` group, so the kernel refuses if it tried.
 - **Uploaded PDFs are parsed in a second sandbox** (`kevin-extract@.service`):
-  the same confinement with no writable folder at all. The bytes go in on
+  the same confinement, no workspace, and nowhere at all to write: its
+  `/tmp` and `/dev/shm` are read-only and empty (pdftotext reading standard
+  input needs no file), and 60 seconds per file. The bytes go in on
   standard input and only text comes back, so a hostile PDF meets pdftotext
   as `kevin-sh`, not as the uid that owns the database. Images and scanned
   PDFs are read by the model API, not by a local parser.
+- **Sign-in is checked against artanis on every request.** Only its answers
+  (signed in as someone, or refused) are cached, for 30 seconds. When it is
+  down or answers with an error, Kevin says so with a 503 instead of sending
+  Ben to sign in, which would loop for as long as the outage lasts.
 - **The main loop has no web tools.** `web_research` is the only way Kevin
   reads the web: a sub-call that receives only the question, searches and
   fetches, and returns text that the main loop treats as data.
@@ -357,6 +371,10 @@ cd server && npm run typecheck && npm test      # vitest; no outside network, no
 cd web && npm run typecheck && npm test
 ```
 
+Each test file gets its own data folder under `/tmp` (a memory filesystem on
+this box) and removes it when it finishes; a run that is killed can leave
+`/tmp/kevin-test-*` behind, which is safe to delete.
+
 The server tests start the real sandbox runner (`sandbox/kevin-sandbox-run`)
 directly, so they need `python3` and `pdftotext` and exercise its framing,
 time limit and session cleanup. They do not exercise the systemd unit's
@@ -407,7 +425,7 @@ web/src/
                           dropdown-menu, popover, tabs, switch, badge, card, skeleton, label
   components/chat/        the chat panel: transcript, tool rows, composer, thread list
   components/shell/       left nav, tab bar, More sheet, notification bell, toasts
-  lib/                    api, events, useView, act, chat (openChat), transcript, notifications,
+  lib/                    api, events, useView, act, chat (openChat), transcript, notifications, reload,
                           nav, spaces, links, format, trigger, image, push, toast, hooks, profile,
                           utils (cn), types
   public/                 manifest.webmanifest, sw.js, icons/ (npm run icons regenerates)
@@ -419,6 +437,16 @@ web/src/
 replace a stub, overwrite `src/pages/<Name>.tsx` and keep the default export;
 nothing else changes. Sub-routes (`/money/accounts`) need a `<Route>` in
 `App.tsx`; prefer `useSearchParams` for tabs and filters, as Settings does.
+
+**After a deploy.** Each release is a new folder, so the previous build's
+hashed chunks stop existing. The server answers any missing file (`/assets/*`
+or any path with an extension) with a 404, never with `index.html`; the
+service worker keeps an asset only when it is a 200 of the right type (a
+script for `.js`, a stylesheet for `.css`, never HTML); and a page whose chunk
+fails to load reloads once (`lib/reload.ts`, also on Vite's `preloadError`) to
+pick up the new build. A page that still fails shows an error with a reload
+button (`PageErrorBoundary`), not a blank app. `/api` answers carry
+`Cache-Control: no-store`.
 
 **The nav is data.** `lib/nav.ts` builds it from `GET /api/view/spaces/nav`:
 built-ins Ben has not hidden, then pinned spaces (lucide icon by name, a count

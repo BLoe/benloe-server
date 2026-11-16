@@ -197,6 +197,14 @@ const CORE: Migration[] = [
     ALTER TABLE threads ADD COLUMN memory_retry_at TEXT;                         -- UTC ISO; the job leaves the thread alone until then
     `,
   },
+  {
+    id: 'core-004',
+    sql: `
+    -- Whether a notification reached a device: 'pushed' (to at least one), 'push-failed' (devices are
+    -- subscribed and every push failed), 'inbox' (push is off or no device is subscribed). NULL: older rows.
+    ALTER TABLE notifications ADD COLUMN delivery TEXT;
+    `,
+  },
 ];
 
 export function openDb(path: string, extra: Migration[] = []): DB {

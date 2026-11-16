@@ -4,7 +4,8 @@
 // Spaces are not listed here: they come from the server at runtime and are
 // all rendered by pages/Space.tsx.
 import { Apple, Briefcase, ChefHat, Dumbbell, FileText, Home, LayoutGrid, type LucideIcon, Receipt, Settings, Wallet } from 'lucide-react';
-import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
+import { type ComponentType, type LazyExoticComponent } from 'react';
+import { lazyPage } from '@/lib/reload';
 import HomePage from './Home';
 
 export interface PageDef {
@@ -18,22 +19,22 @@ export const home: PageDef = { path: '/', label: 'Home', icon: Home, component: 
 
 /** The built-in areas. Which of them show in the nav, and in what order, is the server's answer (lib/nav.ts). */
 export const builtins: PageDef[] = [
-  { path: '/pantry', label: 'Pantry', icon: Apple, component: lazy(() => import('./Pantry')) },
-  { path: '/cooking', label: 'Cooking', icon: ChefHat, component: lazy(() => import('./Cooking')) },
-  { path: '/workouts', label: 'Workouts', icon: Dumbbell, component: lazy(() => import('./Workouts')) },
-  { path: '/money', label: 'Money', icon: Wallet, component: lazy(() => import('./Money')) },
-  { path: '/taxes', label: 'Taxes', icon: Receipt, component: lazy(() => import('./Taxes')) },
-  { path: '/documents', label: 'Documents', icon: FileText, component: lazy(() => import('./Documents')) },
+  { path: '/pantry', label: 'Pantry', icon: Apple, component: lazyPage(() => import('./Pantry')) },
+  { path: '/cooking', label: 'Cooking', icon: ChefHat, component: lazyPage(() => import('./Cooking')) },
+  { path: '/workouts', label: 'Workouts', icon: Dumbbell, component: lazyPage(() => import('./Workouts')) },
+  { path: '/money', label: 'Money', icon: Wallet, component: lazyPage(() => import('./Money')) },
+  { path: '/taxes', label: 'Taxes', icon: Receipt, component: lazyPage(() => import('./Taxes')) },
+  { path: '/documents', label: 'Documents', icon: FileText, component: lazyPage(() => import('./Documents')) },
 ];
 
 /** Always in the nav, below everything else. */
 export const systemPages: PageDef[] = [
-  { path: '/spaces', label: 'All spaces', icon: LayoutGrid, component: lazy(() => import('./Spaces')) },
-  { path: '/jobs', label: 'Jobs', icon: Briefcase, component: lazy(() => import('./Jobs')) },
-  { path: '/settings', label: 'Settings', icon: Settings, component: lazy(() => import('./Settings')) },
+  { path: '/spaces', label: 'All spaces', icon: LayoutGrid, component: lazyPage(() => import('./Spaces')) },
+  { path: '/jobs', label: 'Jobs', icon: Briefcase, component: lazyPage(() => import('./Jobs')) },
+  { path: '/settings', label: 'Settings', icon: Settings, component: lazyPage(() => import('./Settings')) },
 ];
 
-export const SpacePage = lazy(() => import('./Space'));
+export const SpacePage = lazyPage(() => import('./Space'));
 
 export const pages: PageDef[] = [home, ...builtins, ...systemPages];
 export const builtinIcon = (path: string): LucideIcon | undefined => builtins.find((b) => b.path === path)?.icon;

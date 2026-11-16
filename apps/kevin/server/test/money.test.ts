@@ -276,6 +276,26 @@ describe('money_import', () => {
     expect(await rows(kevin, "SELECT ROUND(SUM(spent), 2) AS spent FROM money_spending WHERE account = 'Amex Gold'")).toEqual([{ spent: 586.9 }]);
   });
 
+  it('keeps an overpaid card in credit: the ending balance is read by the file\'s own convention, not by its size', async () => {
+    const kevin = await makeKevin([money]);
+    const card = { create_account: { type: 'credit_card' }, update_balance: true, commit: true };
+    // Balance as the amount owed (a purchase raises it), oldest first, ending $50 in credit.
+    const owedStyle = 'Date,Description,Amount,Balance\n10/01/2026,KITE SHOP,-100.00,100.00\n10/05/2026,PAYMENT THANK YOU,150.00,-50.00\n';
+    await ok(kevin, 'money_import', { attachment_id: await upload(kevin, owedStyle, 'a.csv'), account: 'Card A', ...card });
+    // Balance as the account's value (a purchase lowers it), newest first, ending $50 in credit too.
+    const valueStyle = 'Date,Description,Amount,Balance\n10/05/2026,PAYMENT THANK YOU,150.00,50.00\n10/01/2026,KITE SHOP,-100.00,-100.00\n';
+    await ok(kevin, 'money_import', { attachment_id: await upload(kevin, valueStyle, 'b.csv'), account: 'Card B', ...card });
+    // And an ordinary debt in each style: owed $80.
+    await ok(kevin, 'money_import', { attachment_id: await upload(kevin, 'Date,Description,Amount,Balance\n10/01/2026,KITE SHOP,-30.00,50.00\n10/02/2026,SPAR SHOP,-30.00,80.00\n', 'c.csv'), account: 'Card C', ...card });
+    await ok(kevin, 'money_import', { attachment_id: await upload(kevin, 'Date,Description,Amount,Balance\n10/01/2026,KITE SHOP,-30.00,-50.00\n10/02/2026,SPAR SHOP,-30.00,-80.00\n', 'd.csv'), account: 'Card D', ...card });
+    expect(await rows(kevin, "SELECT name, balance FROM money_accounts WHERE name LIKE 'Card %' ORDER BY name")).toEqual([
+      { name: 'Card A', balance: -50 }, { name: 'Card B', balance: -50 }, { name: 'Card C', balance: 80 }, { name: 'Card D', balance: 80 },
+    ]);
+    // One row says nothing about the convention: read as owed, and the preview says it was assumed.
+    const one = await ok(kevin, 'money_import', { attachment_id: await upload(kevin, 'Date,Description,Amount,Balance\n10/01/2026,KITE SHOP,-30.00,-30.00\n', 'e.csv'), account: 'Card E', create_account: { type: 'credit_card' }, commit: false });
+    expect(one.ending_balance).toMatchObject({ balance: 30, note: expect.stringMatching(/does not show whether/) });
+  });
+
   it('handles a BOM, CRLF, a summary block above the header and quoted fields with commas and line breaks', async () => {
     const kevin = await makeKevin([money]);
     const id = await upload(kevin, BOFA, 'stmt.csv');

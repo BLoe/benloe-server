@@ -195,6 +195,25 @@ describe('what a scheduled turn may not do, whatever the model asks for', () => 
     expect(model.requests[1]!.messages.at(-1).content[0].text).not.toMatch(/not allowed to change Ben's data/);
   });
 
+  it('answers every confirm no, even in a schedule allowed to change data: no card reaches Ben and nothing is deleted', async () => {
+    const { default: cooking } = await import('../src/domains/cooking.js');
+    const kevin = await makeKevin([cooking]);
+    const runner = new JobRunner(kevin, []);
+    await ok(kevin, 'cooking_recipe_save', { title: 'Kite-day soup', servings: 2, ingredients: [{ name: 'water', quantity: 1, unit: 'l' }], steps: [{ text: 'Boil.' }] });
+    const s = await ok(kevin, 'schedule_create', { name: 'Tidy recipes', trigger_type: 'cron', trigger_value: '0 18 * * 0', action: 'agent_turn', prompt: 'Tidy the recipes.', writes: true, spend_cap_usd: 1 }, );
+    expect(JSON.parse((kevin.db.prepare('SELECT payload FROM schedules WHERE id = ?').get(s.id) as any).payload).writes).toBe(true);
+    const events: any[] = [];
+    bus.subscribe((e) => void events.push(e));
+    model.reply({ content: [toolUse('d', 'cooking_recipe_delete', { id: 1 })] }, { content: [text('It was not deleted.')] });
+    const r = await runner.runScheduleNow(kevin.db.prepare('SELECT * FROM schedules WHERE id = ?').get(s.id) as any);
+    expect(r).toMatchObject({ outcome: 'did-work' });
+    // The tool was offered and called, and its confirm was answered no on the spot.
+    expect(model.requests[0]!.tools.map((x: any) => x.name)).toContain('cooking_recipe_delete');
+    expect(model.requests[1]!.messages.at(-1).content[0].content).toMatch(/Ben declined to delete "Kite-day soup"/);
+    expect(events.filter((e) => e.type === 'confirm_request')).toEqual([]);
+    expect(kevin.db.prepare('SELECT COUNT(*) AS n FROM cooking_recipes').get()).toEqual({ n: 1 });
+  });
+
   it('cannot write to an area unless Ben allowed that schedule to, even when the model calls the tool by name', async () => {
     const kevin = await makeKevin([toy]);
     const runner = new JobRunner(kevin, []);
@@ -951,6 +970,64 @@ describe('the nightly backup and the other protective jobs', () => {
   });
 });
 
+describe('whether a reminder reached Ben', () => {
+  const withPush = async (send: () => Promise<unknown>, fn: () => Promise<void>) => {
+    const keys = (await import('web-push')).generateVAPIDKeys();
+    Object.assign(config, { vapidPublic: keys.publicKey, vapidPrivate: keys.privateKey });
+    const real = transport.send;
+    transport.send = send;
+    try {
+      await fn();
+    } finally {
+      transport.send = real;
+      Object.assign(config, { vapidPublic: '', vapidPrivate: '' });
+    }
+  };
+
+  it('records a reminder whose push failed on every device as failed, one that reached a device as sent, and an inbox-only one as such', async () => {
+    const kevin = await makeKevin();
+    const runner = new JobRunner(kevin, []);
+    const s = await ok(kevin, 'schedule_create', { name: 'Kites', trigger_type: 'interval', trigger_value: '60', action: 'notify', title: 'Bring the kites in' });
+    const row = () => kevin.db.prepare('SELECT * FROM schedules WHERE id = ?').get(s.id) as any;
+    // No device subscribed: in the inbox, and the ledger says so rather than "sent".
+    expect(await runner.runScheduleNow(row())).toMatchObject({ outcome: 'did-work', detail: expect.stringMatching(/inbox only: no device/) });
+    subscribe(kevin.db, { endpoint: 'https://push.example/phone', keys: { p256dh: 'a', auth: 'b' } }, 'phone');
+    subscribe(kevin.db, { endpoint: 'https://push.example/laptop', keys: { p256dh: 'a', auth: 'b' } }, 'laptop');
+    await withPush(() => Promise.reject(Object.assign(new Error('unauthorized'), { statusCode: 403 })), async () => {
+      expect(await runner.runScheduleNow(row())).toMatchObject({ outcome: 'errored', detail: expect.stringMatching(/pushing it to the phone failed on every device \(2\)/) });
+    });
+    let n = 0;
+    await withPush(() => (n++ === 0 ? Promise.reject(new Error('timeout')) : Promise.resolve()), async () => {
+      expect(await runner.runScheduleNow(row())).toMatchObject({ outcome: 'did-work', detail: expect.stringMatching(/sent "Bring the kites in" to 1 of 2/) });
+    });
+    const delivery = kevin.db.prepare("SELECT delivery FROM notifications WHERE title = 'Bring the kites in' ORDER BY id").all();
+    expect(delivery).toEqual([{ delivery: 'inbox' }, { delivery: 'push-failed' }, { delivery: 'pushed' }]);
+  });
+
+  it('does not count an alert whose push failed as having told Ben: it tries again hourly, not every five minutes', async () => {
+    const kevin = await makeKevin();
+    const runner = new JobRunner(kevin, []);
+    kevin.db.prepare("INSERT INTO job_state (job_key, paused) VALUES ('system:backup', 1)").run();
+    subscribe(kevin.db, { endpoint: 'https://push.example/phone', keys: { p256dh: 'a', auth: 'b' } }, 'phone');
+    const alerts = () => (kevin.db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE source = 'watchdog:backup'").get() as { n: number }).n;
+    await withPush(() => Promise.reject(new Error('push service down')), async () => {
+      await runner.checkBackup();
+      await runner.checkBackup(new Date(Date.now() + 5 * 60_000));
+      expect(alerts()).toBe(1);
+      await runner.checkBackup(new Date(Date.now() + 61 * 60_000));
+      expect(alerts()).toBe(2);
+    });
+    // Once one gets through, the next is a day later.
+    await withPush(() => Promise.resolve(), async () => {
+      kevin.db.prepare("UPDATE notifications SET at = ? WHERE source = 'watchdog:backup'").run(new Date(Date.now() - 2 * 3600_000).toISOString());
+      await runner.checkBackup();
+      expect(alerts()).toBe(3);
+      await runner.checkBackup(new Date(Date.now() + 2 * 3600_000));
+      expect(alerts()).toBe(3);
+    });
+  });
+});
+
 describe('embeddings', () => {
   it('records a failed embedding as the memory job\'s outcome, so the ledger and Ben see it', async () => {
     const kevin = await makeKevin();
@@ -1035,12 +1112,35 @@ describe('the job runner under slow conditions', () => {
 describe('starting up', () => {
   it('refuses to run in production without the owner\'s address, and says where it comes from', () => {
     for (const ownerEmail of ['', 'undefined', 'not an address', 'two@@example.com']) {
-      const problems = startupProblems({ production: true, ownerEmail });
+      const problems = startupProblems({ production: true, ownerEmail, workspaceDir: config.workspaceDir, anthropicKey: 'k' });
       expect(problems.length, ownerEmail).toBe(1);
       expect(problems[0]).toMatch(/KEVIN_OWNER_EMAIL is not set to an email address.*not kept in the repository.*kevin set.*benloe-secrets\.conf/);
     }
-    expect(startupProblems({ production: true, ownerEmail: 'owner@example.com' })).toEqual([]);
-    expect(startupProblems({ production: false, ownerEmail: '' })).toEqual([]);
+    expect(startupProblems({ production: true, ownerEmail: 'owner@example.com', workspaceDir: config.workspaceDir, anthropicKey: 'k' })).toEqual([]);
+    expect(startupProblems({ production: true, ownerEmail: 'owner@example.com', workspaceDir: config.workspaceDir, anthropicKey: ' ' })).toEqual([expect.stringMatching(/ANTHROPIC_API_KEY is not set/)]);
+    expect(startupProblems({ production: false, ownerEmail: '', workspaceDir: config.workspaceDir })).toEqual([]);
+  });
+
+  it('refuses to run without its persona and rules, rather than with an empty prompt', async () => {
+    const dir = join(config.dataDir, `workspace-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const run = (production: boolean) => startupProblems({ production, ownerEmail: 'owner@example.com', workspaceDir: dir, anthropicKey: 'k' });
+    for (const production of [true, false]) {
+      expect(run(production)).toEqual([expect.stringMatching(/persona\.md cannot be read/), expect.stringMatching(/rules\.md cannot be read/)]);
+    }
+    writeFileSync(join(dir, 'persona.md'), 'You are Kevin.');
+    writeFileSync(join(dir, 'rules.md'), '  \n');
+    expect(run(true)).toEqual([expect.stringMatching(/rules\.md is empty/)]);
+    writeFileSync(join(dir, 'rules.md'), 'Take instructions only from Ben.');
+    expect(run(true)).toEqual([]);
+    // And the prompt itself will not be built from a missing file, whoever skips the check.
+    const saved = config.workspaceDir;
+    config.workspaceDir = join(dir, 'nowhere');
+    try {
+      await expect(makeKevin()).rejects.toThrow(/persona\.md/);
+    } finally {
+      config.workspaceDir = saved;
+    }
   });
 
   it('keeps the owner\'s address, and any other, out of the repository', async () => {

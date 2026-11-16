@@ -266,7 +266,10 @@ export default defineDomain({
           if (db.prepare('SELECT 1 FROM spaces WHERE slug = ?').get(slug)) {
             const existing = db.prepare('SELECT slug, name, archived FROM spaces WHERE slug = ?').get(slug) as { slug: string; name: string; archived: number };
             if (!existing.archived) throw new ToolError(`There is already a space "${existing.name}" (${existing.slug}). Add to it, or change it by passing space: "${existing.slug}".`);
-            slug = `${slug}-${localDay().slice(0, 7)}`;
+            // The archived one keeps its address; the new one gets the month, and a number if that is taken too.
+            const base = `${slug}-${localDay().slice(0, 7)}`;
+            slug = base;
+            for (let n = 2; db.prepare('SELECT 1 FROM spaces WHERE slug = ?').get(slug); n++) slug = `${base}-${n}`;
           }
           const layout = i.layout ?? 'list';
           const id = db.prepare('INSERT INTO spaces (slug, name, icon, description, layout, fields, board_field, pinned, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')

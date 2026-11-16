@@ -17,6 +17,7 @@ import { SpaceIcon } from '@/components/SpaceIcon';
 import { tabEntries, useNav, type Nav, type NavEntry } from '@/lib/nav';
 import { builtinIcon, builtins, home, systemPages, type PageDef } from '@/pages/registry';
 import { NotificationBell } from './NotificationBell';
+import { PageErrorBoundary } from './PageErrorBoundary';
 import { Toaster } from './Toaster';
 
 function Wordmark() {
@@ -221,15 +222,17 @@ export function Shell() {
         </header>
         {/* A container: pages size their columns to this region (@lg/page:, @2xl/page:), because the docked chat makes it much narrower than the window. */}
         <main ref={main} className="scroll-area @container/page min-h-0 flex-1">
-          <Suspense
-            fallback={
-              <div className="mx-auto max-w-3xl px-4 pt-8 lg:px-8">
-                <LoadingRows />
-              </div>
-            }
-          >
-            <Outlet />
-          </Suspense>
+          <PageErrorBoundary resetKey={location.pathname}>
+            <Suspense
+              fallback={
+                <div className="mx-auto max-w-3xl px-4 pt-8 lg:px-8">
+                  <LoadingRows />
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </PageErrorBoundary>
         </main>
         <TabBar nav={nav} running={running} />
         {/* Desktop, chat collapsed: a button on the page's top edge brings it back. */}

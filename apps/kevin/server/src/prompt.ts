@@ -22,14 +22,15 @@ import { config } from './config.js';
 import { type Hit, listFacts, listProfile } from './memory.js';
 import { localStamp } from './time.js';
 
+/**
+ * A workspace file, which must be there and say something. Kevin does not run without his persona
+ * and rules: rules.md is where he is told to take instructions only from Ben, never from a web page.
+ * startupProblems() refuses to start on the same condition with a clearer message; this is the lock.
+ */
 const read = (name: string): string => {
-  try {
-    return readFileSync(join(config.workspaceDir, name), 'utf8').trim();
-  } catch (e) {
-    // Kevin still starts, with that part of his prompt missing; the log says which.
-    console.error(`workspace file ${name} could not be read`, e);
-    return '';
-  }
+  const text = readFileSync(join(config.workspaceDir, name), 'utf8').trim();
+  if (!text) throw new Error(`workspace file ${name} is empty`);
+  return text;
 };
 
 // Tables left out of the schema the model is shown: internals it has no use for. This keeps them out

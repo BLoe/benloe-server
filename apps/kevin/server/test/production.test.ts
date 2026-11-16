@@ -33,7 +33,8 @@ describe('the test-user shortcut', () => {
     expect(config.production).toBe(true);
     expect(config.testUser).toBe('');
     expect((await fetch(`${base}/api/me`)).status).toBe(401);
-    expect((await fetch(`${base}/api/me`, { headers: { Cookie: 'token=anything' } })).status).toBe(401);
+    // With a session cookie and no auth service to check it: refused as unavailable, still never let in.
+    expect((await fetch(`${base}/api/me`, { headers: { Cookie: 'token=anything' } })).status).toBe(503);
     const write = await fetch(`${base}/api/act/settings_update`, { method: 'POST', headers: { 'X-Kevin': '1', 'Content-Type': 'application/json' }, body: '{"monthly_cap_usd":999}' });
     expect(write.status).toBe(401);
     expect(kevin.db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key = 'monthly_cap_usd'").get()).toEqual({ n: 0 });

@@ -436,3 +436,31 @@ export function endingBalance(rows: ParsedRow[]): { balance: number; date: strin
   const pick = newestFirst ? sameDay[0]! : sameDay[sameDay.length - 1]!;
   return { balance: pick.balance!, date: pick.date };
 }
+
+/**
+ * For a credit card, loan or mortgage: the amount owed, from the file's ending balance, with its sign.
+ * Banks write a liability's running balance either as the amount owed (a purchase raises it) or as
+ * the account's value (a purchase lowers it, so a debt is negative). The file says which: between two
+ * consecutive rows the balance moves by the later row's amount, one way or the other. A card in credit
+ * (overpaid) is then a negative amount owed, not a debt.
+ * `convention` is 'unknown' when no pair of rows shows it; the owed amount is then the balance's size,
+ * which is right for a card that is not in credit, and the caller says it was assumed.
+ */
+export function liabilityOwed(rows: ParsedRow[], balance: number): { owed: number; convention: 'owed' | 'value' | 'unknown' } {
+  const withBalance = rows.filter((r) => r.balance != null);
+  // Oldest first: files list either way, and a single day says nothing about order (newest-first is usual).
+  const newestFirst = withBalance.length < 2 || withBalance[0]!.date >= withBalance[withBalance.length - 1]!.date;
+  const ordered = newestFirst ? [...withBalance].reverse() : withBalance;
+  let owedVotes = 0;
+  let valueVotes = 0;
+  for (let i = 1; i < ordered.length; i++) {
+    const delta = Math.round((ordered[i]!.balance! - ordered[i - 1]!.balance!) * 100);
+    const amount = Math.round(ordered[i]!.amount * 100);
+    if (amount === 0) continue;
+    if (delta === -amount) owedVotes++;
+    else if (delta === amount) valueVotes++;
+  }
+  if (owedVotes > valueVotes) return { owed: balance, convention: 'owed' };
+  if (valueVotes > owedVotes) return { owed: -balance, convention: 'value' };
+  return { owed: Math.abs(balance), convention: 'unknown' };
+}

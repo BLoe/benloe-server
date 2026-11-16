@@ -86,9 +86,14 @@ install -o root -g root -m 0755 "$SRC/sandbox/selfcheck.py" /usr/local/lib/benlo
 #   - /run is replaced by an empty folder, so the unix sockets of other services (the system
 #     resolver, D-Bus, anything else there) do not exist for it. Those sockets are how a process
 #     without network can otherwise still ask a daemon to make a lookup on its behalf;
-#   - /var, /srv, /opt, /home, /root, /boot and /mnt are empty for it, as are /etc/benloe,
-#     /etc/caddy and /etc/ssh; /tmp is private to the one command. It can read the rest of
-#     /etc and /usr (programs and libraries), which hold no data of Ben's;
+#   - /var, /srv, /opt, /home, /root, /boot, /mnt and /media are empty for it, as are
+#     /etc/benloe, /etc/caddy and /etc/ssh. It can read the rest of /etc and /usr (programs and
+#     libraries), which hold no data of Ben's;
+#   - where it can write: the shell unit, its workspace (a 2 GB filesystem of its own), and a
+#     /tmp and /dev/shm that are memory filesystems of its own, gone when the command ends
+#     (/tmp at most 256 MB; both count against its memory cap, so neither can fill the disk).
+#     The extraction unit can write nowhere: its /tmp and /dev/shm are read-only and empty,
+#     and pdftotext reading standard input needs no file;
 #   - other processes are not visible in /proc;
 #   - memory, process count and CPU are capped, and after HARD_SECONDS systemd kills every
 #     process in the unit, whatever those processes do about signals or sessions. The same
@@ -133,7 +138,6 @@ SystemCallErrorNumber=EPERM
 
 ProtectSystem=strict
 ProtectHome=yes
-PrivateTmp=yes
 PrivateDevices=yes
 ProtectProc=invisible
 ProcSubset=pid
@@ -155,14 +159,20 @@ LimitFSIZE=1G
 LimitCORE=0
 UNIT
   if [ "$2" = workspace ]; then
+    # /tmp in memory and capped, not on the disk: PrivateTmp would put it on the root filesystem.
     cat <<UNIT
 BindPaths=$WS
 WorkingDirectory=$WS
 Environment=KEVIN_SHELL_DIR=$WS
+TemporaryFileSystem=/tmp:size=256M,mode=1777
 UNIT
   else
     # Nothing writable at all: this one only turns bytes on its input into text on its output.
-    echo "WorkingDirectory=/"
+    cat <<UNIT
+WorkingDirectory=/
+TemporaryFileSystem=/tmp:ro
+ReadOnlyPaths=-/dev/shm
+UNIT
   fi
 }
 sandbox_socket() { # $1 description, $2 socket name
@@ -240,10 +250,12 @@ chmod 755 /usr/local/lib/benloe/node-as-kevin
 # ---- prove it, on this box, before saying it is done ---------------------------------------
 # A few commands through the real socket, sent as the server would send them (from the kevin uid), checking
 # the properties above from the inside. A failure here fails the setup.
-check=$(setpriv --reuid=kevin --regid=kevin --init-groups /usr/bin/python3 -I /usr/local/lib/benloe/kevin-sandbox-selfcheck /run/kevin-sandbox/shell.sock) || {
-  echo "sandbox self-check FAILED:" >&2
-  echo "$check" >&2
-  exit 1
-}
-echo "$check"
+for sock in shell extract; do
+  check=$(setpriv --reuid=kevin --regid=kevin --init-groups /usr/bin/python3 -I /usr/local/lib/benloe/kevin-sandbox-selfcheck /run/kevin-sandbox/$sock.sock) || {
+    echo "sandbox self-check FAILED ($sock):" >&2
+    echo "$check" >&2
+    exit 1
+  }
+  echo "$check"
+done
 echo "kevin system setup done"

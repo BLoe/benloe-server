@@ -93,7 +93,7 @@ describe('owner-only access', () => {
 
   it('asks the auth service again after a failure instead of remembering it, and remembers an answer for a short while', async () => {
     authUp = false;
-    expect((await req('/api/me', { cookie: 'token=owner-session-2' })).status).toBe(401);
+    expect((await req('/api/me', { cookie: 'token=owner-session-2' })).status).toBe(503);
     authUp = true;
     expect((await req('/api/me', { cookie: 'token=owner-session-2' })).status).toBe(200);
     const calls = authCalls;
@@ -102,9 +102,21 @@ describe('owner-only access', () => {
   });
 
   it('does not remember an auth service that answers with an error as "not signed in"', async () => {
+    authStatus = 500;
+    const api = await req('/api/me', { cookie: 'token=owner-session-3' });
+    expect(api.status).toBe(503);
+    expect(await api.json()).toEqual({ error: 'sign-in service unavailable' });
+    // A page is not sent to sign in, which would loop for as long as the outage lasts: it says what is wrong.
+    const page = await req('/money', { cookie: 'token=owner-session-3' });
+    expect(page.status).toBe(503);
+    expect(page.headers.get('location')).toBeNull();
+    expect(await page.text()).toMatch(/sign-in service is not answering/);
+    authStatus = null;
+    authUp = false;
+    expect((await req('/money', { cookie: 'token=owner-session-3' })).status).toBe(503);
+    authUp = true;
     authStatus = 503;
-    expect((await req('/api/me', { cookie: 'token=owner-session-3' })).status).toBe(401);
-    expect((await req('/api/me', { cookie: 'token=owner-session-3' })).status).toBe(401);
+    expect((await req('/api/me', { cookie: 'token=owner-session-3' })).status).toBe(503);
     const calls = authCalls;
     authStatus = null;
     // Asked again at once, not after 30 seconds.
@@ -116,6 +128,17 @@ describe('owner-only access', () => {
     const after = authCalls;
     expect((await req('/api/me', { cookie: 'token=refused-session' })).status).toBe(401);
     expect(authCalls).toBe(after);
+  });
+
+  it('sends a page to sign in only on a real "not signed in", and never redirects a file', async () => {
+    const page = await req('/money', { cookie: 'token=made-up' });
+    expect(page.status).toBe(302);
+    expect(page.headers.get('location')).toMatch(/^https:\/\/auth\.benloe\.com\//);
+    for (const path of ['/assets/Money-abc123.js', '/sw.js', '/index.html']) {
+      const r = await req(path, { cookie: 'token=made-up' });
+      expect(r.status, path).toBe(401);
+      expect(r.headers.get('location'), path).toBeNull();
+    }
   });
 
   it('learns the owner\'s account id from his own sign-in, and never from anyone else\'s', async () => {
@@ -131,6 +154,7 @@ describe('owner-only access', () => {
     // 200 when the web app has been built, 404 when it has not; never a 401 or the sign-in redirect.
     for (const path of ['/manifest.webmanifest', '/icons/icon-192.png', '/favicon.ico']) expect([200, 404], path).toContain((await req(path)).status);
     for (const path of ['/icons/../api/me', '/sw.js', '/index.html', '/assets/app.js']) expect([302, 401], path).toContain((await req(path)).status);
+    expect((await req('/assets/app.js')).status).toBe(401);
     // Only for GET.
     expect([302, 401]).toContain((await req('/manifest.webmanifest', { method: 'POST' })).status);
   });
@@ -194,5 +218,41 @@ describe('cross-site request forgery', () => {
     expect(r.headers.get('x-frame-options')).toBe('DENY');
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
     expect(r.headers.get('x-powered-by')).toBeNull();
+  });
+});
+
+describe('the built web app', () => {
+  it('serves index.html for the app\'s pages and a 404 for any missing file, never the page in a file\'s place', async () => {
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const dir = join(config.dataDir, `web-${Date.now()}`);
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><div id="root"></div>');
+    writeFileSync(join(dir, 'assets', 'Pantry-new.js'), 'export default 1;');
+    const savedWeb = config.webDir;
+    config.webDir = dir;
+    config.testUser = 'ben';
+    const server = createServer(createHttp(kevin));
+    const url = await listen(server);
+    try {
+      for (const path of ['/', '/money', '/money/accounts', '/s/car-maintenance', '/chat/abc-123']) {
+        const r = await fetch(url + path);
+        expect(r.status, path).toBe(200);
+        expect(r.headers.get('content-type'), path).toMatch(/^text\/html/);
+      }
+      const js = await fetch(`${url}/assets/Pantry-new.js`);
+      expect(js.status).toBe(200);
+      expect(js.headers.get('content-type')).toMatch(/javascript/);
+      // A chunk of the previous build, asked for by a copy of the app left open over a deploy.
+      for (const path of ['/assets/Pantry-old.js', '/assets/index-old.css', '/assets/', '/assets/sub/x', '/favicon.ico', '/robots.txt', '/money/report.pdf']) {
+        const r = await fetch(url + path);
+        expect(r.status, path).toBe(404);
+        expect(r.headers.get('content-type'), path).not.toMatch(/html/);
+        expect(await r.text(), path).not.toContain('<div id="root">');
+      }
+    } finally {
+      server.close();
+      config.webDir = savedWeb;
+    }
   });
 });

@@ -51,7 +51,13 @@ export function appLink(link: unknown): string | null {
   return link;
 }
 
-export async function notify(db: DB, n: NotifyInput): Promise<{ id: number; pushed: number }> {
+/**
+ * How a notification went out. `pushed`: devices it reached; `devices`: subscribed devices it was sent
+ * to; `delivery` is what is stored on the row (see core-004 in db.ts).
+ */
+export interface NotifyResult { id: number; pushed: number; devices: number; delivery: 'pushed' | 'push-failed' | 'inbox' }
+
+export async function notify(db: DB, n: NotifyInput): Promise<NotifyResult> {
   const link = appLink(n.link);
   const at = nowIso();
   const source = n.source ?? 'kevin';
@@ -60,8 +66,10 @@ export async function notify(db: DB, n: NotifyInput): Promise<{ id: number; push
   bus.publish({ type: 'data_changed', domains: ['system'] });
   logEvent(db, `notification: ${n.title}${n.body ? ' — ' + n.body.slice(0, 200) : ''}`);
   let pushed = 0;
+  let devices = 0;
   if (setup()) {
     const subs = db.prepare('SELECT endpoint, keys FROM push_subscriptions').all() as { endpoint: string; keys: string }[];
+    devices = subs.length;
     const payload = JSON.stringify({ id, title: n.title, body: n.body ?? '', link: link ?? '/' });
     await Promise.all(
       subs.map(async (s) => {
@@ -76,8 +84,17 @@ export async function notify(db: DB, n: NotifyInput): Promise<{ id: number; push
       }),
     );
   }
-  return { id, pushed };
+  const delivery = pushed > 0 ? 'pushed' : devices > 0 ? 'push-failed' : 'inbox';
+  db.prepare('UPDATE notifications SET delivery = ? WHERE id = ?').run(delivery, id);
+  return { id, pushed, devices, delivery };
 }
+
+/**
+ * SQL condition for "Ben has been told this": with a parameter for the time an hour ago. A notification
+ * whose push failed on every device did not reach him, so it counts only for an hour: the alert is tried
+ * again hourly while push is broken, instead of daily, and instead of on every check.
+ */
+export const TOLD = "(COALESCE(delivery, '') != 'push-failed' OR at > ?)";
 
 export function subscribe(db: DB, sub: { endpoint: string; keys: { p256dh: string; auth: string } }, ua: string | null): void {
   if (!/^https:\/\//.test(sub.endpoint) || !sub.keys?.p256dh || !sub.keys?.auth) throw new Error('not a push subscription');

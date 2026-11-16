@@ -1,5 +1,6 @@
 // Everything environment-shaped, in one place. Nothing here is a secret
 // except what arrives through process.env from the kevin secret set.
+import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,7 +24,7 @@ export const config = {
    * which gives its time limit and session cleanup but none of the unit's confinement.
    */
   shellLauncher: (env.KEVIN_SHELL_LAUNCHER ?? 'unix:/run/kevin-sandbox/shell.sock').split(' '),
-  /** The same, for text extraction from uploads: a sandbox with no writable folder at all. */
+  /** The same, for text extraction from uploads: a sandbox with nowhere to write (not even /tmp; see setup.sh). */
   extractLauncher: (env.KEVIN_EXTRACT_LAUNCHER ?? 'unix:/run/kevin-sandbox/extract.sock').split(' '),
   /** Seconds a shell command may run before it and everything it started are killed. */
   shellSeconds: 115,
@@ -54,14 +55,32 @@ export const config = {
 
 export type Config = typeof config;
 
+/** The workspace files that make up the fixed part of the prompt (prompt.ts). */
+export const WORKSPACE_FILES = ['persona.md', 'rules.md'] as const;
+
 /**
  * Reasons this configuration must not be run, as messages for the log; empty when it may.
  * In production the owner's address has to be set (KEVIN_OWNER_EMAIL, which ecosystem.config.cjs takes
  * from the kevin secret set, or else from BENLOE_OWNER_EMAIL in /etc/benloe/benloe-secrets.conf): it is
  * who the auth check lets in, and without it nobody can sign in while the server looks healthy.
+ * In production the model API key has to be there too. In every mode, persona.md and rules.md must
+ * be readable and not empty.
  */
-export function startupProblems(c: Pick<Config, 'production' | 'ownerEmail'> = config): string[] {
+export function startupProblems(c: Pick<Config, 'production' | 'ownerEmail' | 'workspaceDir'> & { anthropicKey?: string } = { ...config, anthropicKey: env.ANTHROPIC_API_KEY }): string[] {
   const problems: string[] = [];
+  // Without it every turn fails while the server looks healthy.
+  if (c.production && !c.anthropicKey?.trim()) problems.push('ANTHROPIC_API_KEY is not set. Add it to the kevin set at secrets.benloe.com and restart.');
+  // The fixed prompt. Without rules.md Kevin would run with no rule about whose instructions to follow.
+  for (const name of WORKSPACE_FILES) {
+    let text = '';
+    try {
+      text = readFileSync(join(c.workspaceDir, name), 'utf8').trim();
+    } catch {
+      problems.push(`${join(c.workspaceDir, name)} cannot be read (KEVIN_WORKSPACE_DIR, or a release built without workspace/).`);
+      continue;
+    }
+    if (!text) problems.push(`${join(c.workspaceDir, name)} is empty.`);
+  }
   if (c.production && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c.ownerEmail)) {
     problems.push('KEVIN_OWNER_EMAIL is not set to an email address. It is not kept in the repository: the PM2 config takes it from KEVIN_OWNER_EMAIL in the kevin set at secrets.benloe.com, or else from BENLOE_OWNER_EMAIL in /etc/benloe/benloe-secrets.conf. Set one of them and restart.');
   }

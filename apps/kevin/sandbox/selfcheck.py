@@ -6,8 +6,11 @@
 Connects to the sandbox socket the way the server does, runs a few commands in
 it, and exits non-zero (printing what failed) unless every property holds:
 the uid, no network by any route, the hidden parts of the filesystem, a
-workspace that is the only writable place, and a time limit that ends a
-command which ignores signals and has moved itself to another session.
+workspace that is the only writable place on disk (with /tmp a capped memory
+filesystem), and a time limit that ends a command which ignores signals and
+has moved itself to another session. Given the extraction socket
+(extract.sock), it checks that unit instead: the same confinement and nowhere
+at all to write.
 """
 import json
 import socket
@@ -71,14 +74,52 @@ done
 [ "$(ls -A /var/lib 2>/dev/null)" = "__WSTOP__" ] && ok "/var/lib holds only the workspace's folder" || bad "/var/lib holds only the workspace's folder (has: $(ls -A /var/lib | tr '\n' ' '))"
 [ "$(ls /proc | grep -c '^[0-9]')" -le 12 ] && ok "other processes are not visible" || bad "other processes are not visible ($(ls /proc | grep -c '^[0-9]') pids)"
 
-# The workspace is the only place it can write (besides its private /tmp).
+# The workspace is the only place on disk it can write. /tmp is a memory filesystem of its own, capped.
 expect_ok "can write in the workspace" bash -c 'echo x > .selfcheck && rm .selfcheck'
+[ "$(stat -f -c %T /tmp)" = tmpfs ] && ok "/tmp is a memory filesystem, not the disk" || bad "/tmp is a memory filesystem, not the disk (is $(stat -f -c %T /tmp))"
+[ "$(df -k --output=size /tmp | tail -1 | tr -d ' ')" -le 262144 ] && ok "/tmp is at most 256 MB" || bad "/tmp is at most 256 MB (is $(df -k --output=size /tmp | tail -1) KB)"
+
 for d in /etc /usr/local/lib /var /var/lib /run /srv /opt; do
   expect_fail "cannot write in $d" bash -c "echo x > $d/.selfcheck"
 done
 expect_fail "cannot become another user" sudo -n true
 expect_ok "the tools Kevin is told about are there" bash -c 'python3 -c 1 && jq -n 1 && awk "BEGIN{}" && command -v pdftotext && command -v sed'
 '''
+
+# The extraction unit: same confinement, and nowhere at all to write.
+EXTRACT_CHECKS = r'''
+ok() { echo "PASS $1"; }
+bad() { echo "FAIL $1"; }
+expect_fail() { name=$1; shift; if "$@" >/dev/null 2>&1; then bad "$name"; else ok "$name"; fi; }
+[ "$(id -un)" = "__UID__" ] && ok "runs as __UID__" || bad "runs as __UID__ (is $(id -un))"
+expect_fail "no TCP to a public address" bash -c 'exec 3<>/dev/tcp/1.1.1.1/53'
+expect_fail "no TCP to this machine's own services" bash -c 'exec 3<>/dev/tcp/127.0.0.1/22'
+expect_fail "no DNS through the C library" getent hosts example.com
+[ -z "$(find /run -type s 2>/dev/null | head -1)" ] && ok "no service sockets under /run" || bad "no service sockets under /run"
+for d in / /tmp /dev/shm /var/tmp /etc /usr/local/lib /var /run /srv /opt /var/lib/kevin-sh/workspace; do
+  expect_fail "cannot write in $d" bash -c "echo x > $d/.selfcheck"
+done
+[ -z "$(ls -A /var/lib/kevin-sh 2>/dev/null)" ] && ok "the shell's workspace is not there" || bad "the shell's workspace is not there"
+for d in /var/lib/kevin /srv/benloe /root /home /etc/benloe; do
+  [ -z "$(ls -A "$d" 2>/dev/null)" ] && ok "$d is empty or absent" || bad "$d is empty or absent"
+done
+command -v pdftotext >/dev/null && ok "pdftotext is there" || bad "pdftotext is there"
+'''
+
+
+def check_extract(path, uid):
+    out, err, end = run(path, EXTRACT_CHECKS.replace("__UID__", uid))
+    lines = [l for l in out.splitlines() if l.startswith(("PASS ", "FAIL "))]
+    failures = [l[5:] for l in lines if l.startswith("FAIL ")]
+    passed = sum(l.startswith("PASS ") for l in lines)
+    if end is None or end.get("code") != 0 or passed + len(failures) < 22:
+        failures.append(f"the check script did not run to its end (end: {end}, stderr: {err.strip()[:300]})")
+    if failures:
+        print("\n".join(f"  - {f}" for f in failures))
+        return 1
+    print(f"extraction sandbox self-check passed ({passed} checks: uid, no network, nowhere to write, hidden files)")
+    return 0
+
 
 # Ignores the signals it can, and starts a helper in a session of its own that does the same.
 STUBBORN = r'''
@@ -100,6 +141,8 @@ done
 def main():
     path = sys.argv[1]
     uid = sys.argv[2] if len(sys.argv) > 2 else "kevin-sh"
+    if path.endswith("extract.sock"):
+        return check_extract(path, uid)
     ws = sys.argv[3] if len(sys.argv) > 3 else "/var/lib/kevin-sh/workspace"
     failures = []
 

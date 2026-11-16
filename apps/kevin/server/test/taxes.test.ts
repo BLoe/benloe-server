@@ -2,7 +2,7 @@ import express, { Router } from 'express';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
+import { config } from '../src/config.js';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { extract, saveUpload } from '../src/attachments.js';
@@ -315,7 +315,7 @@ describe('tax_packet_build', () => {
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     const body = Buffer.from(await res.arrayBuffer());
     expect(body.length).toBe(p.size_bytes);
-    const copy = join(tmpdir(), `kevin-packet-${process.pid}.zip`);
+    const copy = join(config.dataDir, `kevin-packet-${process.pid}.zip`); // removed with the test's data folder
     writeFileSync(copy, body);
     expect(Object.keys(unzip(copy))).toContain('tax-2026/summary.md');
 

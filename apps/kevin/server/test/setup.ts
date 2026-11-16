@@ -1,11 +1,15 @@
 // Runs before any test file imports src/config.ts: every test process gets its
 // own throwaway data and sandbox folders, the sandbox runner started directly, and no auth.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { afterAll } from 'vitest';
 
 const root = mkdtempSync(join(tmpdir(), 'kevin-test-'));
+// Removed when this file's tests are done: /tmp is a memory filesystem on the box, and a few
+// hundred left-over runs (tens of MB each) once filled it.
+afterAll(() => rmSync(root, { recursive: true, force: true }));
 process.env.KEVIN_DATA_DIR = join(root, 'data');
 process.env.KEVIN_SHELL_DIR = join(root, 'sandbox');
 // The real sandbox runner, started directly: same framing, time limit and session cleanup as in

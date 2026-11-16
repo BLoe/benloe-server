@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, statSync, utimesSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { config } from '../src/config.js';
 import { OWNER_ACCOUNT_KEY, setSetting } from '../src/db.js';
-import ironpr, { syncIronPr } from '../src/domains/ironpr.js';
+import ironpr, { ironprLimits, syncIronPr } from '../src/domains/ironpr.js';
 import { call, makeKevin, ok, view } from './helpers.js';
 
 /** Ben's account, as Kevin learns it from his sign-in. */
@@ -57,8 +57,8 @@ describe('IRON PR mirror', () => {
     const path = fixture('ironpr-a.db');
     const before = { sha: sha(path), mtime: statSync(path).mtimeMs };
     const kevin = await owned();
-    expect(syncIronPr(kevin.db, path)).toEqual({ ok: true, changed: true, exercises: 2, entries: 4, prs: 2 });
-    expect(syncIronPr(kevin.db, path)).toEqual({ ok: true, changed: false }); // nothing new: no work
+    expect(await syncIronPr(kevin.db, path)).toEqual({ ok: true, changed: true, exercises: 2, entries: 4, prs: 2, skipped: 1 }); // skipped: Ben's id on someone else's exercise
+    expect(await syncIronPr(kevin.db, path)).toEqual({ ok: true, changed: false }); // nothing new: no work
     expect(sha(path)).toBe(before.sha);
     expect(statSync(path).mtimeMs).toBe(before.mtime);
     // No journal or lock files appeared beside it.
@@ -83,14 +83,14 @@ describe('IRON PR mirror', () => {
   it('picks up new lifts, and keeps the last good copy when the app\'s file is unreadable', async () => {
     const path = fixture('ironpr-b.db');
     const kevin = await owned();
-    syncIronPr(kevin.db, path);
+    await syncIronPr(kevin.db, path);
     const live = new Database(path);
     live.prepare('INSERT INTO workouts VALUES (?,?,?,?,?,?,?)').run('w5', 'u1', 'bp', 160, 1, 160, Date.now());
     live.close();
     const later = new Date(Date.now() + 5000);
     utimesSync(path, later, later);
-    expect(syncIronPr(kevin.db, path)).toMatchObject({ ok: true, changed: true, entries: 5 });
-    expect(syncIronPr(kevin.db, join(config.dataDir, 'missing.db'))).toMatchObject({ ok: false });
+    expect(await syncIronPr(kevin.db, path)).toMatchObject({ ok: true, changed: true, entries: 5 });
+    expect(await syncIronPr(kevin.db, join(config.dataDir, 'missing.db'))).toMatchObject({ ok: false });
     expect((await ok(kevin, 'query', { sql: 'SELECT COUNT(*) AS n FROM ironpr_entries' })).rows).toEqual([{ n: 5 }]);
   });
 
@@ -119,14 +119,14 @@ describe('IRON PR mirror', () => {
     setSetting(kevin.db, 'ironpr_stamp', `${st.mtimeMs}:${st.size}`);
 
     // Owner not known: fail closed, and the mirror is emptied.
-    expect(syncIronPr(kevin.db, path)).toMatchObject({ ok: false, changed: false, error: expect.stringMatching(/which IRON PR account is Ben's/) });
+    expect(await syncIronPr(kevin.db, path)).toMatchObject({ ok: false, changed: false, error: expect.stringMatching(/which IRON PR account is Ben's/) });
     for (const t of ['ironpr_exercises', 'ironpr_entries', 'ironpr_prs']) expect(await all(t), t).toEqual([]);
     Object.assign(config, { ironPrDb: path });
     expect(await view(kevin, 'ironpr/overview')).toMatchObject({ available: false, error: expect.stringMatching(/which IRON PR account/), totals: { exercises: 0 } });
 
     // Known: exactly Ben's rows.
     setSetting(kevin.db, OWNER_ACCOUNT_KEY, 'u1');
-    expect(syncIronPr(kevin.db, path)).toEqual({ ok: true, changed: true, exercises: 2, entries: 4, prs: 2 });
+    expect(await syncIronPr(kevin.db, path)).toEqual({ ok: true, changed: true, exercises: 2, entries: 4, prs: 2, skipped: 1 }); // skipped: Ben's id on someone else's exercise
     expect(await all('ironpr_exercises')).toEqual(['bp', 'sq']);
     expect(await all('ironpr_entries')).toEqual(['w1', 'w2', 'w3', 'w4']);
     expect(await all('ironpr_prs')).toEqual(['p1', 'p2']);
@@ -134,7 +134,101 @@ describe('IRON PR mirror', () => {
 
     // A different account becomes the owner's (say, the account was recreated): the mirror is re-read for it.
     setSetting(kevin.db, OWNER_ACCOUNT_KEY, 'u2');
-    expect(syncIronPr(kevin.db, path)).toMatchObject({ ok: true, changed: true, exercises: 2 });
+    expect(await syncIronPr(kevin.db, path)).toMatchObject({ ok: true, changed: true, exercises: 2 });
     expect(await all('ironpr_entries')).toEqual(['v1', 'v2']);
+  });
+
+  describe('a hostile or broken source file', () => {
+    const fresh = async () => {
+      const kevin = await owned();
+      return kevin;
+    };
+    /** A database like IRON PR's, shaped by `sql` instead of the real schema. */
+    const craft = (name: string, sql: string): string => {
+      mkdirSync(config.dataDir, { recursive: true });
+      const path = join(config.dataDir, name);
+      rmSync(path, { force: true });
+      const db = new Database(path);
+      db.exec(sql);
+      db.close();
+      return path;
+    };
+    const tables = `CREATE TABLE workouts (id TEXT, userId TEXT, exerciseId TEXT, weight REAL, reps INTEGER, oneRM REAL, createdAt INTEGER);
+                    CREATE TABLE pr_history (id TEXT, userId TEXT, exerciseId TEXT, weight REAL, previousWeight REAL, createdAt INTEGER);`;
+
+    it('refuses a view where a table should be, so a query that never ends is never run', async () => {
+      const path = craft('ironpr-view.db', `${tables}
+        CREATE VIEW exercises AS WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT 'e' || x AS id, 'n' AS name, 'u1' AS userId, 0 AS createdAt FROM c;`);
+      const kevin = await fresh();
+      let ticks = 0;
+      const timer = setInterval(() => ticks++, 10);
+      const started = Date.now();
+      const r = await syncIronPr(kevin.db, path);
+      clearInterval(timer);
+      expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/exercises is not a table/) });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(ticks).toBeGreaterThan(0); // the server's own thread kept running
+    });
+
+    it('kills a reader that runs past its deadline, and keeps the server responsive meanwhile', async () => {
+      const path = fixture('ironpr-slow.db');
+      const kevin = await fresh();
+      const saved = ironprLimits.seconds;
+      ironprLimits.seconds = 0.001; // shorter than the reader can possibly start
+      try {
+        expect(await syncIronPr(kevin.db, path)).toMatchObject({ ok: false, error: expect.stringMatching(/took longer than .* seconds and was stopped/) });
+      } finally {
+        ironprLimits.seconds = saved;
+      }
+      // The last good mirror (here: none) is left as it was, and the next sync works.
+      expect(await syncIronPr(kevin.db, path)).toMatchObject({ ok: true, changed: true, entries: 4 });
+    });
+
+    it('refuses a symlink and a file over the size limit without reading them', async () => {
+      const real = fixture('ironpr-real.db');
+      const link = join(config.dataDir, 'ironpr-link.db');
+      rmSync(link, { force: true });
+      symlinkSync(real, link);
+      const kevin = await fresh();
+      expect(await syncIronPr(kevin.db, link)).toMatchObject({ ok: false, error: expect.stringMatching(/not a regular file/) });
+      const big = join(config.dataDir, 'ironpr-big.db');
+      rmSync(big, { force: true });
+      truncateSync(fixture('ironpr-big.db'), ironprLimits.fileBytes + 1); // sparse: takes no disk
+      expect(await syncIronPr(kevin.db, big)).toMatchObject({ ok: false, error: expect.stringMatching(/more than the .* read/) });
+      expect((await ok(kevin, 'query', { sql: 'SELECT COUNT(*) AS n FROM ironpr_entries' })).rows).toEqual([{ n: 0 }]);
+    });
+
+    it('leaves out rows of the wrong shape, and refuses a table with more rows than the limit', async () => {
+      const t = Date.parse('2026-01-05T12:00:00Z');
+      const path = craft('ironpr-shapes.db', `${tables}
+        CREATE TABLE exercises (id TEXT, name TEXT, userId TEXT, createdAt INTEGER);
+        INSERT INTO exercises VALUES ('sq', 'Squat', 'u1', ${t}), (NULL, 'No id', 'u1', ${t}), ('${'x'.repeat(65)}', 'Long id', 'u1', ${t}), ('bad-date', 'Bad date', 'u1', -5);
+        INSERT INTO workouts VALUES ('w1', 'u1', 'sq', 200, 3, 220, ${t}), ('w2', 'u1', 'sq', 'heavy', 3, 220, ${t}), ('w3', 'u1', 'sq', 1e300, 1, 1, ${t}), ('w4', 'u1', 'nope', 100, 1, 100, ${t}), ('w5', 'u1', 'sq', 150, 2.6, 160, 'not a date');
+        INSERT INTO pr_history VALUES ('p1', 'u1', 'sq', 200, NULL, ${t}), ('p2', 'u1', 'sq', 210, 'x', ${t});`);
+      const kevin = await fresh();
+      expect(await syncIronPr(kevin.db, path)).toEqual({ ok: true, changed: true, exercises: 1, entries: 1, prs: 1, skipped: 8 });
+      expect((await ok(kevin, 'query', { sql: 'SELECT id, weight_lbs, reps FROM ironpr_entries' })).rows).toEqual([{ id: 'w1', weight_lbs: 200, reps: 3 }]);
+
+      const saved = ironprLimits.rows;
+      ironprLimits.rows = 3;
+      try {
+        const many = craft('ironpr-many.db', `${tables}
+          CREATE TABLE exercises (id TEXT, name TEXT, userId TEXT, createdAt INTEGER);
+          INSERT INTO exercises VALUES ('a', 'A', 'u1', ${t}), ('b', 'B', 'u1', ${t}), ('c', 'C', 'u1', ${t}), ('d', 'D', 'u1', ${t});`);
+        expect(await syncIronPr(kevin.db, many)).toMatchObject({ ok: false, error: expect.stringMatching(/more than 3 rows/) });
+        // The good mirror from before is kept.
+        expect((await ok(kevin, 'query', { sql: 'SELECT COUNT(*) AS n FROM ironpr_entries' })).rows).toEqual([{ n: 1 }]);
+      } finally {
+        ironprLimits.rows = saved;
+      }
+    });
+
+    it('never changes the source file', async () => {
+      const path = fixture('ironpr-ro.db');
+      const before = sha(path);
+      const kevin = await fresh();
+      await syncIronPr(kevin.db, path, true);
+      expect(sha(path)).toBe(before);
+    });
   });
 });

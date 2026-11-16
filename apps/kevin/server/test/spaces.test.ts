@@ -83,6 +83,19 @@ describe('spaces', () => {
     expect((await view(kevin, 'spaces/get', { space: 'gifts' })).space).toBeNull();
   });
 
+  it('makes a new space with a free address when its name belongs to archived ones, however many times', async () => {
+    const kevin = await makeKevin([spaces]);
+    const slugs: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const s = await ok(kevin, 'space_save', { name: 'Kite repairs', confirm_new: true });
+      slugs.push(s.space?.slug ?? s.slug);
+      await ok(kevin, 'space_save', { space: slugs.at(-1), archived: true });
+    }
+    expect(new Set(slugs).size).toBe(4);
+    expect(slugs[0]).toBe('kite-repairs');
+    expect(slugs.slice(1).every((x) => x.startsWith('kite-repairs-'))).toBe(true);
+  });
+
   it('lets Ben, not the agent, hide built-in pages', async () => {
     const kevin = await makeKevin([spaces]);
     expect((await call(kevin, 'nav_update', { hidden_pages: ['/taxes'] })).ok).toBe(false);

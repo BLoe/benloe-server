@@ -61,7 +61,7 @@ const capped = (text: string): string =>
 /**
  * The text layer of a PDF, read by pdftotext. The PDF is an upload and pdftotext is a large parser, so it
  * does not run in this process's uid, which owns Ben's records: the bytes are piped to it inside the
- * extraction sandbox (no network, no writable folder, another uid; see setup.sh) and only its text comes back.
+ * extraction sandbox (no network, nowhere to write, another uid; see setup.sh) and only its text comes back.
  *
  * Throws when the sandbox itself could not be reached or did not report: that is a fault of this
  * server, not a property of the file, and the caller must not paper over it by sending the file to

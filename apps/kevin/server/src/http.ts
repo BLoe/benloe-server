@@ -12,16 +12,19 @@ import { config } from './config.js';
 import { type DB, getSetting, OWNER_ACCOUNT_KEY, setSetting } from './db.js';
 import type { Kevin } from './kevin.js';
 import { notify, subscribe } from './push.js';
+import { ToolError } from './tools.js';
 import { createThread, getThread, listThreads, resolveConfirm, send, stop } from './threads.js';
 
-type Who = 'owner' | 'other' | null;
+/** `unavailable`: the auth service could not say (down, an error, an answer that makes no sense). */
+type Who = 'owner' | 'other' | null | 'unavailable';
 const authCache = new Map<string, { who: Who; at: number }>();
 
 /**
- * Who sent this request, by asking artanis about its session cookie. Only an answer is cached (signed
- * in as someone, or the session refused with 401/403), for 30 seconds. An unreachable or failing auth
- * service is logged and not cached: it says nothing about the session, and remembering it as "not
- * signed in" would send Ben round the sign-in page until it expired.
+ * Who sent this request, by asking artanis about its session cookie: the owner, someone else, nobody
+ * signed in (no cookie, or the session refused with 401/403), or `unavailable`. Only real answers are
+ * cached, for 30 seconds. An unreachable or failing auth service is not an answer about the session:
+ * it is logged, not cached, and must not be taken for "not signed in", which would send Ben round the
+ * sign-in page for as long as the outage lasts.
  */
 export async function whoIs(req: Request, db: DB): Promise<Who> {
   if (config.testUser) return 'owner';
@@ -35,23 +38,33 @@ export async function whoIs(req: Request, db: DB): Promise<Who> {
     if (res.status === 401 || res.status === 403) who = null;
     else if (!res.ok) {
       console.error(`auth service answered ${res.status} to a session check; not treated as an answer`);
-      return null;
+      return 'unavailable';
     } else {
-      const user = ((await res.json()) as { user?: { id?: unknown; email?: unknown } }).user;
-      const email = typeof user?.email === 'string' ? user.email.toLowerCase() : '';
-      who = !email ? null : email === config.ownerEmail ? 'owner' : 'other';
+      const user = ((await res.json()) as { user?: { id?: unknown; email?: unknown } } | null)?.user;
+      const email = typeof user?.email === 'string' ? user.email.trim().toLowerCase() : '';
+      if (!email) {
+        console.error('auth service answered a session check without an email address; not treated as an answer');
+        return 'unavailable';
+      }
+      who = email === config.ownerEmail ? 'owner' : 'other';
       if (who === 'owner' && typeof user?.id === 'string' && user.id && getSetting<string | null>(db, OWNER_ACCOUNT_KEY, null) !== user.id) {
         setSetting(db, OWNER_ACCOUNT_KEY, user.id);
       }
     }
   } catch (e) {
     console.error(`auth service could not be asked about a session: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
+    return 'unavailable';
   }
   if (authCache.size > 500) authCache.clear();
   authCache.set(token, { who, at: Date.now() });
   return who;
 }
+
+/** What Ben is shown when the server itself failed; the cause is in the log. */
+const INTERNAL = 'Something went wrong inside Kevin. The details are in the server log.';
+
+/** A path that names a file (an asset, an icon), as opposed to a page of the app. */
+const FILE_LIKE = /^\/assets\/|\.[A-Za-z0-9]{1,8}$/;
 
 // Fetched by the browser without credentials when installing the PWA.
 const PUBLIC = /^\/(manifest\.webmanifest|icons\/[\w.-]+|favicon\.ico)$/;
@@ -73,8 +86,16 @@ export function createHttp(kevin: Kevin): express.Express {
     if (req.method === 'GET' && PUBLIC.test(req.path)) return next();
     const who = await whoIs(req, kevin.db);
     if (who === 'owner') return next();
+    if (who === 'unavailable') {
+      // Kevin cannot tell who this is. Not a redirect to sign in: that would loop for as long as the outage lasts.
+      res.setHeader('Retry-After', '30');
+      if (req.path.startsWith('/api/')) return void res.status(503).json({ error: 'sign-in service unavailable' });
+      return void res.status(503).type('text/plain').send('Kevin cannot check your sign-in right now: the sign-in service is not answering. Try again in a minute.');
+    }
     if (req.path.startsWith('/api/')) return void res.status(who ? 403 : 401).json({ error: who ? 'not the owner' : 'sign in' });
     if (who) return void res.status(403).type('text/plain').send('Kevin is Ben’s private assistant.');
+    // A file is not a page to come back to: a script or icon asked for without a session gets a plain 401.
+    if (FILE_LIKE.test(req.path)) return void res.status(401).type('text/plain').send('sign in');
     // Back to the page that was asked for, on this site. A request line can carry a full URL instead of a path; that is not passed on.
     const back = /^\/(?![/\\])/.test(req.originalUrl) ? req.originalUrl : '/';
     res.redirect(302, `https://auth.benloe.com/?redirect=${encodeURIComponent(config.publicUrl + back)}`);
@@ -90,13 +111,20 @@ export function createHttp(kevin: Kevin): express.Express {
   });
 
   const api = Router();
+  // Private data, and answers that change with every write: never kept by the browser or anything between.
+  api.use((_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
   const json = express.json({ limit: '2mb' });
   const wrap = (fn: (req: Request, res: Response) => unknown) => (req: Request, res: Response) => {
     Promise.resolve()
       .then(() => fn(req, res))
       .catch((e: unknown) => {
+        if (e instanceof ToolError) return void (!res.headersSent && res.status(400).json({ error: e.message }));
+        // Anything else is a fault in Kevin (a database error, a bug). Its text is for the log, not for Ben's screen.
         console.error(`${req.method} ${req.path} failed`, e);
-        if (!res.headersSent) res.status(500).json({ error: e instanceof Error ? e.message : 'internal error' });
+        if (!res.headersSent) res.status(500).json({ error: INTERNAL });
       });
   };
 
@@ -193,7 +221,9 @@ export function createHttp(kevin: Kevin): express.Express {
       subscribe(kevin.db, req.body as { endpoint: string; keys: { p256dh: string; auth: string } }, req.headers['user-agent'] ?? null);
       res.json({ ok: true });
     } catch (e) {
-      res.status(400).json({ error: (e as Error).message });
+      if ((e as Error).message === 'not a push subscription') return void res.status(400).json({ error: 'not a push subscription' });
+      console.error('push subscribe failed', e);
+      res.status(500).json({ error: INTERNAL });
     }
   });
   api.post('/push/test', wrap(async (_req, res) => void res.json(await notify(kevin.db, { title: 'Kevin', body: 'Notifications are working on this device.', link: '/', source: 'test' }))));
@@ -216,7 +246,11 @@ export function createHttp(kevin: Kevin): express.Express {
         res.setHeader('Cache-Control', /\/assets\//.test(path) ? 'public, max-age=31536000, immutable' : 'no-cache');
       },
     }));
-    app.get(/.*/, (_req, res) => {
+    // The app's pages are routes inside index.html. A path that names a file is not one: a missing asset
+    // (a chunk of a build that has been replaced) is a 404, never the page, which a browser or the
+    // service worker would otherwise take for the script it asked for.
+    app.get(/.*/, (req, res) => {
+      if (FILE_LIKE.test(req.path)) return void res.status(404).setHeader('Cache-Control', 'no-store').type('text/plain').send('Not found');
       res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(join(config.webDir, 'index.html'));
     });

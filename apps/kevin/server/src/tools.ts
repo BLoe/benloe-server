@@ -119,8 +119,13 @@ export class ToolRegistry {
             text = `${text.slice(0, MAX_RESULT_CHARS)}\n[truncated: result was ${text.length} characters. Narrow the request.]`;
           }
         } catch (e) {
-          text = e instanceof ToolError ? e.message : `${tool.name} failed: ${e instanceof Error ? e.message : String(e)}`;
-          if (!(e instanceof ToolError)) console.error(`tool ${tool.name} threw`, e);
+          // A ToolError is written for whoever called. Anything else is a fault inside Kevin: the model gets
+          // its text (it may be able to work round it); the page gets a plain sentence, the log the rest.
+          if (e instanceof ToolError) text = e.message;
+          else {
+            console.error(`tool ${tool.name} threw`, e);
+            text = ctx.source === 'ui' ? `Kevin could not do that because of a problem on the server, not in what you entered. The details are in the server log.` : `${tool.name} failed: ${e instanceof Error ? e.message : String(e)}`;
+          }
         }
       }
     }

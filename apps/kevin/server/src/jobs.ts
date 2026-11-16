@@ -13,7 +13,7 @@ import { nowIso, parseJson } from './db.js';
 import type { Kevin } from './kevin.js';
 import { RefusalError, small, spend, monthStartIso } from './llm.js';
 import { embedPending, logEvent } from './memory.js';
-import { notify } from './push.js';
+import { notify, type NotifyResult, TOLD } from './push.js';
 import { readOnlyQuery } from './sql.js';
 import { createThread, send } from './threads.js';
 import { localDay, nextCron, nextRun, type TriggerType } from './time.js';
@@ -229,7 +229,7 @@ const ironpr: SystemJob = {
   run: async (kevin) => {
     if (!kevin.domains.some((d) => d.name === 'ironpr')) return { outcome: 'nothing-to-do' };
     const { syncIronPr } = await import('./domains/ironpr.js');
-    const r = syncIronPr(kevin.db);
+    const r = await syncIronPr(kevin.db);
     if (!r.ok) return { outcome: 'errored', detail: r.error };
     return r.changed ? { outcome: 'did-work', detail: `${r.entries} lifts, ${r.exercises} exercises, ${r.prs} records copied` } : { outcome: 'nothing-to-do' };
   },
@@ -309,20 +309,29 @@ export async function recoverFromRestart(kevin: Kevin): Promise<{ turns: number;
   return { turns, jobRuns: cut, attachments };
 }
 
+/**
+ * A reminder's outcome is whether it reached Ben. Pushed to a device: done. Devices subscribed and every
+ * push failed: an error (the reminder is in the inbox, but the phone never buzzed). No device or push not
+ * set up: done, and the detail says it is in the inbox only.
+ */
+function delivered(r: NotifyResult, what: string): RunResult {
+  if (r.delivery === 'pushed') return { outcome: 'did-work', detail: `sent ${what} to ${r.pushed} of ${r.devices} device(s)` };
+  if (r.delivery === 'push-failed') return { outcome: 'errored', detail: `${what} is in the inbox, but pushing it to the phone failed on every device (${r.devices})` };
+  return { outcome: 'did-work', detail: `${what} is in the inbox only: no device is subscribed to push` };
+}
+
 async function runSchedule(kevin: Kevin, s: ScheduleRow): Promise<RunResult> {
   const key = `schedule:${s.id}`;
   if (s.action === 'notify') {
     const p = JSON.parse(s.payload) as NotifyPayload;
-    await notify(kevin.db, { title: p.title, body: p.body, link: p.link, source: key });
-    return { outcome: 'did-work', detail: `sent "${p.title}"` };
+    return delivered(await notify(kevin.db, { title: p.title, body: p.body, link: p.link, source: key }), `"${p.title}"`);
   }
   if (s.action === 'check') {
     const p = JSON.parse(s.payload) as CheckPayload;
     const { rows } = await readOnlyQuery(kevin, p.sql, 20);
     if (!rows.length) return { outcome: 'nothing-to-do', detail: 'query returned no rows' };
     const body = rows.slice(0, 8).map((r) => Object.values(r).filter((v) => v != null).join(' · ')).join('\n') + (rows.length > 8 ? `\n…and ${rows.length - 8} more` : '');
-    await notify(kevin.db, { title: p.title, body, link: p.link, source: key });
-    return { outcome: 'did-work', detail: `${rows.length} row(s); sent "${p.title}"` };
+    return delivered(await notify(kevin.db, { title: p.title, body, link: p.link, source: key }), `${rows.length} row(s); "${p.title}"`);
   }
   const p = JSON.parse(s.payload) as AgentPayload;
   const remaining = s.spend_cap_usd - scheduleSpentThisMonth(kevin, s.id);
@@ -374,7 +383,8 @@ export class JobRunner {
   async checkBackup(now = new Date()): Promise<string | null> {
     const { problem } = backupHealth(this.kevin.db, now);
     if (!problem) return null;
-    const told = this.kevin.db.prepare("SELECT 1 FROM notifications WHERE source = 'watchdog:backup' AND at > ?").get(new Date(now.getTime() - 24 * 3600_000).toISOString());
+    // An alert whose push failed did not reach Ben: it does not count as telling him.
+    const told = this.kevin.db.prepare(`SELECT 1 FROM notifications WHERE source = 'watchdog:backup' AND at > ? AND ${TOLD}`).get(new Date(now.getTime() - 24 * 3600_000).toISOString(), new Date(now.getTime() - 3600_000).toISOString());
     if (!told) await notify(this.kevin.db, { title: 'Kevin’s backup is not running', body: problem, link: '/jobs', source: 'watchdog:backup' });
     return problem;
   }
@@ -491,7 +501,7 @@ export class JobRunner {
       const body = result.detail?.slice(0, 300) ?? '';
       // A job that fails every ten minutes for one reason is one piece of news. The ledger has every run;
       // Ben is told again only when the reason changes or a day has passed.
-      const told = db.prepare('SELECT 1 FROM notifications WHERE source = ? AND title = ? AND body = ? AND at > ?').get(key, title, body, new Date(Date.now() - 24 * 3600_000).toISOString());
+      const told = db.prepare(`SELECT 1 FROM notifications WHERE source = ? AND title = ? AND body = ? AND at > ? AND ${TOLD}`).get(key, title, body, new Date(Date.now() - 24 * 3600_000).toISOString(), new Date(Date.now() - 3600_000).toISOString());
       if (!told) await notify(db, { title, body, link: '/jobs', source: key }).catch((e) => console.error(`could not send the failure notification for ${key}`, e));
     }
     return result;

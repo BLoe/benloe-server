@@ -43,8 +43,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     signedOut();
     throw new ApiError('Signed out. Reloading…', 401);
   }
-  const data = (await res.json().catch(() => null)) as { error?: string } | null;
-  if (!res.ok) throw new ApiError(data?.error ?? `Request failed (${res.status})`, res.status);
+  const UNREADABLE = Symbol('unreadable');
+  const data = (await res.json().catch(() => UNREADABLE)) as { error?: string } | null | typeof UNREADABLE;
+  if (!res.ok) throw new ApiError((data !== UNREADABLE && data?.error) || `Request failed (${res.status})`, res.status);
+  // A success that is not JSON (a page from something in between) is not an answer: never treat it as empty data.
+  if (data === UNREADABLE) throw new ApiError('Kevin answered with something unexpected. Try reloading.', res.status);
   return data as T;
 }
 

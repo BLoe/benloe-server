@@ -77,17 +77,23 @@ describe('a schedule whose stored trigger no longer parses', () => {
 });
 
 describe('the prompt', () => {
-  it('logs a workspace file it cannot read instead of quietly leaving it out', async () => {
+  it('refuses to build the prompt from a workspace file it cannot read, instead of quietly leaving it out', async () => {
     const kevin = await makeKevin();
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const real = config.workspaceDir;
     config.workspaceDir = '/nonexistent/workspace';
     try {
-      expect(buildStableSystem(kevin.db, [])).not.toContain('You are Kevin');
-      expect(errors.mock.calls.map((c: unknown[]) => String(c[0]))).toEqual(['workspace file persona.md could not be read', 'workspace file rules.md could not be read']);
+      expect(() => buildStableSystem(kevin.db, [])).toThrow(/persona\.md/);
+      // An empty file is refused too, not taken as a prompt with nothing in it.
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const dir = join(config.dataDir, `empty-workspace-${Date.now()}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'persona.md'), 'You are Kevin.');
+      writeFileSync(join(dir, 'rules.md'), '\n  \n');
+      config.workspaceDir = dir;
+      expect(() => buildStableSystem(kevin.db, [])).toThrow(/rules\.md is empty/);
     } finally {
       config.workspaceDir = real;
-      errors.mockRestore();
     }
     expect(buildStableSystem(kevin.db, [])).toContain('You are Kevin');
     // The rules name the web tool that exists, and none that do not.
