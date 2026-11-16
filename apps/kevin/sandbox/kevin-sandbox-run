@@ -1,0 +1,166 @@
+#!/usr/bin/python3 -I
+"""Runs one bash script for Kevin's server and reports how it went.
+
+Installed by apps/kevin/setup.sh as /usr/local/lib/benloe/kevin-sandbox-run and
+started by systemd, once per connection to a socket only the server's uid can
+open (kevin-shell@.service, kevin-extract@.service). The unit, not this file,
+is what confines the script: uid, network, visible files, memory, and the
+hard time limit that kills every process the script started. This file adds
+the request/response framing and an earlier, politer time limit.
+
+Request, on standard input:
+    4 bytes  "KSB1"
+    u32      seconds the script may run (capped at MAX_SECONDS)
+    u32 + n  the script, UTF-8 (run as: bash -c <script>)
+    u64 + n  bytes to feed the script's standard input
+After the request the caller keeps its end open. If it closes it before the
+script is done, the script is killed: that is how the server stops a run.
+
+Response, on standard output, a sequence of frames (u8 kind, u32 length, payload):
+    1  a chunk of the script's standard output
+    2  a chunk of the script's standard error
+    3  the end, sent once: JSON {"code": int|null, "timed_out": bool}
+
+Numbers are big-endian. The script runs in its own session; when it ends, is
+stopped or runs out of time, the whole session is killed, so a background
+child does not outlive the call. A child that leaves the session is ended by
+the unit when this process exits.
+"""
+import json
+import os
+import resource
+import selectors
+import signal
+import struct
+import subprocess
+import sys
+import threading
+import time
+
+MAX_SECONDS = 115
+MAX_SCRIPT_BYTES = 1 << 20
+MAX_STDIN_BYTES = 64 << 20
+# How long output is still collected after the script itself has exited, in case
+# something it started is still holding the pipes open.
+DRAIN_SECONDS = 0.3
+
+
+def read_exact(fd, n):
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = os.read(fd, min(1 << 16, n - len(buf)))
+        if not chunk:
+            raise EOFError("request ended early")
+        buf += chunk
+    return bytes(buf)
+
+
+def frame(kind, payload):
+    data = struct.pack(">BI", kind, len(payload)) + payload
+    view = memoryview(data)
+    while view:
+        view = view[os.write(1, view):]
+
+
+def limits():
+    # Belt and braces next to the unit's own limits; these also apply when the
+    # script is run directly (tests, a development machine).
+    resource.setrlimit(resource.RLIMIT_CPU, (120, 125))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (1 << 30, 1 << 30))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def main():
+    try:
+        if read_exact(0, 4) != b"KSB1":
+            return 64
+        seconds = min(max(struct.unpack(">I", read_exact(0, 4))[0], 1), MAX_SECONDS)
+        (script_len,) = struct.unpack(">I", read_exact(0, 4))
+        if script_len > MAX_SCRIPT_BYTES:
+            return 64
+        script = read_exact(0, script_len).decode("utf-8")
+        (stdin_len,) = struct.unpack(">Q", read_exact(0, 8))
+        if stdin_len > MAX_STDIN_BYTES:
+            return 64
+        stdin_data = read_exact(0, stdin_len)
+    except (EOFError, UnicodeDecodeError, struct.error):
+        return 64
+
+    workdir = os.environ.get("KEVIN_SHELL_DIR")
+    if workdir:
+        os.chdir(workdir)
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": os.getcwd(),
+        "LANG": "C.UTF-8",
+    }
+    proc = subprocess.Popen(
+        ["/bin/bash", "-c", script],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=env, start_new_session=True, preexec_fn=limits,
+    )
+
+    def kill_session():
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    def feed():
+        try:
+            proc.stdin.write(stdin_data)
+        except (BrokenPipeError, OSError):
+            pass  # the script exited or closed its input without reading all of it
+        finally:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+
+    threading.Thread(target=feed, daemon=True).start()
+
+    sel = selectors.DefaultSelector()
+    sel.register(proc.stdout, selectors.EVENT_READ, 1)
+    sel.register(proc.stderr, selectors.EVENT_READ, 2)
+    sel.register(0, selectors.EVENT_READ, 0)
+    open_streams = 2
+    deadline = time.monotonic() + seconds
+    exited_at = None
+    timed_out = False
+    try:
+        while True:
+            now = time.monotonic()
+            if exited_at is None and proc.poll() is not None:
+                exited_at = now
+            if exited_at is not None and (open_streams == 0 or now - exited_at > DRAIN_SECONDS):
+                break
+            if exited_at is None and now >= deadline:
+                timed_out = True
+                break
+            for key, _ in sel.select(timeout=0.05):
+                if key.data == 0:
+                    # Anything arriving after the request, or the end of input, means the caller is done with us.
+                    kill_session()
+                    return 0
+                chunk = os.read(key.fileobj.fileno(), 1 << 16)
+                if chunk:
+                    frame(key.data, chunk)
+                else:
+                    sel.unregister(key.fileobj)
+                    open_streams -= 1
+    except (BrokenPipeError, ConnectionError):
+        # The caller went away while we were writing to it.
+        kill_session()
+        return 0
+    finally:
+        kill_session()
+    code = None if timed_out else proc.wait()
+    try:
+        frame(3, json.dumps({"code": code, "timed_out": timed_out}).encode())
+    except (BrokenPipeError, ConnectionError):
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -3,7 +3,8 @@
 // every run is a row in job_runs with an outcome of did-work,
 // nothing-to-do or errored, so "did my reminder fire?" is a lookup.
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import Database from 'better-sqlite3';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { bus } from './bus.js';
@@ -13,6 +14,7 @@ import type { Kevin } from './kevin.js';
 import { RefusalError, small, spend, monthStartIso } from './llm.js';
 import { embedPending, logEvent } from './memory.js';
 import { notify } from './push.js';
+import { readOnlyQuery } from './sql.js';
 import { createThread, send } from './threads.js';
 import { localDay, nextCron, nextRun, type TriggerType } from './time.js';
 
@@ -145,17 +147,65 @@ const backup: SystemJob = {
   description: 'Nightly snapshot of the database, documents and uploads. Seven days are kept on this server; offsite copy needs a bucket.',
   cron: '30 3 * * *',
   run: async (kevin) => {
-    const dir = join(config.dataDir, 'backups', localDay());
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    await kevin.db.backup(join(dir, 'kevin.db'));
-    const parts = ['documents', 'uploads'].filter((p) => existsSync(join(config.dataDir, p)));
-    if (parts.length) await run('tar', ['-czf', join(dir, 'files.tar.gz'), '-C', config.dataDir, ...parts], { timeout: 10 * 60_000 });
-    const root = join(config.dataDir, 'backups');
-    const old = readdirSync(root).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().slice(0, -7);
-    for (const d of old) rmSync(join(root, d), { recursive: true, force: true });
-    return { outcome: 'did-work', detail: `local snapshot ${localDay()} written (database${parts.length ? ' + files' : ''}); offsite copy is not configured` };
+    const { day, files } = await writeBackup(kevin);
+    return { outcome: 'did-work', detail: `local snapshot ${day} written (database${files ? ' + files' : ''}); offsite copy is not configured` };
   },
 };
+
+/** Snapshots kept. */
+export const BACKUPS_KEPT = 7;
+
+/**
+ * Writes one snapshot to backups/<day>/ and prunes old ones.
+ *
+ * A snapshot is built in backups/<day>.partial and gets its final name only after the database copy
+ * has passed SQLite's integrity check and the archive of files has been read back. So a folder with
+ * a date for a name is always a complete snapshot, and those are the only ones retention counts: a
+ * run of failed nights cannot push the last good snapshots out. A failed build is deleted.
+ */
+export async function writeBackup(kevin: Kevin, day = localDay()): Promise<{ day: string; files: boolean }> {
+  const root = join(config.dataDir, 'backups');
+  const partial = join(root, `${day}.partial`);
+  rmSync(partial, { recursive: true, force: true });
+  mkdirSync(partial, { recursive: true, mode: 0o700 });
+  let files = false;
+  try {
+    const copyPath = join(partial, 'kevin.db');
+    await kevin.db.backup(copyPath);
+    const copy = new Database(copyPath, { fileMustExist: true });
+    try {
+      // The copy leaves write-ahead mode, so the snapshot is one self-contained file with no side files.
+      copy.pragma('journal_mode = DELETE');
+      const verdict = copy.pragma('quick_check', { simple: true });
+      if (verdict !== 'ok') throw new Error(`the database copy failed its integrity check: ${String(verdict).slice(0, 200)}`);
+    } finally {
+      copy.close();
+    }
+    const parts = ['documents', 'uploads'].filter((p) => existsSync(join(config.dataDir, p)));
+    if (parts.length) {
+      const archive = join(partial, 'files.tar.gz');
+      await run(backupTools.tar, ['-czf', archive, '-C', config.dataDir, ...parts], { timeout: 10 * 60_000 });
+      // Read back end to end: a truncated or corrupt archive fails here, not on the day it is needed.
+      await run(backupTools.tar, ['-tzf', archive], { timeout: 10 * 60_000, maxBuffer: 256 * 1024 * 1024 });
+      files = true;
+    }
+    const final = join(root, day);
+    // A second run on the same day replaces that day's snapshot, and only now that the new one is whole.
+    rmSync(final, { recursive: true, force: true });
+    renameSync(partial, final);
+  } catch (e) {
+    rmSync(partial, { recursive: true, force: true });
+    throw e;
+  }
+  const entries = readdirSync(root);
+  for (const d of entries.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().slice(0, -BACKUPS_KEPT)) rmSync(join(root, d), { recursive: true, force: true });
+  // Left by a run that was killed before it could clean up after itself.
+  for (const d of entries.filter((d) => /^\d{4}-\d{2}-\d{2}\.partial$/.test(d))) rmSync(join(root, d), { recursive: true, force: true });
+  return { day, files };
+}
+
+/** Tests replace the archiver to make it fail. */
+export const backupTools = { tar: 'tar' };
 
 const prune: SystemJob = {
   name: 'prune',
@@ -189,18 +239,6 @@ export interface NotifyPayload { title: string; body?: string; link?: string }
 export interface CheckPayload { sql: string; title: string; link?: string }
 export interface AgentPayload { prompt: string; deep?: boolean; thread_id?: string }
 
-/** Runs a read-only statement; anything that writes is refused. */
-export function readOnlyQuery(kevin: Kevin, sql: string, limit = 200): Record<string, unknown>[] {
-  const stmt = kevin.db.prepare(sql);
-  if (!stmt.readonly || !stmt.reader) throw new Error('only a single read-only SELECT is allowed here');
-  const out: Record<string, unknown>[] = [];
-  for (const row of stmt.iterate() as IterableIterator<Record<string, unknown>>) {
-    out.push(row);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
 export function scheduleSpentThisMonth(kevin: Kevin, id: number): number {
   return (kevin.db.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS s FROM job_runs WHERE job_key = ? AND started_at >= ?').get(`schedule:${id}`, monthStartIso()) as { s: number }).s;
 }
@@ -214,7 +252,7 @@ async function runSchedule(kevin: Kevin, s: ScheduleRow): Promise<RunResult> {
   }
   if (s.action === 'check') {
     const p = JSON.parse(s.payload) as CheckPayload;
-    const rows = readOnlyQuery(kevin, p.sql, 20);
+    const { rows } = await readOnlyQuery(kevin, p.sql, 20);
     if (!rows.length) return { outcome: 'nothing-to-do', detail: 'query returned no rows' };
     const body = rows.slice(0, 8).map((r) => Object.values(r).filter((v) => v != null).join(' · ')).join('\n') + (rows.length > 8 ? `\n…and ${rows.length - 8} more` : '');
     await notify(kevin.db, { title: p.title, body, link: p.link, source: key });

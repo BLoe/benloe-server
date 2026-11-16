@@ -18,8 +18,15 @@
 # every directory rollback can choose is a complete release. A failed build
 # leaves its .building directory behind; it and old releases are left in place,
 # and this script says when there is something to clear out.
+#
+# After the switch to a new release the service is checked. If it does not come
+# up, `current` is pointed back at the release that was running, the service is
+# restarted on it, and the release that failed is renamed .failed-<time> so that
+# neither this script nor a later rollback picks it again. The script says which
+# of these happened and exits non-zero.
 set -euo pipefail
-SRC=$(cd "$(dirname "$0")" && pwd)
+# -P: the real directory, so a symlinked folder in a checkout cannot make this look like it runs from /opt/benloe-src.
+SRC=$(cd "$(dirname "$0")" && pwd -P)
 ROOT=/opt/kevin
 
 case "$SRC" in
@@ -32,7 +39,12 @@ case "$SRC" in
 esac
 
 restart() {
-  install -o root -g root -m 0644 "$SRC/ecosystem.config.cjs" /etc/benloe/ecosystem/kevin.config.js
+  # Each release carries the PM2 config it was built with, so a rollback also goes back to that
+  # release's config. Releases from before this was added have none; they get this checkout's.
+  local cfg
+  cfg="$(readlink -f $ROOT/current)/ecosystem.config.cjs"
+  [ -f "$cfg" ] || cfg="$SRC/ecosystem.config.cjs"
+  install -o root -g root -m 0644 "$cfg" /etc/benloe/ecosystem/kevin.config.js
   if pm2 describe kevin-api >/dev/null 2>&1; then pm2 delete kevin-api >/dev/null; fi
   pm2 start /etc/benloe/ecosystem/kevin.config.js >/dev/null
   pm2 save >/dev/null
@@ -70,7 +82,10 @@ if [ "${1:-}" = "rollback" ]; then
     exit 1
   fi
   ln -sfn "$prev" $ROOT/current
-  restart
+  if ! restart; then
+    echo "rolled back to $prev, but kevin-api did not come up on it either: Kevin is DOWN." >&2
+    exit 1
+  fi
   exit
 fi
 
@@ -100,18 +115,35 @@ if ! (cd "$REL/server" && npm prune --omit=dev --silent >/dev/null); then
   echo "note: npm prune failed; this release still carries the dev dependencies." >&2
 fi
 cp -r "$SRC/workspace" "$REL/workspace"
+cp "$SRC/ecosystem.config.cjs" "$REL/ecosystem.config.cjs"
 chown -R root:root "$REL"
 chmod -R u=rwX,go=rX "$REL"
 echo "${BENLOE_PROMOTED_COMMIT:-unknown}" > "$REL/COMMIT"
 mv "$REL" "$FINAL"
+PREV=$(readlink -f $ROOT/current 2>/dev/null || true)
 ln -sfn "$FINAL" $ROOT/current
-restart
+if ! restart; then
+  # Out of the way first, so nothing chooses it again; kept for a look at what went wrong.
+  mv "$FINAL" "$ROOT/releases/.failed-$STAMP"
+  if [ -n "$PREV" ] && [ "$PREV" != "$FINAL" ] && [ -f "$PREV/COMMIT" ]; then
+    echo "the new release did not come up; going back to $PREV" >&2
+    ln -sfn "$PREV" $ROOT/current
+    if restart; then
+      echo "ROLLED BACK: Kevin is running the previous release again ($PREV). The release that failed is in $ROOT/releases/.failed-$STAMP." >&2
+    else
+      echo "the previous release did not come up either: Kevin is DOWN. current -> $PREV; the failed release is in $ROOT/releases/.failed-$STAMP." >&2
+    fi
+  else
+    echo "the new release did not come up and there is no earlier complete release to go back to: Kevin is DOWN. The failed release is in $ROOT/releases/.failed-$STAMP." >&2
+  fi
+  exit 1
+fi
 
 count=$(releases | wc -l)
 if [ "$count" -gt 5 ]; then
   echo "note: $count releases in $ROOT/releases; the oldest can be removed by hand."
 fi
-failed=$(find $ROOT/releases -mindepth 1 -maxdepth 1 -type d -name '.building-*' | wc -l)
+failed=$(find $ROOT/releases -mindepth 1 -maxdepth 1 -type d \( -name '.building-*' -o -name '.failed-*' \) | wc -l)
 if [ "$failed" -gt 0 ]; then
-  echo "note: $failed failed build(s) left in $ROOT/releases/.building-*; they can be removed by hand."
+  echo "note: $failed failed build(s) or release(s) left in $ROOT/releases/.building-* and .failed-*; they can be removed by hand."
 fi

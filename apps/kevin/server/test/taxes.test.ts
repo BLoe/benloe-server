@@ -156,7 +156,7 @@ describe('tax_deductions_update', () => {
       items: [
         { category: 'charity', description: 'Donation to City Harvest', amount: 500, date: '2026-12-01', document_id: receipt.id },
         { category: 'charity', description: 'Goodwill drop-off', amount: 120.456, date: '2026-05-14' },
-        { category: 'medical', description: 'Periodontist', amount: 84.2 },
+        { category: 'education', description: 'Kite-making course', amount: 84.2 },
         { category: 'payment', description: 'Q2 federal estimated payment', amount: 2000, date: '2026-06-15' },
       ],
     });
@@ -165,7 +165,7 @@ describe('tax_deductions_update', () => {
     expect(r.totals).toEqual({
       by_category: [
         { category: 'charity', label: 'Charitable giving', total: 620.46, count: 2 },
-        { category: 'medical', label: 'Medical', total: 84.2, count: 1 },
+        { category: 'education', label: 'Education', total: 84.2, count: 1 },
         { category: 'payment', label: 'Tax payments', total: 2000, count: 1 },
       ],
       deductions_total: 704.66,
@@ -211,7 +211,7 @@ describe('tax_packet_build', () => {
       items: [
         { category: 'charity', description: 'Donation to City Harvest', amount: 500, date: '2026-12-01', document_id: receipt.id },
         { category: 'charity', description: 'Goodwill | drop-off', amount: 1120.5 },
-        { category: 'medical', description: 'Periodontist', amount: 84.2 },
+        { category: 'education', description: 'Kite-making course', amount: 84.2 },
         { category: 'payment', description: 'Q2 federal estimated payment', amount: 2000, date: '2026-06-15' },
       ],
     });
@@ -251,7 +251,7 @@ describe('tax_packet_build', () => {
     expect(s).toContain('### Charitable giving: $1,620.50');
     expect(s).toContain('| 2026-12-01 | Donation to City Harvest | $500.00 | documents/02-City-Harvest-donation-receipt.txt |  |');
     expect(s).toContain('| Goodwill \\| drop-off | $1,120.50 |'); // a pipe in the text does not break the table
-    expect(s).toContain('### Medical: $84.20');
+    expect(s).toContain('### Education: $84.20');
     expect(s).toContain('**Total of all items above: $1,704.70**');
     expect(s).toContain('## Tax payments and withholding notes');
     expect(s).toContain('| 2026-06-15 | Q2 federal estimated payment | $2,000.00 |');

@@ -10,7 +10,7 @@ import { FILE_CSP, vaultFile, vaultPath, vaultRoot } from '../src/domains/_docum
 import type { Kevin } from '../src/kevin.js';
 import { call, makeKevin, ok, view } from './helpers.js';
 
-const EOB = 'Aetna Explanation of Benefits\nMember: Ben\nProvider: Dr. Alvarez\nDate of service: 2026-03-02\nProcedure: periodontal scaling\nPatient responsibility: $84.20';
+const INVOICE = 'Northwind Kite Repair invoice\nCustomer: Test Owner\nTechnician: Zephyrine\nDate of service: 2026-03-02\nWork: spar replacement\nAmount due: $84.20';
 const W2 = 'Form W-2 Wage and Tax Statement 2026\nEmployer: Acme Corp\nWages, tips, other compensation: 150000.00\nFederal income tax withheld: 28000.00';
 const LEASE = 'Residential lease agreement between landlord Hargrove Properties and tenant. Monthly rent 2400. Term begins 2025-09-01.';
 
@@ -19,15 +19,15 @@ async function upload(kevin: Kevin, name: string, text: string) {
 }
 
 async function seed(kevin: Kevin) {
-  const eob = await ok(kevin, 'ingest_document', {
-    attachment_id: (await upload(kevin, 'aetna eob.txt', EOB)).id, title: 'Aetna EOB, Dr. Alvarez, March 2026', category: 'medical',
-    tags: ['Dental', ' hsa ', 'dental'], document_date: '2026-03-10', issuer: 'Aetna', summary: 'Periodontal scaling on 2026-03-02; Ben owes $84.20.',
+  const invoice = await ok(kevin, 'ingest_document', {
+    attachment_id: (await upload(kevin, 'northwind invoice.txt', INVOICE)).id, title: 'Northwind invoice, spar repair, March 2026', category: 'home',
+    tags: ['Mending', ' club ', 'mending'], document_date: '2026-03-10', issuer: 'Northwind', summary: 'Spar replacement on 2026-03-02; $84.20 due.',
   });
   const w2 = await ok(kevin, 'ingest_document', {
     attachment_id: (await upload(kevin, 'w2.txt', W2)).id, title: 'W-2 2026, Acme Corp', category: 'tax', tags: ['w-2'], document_date: '2027-01-20', issuer: 'Acme Corp', tax_year: 2026,
   });
   const lease = await ok(kevin, 'ingest_document', { attachment_id: (await upload(kevin, 'lease.txt', LEASE)).id, title: 'Apartment lease 2025' });
-  return { eob, w2, lease };
+  return { invoice, w2, lease };
 }
 
 const servers: { close(): void }[] = [];
@@ -48,41 +48,41 @@ const pathOf = (kevin: Kevin, id: number) => (kevin.db.prepare('SELECT file_path
 describe('ingest_document', () => {
   it('copies the file into the vault owner-only, stores metadata and text, and indexes it', async () => {
     const kevin = await makeKevin([documents]);
-    const { eob, lease } = await seed(kevin);
-    expect(eob).toMatchObject({
-      filed: true, id: 1, title: 'Aetna EOB, Dr. Alvarez, March 2026', category: 'medical', tags: ['dental', 'hsa'], document_date: '2026-03-10', issuer: 'Aetna', tax_year: null,
-      original_filename: 'aetna eob.txt', mime: 'text/plain', size_bytes: EOB.length, text_chars: EOB.length, file_url: '/api/x/documents/1/file',
+    const { invoice, lease } = await seed(kevin);
+    expect(invoice).toMatchObject({
+      filed: true, id: 1, title: 'Northwind invoice, spar repair, March 2026', category: 'home', tags: ['club', 'mending'], document_date: '2026-03-10', issuer: 'Northwind', tax_year: null,
+      original_filename: 'northwind invoice.txt', mime: 'text/plain', size_bytes: INVOICE.length, text_chars: INVOICE.length, file_url: '/api/x/documents/1/file',
     });
-    expect(eob).not.toHaveProperty('extracted_text');
-    expect(eob).not.toHaveProperty('file_path');
+    expect(invoice).not.toHaveProperty('extracted_text');
+    expect(invoice).not.toHaveProperty('file_path');
     // Everything but attachment_id and title is optional.
     expect(lease).toMatchObject({ category: 'other', tags: [], document_date: null, issuer: null, summary: null });
 
-    const rel = pathOf(kevin, eob.id);
-    expect(rel).toBe('medical/1-aetna eob.txt');
+    const rel = pathOf(kevin, invoice.id);
+    expect(rel).toBe('home/1-northwind invoice.txt');
     const abs = join(config.dataDir, 'documents', rel);
-    expect(readFileSync(abs, 'utf8')).toBe(EOB);
+    expect(readFileSync(abs, 'utf8')).toBe(INVOICE);
     expect(statSync(abs).mode & 0o777).toBe(0o600);
-    expect(statSync(join(config.dataDir, 'documents', 'medical')).mode & 0o777).toBe(0o700);
+    expect(statSync(join(config.dataDir, 'documents', 'home')).mode & 0o777).toBe(0o700);
     expect(statSync(vaultRoot()).mode & 0o777).toBe(0o700);
 
     const row = kevin.db.prepare('SELECT sha256, attachment_id, extracted_text FROM documents WHERE id = 1').get() as { sha256: string; attachment_id: number; extracted_text: string };
     expect(row.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(row.extracted_text).toBe(EOB);
+    expect(row.extracted_text).toBe(INVOICE);
 
     // Recall reaches the text and the metadata.
-    const hits = (await ok(kevin, 'recall', { query: 'periodontal scaling', kinds: ['document'] })).hits;
-    expect(hits[0]).toMatchObject({ kind: 'document', ref: '1', title: 'Aetna EOB, Dr. Alvarez, March 2026', at: '2026-03-10' });
-    expect((await ok(kevin, 'recall', { query: 'hsa', kinds: ['document'] })).hits[0].ref).toBe('1');
+    const hits = (await ok(kevin, 'recall', { query: 'spar replacement', kinds: ['document'] })).hits;
+    expect(hits[0]).toMatchObject({ kind: 'document', ref: '1', title: 'Northwind invoice, spar repair, March 2026', at: '2026-03-10' });
+    expect((await ok(kevin, 'recall', { query: 'club', kinds: ['document'] })).hits[0].ref).toBe('1');
   });
 
   it('refuses a file already in the vault, naming the existing document', async () => {
     const kevin = await makeKevin([documents]);
     await seed(kevin);
-    const again = await upload(kevin, 'renamed copy.txt', EOB);
-    const r = await call(kevin, 'ingest_document', { attachment_id: again.id, title: 'Same EOB again' });
+    const again = await upload(kevin, 'renamed copy.txt', INVOICE);
+    const r = await call(kevin, 'ingest_document', { attachment_id: again.id, title: 'Same invoice again' });
     expect(r.ok).toBe(false);
-    expect(r.text).toMatch(/already in the vault as document 1, "Aetna EOB, Dr\. Alvarez, March 2026"/);
+    expect(r.text).toMatch(/already in the vault as document 1, "Northwind invoice, spar repair, March 2026"/);
     expect(kevin.db.prepare('SELECT COUNT(*) AS n FROM documents').get()).toEqual({ n: 3 });
   });
 
@@ -100,10 +100,10 @@ describe('ingest_document', () => {
     const kevin = await makeKevin([documents]);
     const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('not really a picture')]);
     const a = saveUpload(kevin.db, png, 'insurance card.png'); // never extracted: no API call in tests
-    const d = await ok(kevin, 'ingest_document', { attachment_id: a.id, title: 'Aetna insurance card', category: 'insurance', summary: 'Member ID W123456789, group 0042.' });
+    const d = await ok(kevin, 'ingest_document', { attachment_id: a.id, title: 'Northwind membership card', category: 'insurance', summary: 'Member number K-000-TEST, group 0042.' });
     expect(d).toMatchObject({ mime: 'image/png', text_chars: 0 });
     expect(d.note).toMatch(/No text could be read/);
-    expect((await ok(kevin, 'recall', { query: 'W123456789', kinds: ['document'] })).hits[0].ref).toBe(String(d.id));
+    expect((await ok(kevin, 'recall', { query: '0042', kinds: ['document'] })).hits[0].ref).toBe(String(d.id));
   });
 
   it('is offered to the model with only attachment_id and title required, and is callable from the page', async () => {
@@ -119,16 +119,16 @@ describe('ingest_document', () => {
 describe('document_update', () => {
   it('changes only what is passed, clears with null, and re-indexes', async () => {
     const kevin = await makeKevin([documents]);
-    const { eob } = await seed(kevin);
-    const u = await ok(kevin, 'document_update', { id: eob.id, title: 'Aetna EOB, gum treatment', tags: ['periodontist'], notes: 'Submitted to the HSA for reimbursement.', issuer: null });
-    expect(u).toMatchObject({ title: 'Aetna EOB, gum treatment', tags: ['periodontist'], issuer: null, category: 'medical', document_date: '2026-03-10', notes: 'Submitted to the HSA for reimbursement.' });
+    const { invoice } = await seed(kevin);
+    const u = await ok(kevin, 'document_update', { id: invoice.id, title: 'Northwind invoice, spar work', tags: ['spars'], notes: 'Sent to the kite club for reimbursement.', issuer: null });
+    expect(u).toMatchObject({ title: 'Northwind invoice, spar work', tags: ['spars'], issuer: null, category: 'home', document_date: '2026-03-10', notes: 'Sent to the kite club for reimbursement.' });
     expect(u.summary).toMatch(/84\.20/);
 
     const find = async (q: string) => (await ok(kevin, 'recall', { query: q, kinds: ['document'] })).hits.map((h: { ref: string }) => h.ref);
     expect(await find('reimbursement')).toEqual(['1']); // new notes
-    expect(await find('periodontist')).toEqual(['1']); // new tag
-    expect(await find('gum')).toEqual(['1']); // new title
-    expect(await find('dental')).toEqual([]); // old tag
+    expect(await find('spars')).toEqual(['1']); // new tag
+    expect(await find('work')).toEqual(['1']); // new title
+    expect(await find('mending')).toEqual([]); // old tag
     expect(await find('march')).toEqual([]); // old title
     expect(kevin.db.prepare("SELECT COUNT(*) AS n FROM search_index WHERE kind = 'document' AND ref = '1'").get()).toEqual({ n: 1 });
     expect((await call(kevin, 'document_update', { id: 77, title: 'x' })).text).toMatch(/no document 77/);
@@ -147,23 +147,23 @@ describe('document_update', () => {
 
   it('deletes the file, the row and the index entry once Ben confirms; a declined confirm keeps everything', async () => {
     const kevin = await makeKevin([documents]);
-    const { eob } = await seed(kevin);
-    const abs = vaultFile(pathOf(kevin, eob.id))!;
-    const declined = await call(kevin, 'document_update', { id: eob.id, delete: true }, { confirm: false });
+    const { invoice } = await seed(kevin);
+    const abs = vaultFile(pathOf(kevin, invoice.id))!;
+    const declined = await call(kevin, 'document_update', { id: invoice.id, delete: true }, { confirm: false });
     expect(declined.ok).toBe(false);
     expect(declined.text).toMatch(/declined/);
     expect(existsSync(abs)).toBe(true);
-    expect((await view(kevin, 'documents/get', { id: String(eob.id) })).document.title).toMatch(/Aetna/);
-    expect((await ok(kevin, 'recall', { query: 'periodontal', kinds: ['document'] })).hits).toHaveLength(1);
+    expect((await view(kevin, 'documents/get', { id: String(invoice.id) })).document.title).toMatch(/Northwind/);
+    expect((await ok(kevin, 'recall', { query: 'spar', kinds: ['document'] })).hits).toHaveLength(1);
 
-    expect(await ok(kevin, 'document_update', { id: eob.id, delete: true })).toEqual({ deleted: eob.id, title: 'Aetna EOB, Dr. Alvarez, March 2026' });
+    expect(await ok(kevin, 'document_update', { id: invoice.id, delete: true })).toEqual({ deleted: invoice.id, title: 'Northwind invoice, spar repair, March 2026' });
     expect(existsSync(abs)).toBe(false);
-    expect((await view(kevin, 'documents/get', { id: String(eob.id) })).document).toBeNull();
-    expect((await ok(kevin, 'recall', { query: 'periodontal', kinds: ['document'] })).hits).toEqual([]);
-    expect(kevin.db.prepare('SELECT COUNT(*) AS n FROM documents_tags WHERE document_id = ?').get(eob.id)).toEqual({ n: 0 });
+    expect((await view(kevin, 'documents/get', { id: String(invoice.id) })).document).toBeNull();
+    expect((await ok(kevin, 'recall', { query: 'spar', kinds: ['document'] })).hits).toEqual([]);
+    expect(kevin.db.prepare('SELECT COUNT(*) AS n FROM documents_tags WHERE document_id = ?').get(invoice.id)).toEqual({ n: 0 });
     // The same file can be filed again afterwards.
-    const again = await upload(kevin, 'aetna eob.txt', EOB);
-    expect((await call(kevin, 'ingest_document', { attachment_id: again.id, title: 'EOB refiled' })).ok).toBe(true);
+    const again = await upload(kevin, 'northwind invoice.txt', INVOICE);
+    expect((await call(kevin, 'ingest_document', { attachment_id: again.id, title: 'Invoice refiled' })).ok).toBe(true);
   });
 });
 
@@ -173,14 +173,14 @@ describe('document views', () => {
     await seed(kevin);
     const all = await view(kevin, 'documents/list');
     expect(all.total).toBe(3);
-    expect(all.documents.map((d: { title: string }) => d.title)).toEqual(['W-2 2026, Acme Corp', 'Aetna EOB, Dr. Alvarez, March 2026', 'Apartment lease 2025']); // undated last
+    expect(all.documents.map((d: { title: string }) => d.title)).toEqual(['W-2 2026, Acme Corp', 'Northwind invoice, spar repair, March 2026', 'Apartment lease 2025']); // undated last
     expect(all.documents[0]).not.toHaveProperty('extracted_text');
     expect(all.documents[0]).toMatchObject({ snippet: null, tags: ['w-2'], file_url: '/api/x/documents/2/file' });
     const ids = async (p: Record<string, string>) => (await view(kevin, 'documents/list', p)).documents.map((d: { id: number }) => d.id);
-    expect(await ids({ category: 'medical' })).toEqual([1]);
-    expect(await ids({ tag: 'HSA' })).toEqual([1]);
+    expect(await ids({ category: 'home' })).toEqual([1]);
+    expect(await ids({ tag: 'CLUB' })).toEqual([1]);
     expect(await ids({ tax_year: '2026' })).toEqual([2]);
-    expect(await ids({ category: 'tax', tag: 'dental' })).toEqual([]);
+    expect(await ids({ category: 'tax', tag: 'mending' })).toEqual([]);
     expect(await ids({ limit: '1', offset: '1' })).toEqual([1]);
   });
 
@@ -193,15 +193,15 @@ describe('document views', () => {
     expect(r.documents[0].snippet).toMatch(/withheld/i);
     expect(r.documents[0]).not.toHaveProperty('extracted_text');
     // A partial word finds the issuer even though the full-text index matches whole words.
-    const partial = await view(kevin, 'documents/list', { q: 'aet' });
+    const partial = await view(kevin, 'documents/list', { q: 'nort' });
     expect(partial.documents.map((d: { id: number }) => d.id)).toEqual([1]);
     expect(partial.documents[0].snippet).toBeNull();
     // q combines with the other filters; nothing found is an empty list.
-    expect((await view(kevin, 'documents/list', { q: 'landlord', category: 'medical' })).documents).toEqual([]);
+    expect((await view(kevin, 'documents/list', { q: 'landlord', category: 'home' })).documents).toEqual([]);
     expect((await view(kevin, 'documents/list', { q: 'landlord' })).documents[0].id).toBe(3);
     expect(await view(kevin, 'documents/list', { q: 'zebra%' })).toEqual({ documents: [], total: 0 });
     // Only documents: the uploads themselves are indexed too, under another kind.
-    expect((await view(kevin, 'documents/list', { q: 'periodontal' })).total).toBe(1);
+    expect((await view(kevin, 'documents/list', { q: 'spar' })).total).toBe(1);
   });
 
   it('returns one document with its text, and facets for the filter chips', async () => {
@@ -212,8 +212,8 @@ describe('document views', () => {
     expect((await view(kevin, 'documents/get', { id: 'nope' })).document).toBeNull();
     expect(await view(kevin, 'documents/facets')).toEqual({
       total: 3,
-      categories: [{ category: 'medical', count: 1 }, { category: 'other', count: 1 }, { category: 'tax', count: 1 }],
-      tags: [{ tag: 'dental', count: 1 }, { tag: 'hsa', count: 1 }, { tag: 'w-2', count: 1 }],
+      categories: [{ category: 'home', count: 1 }, { category: 'other', count: 1 }, { category: 'tax', count: 1 }],
+      tags: [{ tag: 'club', count: 1 }, { tag: 'mending', count: 1 }, { tag: 'w-2', count: 1 }],
       tax_years: [{ tax_year: 2026, count: 1 }],
     });
   });
@@ -233,11 +233,11 @@ describe('document views', () => {
     const kevin = await makeKevin([documents]);
     await seed(kevin);
     const listing = await ok(kevin, 'query', {
-      sql: "SELECT d.id, d.title, d.document_date, d.summary FROM documents d JOIN documents_tags t ON t.document_id = d.id WHERE t.tag = 'dental' ORDER BY d.document_date DESC",
+      sql: "SELECT d.id, d.title, d.document_date, d.summary FROM documents d JOIN documents_tags t ON t.document_id = d.id WHERE t.tag = 'mending' ORDER BY d.document_date DESC",
     });
-    expect(listing.rows).toEqual([{ id: 1, title: 'Aetna EOB, Dr. Alvarez, March 2026', document_date: '2026-03-10', summary: 'Periodontal scaling on 2026-03-02; Ben owes $84.20.' }]);
+    expect(listing.rows).toEqual([{ id: 1, title: 'Northwind invoice, spar repair, March 2026', document_date: '2026-03-10', summary: 'Spar replacement on 2026-03-02; $84.20 due.' }]);
     const slice = await ok(kevin, 'query', { sql: 'SELECT substr(extracted_text, 1, 29) AS text, text_chars FROM documents WHERE id = 1' });
-    expect(slice.rows).toEqual([{ text: 'Aetna Explanation of Benefits', text_chars: EOB.length }]);
+    expect(slice.rows).toEqual([{ text: 'Northwind Kite Repair invoice', text_chars: INVOICE.length }]);
     // The schema and the working notes reach the system prompt, comments included.
     expect(kevin.stableSystem).toMatch(/CREATE TABLE documents \(/);
     expect(kevin.stableSystem).toMatch(/read it in slices with substr/);
@@ -248,17 +248,17 @@ describe('document views', () => {
 describe('GET /api/x/documents/:id/file', () => {
   it('serves the stored file with the protective headers', async () => {
     const kevin = await makeKevin([documents]);
-    const { eob } = await seed(kevin);
+    const { invoice } = await seed(kevin);
     const base = await serve(kevin);
-    const res = await fetch(`${base}/${eob.id}/file`);
+    const res = await fetch(`${base}/${invoice.id}/file`);
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe(EOB);
+    expect(await res.text()).toBe(INVOICE);
     expect(res.headers.get('content-type')).toMatch(/^text\/plain/);
     expect(res.headers.get('content-security-policy')).toBe(FILE_CSP);
     expect(FILE_CSP).toBe("sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"); // the core's header for uploads
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(res.headers.get('content-disposition')).toBe('inline; filename="aetna eob.txt"');
-    expect((await fetch(`${base}/${eob.id}/file?download=1`)).headers.get('content-disposition')).toBe('attachment; filename="aetna eob.txt"');
+    expect(res.headers.get('content-disposition')).toBe('inline; filename="northwind invoice.txt"');
+    expect((await fetch(`${base}/${invoice.id}/file?download=1`)).headers.get('content-disposition')).toBe('attachment; filename="northwind invoice.txt"');
   });
 
   it('sanitizes the filename and downloads what a browser should not render', async () => {
@@ -275,7 +275,7 @@ describe('GET /api/x/documents/:id/file', () => {
 
   it('answers 404 for unknown ids, missing files, and any path that leaves the vault', async () => {
     const kevin = await makeKevin([documents]);
-    const { eob, w2, lease } = await seed(kevin);
+    const { invoice, w2, lease } = await seed(kevin);
     const base = await serve(kevin);
     expect((await fetch(`${base}/999/file`)).status).toBe(404);
     expect((await fetch(`${base}/abc/file`)).status).toBe(404);
@@ -284,12 +284,12 @@ describe('GET /api/x/documents/:id/file', () => {
     // A row pointing outside the vault is never followed, whatever put it there.
     writeFileSync(join(config.dataDir, 'outside.txt'), 'not a vault file');
     const setPath = (id: number, p: string) => kevin.db.prepare('UPDATE documents SET file_path = ? WHERE id = ?').run(p, id);
-    setPath(eob.id, '../outside.txt');
-    expect((await fetch(`${base}/${eob.id}/file`)).status).toBe(404);
-    setPath(eob.id, join(config.dataDir, 'outside.txt'));
-    expect((await fetch(`${base}/${eob.id}/file`)).status).toBe(404);
-    setPath(eob.id, 'medical/../../outside.txt');
-    expect((await fetch(`${base}/${eob.id}/file`)).status).toBe(404);
+    setPath(invoice.id, '../outside.txt');
+    expect((await fetch(`${base}/${invoice.id}/file`)).status).toBe(404);
+    setPath(invoice.id, join(config.dataDir, 'outside.txt'));
+    expect((await fetch(`${base}/${invoice.id}/file`)).status).toBe(404);
+    setPath(invoice.id, 'home/../../outside.txt');
+    expect((await fetch(`${base}/${invoice.id}/file`)).status).toBe(404);
     // A symlink inside the vault that points out of it.
     mkdirSync(join(vaultRoot(), 'other'), { recursive: true });
     symlinkSync(join(config.dataDir, 'outside.txt'), join(vaultRoot(), 'other', 'link.txt'));
@@ -304,6 +304,6 @@ describe('GET /api/x/documents/:id/file', () => {
     expect(vaultPath('../outside.txt')).toBeNull();
     expect(vaultPath('/etc/passwd')).toBeNull();
     expect(vaultPath('')).toBeNull();
-    expect(vaultPath('medical/1-a.txt')).toBe(join(vaultRoot(), 'medical', '1-a.txt'));
+    expect(vaultPath('home/1-a.txt')).toBe(join(vaultRoot(), 'home', '1-a.txt'));
   });
 });

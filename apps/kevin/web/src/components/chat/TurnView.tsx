@@ -1,11 +1,11 @@
-import { CornerDownRight, FileText, ShieldQuestion } from 'lucide-react';
+import { ChevronRight, CornerDownRight, FileText, ShieldQuestion } from 'lucide-react';
 import { memo, useState } from 'react';
 import { Markdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { answerConfirm } from '@/lib/chat';
-import { clock, cost, modelLabel } from '@/lib/format';
-import { endNote, segments, type Confirm, type Turn } from '@/lib/transcript';
+import { clock, cost, modelLabel, toolLabel } from '@/lib/format';
+import { display, endNote, segments, workSummary, type Confirm, type Turn, type WorkPart } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
 import { ToolRow } from './ToolRow';
 
@@ -47,6 +47,54 @@ function StatusLine({ text, streaming }: { text: string; streaming: boolean }) {
       title={long && !open ? 'Show all' : undefined}
     >
       {text.trim()}
+    </div>
+  );
+}
+
+function WorkParts({ parts }: { parts: WorkPart[] }) {
+  return (
+    <>
+      {parts.map((p, i) => (p.kind === 'tool' ? <ToolRow key={p.item.id} item={p.item} /> : <StatusLine key={i} text={p.text} streaming={p.streaming} />))}
+    </>
+  );
+}
+
+/**
+ * A run of tool calls and the lines Kevin wrote between them. While it is the
+ * live end of a running turn only the step in progress shows; once Kevin has
+ * moved on it is one summary line. Either way the full list is one tap away.
+ */
+function WorkGroup({ parts, live }: { parts: WorkPart[]; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  const { steps, names, failed, declined } = workSummary(parts);
+  // Lines with no tool call (a turn that ended mid-thought) have nothing to fold away.
+  if (steps === 0) return <WorkParts parts={parts} />;
+  const current = parts.at(-1)!;
+  const earlier = live ? parts.length - 1 : parts.length;
+  const label = live
+    ? `${earlier} earlier step${earlier === 1 ? '' : 's'}`
+    : `${steps} step${steps === 1 ? '' : 's'}: ${names.map(toolLabel).join(', ')}`;
+  const trouble = [failed ? `${failed} failed` : '', declined ? `${declined} declined` : ''].filter(Boolean).join(', ');
+  return (
+    <div className="flex flex-col gap-1" data-work={live ? 'live' : 'done'}>
+      {(!live || earlier > 0) && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="-mx-1.5 flex min-h-9 w-[calc(100%+0.75rem)] items-center gap-2 rounded-md px-1.5 text-left text-sm text-muted-foreground hover:bg-secondary lg:min-h-7"
+        >
+          <ChevronRight className={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-90')} aria-hidden />
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          {trouble && <span className="shrink-0 text-xs text-destructive">{trouble}</span>}
+        </button>
+      )}
+      {open && (
+        <div className="ml-2 flex flex-col gap-1 border-l-2 pl-3">
+          <WorkParts parts={live ? parts.slice(0, -1) : parts} />
+        </div>
+      )}
+      {live && <WorkParts parts={[current]} />}
     </div>
   );
 }
@@ -94,6 +142,7 @@ function TurnViewImpl({ turn, confirms }: { turn: Turn; confirms: Confirm[] }) {
   const [showCost, setShowCost] = useState(false);
   const segs = segments(turn);
   const running = turn.status === 'running';
+  const shown = display(segs);
   const note = endNote(turn);
   const last = segs.at(-1);
   // Dots whenever nothing on screen is visibly moving: before the first block, between blocks, after a tool.
@@ -104,10 +153,9 @@ function TurnViewImpl({ turn, confirms }: { turn: Turn; confirms: Confirm[] }) {
     <article className="flex flex-col gap-3" data-turn={turn.id} data-status={turn.status}>
       <UserBubble text={turn.user.text} attachments={turn.user.attachments} />
       <div className="flex flex-col gap-2">
-        {segs.map((s, i) => {
+        {shown.map((s, i) => {
           if (s.kind === 'text') return <Markdown key={i} text={s.text} className={turn.status === 'blocked' || turn.status === 'refused' ? 'text-destructive' : undefined} />;
-          if (s.kind === 'status') return <StatusLine key={i} text={s.text} streaming={s.streaming} />;
-          if (s.kind === 'tool') return <ToolRow key={s.item.id} item={s.item} />;
+          if (s.kind === 'work') return <WorkGroup key={i} parts={s.parts} live={running && i === shown.length - 1} />;
           return (
             <div key={i} className="flex items-start justify-end gap-1.5 py-1 text-sm">
               <CornerDownRight className="mt-2 size-3.5 shrink-0 text-muted-foreground" aria-hidden />

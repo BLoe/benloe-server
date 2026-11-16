@@ -41,7 +41,7 @@ describe('profile helpers', () => {
 
   it('keeps profile text out of the log list', () => {
     expect(logLine('profile_update {"section":"Family","body":"Sam is my partner and we')).toBe('About you: updated “Family”');
-    expect(logLine('profile_update {"section":"Health history","append":"Knee surgery in 2019"}')).toBe('About you: added to “Health history”');
+    expect(logLine('profile_update {"section":"Kite history","append":"Built a box kite in 2019"}')).toBe('About you: added to “Kite history”');
     expect(logLine('profile_update {"section":"work","delete":true}')).toBe('About you: deleted “work”');
     expect(logLine('profile_update {"sec')).toBe('About you: updated');
     expect(logLine('remember {"text":"likes tea"}')).toBe('remember {"text":"likes tea"}');

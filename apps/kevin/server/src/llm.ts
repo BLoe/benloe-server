@@ -82,6 +82,29 @@ export function record(db: DB, tag: UsageTag, model: string, usage: Anthropic.Us
   return cost;
 }
 
+/**
+ * Records what a streamed request cost when it ended without a final message: Ben pressed Stop, the
+ * connection dropped, the model errored part-way. Such a request is still billed. `partial` is the
+ * stream's message so far (the SDK's `currentMessage`); it exists only once the API has started
+ * answering, and its usage holds the prompt's tokens. Output tokens are reported only at the end of a
+ * response, so they are estimated here from the characters that arrived, at three characters a token.
+ * That is a floor: thinking the API did not send is billed too and cannot be counted.
+ * Returns the cost recorded; 0, and no row, when the request never started.
+ */
+export function recordPartial(db: DB, tag: UsageTag, model: string, partial: { usage?: Anthropic.Usage | Anthropic.Beta.BetaUsage | null; model?: string } | undefined, streamedChars: number): number {
+  if (!partial?.usage) return 0;
+  const estimated = Math.ceil(streamedChars / 3);
+  const usage = { ...partial.usage, output_tokens: Math.max(partial.usage.output_tokens ?? 0, estimated) };
+  return record(db, tag, partial.model || model, usage as Anthropic.Usage);
+}
+
+/** Characters of model output carried by one stream event (text, thinking, or a tool call's input). */
+export function deltaChars(e: unknown): number {
+  const ev = e as { type?: string; delta?: { text?: string; thinking?: string; partial_json?: string } };
+  if (ev.type !== 'content_block_delta' || !ev.delta) return 0;
+  return (ev.delta.text?.length ?? 0) + (ev.delta.thinking?.length ?? 0) + (ev.delta.partial_json?.length ?? 0);
+}
+
 /** Start of the current month in Ben's timezone, as a UTC ISO string. */
 export function monthStartIso(now = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, year: 'numeric', month: '2-digit' }).formatToParts(now);

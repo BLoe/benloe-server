@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -173,21 +174,22 @@ describe('query', () => {
 
 describe('memory', () => {
   it('builds a safe FTS query from free text', () => {
-    expect(ftsQuery('What did the doctor say about my cholesterol?')).toBe('"doctor" OR "say" OR "cholesterol"');
+    expect(ftsQuery('What did the club say about my kitestring?')).toBe('"club" OR "say" OR "kitestring"');
     expect(ftsQuery('the and of')).toBe('');
     expect(ftsQuery('"); DROP TABLE x; --')).toBe('"drop" OR "table"');
   });
   it('remembers facts into the prompt and recalls indexed text', async () => {
     const kevin = await makeKevin();
-    const f = await ok(kevin, 'remember', { text: 'Ben is allergic to shellfish.', category: 'Food' });
-    expect(f.category).toBe('food');
-    expect((await view(kevin, 'system/facts'))[0].text).toMatch(/shellfish/);
-    await ok(kevin, 'fact_update', { id: f.id, text: 'Ben is allergic to shellfish and peanuts.' });
-    await ok(kevin, 'note', { text: 'Ben decided to switch dentists to Dr. Alvarez in March.' });
-    indexItem(kevin.db, 'document', 7, 'Lab results 2026', 'LDL cholesterol 131 mg/dL, HDL 52');
-    const hits = (await ok(kevin, 'recall', { query: 'cholesterol numbers' })).hits;
+    // Invented fixtures: a kite collector's notes. Nothing here describes a real person.
+    const f = await ok(kevin, 'remember', { text: 'The test owner flies box kites on windy days.', category: 'Hobbies' });
+    expect(f.category).toBe('hobbies');
+    expect((await view(kevin, 'system/facts'))[0].text).toMatch(/box kites/);
+    await ok(kevin, 'fact_update', { id: f.id, text: 'The test owner flies box kites and delta kites.' });
+    await ok(kevin, 'note', { text: 'Decided to move the kite workshop to the blue shed in Marchember.' });
+    indexItem(kevin.db, 'document', 7, 'Kite inventory 2026', 'Spool of zephyrline 131 metres, 52 ripstop panels');
+    const hits = (await ok(kevin, 'recall', { query: 'zephyrline length' })).hits;
     expect(hits[0]).toMatchObject({ kind: 'document', ref: '7' });
-    expect(keywordSearch(kevin.db, 'dentist')[0]!.kind).toBe('log-note');
+    expect(keywordSearch(kevin.db, 'workshop')[0]!.kind).toBe('log-note');
     await ok(kevin, 'fact_update', { id: f.id, delete: true });
     expect(await view(kevin, 'system/facts')).toEqual([]);
   });
@@ -208,7 +210,7 @@ describe('sandbox files', () => {
 
   it('refuses a path that leaves the sandbox through a symlink: the file itself, a parent folder, or a dangling link', async () => {
     const kevin = await makeKevin();
-    const { symlinkSync, writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync } = await fs();
+    const { symlinkSync, writeFileSync, mkdirSync, readdirSync } = await fs();
     const secret = join(config.dataDir, 'secret.txt');
     writeFileSync(secret, 'tax return');
     mkdirSync(at('links', 'deep'), { recursive: true });
@@ -237,7 +239,7 @@ describe('sandbox files', () => {
 
   it('does every file operation through the launcher, never in the server process', async () => {
     const kevin = await makeKevin();
-    const { writeFileSync, existsSync, mkdirSync } = await fs();
+    const { writeFileSync, mkdirSync } = await fs();
     mkdirSync(at('direct'), { recursive: true });
     writeFileSync(at('direct', 'there.txt'), 'already here');
     const launcher = config.shellLauncher;
@@ -257,13 +259,13 @@ describe('sandbox files', () => {
 
   it('passes the path and the content as data: nothing the model writes is run or expanded by a shell', async () => {
     const kevin = await makeKevin();
-    const { writeFileSync, existsSync, readFileSync, mkdirSync, chmodSync } = await fs();
-    // Records what the launcher was started with, then behaves like the test launcher.
-    const log = join(config.dataDir, 'launcher-args.log');
+    const { writeFileSync, mkdirSync, chmodSync } = await fs();
+    // Records every request sent to the sandbox, then passes it on to the real runner.
+    const log = join(config.dataDir, `requests-${Date.now()}.log`);
     const spy = join(config.dataDir, 'spy-launcher.sh');
-    writeFileSync(spy, `#!/bin/bash\nprintf '%s\\n---\\n' "$#" "$@" >> ${JSON.stringify(log)}\nexec bash -c "$1"\n`);
-    chmodSync(spy, 0o755);
     const launcher = config.shellLauncher;
+    writeFileSync(spy, `#!/bin/bash\ntee -a ${JSON.stringify(log)} | ${launcher.join(' ')}\n`);
+    chmodSync(spy, 0o755);
     config.shellLauncher = [spy];
     const name = 'it\'s $(touch pwned-by-path) `touch pwned-by-tick`; touch pwned-by-semi & "q".txt';
     const content = '$(touch pwned-by-content)\n`touch pwned-by-content`\n\0binary\ttab\n';
@@ -279,16 +281,28 @@ describe('sandbox files', () => {
     for (const dir of [config.shellDir, at('data'), process.cwd()]) {
       for (const f of ['pwned-by-path', 'pwned-by-tick', 'pwned-by-semi', 'pwned-by-content']) expect(existsSync(join(dir, f)), `${dir}/${f}`).toBe(false);
     }
-    // One argument each time (the fixed script), and neither the path nor the content is in it.
-    const args = readFileSync(log, 'utf8');
-    expect(args).not.toContain('pwned');
-    expect(args).not.toContain('binary');
-    expect(args.split('\n---\n').filter((x) => /^\d+$/.test(x.trim()))).toEqual(['1', '1', '1']);
+    // Each request is: the script bash runs, then the bytes for its standard input. The script is the
+    // same fixed text every time and holds neither the path nor the content; those are in the input.
+    const raw = readFileSync(log);
+    const scripts: string[] = [];
+    const inputs: Buffer[] = [];
+    for (let at = 0; at < raw.length; ) {
+      expect(raw.subarray(at, at + 4).toString('latin1')).toBe('KSB1');
+      const scriptLen = raw.readUInt32BE(at + 8);
+      scripts.push(raw.subarray(at + 12, at + 12 + scriptLen).toString('utf8'));
+      const inputLen = Number(raw.readBigUInt64BE(at + 12 + scriptLen));
+      inputs.push(raw.subarray(at + 20 + scriptLen, at + 20 + scriptLen + inputLen));
+      at += 20 + scriptLen + inputLen;
+    }
+    expect(scripts.length).toBe(3);
+    expect(new Set(scripts).size).toBe(1);
+    expect(scripts[0]).not.toContain('pwned');
+    expect(scripts[0]).not.toContain('binary');
+    expect(inputs[0]!.includes(Buffer.from(`write\0${config.shellDir}\0data/${name}\0create\0${content}`))).toBe(true);
   });
 
   it('writes, lists, reads, and asks before overwriting or deleting', async () => {
     const kevin = await makeKevin();
-    const { readFileSync } = await fs();
     await ok(kevin, 'file_write', { path: 'calc/in.csv', content: 'a,b\n1,2\n' });
     expect((await ok(kevin, 'file_list', { path: 'calc' })).entries[0]).toMatchObject({ name: 'in.csv', size: 8 });
     expect(await ok(kevin, 'file_list', { path: 'nowhere' })).toEqual({ entries: [] });
@@ -302,7 +316,7 @@ describe('sandbox files', () => {
     await ok(kevin, 'file_write', { path: 'calc/in.csv', content: 'c\n3\n' });
     expect(readFileSync(at('calc', 'in.csv'), 'utf8')).toBe('c\n3\n');
     // What file_write made, the shell can read and change (in production both are the same uid).
-    expect(await ok(kevin, 'shell', { command: `cd ${JSON.stringify(config.shellDir)} && echo 4 >> calc/in.csv && cat calc/in.csv` })).toMatch(/exit code: 0\nc\n3\n4/);
+    expect(await ok(kevin, 'shell', { command: 'echo 4 >> calc/in.csv && cat calc/in.csv' })).toMatch(/exit code: 0\nc\n3\n4/);
     expect(await ok(kevin, 'shell', { command: 'echo $((6*7))' })).toMatch(/exit code: 0\n42/);
     expect((await call(kevin, 'shell', { command: 'rm -rf calc' }, { confirm: false })).text).toMatch(/declined/);
     expect(await ok(kevin, 'file_read', { path: 'calc/in.csv' })).toBe('c\n3\n4\n');
@@ -314,9 +328,79 @@ describe('sandbox files', () => {
   it('reports a failing shell command with its exit code and output, and ends one that Ben stops', async () => {
     const kevin = await makeKevin();
     expect(await ok(kevin, 'shell', { command: 'echo out; echo err >&2; exit 3' })).toBe('exit code: 3\nout\n\n[stderr]\nerr');
+    expect(await ok(kevin, 'shell', { command: 'pwd -P' })).toBe(`exit code: 0\n${realpathSync(config.shellDir)}`);
+    expect(await ok(kevin, 'shell', { command: 'kill -KILL $$' })).toMatch(/^exit code: 137/);
+  });
+
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const pidsIn = (file: string) => readFileSync(at(file), 'utf8').trim().split(/\s+/).map(Number);
+  const gone = async (pids: number[]) => {
+    for (let i = 0; i < 100 && pids.some(alive); i++) await new Promise((r) => setTimeout(r, 20));
+    return pids.filter(alive);
+  };
+
+  it('kills the command and its children when Ben presses Stop', async () => {
+    const kevin = await makeKevin();
     const abort = new AbortController();
-    const running = kevin.tools.call('shell', { command: 'sleep 30' }, { db: kevin.db, source: 'agent', confirm: () => Promise.resolve(true), signal: abort.signal });
-    setTimeout(() => abort.abort(), 50);
-    expect((await running).text).toMatch(/exit code: none/);
+    const running = kevin.tools.call('shell', { command: 'sleep 300 & echo $! $$ > stop.pids; sleep 300' }, { db: kevin.db, source: 'agent', confirm: () => Promise.resolve(true), signal: abort.signal });
+    for (let i = 0; i < 100 && !existsSync(at('stop.pids')); i++) await new Promise((r) => setTimeout(r, 20));
+    const pids = pidsIn('stop.pids');
+    expect(pids.every(alive)).toBe(true);
+    abort.abort();
+    const r = await running;
+    expect(r.text).toMatch(/^exit code: none\n\(no output\)\n\[stopped by Ben/);
+    expect(await gone(pids)).toEqual([]);
+  });
+
+  it('enforces the time limit on a command that ignores every signal it can', async () => {
+    const kevin = await makeKevin();
+    config.shellSeconds = 1;
+    try {
+      const started = Date.now();
+      const r = await ok<string>(kevin, 'shell', { command: "trap '' TERM INT HUP QUIT; echo $$ > limit.pids; while :; do sleep 0.1; done" });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(r).toMatch(/^exit code: none\n\(no output\)\n\[stopped: ran longer than 1 seconds/);
+      expect(await gone(pidsIn('limit.pids'))).toEqual([]);
+    } finally {
+      config.shellSeconds = 115;
+    }
+  });
+
+  it('returns when the command is done even though something it started still holds its output open', async () => {
+    const kevin = await makeKevin();
+    const started = Date.now();
+    // A background child in the same session: it is killed when the command ends.
+    expect(await ok(kevin, 'shell', { command: 'sleep 300 & echo $! > bg.pids; echo done' })).toBe('exit code: 0\ndone');
+    expect(await gone(pidsIn('bg.pids'))).toEqual([]);
+    // One that left the session keeps the pipe open and is out of the runner's reach (in production the
+    // systemd unit ends it). The call still returns.
+    expect(await ok(kevin, 'shell', { command: 'setsid sleep 300 & echo $! > escaped.pids; echo done' })).toBe('exit code: 0\ndone');
+    expect(Date.now() - started).toBeLessThan(5000);
+    for (const pid of pidsIn('escaped.pids')) if (alive(pid)) process.kill(pid, 'SIGKILL');
+  });
+
+  it('stops a command that floods its output, and says when the sandbox cannot be reached', async () => {
+    const kevin = await makeKevin();
+    const flood = await ok<string>(kevin, 'shell', { command: 'echo $$ > flood.pids; yes aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
+    expect(flood).toMatch(/^exit code: none\naaaa/);
+    expect(flood).toMatch(/\[output cut: it was \d+ characters\]/);
+    expect(flood).toMatch(/\[stopped: wrote more than 2 MB of output\]$/);
+    expect(await gone(pidsIn('flood.pids'))).toEqual([]);
+    const launcher = config.shellLauncher;
+    config.shellLauncher = ['unix:/nonexistent/kevin-sandbox.sock'];
+    try {
+      const r = await call(kevin, 'shell', { command: 'echo hi' });
+      expect(r.ok).toBe(false);
+      expect(r.text).toMatch(/could not be run: the sandbox is not available/);
+    } finally {
+      config.shellLauncher = launcher;
+    }
   });
 });

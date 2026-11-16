@@ -1,15 +1,18 @@
 // Shared by every test file.
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { config } from '../src/config.js';
 import type { Domain } from '../src/domains.js';
 import { createKevin, type Kevin } from '../src/kevin.js';
 import type { ToolCtx } from '../src/tools.js';
 
-/** A Kevin on an in-memory database with just the domains under test. */
+/** A Kevin on a throwaway database with just the domains under test. */
 export async function makeKevin(domains: Domain[] = []): Promise<Kevin> {
   mkdirSync(config.dataDir, { recursive: true });
   mkdirSync(config.shellDir, { recursive: true });
-  return createKevin({ dbPath: ':memory:', domains });
+  // A file, not ':memory:': SQL the model writes runs in a separate process, which needs a file to open.
+  return createKevin({ dbPath: join(config.dataDir, `test-${randomUUID()}.db`), domains });
 }
 
 /** Calls a tool the way the agent would. `confirm` answers any confirm prompt. */

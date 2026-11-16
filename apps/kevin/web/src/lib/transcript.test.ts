@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addPending, applyEvent, emptyThread, endNote, fromPayload, mergeSnapshot, progress, segments, type ThreadEvent, type ThreadState } from './transcript';
+import { addPending, applyEvent, display, emptyThread, endNote, fromPayload, mergeSnapshot, progress, segments, workSummary, type ThreadEvent, type ThreadState } from './transcript';
 import type { ThreadPayload, ToolItem, TurnPayload, UiItem } from './types';
 
 const T = 't1';
@@ -261,5 +261,29 @@ describe('segments and endNote', () => {
     expect(endNote({ ...t, status: 'blocked' })?.text).toMatch(/spend cap/);
     expect(endNote({ ...t, status: 'refused' })?.tone).toBe('error');
     expect(endNote({ ...t, status: 'error', error: null })?.text).toBe('This turn failed.');
+  });
+});
+
+describe('display and workSummary', () => {
+  const st = (text: string) => ({ kind: 'status' as const, text, streaming: false });
+  const tl = (id: string, name: string, state: 'ok' | 'error' | 'denied' | 'running' = 'ok') => ({ kind: 'tool' as const, item: { ...tool(id, state), name } });
+  const txt = (text: string) => ({ kind: 'text' as const, text, streaming: false });
+
+  it('folds each unbroken run of status lines and tool calls into one work entry', () => {
+    const d = display([st('Checking.'), tl('a', 'query'), tl('b', 'pantry_update'), { kind: 'folded', text: 'also milk' }, tl('c', 'pantry_update'), txt('Done.')]);
+    expect(d.map((x) => x.kind)).toEqual(['work', 'folded', 'work', 'text']);
+    expect(d[0]).toMatchObject({ parts: [{ kind: 'status' }, { kind: 'tool' }, { kind: 'tool' }] });
+    expect(d[2]).toMatchObject({ parts: [{ kind: 'tool' }] });
+  });
+
+  it('leaves a turn with no tool calls untouched', () => {
+    expect(display([txt('Hello.')])).toEqual([txt('Hello.')]);
+    expect(display([])).toEqual([]);
+  });
+
+  it('counts steps, names each tool once in order, and counts what failed or was declined', () => {
+    const parts = display([st('x'), tl('a', 'query'), tl('b', 'pantry_update', 'error'), tl('c', 'query'), tl('d', 'shell', 'denied')])[0] as { parts: Parameters<typeof workSummary>[0] };
+    expect(workSummary(parts.parts)).toEqual({ steps: 4, names: ['query', 'pantry_update', 'shell'], failed: 1, declined: 1 });
+    expect(workSummary([st('only words')])).toEqual({ steps: 0, names: [], failed: 0, declined: 0 });
   });
 });

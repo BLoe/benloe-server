@@ -19,8 +19,8 @@ const searched = { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_0', co
 describe('web_research', () => {
   it('gives the sub-call the question and the web tools, and nothing of Ben\'s', async () => {
     const kevin = await makeKevin();
-    await ok(kevin, 'remember', { text: 'Ben is allergic to shellfish.' });
-    await ok(kevin, 'profile_update', { section: 'Family', append: 'Ben has a sister named Imogen.' });
+    await ok(kevin, 'remember', { text: 'The test owner collects box kites.' });
+    await ok(kevin, 'profile_update', { section: 'Family', append: 'The test owner has a pen pal named Zephyrine.' });
     model.reply({ content: [cited('The family limit is $8,750.', 'https://tax.example/hsa-2026', 'HSA limits for 2026')] });
     const out = await ok<string>(kevin, 'web_research', { question: QUESTION });
     const req = model.requests[0]!;
@@ -29,7 +29,7 @@ describe('web_research', () => {
     expect(req.tools.map((t: any) => t.name).sort()).toEqual(['web_fetch', 'web_search']);
     expect(req.tools.every((t: any) => typeof t.max_uses === 'number')).toBe(true);
     const everything = JSON.stringify(req);
-    for (const secret of ['shellfish', 'Imogen', 'CREATE TABLE', 'profile_update', 'query']) expect(everything).not.toContain(secret);
+    for (const secret of ['box kites', 'Zephyrine', 'CREATE TABLE', 'profile_update', 'query']) expect(everything).not.toContain(secret);
     // What comes back is labelled as web material and carries its sources.
     expect(out).toMatch(/^Result of web research\. Everything below was written from web pages/);
     expect(out).toContain('The family limit is $8,750.');

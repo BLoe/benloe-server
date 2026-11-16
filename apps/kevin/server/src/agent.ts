@@ -20,7 +20,7 @@ import { bus, type UiItem } from './bus.js';
 import { config } from './config.js';
 import { nowIso, parseJson } from './db.js';
 import type { Kevin } from './kevin.js';
-import { anthropic, record, spend } from './llm.js';
+import { anthropic, deltaChars, record, recordPartial, spend } from './llm.js';
 import { type Hit, keywordSearch } from './memory.js';
 import { contextBlock, factsBlock, profileBlock } from './prompt.js';
 import type { ToolCtx } from './tools.js';
@@ -305,10 +305,13 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
       ...(facts ? [{ type: 'text' as const, text: facts }] : []),
     ];
     // Kevin's own tools only. Nothing here reads the web: that is `web_research`, which runs apart from this conversation.
-    const tools = kevin.tools.apiTools((t) => !scope.offTools.has(t.name) && (opts.origin === 'chat' || t.name !== 'shell')) as unknown as Anthropic.Beta.BetaToolUnion[];
+    const offeredTools = kevin.tools.apiTools((t) => !scope.offTools.has(t.name) && (opts.origin === 'chat' || t.job !== false));
+    const tools = offeredTools as unknown as Anthropic.Beta.BetaToolUnion[];
+    // The same list is enforced when a call comes back: the model can name any tool, whatever it was given.
+    const offered = new Set(offeredTools.map((t) => t.name));
 
     const ctx: ToolCtx = {
-      db, source: opts.origin === 'job' ? 'job' : 'agent', threadId, turnId, jobKey: opts.jobKey ?? null, signal: handle.abort.signal,
+      db, source: opts.origin === 'job' ? 'job' : 'agent', threadId, turnId, jobKey: opts.jobKey ?? null, signal: handle.abort.signal, offered,
       confirm: (summaryText) => {
         if (opts.origin === 'job') return Promise.resolve(false);
         const confirmId = randomUUID();
@@ -347,7 +350,9 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
 
       // Stream order is display order. index -> the UI item for that block.
       const byIndex = new Map<number, UiItem>();
+      let streamedChars = 0;
       stream.on('streamEvent', (e) => {
+        streamedChars += deltaChars(e);
         if (e.type === 'content_block_start') {
           const b = e.content_block as { type: string; id?: string; name?: string };
           let item: UiItem | null = null;
@@ -382,7 +387,11 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
         }
       });
 
-      const msg = await stream.finalMessage();
+      const msg = await stream.finalMessage().catch((e: unknown) => {
+        // Stopped or failed mid-reply. What the request cost up to here still counts against the caps.
+        recordPartial(db, { purpose: 'turn', threadId, turnId, jobKey: opts.jobKey }, model, stream.currentMessage, streamedChars);
+        throw e;
+      });
       handle.lastPromptTokens = (msg.usage.input_tokens ?? 0) + (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0);
       record(db, { purpose: 'turn', threadId, turnId, jobKey: opts.jobKey }, msg.model || model, msg.usage);
 
@@ -415,7 +424,8 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
         return finish('done');
       }
 
-      // tools.call never throws, so every call gets a result, including one cut short by Stop.
+      // Every call gets a result, including one cut short by Stop: tools.call reports failures as results,
+      // and anything it might still throw is caught here, so one call can never lose the others' results.
       const results: Block[] = await Promise.all(
         calls.map(async (call): Promise<Block> => {
           const item = toolItems.get(call.id) ?? { type: 'tool' as const, id: call.id, name: call.name, input: call.input, state: 'running' as const };
@@ -424,7 +434,10 @@ export async function runTurn(kevin: Kevin, threadId: string, input: TurnInput, 
           // A call cut off by the length limit can carry a partial input that still parses.
           const r = msg.stop_reason === 'max_tokens'
             ? { ok: false, text: 'This call was cut off before its input was complete. Send it again, with smaller content if it was large.' }
-            : await kevin.tools.call(call.name, call.input, ctx);
+            : await kevin.tools.call(call.name, call.input, ctx).catch((e: unknown) => {
+                console.error(`tool call ${call.name} threw outside the tool`, e);
+                return { ok: false, text: `${call.name} may or may not have taken effect: the server failed while finishing the call (${e instanceof Error ? e.message : String(e)}). Check with a query before doing it again.` };
+              });
           item.state = r.ok ? 'ok' : r.text.startsWith('Ben declined') ? 'denied' : 'error';
           item.preview = r.text.slice(0, 600);
           item.ms = Date.now() - started;

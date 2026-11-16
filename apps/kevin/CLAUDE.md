@@ -27,7 +27,7 @@ apps/kevin/
 |---|---|
 | Code that runs | `/opt/kevin/current` (root-owned release, built by `deploy.sh` from a pushed commit) |
 | Data | `/var/lib/kevin/` (uid `kevin`, 0700): `kevin.db`, `documents/`, `uploads/`, `backups/`, `SUGGESTIONS.md` |
-| Shell sandbox | `/var/lib/kevin-sh/workspace` (uid `kevin-sh`, no network) |
+| Sandbox | Workspace `/var/lib/kevin-sh/workspace` (uid `kevin-sh`; a 2 GB filesystem of its own, the image is `/var/lib/kevin-sh/workspace.img`). Reached through `/run/kevin-sandbox/shell.sock` and `extract.sock`; systemd units `kevin-shell@.service`, `kevin-extract@.service`; runner `/usr/local/lib/benloe/kevin-sandbox-run`. All installed by `setup.sh`. |
 | Secrets | set `kevin` in benloe-secrets: `ANTHROPIC_API_KEY`, `KEVIN_VAPID_*`, optional `OPENAI_API_KEY` |
 | PM2 config | `/etc/benloe/ecosystem/kevin.config.js` |
 | Logs | `/srv/benloe/logs/kevin-api-*.log` |
@@ -43,14 +43,16 @@ is writable by another uid, and this database holds tax and medical records.
 | `threads.ts` | One turn at a time per thread; a message Ben sends mid-turn folds into the running turn when that turn is a chat turn, and otherwise runs as its own chat turn afterwards; titles; compaction. |
 | `process.ts` | Logs unhandled promise rejections instead of letting one end the process. |
 | `prompt.ts` | System prompt assembly and the per-message `<context>` block. |
-| `tools.ts` | Tool registry: validation, audit log, daily-log event, `data_changed` event. |
+| `tools.ts` | Tool registry: who may call what (checked at the call, not by what a turn was shown), validation, audit log, daily-log event, `data_changed` event. |
+| `sandbox.ts` | Client for the sandbox: sends one bash script and its input, collects the reply, and stops waiting on its own timer, on Stop, or on too much output. |
+| `sql.ts` | Runs SQL the model wrote in a short-lived child process on a read-only connection, killed at a deadline. |
 | `core/index.ts` | Core tools (query, remember, recall, schedules, shell, files, web_research, ...) and the `system/*` views. |
 | `domains/spaces.ts` | Spaces: runtime-created areas, their records, the data-driven nav. |
 | `domains.ts`, `domains/*.ts` | One file per life area. Dropping a file in `domains/` registers it. |
 | `jobs.ts` | System jobs (in code), Kevin's schedules (in the DB), one runner, one ledger (`job_runs`), the watchdog. |
 | `memory.ts` | Daily log, FTS5 search index, facts, optional embeddings. |
 | `llm.ts` | Client, price table, usage recording, spend cap. |
-| `attachments.ts` | Uploads and one-time text extraction (pdftotext, then vision). |
+| `attachments.ts` | Uploads and one-time text extraction (pdftotext, run in the extraction sandbox; then vision). |
 | `push.ts` | Inbox row + SSE event + web push. |
 | `http.ts` | Express: auth, CSRF header, SSE, threads, uploads, `/api/view`, `/api/act`. |
 
@@ -204,34 +206,73 @@ export default defineDomain({
 Kevin reads web pages and holds tax and medical records, so a page that
 talks the model into something is the threat to design for.
 
-- **The shell** runs as `kevin-sh`: no network (iptables owner rule, loopback
-  included), an empty environment, resource limits, and its working directory
-  is `/var/lib/kevin-sh/workspace`. It is a separate uid, with no chroot or
-  mount namespace: it can read whatever is world-readable on this box. It
-  cannot read `/var/lib/kevin` (0700, uid `kevin`) or the rendered secrets.
-  Scheduled turns get no shell.
-- **Kevin's file tools run as `kevin-sh` too**, through the same launcher, so
-  they can reach exactly what the shell can. The server process never opens a
-  path in the sandbox folder, and `kevin` is not in the `kevin-sh` group, so
-  the kernel refuses if it tried. The path check inside the file-tool script
-  catches mistakes; the uid is the boundary.
+- **The sandbox.** A shell command runs in a systemd service started for that
+  one command (`kevin-shell@.service`; the server only connects to a socket,
+  it has no sudo rule and runs nothing as another uid). `setup.sh` holds the
+  unit and lists what it takes away; in short:
+  - uid `kevin-sh`, no capabilities, no way to gain any;
+  - no network: its own network namespace, so no TCP, UDP or DNS and no
+    service on 127.0.0.1; and `/run` is empty for it, so the unix sockets
+    through which another daemon could make a lookup on its behalf (the
+    system resolver's, D-Bus) are not there. An iptables rule for the uid
+    stays as a second lock;
+  - `/var`, `/srv`, `/opt`, `/home`, `/root`, `/boot` are empty for it, as are
+    `/etc/benloe`, `/etc/caddy` and `/etc/ssh`. It sees its workspace, a
+    private `/tmp`, and the rest of `/etc` and `/usr` read-only;
+  - 115 seconds per command, then the command's whole session is killed; at
+    130 seconds, and whenever the runner exits, systemd kills every process
+    left in the unit, whatever they did about signals or sessions. Stop does
+    the same at once. Memory, CPU and process count are capped, and the
+    workspace is a 2 GB filesystem, so filling it does not fill the disk.
+  `setup.sh` ends by running `sandbox/selfcheck.py` against the real socket
+  and fails if any of this does not hold.
+  What it can still do: use its CPU and memory share for its time limit, and
+  read world-readable files under `/etc` and `/usr`.
+- **Scheduled turns cannot run the shell.** `tools.ts` refuses the call by
+  the turn's origin, and refuses any tool a turn was not given (the tools of
+  an area Ben switched off), whatever the model asks for. A scheduled turn
+  also cannot create or re-point schedules that run Kevin, raise a spend cap,
+  or pause jobs. Raising a schedule's cap in chat asks Ben.
+- **Kevin's file tools run in the same sandbox**, as a fixed script with the
+  path and content on its input, so they can reach exactly what the shell
+  can. The server process never opens a path in the workspace, and `kevin` is
+  not in the `kevin-sh` group, so the kernel refuses if it tried.
+- **Uploaded PDFs are parsed in a second sandbox** (`kevin-extract@.service`):
+  the same confinement with no writable folder at all. The bytes go in on
+  standard input and only text comes back, so a hostile PDF meets pdftotext
+  as `kevin-sh`, not as the uid that owns the database. Images and scanned
+  PDFs are read by the model API, not by a local parser.
 - **The main loop has no web tools.** `web_research` is the only way Kevin
   reads the web: a sub-call that receives only the question, searches and
   fetches, and returns text that the main loop treats as data.
-- **Writes are typed tools**; `query` refuses anything but a single read.
-  Deleting a space, raising the spend cap and hiding pages are Ben-only
-  (`agent: false`).
-- **Not closed:** the main model can see Ben's records and writes the
-  question it hands to `web_research`, so a successful injection could leak
-  a small amount through that question and the searches made from it. Tool
-  inputs are written to `tool_audit` and the daily log in the same private
-  database, so a summary Kevin passes to a tool is stored
-  there too.
+- **Writes are typed tools.** SQL the model writes (`query`, and the statement
+  of a `check` schedule) runs in a separate process on a read-only
+  connection, must be a single SELECT, and is killed after 5 seconds, so it
+  can neither change anything nor stall the server. Deleting a space, raising
+  the monthly spend cap and hiding pages are Ben-only (`agent: false`).
+- **Not closed:**
+  - The main model can see Ben's records and writes the question it hands to
+    `web_research`, so a successful injection could leak a small amount
+    through that question and the searches made from it.
+  - Tool inputs are written to `tool_audit` and the daily log in the same
+    private database, so a summary Kevin passes to a tool is stored there
+    too.
+  - `query` can read every table, including the few left out of the schema
+    the model is shown (push subscriptions, settings, stored messages).
+  - A regular expression in a money rule runs in the server's thread. Rules
+    that could run long are refused when saved and skipped when loaded, and
+    one that still takes over 100 ms is switched off, but a match in progress
+    cannot be interrupted.
 
 ## Costs
 
-Every model request is a row in `usage`; Settings shows month-to-date and the
-cap (default $50) blocks new turns, extraction and summaries once reached.
+Every request to the Anthropic API is a row in `usage`, including one that was
+stopped or failed part-way (its output is then an estimate from what had
+arrived, so slightly low). Settings shows month-to-date, and once the cap
+(default $50) is reached no new turn starts, a running turn stops at its next
+step, and web research, model-read extraction of images and scans, titles,
+compaction and memory summaries are not requested. Embedding requests to
+OpenAI, when that key is set, are not in `usage` and not under the cap.
 The fixed prompt (38 tools, schema, workspace files) is about 35,000 tokens:
 about a third of a cent per request from cache, about 14 cents for the first
 message after an hour's silence. A "think hard" turn runs on Opus with its own
@@ -241,8 +282,12 @@ a space adds nothing.
 ## Not configured yet (each needs something from Ben)
 
 - **Offsite backup.** The nightly job writes `/var/lib/kevin/backups/<day>/`
-  (database + documents + uploads, seven days). Copying it off the droplet
-  needs a bucket and credentials.
+  (database + documents + uploads, seven days). A snapshot is built in
+  `<day>.partial` and renamed only after the database copy passes SQLite's
+  integrity check and the archive reads back, so a dated folder is always
+  complete and a failed night leaves nothing. This is Kevin's only backup:
+  the box-wide `benloe-db-backup` does not cover `/var/lib/kevin`. Copying it
+  off the droplet needs a bucket and credentials.
 - **Embeddings.** Recall is keyword search (FTS5). Adding `OPENAI_API_KEY` to
   the `kevin` secret set and restarting turns on the hybrid path already in
   `memory.ts`.
@@ -252,9 +297,18 @@ a space adds nothing.
 ## Working on it
 
 ```
-cd server && npm run typecheck && npm test      # vitest; no network, no API calls
+cd server && npm run typecheck && npm test      # vitest; no outside network, no API calls
 cd web && npm run typecheck && npm test
 ```
+
+The server tests start the real sandbox runner (`sandbox/kevin-sandbox-run`)
+directly, so they need `python3` and `pdftotext` and exercise its framing,
+time limit and session cleanup. They do not exercise the systemd unit's
+confinement; `sandbox/selfcheck.py`, run by `setup.sh`, does that on the box.
+To run the server by hand, set `KEVIN_SHELL_LAUNCHER` and
+`KEVIN_EXTRACT_LAUNCHER` to `python3 -I <repo>/apps/kevin/sandbox/kevin-sandbox-run`
+(a command instead of `unix:<socket>`): commands then run as your own uid
+with the runner's limits only.
 
 To ship: read the diff, commit, push, get it merged to `main`, then
 
@@ -265,10 +319,17 @@ benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/
 which takes the commit id from GitHub (never from this working tree), fetches
 that exact commit into a root-owned directory,
 installs dependencies from the lockfiles, runs both suites, builds a new
-release in `/opt/kevin/releases/` and restarts `kevin-api`. `deploy.sh
-rollback` (through `benloe-promote` the same way) returns to the previous
+release in `/opt/kevin/releases/` and restarts `kevin-api`. If the service
+does not answer after the switch, the script points `current` back at the
+release that was running, restarts it, renames the failed one `.failed-<time>`
+and exits non-zero saying which of those happened. `deploy.sh rollback`
+(through `benloe-promote` the same way) returns to the previous complete
 release. `deploy.sh` and `setup.sh` refuse to run from the working tree: see
 "Promoting code that root runs" in `docs/CLAUDE.md`.
+
+`setup.sh` (same command, with `apps/kevin/setup.sh`) installs the users, the
+sandbox units and the workspace filesystem, and is safe to re-run. Run it
+before a deploy whose code expects something new from it.
 
 ## Web map
 

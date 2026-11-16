@@ -3,16 +3,14 @@
 // bytes again. Files stay on this box; the bytes go to the API only here and
 // on the turn the file is attached to.
 import type Anthropic from '@anthropic-ai/sdk';
-import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { promisify } from 'node:util';
 import { config } from './config.js';
 import { type DB, nowIso } from './db.js';
 import { small, spend } from './llm.js';
 import { indexItem } from './memory.js';
+import { runInSandbox } from './sandbox.js';
 
-const run = promisify(execFile);
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export interface Attachment {
@@ -41,15 +39,36 @@ export function saveUpload(db: DB, buf: Buffer, filename: string): Attachment {
   if (buf.length > MAX_UPLOAD_BYTES) throw new Error('file is over 25 MB');
   const { mime, kind } = sniff(buf, filename);
   const now = new Date();
-  const id = Number(
-    db.prepare('INSERT INTO attachments (at, filename, mime, size, path, kind) VALUES (?,?,?,?,?,?)').run(now.toISOString(), safeName(filename), mime, buf.length, '', kind).lastInsertRowid,
-  );
-  const rel = join('uploads', String(now.getUTCFullYear()), String(now.getUTCMonth() + 1).padStart(2, '0'), `${id}-${safeName(filename)}`);
-  const abs = join(config.dataDir, rel);
-  mkdirSync(dirname(abs), { recursive: true, mode: 0o700 });
-  writeFileSync(abs, buf, { mode: 0o600 });
-  db.prepare('UPDATE attachments SET path = ? WHERE id = ?').run(rel, id);
-  return db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Attachment;
+  // One transaction: if the file cannot be written, no row is left pointing at nothing.
+  return db.transaction(() => {
+    const id = Number(
+      db.prepare('INSERT INTO attachments (at, filename, mime, size, path, kind) VALUES (?,?,?,?,?,?)').run(now.toISOString(), safeName(filename), mime, buf.length, '', kind).lastInsertRowid,
+    );
+    const rel = join('uploads', String(now.getUTCFullYear()), String(now.getUTCMonth() + 1).padStart(2, '0'), `${id}-${safeName(filename)}`);
+    const abs = join(config.dataDir, rel);
+    mkdirSync(dirname(abs), { recursive: true, mode: 0o700 });
+    writeFileSync(abs, buf, { mode: 0o600 });
+    db.prepare('UPDATE attachments SET path = ? WHERE id = ?').run(rel, id);
+    return db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Attachment;
+  })();
+}
+
+/** Characters of a file's text that are kept for the model. Longer text is cut, and says so. */
+export const MAX_EXTRACT_CHARS = 200_000;
+const capped = (text: string): string =>
+  text.length > MAX_EXTRACT_CHARS ? `${text.slice(0, MAX_EXTRACT_CHARS)}\n[cut here: this is the first ${MAX_EXTRACT_CHARS} of ${text.length} characters of the file]` : text;
+
+/**
+ * The text layer of a PDF, read by pdftotext. The PDF is an upload and pdftotext is a large parser, so it
+ * does not run in this process's uid, which owns Ben's records: the bytes are piped to it inside the
+ * extraction sandbox (no network, no writable folder, another uid; see setup.sh) and only its text comes back.
+ * Returns '' when it could not be read; the reason is logged.
+ */
+async function pdfText(bytes: Buffer, id: number): Promise<string> {
+  const r = await runInSandbox(config.extractLauncher, 'exec pdftotext -layout -l 60 - -', { stdin: bytes, maxOut: 20 * 1024 * 1024, seconds: 60 });
+  if (r.code === 0) return r.stdout.toString('utf8').trim();
+  console.error(`pdftotext failed for attachment ${id}: ${r.failure ?? (r.timedOut ? 'took longer than 60 seconds' : r.overflow ? 'produced more than 20 MB of text' : r.stderr.trim().slice(0, 300) || `exit code ${r.code}`)}`);
+  return '';
 }
 
 const EXTRACT_SYSTEM =
@@ -63,13 +82,9 @@ export async function extract(db: DB, id: number): Promise<Attachment> {
   let status = 'done';
   try {
     if (a.kind === 'text') {
-      text = readFileSync(abs, 'utf8').slice(0, 200_000);
+      text = capped(readFileSync(abs, 'utf8'));
     } else if (a.kind === 'pdf') {
-      try {
-        text = (await run('pdftotext', ['-layout', '-l', '60', abs, '-'], { maxBuffer: 20 * 1024 * 1024, timeout: 60_000 })).stdout.trim().slice(0, 200_000);
-      } catch (e) {
-        console.error('pdftotext failed', (e as Error).message);
-      }
+      text = capped(await pdfText(readFileSync(abs), id));
       // A scan has no text layer: have the model read the pages.
       if (text.replace(/\s/g, '').length < 200 && a.size <= 20 * 1024 * 1024) {
         if (spend(db).blocked) throw new Error('monthly spend cap reached');

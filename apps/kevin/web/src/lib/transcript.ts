@@ -225,6 +225,39 @@ export function segments(turn: Turn): Segment[] {
   });
 }
 
+export type WorkPart = Extract<Segment, { kind: 'status' | 'tool' }>;
+export type Display = Extract<Segment, { kind: 'text' | 'folded' }> | { kind: 'work'; parts: WorkPart[] };
+
+/**
+ * Segments as the chat shows them: each unbroken run of status lines and tool
+ * calls becomes one "work" entry, so a turn that used six tools is one line
+ * above the reply, opened only when Ben wants the detail.
+ */
+export function display(segs: Segment[]): Display[] {
+  const out: Display[] = [];
+  for (const s of segs) {
+    if (s.kind === 'text' || s.kind === 'folded') {
+      out.push(s);
+      continue;
+    }
+    const last = out.at(-1);
+    if (last?.kind === 'work') last.parts.push(s);
+    else out.push({ kind: 'work', parts: [s] });
+  }
+  return out;
+}
+
+/** One line for a run of work: how many tool calls, which tools (each named once, in order), and how many did not succeed. */
+export function workSummary(parts: WorkPart[]): { steps: number; names: string[]; failed: number; declined: number } {
+  const tools = parts.flatMap((p) => (p.kind === 'tool' ? [p.item] : []));
+  return {
+    steps: tools.length,
+    names: [...new Set(tools.map((t) => t.name))],
+    failed: tools.filter((t) => t.state === 'error').length,
+    declined: tools.filter((t) => t.state === 'denied').length,
+  };
+}
+
 /** Plain words for how a turn ended, or null when it ended normally. */
 export function endNote(turn: Turn): { tone: 'error' | 'muted'; text: string } | null {
   switch (turn.status) {

@@ -32,7 +32,8 @@ const read = (name: string): string => {
   }
 };
 
-// Tables the model has no business reading through `query`.
+// Tables left out of the schema the model is shown: internals it has no use for. This keeps them out
+// of its way; it is not a lock. `query` can still read them if the model names one.
 const HIDDEN = new Set(['push_subscriptions', 'embeddings', 'messages', '_migrations', 'settings']);
 
 /** Does this table belong to one of the named domains? Tables are prefixed with their domain's name. */

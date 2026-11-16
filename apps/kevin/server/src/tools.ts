@@ -21,6 +21,12 @@ export interface ToolCtx {
    */
   confirm(summary: string): Promise<boolean>;
   signal?: AbortSignal;
+  /**
+   * The names of the tools this turn was given. When set, a call to any other tool is refused: a tool
+   * left out of a turn's list (the shell in a scheduled turn, the tools of an area Ben switched off) is
+   * not merely unadvertised, it cannot be run by that turn.
+   */
+  offered?: ReadonlySet<string>;
 }
 
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
@@ -34,6 +40,8 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   ui?: boolean;
   /** Offered to the model. Default true; false for things only Ben may do (raising the spend cap). */
   agent?: boolean;
+  /** Usable in a turn a schedule started, where nobody is watching. Default true; false for the shell. */
+  job?: boolean;
   run(input: z.infer<S>, ctx: ToolCtx): unknown | Promise<unknown>;
 }
 
@@ -88,6 +96,10 @@ export class ToolRegistry {
       text = `"${name}" is not callable from the UI.`;
     } else if (ctx.source !== 'ui' && tool.agent === false) {
       text = `"${name}" is something only Ben can do, from the app.`;
+    } else if (ctx.source === 'job' && tool.job === false) {
+      text = `"${tool.name}" is not available in a scheduled turn; it needs Ben in the conversation.`;
+    } else if (ctx.offered && !ctx.offered.has(tool.name)) {
+      text = `"${tool.name}" is not one of the tools this turn has.`;
     } else {
       const parsed = tool.input.safeParse(rawInput ?? {});
       if (!parsed.success) {
@@ -115,7 +127,13 @@ export class ToolRegistry {
       console.error('audit write failed', e);
     }
     if (ok && tool?.touches?.length) {
-      logEvent(ctx.db, `${tool.name} ${input.slice(0, 400)}`, ctx.threadId ?? null);
+      // The write has happened. A failure to log it or announce it must not turn into a failed call:
+      // the caller would report an error for a change that is in the database, and might make it again.
+      try {
+        logEvent(ctx.db, `${tool.name} ${input.slice(0, 400)}`, ctx.threadId ?? null);
+      } catch (e) {
+        console.error(`${tool.name} succeeded but its entry in the daily log could not be written`, e);
+      }
       bus.publish({ type: 'data_changed', domains: tool.touches });
     }
     return { ok, text, value };

@@ -190,7 +190,7 @@ describe('a turn that fails outside the model call', () => {
     const t = createThread(kevin, 'chat', 'Titled');
     kevin.db.exec('DROP TABLE search_index');
     model.reply({ content: [text('Still here.')] });
-    expect(await send(kevin, t.id, { text: 'what did the dentist say' })).toMatchObject({ status: 'done', text: 'Still here.' });
+    expect(await send(kevin, t.id, { text: 'what did the kite club decide' })).toMatchObject({ status: 'done', text: 'Still here.' });
     expect(errors.mock.calls.some((c: unknown[]) => String(c[0]).includes('memory search failed'))).toBe(true);
     await idle(t.id);
   });
@@ -365,13 +365,13 @@ describe('the memory job', () => {
     const kevin = await makeKevin();
     const runner = new JobRunner(kevin);
     const good = quietThread(kevin, 'Garden');
-    const refused = quietThread(kevin, 'Clinic');
+    const refused = quietThread(kevin, 'Riddles');
     const failing = quietThread(kevin, 'Budget');
-    answer({ Garden: { content: [text('Ben is planting tomatoes in May.')] }, Clinic: { content: [], stop_reason: 'refusal' }, Budget: down });
+    answer({ Garden: { content: [text('The test owner is planting tomatoes in Marchember.')] }, Riddles: { content: [], stop_reason: 'refusal' }, Budget: down });
     const r = await runner.runSystemNow('memory');
     expect(model.requests.length).toBe(3);
     // The good one is in the log; the refused one is passed over for good; the failed one waits.
-    expect(kevin.db.prepare("SELECT text FROM memory_log WHERE kind = 'summary'").all()).toEqual([{ text: 'Garden: Ben is planting tomatoes in May.' }]);
+    expect(kevin.db.prepare("SELECT text FROM memory_log WHERE kind = 'summary'").all()).toEqual([{ text: 'Garden: The test owner is planting tomatoes in Marchember.' }]);
     expect(state(kevin, good)).toMatchObject({ memory_failures: 0, memory_retry_at: null });
     expect(state(kevin, good).memory_upto).toBeGreaterThan(0);
     expect(state(kevin, refused)).toMatchObject({ memory_failures: 0, memory_retry_at: null });

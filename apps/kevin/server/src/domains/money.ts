@@ -480,10 +480,13 @@ function runImport(input: z.infer<typeof importInput>, ctx: ToolCtx): unknown {
   if (!att) throw new ToolError(`There is no attachment ${input.attachment_id}.`);
   if (att.kind !== 'text') throw new ToolError(`Attachment ${att.id} (${att.filename}) is a ${att.kind} file. money_import reads CSV exports; ask Ben for the bank's CSV download.`);
   let text: string;
+  // The whole file, from disk. The text kept for the model is cut at a fixed length, and an import
+  // from that would stop part-way through a long export without saying so.
   try {
     text = readFileSync(attachmentPath(att), 'utf8');
-  } catch {
-    text = att.extracted_text ?? '';
+  } catch (e) {
+    console.error(`money_import could not read attachment ${att.id}`, e);
+    throw new ToolError(`Attachment ${att.id} (${att.filename}) could not be read from disk, so nothing was imported. Ask Ben to upload the file again.`);
   }
   if (!text.trim()) throw new ToolError(`Attachment ${att.id} (${att.filename}) is empty.`);
 

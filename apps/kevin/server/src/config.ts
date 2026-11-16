@@ -17,8 +17,18 @@ export const config = {
   webDir: resolve(env.KEVIN_WEB_DIR ?? join(here, '../../web/dist')),
   /** Where the sandboxed shell runs; owned by the kevin-sh uid. */
   shellDir: resolve(env.KEVIN_SHELL_DIR ?? '/var/lib/kevin-sh/workspace'),
-  /** How a shell command is launched. Production: sudo to the kevin-sh uid. */
-  shellLauncher: (env.KEVIN_SHELL_LAUNCHER ?? 'sudo -n -u kevin-sh /usr/local/lib/benloe/kevin-shell').split(' '),
+  /**
+   * Where the sandbox runner is reached. `unix:<path>`: the socket systemd listens on (production, see
+   * setup.sh). Anything else: a command that starts the runner directly (tests, a development machine),
+   * which gives its time limit and session cleanup but none of the unit's confinement.
+   */
+  shellLauncher: (env.KEVIN_SHELL_LAUNCHER ?? 'unix:/run/kevin-sandbox/shell.sock').split(' '),
+  /** The same, for text extraction from uploads: a sandbox with no writable folder at all. */
+  extractLauncher: (env.KEVIN_EXTRACT_LAUNCHER ?? 'unix:/run/kevin-sandbox/extract.sock').split(' '),
+  /** Seconds a shell command may run before it and everything it started are killed. */
+  shellSeconds: 115,
+  /** Seconds a model-written SQL statement may run before it is cancelled. */
+  sqlSeconds: 5,
   /** IRON PR (weights.benloe.com), Ben's lifting PR tracker. Read only, ever: see domains/ironpr.ts. */
   ironPrDb: env.KEVIN_IRONPR_DB ?? '/srv/benloe/data/weights.db',
   ownerEmail: (env.KEVIN_OWNER_EMAIL ?? '').toLowerCase(),

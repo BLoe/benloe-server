@@ -5,15 +5,15 @@ import {
 } from './logic';
 
 const doc: DocumentInfo = {
-  id: 7, title: 'Aetna EOB, March 2026', category: 'insurance', tags: ['aetna', 'eob'], document_date: '2026-03-12', issuer: 'Aetna', tax_year: 2026,
-  summary: 'Visit on March 3.', notes: null, original_filename: 'eob.pdf', mime: 'application/pdf', size_bytes: 1200, text_chars: 800,
+  id: 7, title: 'Northwind invoice, March 2026', category: 'insurance', tags: ['northwind', 'invoice'], document_date: '2026-03-12', issuer: 'Northwind', tax_year: 2026,
+  summary: 'Repair on March 3.', notes: null, original_filename: 'invoice.pdf', mime: 'application/pdf', size_bytes: 1200, text_chars: 800,
   created_at: '2026-03-20T10:00:00.000Z', updated_at: '2026-03-20T10:00:00.000Z', file_url: '/api/x/documents/7/file',
 };
 
 describe('filters', () => {
   it('reads the URL, dropping values the server would not accept', () => {
-    const f = filtersFromSearch(new URLSearchParams('q=cardiology&category=medical&tag=%20HSA%20&year=2026&doc=4'));
-    expect(f).toEqual({ q: 'cardiology', category: 'medical', tag: 'hsa', year: '2026' });
+    const f = filtersFromSearch(new URLSearchParams('q=spars&category=home&tag=%20HSA%20&year=2026&doc=4'));
+    expect(f).toEqual({ q: 'spars', category: 'home', tag: 'hsa', year: '2026' });
     expect(filtersFromSearch(new URLSearchParams('category=nonsense&year=20x6'))).toEqual({ q: '', category: '', tag: '', year: '' });
   });
 
@@ -25,41 +25,41 @@ describe('filters', () => {
   });
 
   it('sets and removes search params, keeping the rest', () => {
-    const sp = new URLSearchParams('q=eob&category=medical');
-    expect(withParams(sp, { category: null, doc: 9 }).toString()).toBe('q=eob&doc=9');
-    expect(withParams(sp, { q: '' }).toString()).toBe('category=medical');
-    expect(sp.toString()).toBe('q=eob&category=medical');
+    const sp = new URLSearchParams('q=invoice&category=home');
+    expect(withParams(sp, { category: null, doc: 9 }).toString()).toBe('q=invoice&doc=9');
+    expect(withParams(sp, { q: '' }).toString()).toBe('category=home');
+    expect(sp.toString()).toBe('q=invoice&category=home');
   });
 
   it('links to a document, carrying the search', () => {
     expect(documentLink(3)).toBe('/documents?doc=3');
-    expect(documentLink(3, ' blood pressure ')).toBe('/documents?doc=3&q=blood%20pressure');
+    expect(documentLink(3, ' kite string ')).toBe('/documents?doc=3&q=kite%20string');
   });
 });
 
 describe('tags', () => {
   it('normalises the way the server does', () => {
-    expect(cleanTags([' HSA ', 'hsa', 'Dr.  Alvarez', '', '#dental'])).toEqual(['dental', 'dr. alvarez', 'hsa']);
+    expect(cleanTags([' CLUB ', 'club', 'Blue  Shed', '', '#kites'])).toEqual(['blue shed', 'club', 'kites']);
     expect(cleanTags(Array.from({ length: 30 }, (_, i) => `t${String(i).padStart(2, '0')}`))).toHaveLength(20);
     expect(cleanTags(['x'.repeat(60)])[0]).toHaveLength(40);
   });
 
   it('splits typed text on commas', () => {
-    expect(parseTagInput('Dental, hsa ,, Kaiser')).toEqual(['dental', 'hsa', 'kaiser']);
+    expect(parseTagInput('Kites, club ,, Northwind')).toEqual(['club', 'kites', 'northwind']);
   });
 
   it('suggests unused tags, prefix matches then most used first', () => {
-    const facets = [{ tag: 'hsa', count: 5 }, { tag: 'dental', count: 3 }, { tag: 'aetna', count: 9 }, { tag: 'health', count: 1 }];
-    expect(tagSuggestions(facets, ['aetna'], '')).toEqual(['hsa', 'dental', 'health']);
-    expect(tagSuggestions(facets, [], 'h')).toEqual(['hsa', 'health']);
-    expect(tagSuggestions(facets, [], 'ta')).toEqual(['dental']);
-    expect(tagSuggestions(facets, [], '', 2)).toEqual(['aetna', 'hsa']);
+    const facets = [{ tag: 'club', count: 5 }, { tag: 'kites', count: 3 }, { tag: 'northwind', count: 9 }, { tag: 'craft', count: 1 }];
+    expect(tagSuggestions(facets, ['northwind'], '')).toEqual(['club', 'kites', 'craft']);
+    expect(tagSuggestions(facets, [], 'c')).toEqual(['club', 'craft']);
+    expect(tagSuggestions(facets, [], 'te')).toEqual(['kites']);
+    expect(tagSuggestions(facets, [], '', 2)).toEqual(['northwind', 'club']);
   });
 });
 
 describe('filing form', () => {
   it('makes a title from a filename', () => {
-    expect(titleFromFilename('aetna_eob-march.pdf')).toBe('Aetna eob march');
+    expect(titleFromFilename('northwind_invoice-march.pdf')).toBe('Northwind invoice march');
     expect(titleFromFilename('W-2_2026.PDF')).toBe('W-2 2026');
     expect(titleFromFilename('statement 2026-03-31.pdf')).toBe('Statement 2026-03-31');
     expect(titleFromFilename('1099-INT-ally.pdf')).toBe('1099-INT ally');
@@ -69,7 +69,7 @@ describe('filing form', () => {
 
   it('starts a draft from the filename and a preset', () => {
     expect(newDraft('scan.jpg', { category: 'tax', tax_year: '2026', title: 'W-2 from Acme' })).toMatchObject({ title: 'W-2 from Acme', category: 'tax', tax_year: '2026', tags: [] });
-    expect(newDraft('lab_results.pdf').title).toBe('Lab results');
+    expect(newDraft('kite_plans.pdf').title).toBe('Kite plans');
   });
 
   it('says why a draft cannot be saved', () => {
@@ -91,15 +91,15 @@ describe('filing form', () => {
 
   it('builds document_update input from what changed only', () => {
     expect(updateInput(doc, draftOf(doc))).toEqual({ id: 7 });
-    expect(updateInput(doc, { ...draftOf(doc), title: 'Aetna EOB', issuer: '', tax_year: '', tags: ['eob', 'Aetna', 'cardiology'], notes: 'Paid' })).toEqual({
-      id: 7, title: 'Aetna EOB', issuer: null, tax_year: null, tags: ['aetna', 'cardiology', 'eob'], notes: 'Paid',
+    expect(updateInput(doc, { ...draftOf(doc), title: 'Northwind invoice', issuer: '', tax_year: '', tags: ['invoice', 'Northwind', 'spars'], notes: 'Paid' })).toEqual({
+      id: 7, title: 'Northwind invoice', issuer: null, tax_year: null, tags: ['invoice', 'northwind', 'spars'], notes: 'Paid',
     });
-    expect(updateInput(doc, { ...draftOf(doc), document_date: '', category: 'medical', tags: [] })).toEqual({ id: 7, document_date: null, category: 'medical', tags: [] });
+    expect(updateInput(doc, { ...draftOf(doc), document_date: '', category: 'home', tags: [] })).toEqual({ id: 7, document_date: null, category: 'home', tags: [] });
   });
 
   it('finds the existing document in a duplicate refusal', () => {
-    expect(duplicateOf('This exact file is already in the vault as document 1, "Aetna EOB, Dr. Alvarez, March 2026" (insurance). Change its details with document_update if needed.')).toEqual({
-      id: 1, title: 'Aetna EOB, Dr. Alvarez, March 2026',
+    expect(duplicateOf('This exact file is already in the vault as document 1, "Northwind invoice, spar repair, March 2026" (insurance). Change its details with document_update if needed.')).toEqual({
+      id: 1, title: 'Northwind invoice, spar repair, March 2026',
     });
     expect(duplicateOf('already in the vault as document 42')).toEqual({ id: 42, title: null });
     expect(duplicateOf('There is no upload with id 3.')).toBeNull();
@@ -108,7 +108,7 @@ describe('filing form', () => {
 
 describe('highlighting', () => {
   it('takes the words of a search', () => {
-    expect(searchTerms('"blood pressure" AND a cardiology*')).toEqual(['cardiology', 'pressure', 'blood']);
+    expect(searchTerms('"kite string" AND a aerodynamics*')).toEqual(['aerodynamics', 'string', 'kite']);
     expect(searchTerms('  ')).toEqual([]);
     expect(searchTerms('W-2 w-2')).toEqual(['w-2']);
   });
@@ -143,6 +143,6 @@ describe('display', () => {
   });
 
   it('names the document in the chat prefill', () => {
-    expect(askPrompt({ id: 7, title: 'Aetna EOB' })).toBe('About document 7 (“Aetna EOB”): ');
+    expect(askPrompt({ id: 7, title: 'Northwind invoice' })).toBe('About document 7 (“Northwind invoice”): ');
   });
 });

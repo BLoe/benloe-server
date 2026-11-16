@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { bus } from './bus.js';
 import { nowIso, parseJson } from './db.js';
 import type { Kevin } from './kevin.js';
-import { small } from './llm.js';
+import { small, spend } from './llm.js';
 import { indexItem } from './memory.js';
 import { runTurn, type TurnHandle, type TurnInput, type TurnOpts, type TurnResult } from './agent.js';
 
@@ -114,6 +114,8 @@ const KEEP_TURNS = 4;
 
 async function afterTurn(kevin: Kevin, threadId: string, handle: TurnHandle): Promise<void> {
   const { db } = kevin;
+  // Titles and compaction are model requests too: none are made once the month's cap is reached.
+  if (spend(db).blocked) return;
   const t = db.prepare('SELECT title, origin FROM threads WHERE id = ?').get(threadId) as { title: string; origin: string };
   const turnCount = (db.prepare('SELECT COUNT(*) AS n FROM turns WHERE thread_id = ?').get(threadId) as { n: number }).n;
   if (t.title === 'New chat' && turnCount >= 1) {
