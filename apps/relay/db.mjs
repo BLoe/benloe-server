@@ -3,7 +3,7 @@
 // session on this box talks to). No dependencies: node:sqlite.
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync } from 'node:fs';
+import { chmodSync, existsSync, statSync } from 'node:fs';
 
 // Under /var/lib, not /srv/benloe/data, which claude-worker owns. /var/lib is
 // root-owned, and /var/lib/benloe-relay itself belongs to the `relay` user
@@ -16,22 +16,33 @@ export const MAX_DB_BYTES = 200 * 1024 * 1024; // posts are refused past this
 // messages would be indistinguishable from this side's own.
 export const LOCAL_SENDER = 'claude';
 export const MAX_BODY_CHARS = 200_000;
+// The longest a token may live. A token is assumed to leak (it sits in the
+// outside agent's logs), and a bounded lifetime also keeps every expiry a
+// four-digit year, which is the only form of date this file ever writes.
+export const MAX_TTL_MS = 90 * 86_400_000;
 const AGENT = /^[a-z][a-z0-9-]{0,30}$/;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const now = () => new Date().toISOString();
 
-export function openDb(path = DEFAULT_DB) {
+// Opens the database. It is created only when the caller says so (`relay
+// init`, and the tests): a database that has gone missing must not be quietly
+// replaced by an empty one, which would have no tokens and no messages and
+// look, to either side, like a quiet channel.
+export function openDb(path = DEFAULT_DB, { create = false } = {}) {
+  if (!create && !existsSync(path)) throw new Error(`no database at ${path}`);
   // The server and the local command are different uids sharing this file
   // through their group, so it must be writable by the group and closed to
   // everyone else. SQLite creates a database as 0644 less the umask (0640
   // here), and gives -wal and -shm the database file's own mode whatever the
-  // umask is. So whichever side creates the database opens it to the group
-  // here, before the first write makes those two files, and they follow.
+  // umask is. So the side that owns the database (the one that created it)
+  // opens it to the group here, before the first write makes those two
+  // files, and they follow. A database the other uid owns is left alone:
+  // only an owner can chmod, and that side has already done it.
   process.umask(0o007);
-  const fresh = !existsSync(path);
   const db = new DatabaseSync(path);
-  if (fresh) chmodSync(path, 0o660);
+  const st = statSync(path);
+  if (st.uid === process.geteuid?.() && (st.mode & 0o777) !== 0o660) chmodSync(path, 0o660);
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA busy_timeout = 3000;
@@ -68,6 +79,7 @@ export function createToken(db, agent, ttlMs, note = null) {
   if (!AGENT.test(agent)) throw new Error(`agent name must match ${AGENT}`);
   if (agent === LOCAL_SENDER) throw new Error(`"${agent}" is reserved for the local side`);
   if (!(ttlMs > 0)) throw new Error('ttl must be positive');
+  if (!(ttlMs <= MAX_TTL_MS)) throw new Error(`ttl is at most ${MAX_TTL_MS / 86_400_000} days`);
   const id = randomBytes(3).toString('hex');
   const token = `rly_${id}_${randomBytes(32).toString('base64url')}`;
   const expires_at = new Date(Date.now() + ttlMs).toISOString();
@@ -75,6 +87,12 @@ export function createToken(db, agent, ttlMs, note = null) {
     .run(id, agent, sha(token), now(), expires_at, note);
   return { id, agent, token, expires_at };
 }
+
+// The one test of expiry, used to accept a token, to list it and to revoke
+// it: true only if expires_at parses as a date and that date is in the
+// future. A value that does not parse (NaN) fails this test; it does not
+// slip past it.
+export const notExpired = (row) => Date.parse(row.expires_at) > Date.now();
 
 // -> { ok: true, token: row } | { ok: false, reason }
 export function checkToken(db, presented) {
@@ -84,9 +102,7 @@ export function checkToken(db, presented) {
   const row = db.prepare('SELECT * FROM tokens WHERE hash = ?').get(sha(presented));
   if (!row) return { ok: false, reason: 'unknown token' };
   if (row.revoked_at) return { ok: false, reason: 'token revoked' };
-  // Accepted only if the expiry parses and is in the future: a value that
-  // does not parse (NaN) fails this test, it does not slip past it.
-  if (!(Date.parse(row.expires_at) > Date.now())) return { ok: false, reason: 'token expired' };
+  if (!notExpired(row)) return { ok: false, reason: 'token expired' };
   return { ok: true, token: row };
 }
 
@@ -99,15 +115,18 @@ export function listTokens(db) {
 }
 
 // `which` is a token id, an agent name, or '--all'. Revokes the matching
-// tokens that are neither revoked nor past their expiry, and returns how many
-// that was. An expired token is left as it is: it already cannot be used.
-// (createToken writes expires_at with toISOString, so comparing as text
-// compares the times.)
+// tokens that checkToken would still accept (not revoked, not expired, by the
+// same test it uses) and returns how many that was. A token that is already
+// dead is left as it is.
 export function revokeTokens(db, which) {
-  const where = which === '--all' ? '1=1' : '(id = ? OR agent = ?)';
-  const args = which === '--all' ? [] : [which, which];
+  const rows = which === '--all'
+    ? db.prepare('SELECT id, expires_at FROM tokens WHERE revoked_at IS NULL').all()
+    : db.prepare('SELECT id, expires_at FROM tokens WHERE revoked_at IS NULL AND (id = ? OR agent = ?)').all(which, which);
+  const stamp = db.prepare('UPDATE tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL');
   const at = now();
-  return db.prepare(`UPDATE tokens SET revoked_at = ? WHERE revoked_at IS NULL AND expires_at > ? AND ${where}`).run(at, at, ...args).changes;
+  let n = 0;
+  for (const row of rows.filter(notExpired)) n += stamp.run(at, row.id).changes;
+  return n;
 }
 
 // ---- messages -------------------------------------------------------------

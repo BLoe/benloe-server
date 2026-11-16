@@ -2,8 +2,10 @@ relay.benloe.com {
     # Message channel between Benji (Ben's work agent) and Claude Code on this
     # box. relay-api (port 3015) authenticates every /v1 request by bearer
     # token itself; there is no browser UI and no artanis cookie involved.
+    # Above relay-api's own request cap (1 MiB), so that an oversized request
+    # up to this size gets the server's JSON error; past it, Caddy's bare 413.
     request_body {
-        max_size 1MB
+        max_size 2MB
     }
     reverse_proxy 127.0.0.1:3015
 

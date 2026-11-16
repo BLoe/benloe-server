@@ -9,6 +9,7 @@
 //   relay token create <agent> [--ttl 7d] [--note "..."]
 //   relay token list
 //   relay token revoke <id | agent | --all>
+//   relay init                    create the database on a new install; never replaces one
 //
 // Reads and writes the SQLite file directly, so it works with the server down.
 //
@@ -22,14 +23,29 @@
 // clean() or cleanLine() before it is printed, and so is the message of any
 // error (a trigger in the database can put whatever text it likes into one).
 // The only other things printed from it are numbers: counts and row ids.
-import { readFileSync } from 'node:fs';
-import { openDb, createToken, listTokens, revokeTokens, addMessage, getMessages, getMessage, markRead, formatMessage, formatWithin, inboxBatch, cleanLine, LOCAL_SENDER as ME } from './db.mjs';
+import { existsSync, readFileSync, writeSync } from 'node:fs';
+import { openDb, createToken, listTokens, revokeTokens, notExpired, addMessage, getMessages, getMessage, markRead, formatMessage, formatWithin, inboxBatch, cleanLine, DEFAULT_DB, LOCAL_SENDER as ME } from './db.mjs';
 
 // For this file's own messages. Nothing from the database goes through here.
 const die = (msg) => {
   console.error(msg);
   process.exit(1);
 };
+
+// Everything this command prints to stdout goes through here, not through
+// console.log, which drops a failed write (a closed pipe, a full disk)
+// without a word. This throws instead, so `inbox` never marks as read what
+// it could not write out, and the command exits 1.
+function say(text = '') {
+  const buf = Buffer.from(`${text}\n`);
+  for (let off = 0; off < buf.length; ) {
+    try {
+      off += writeSync(1, buf, off);
+    } catch (e) {
+      if (e.code !== 'EAGAIN') throw e; // a pipe that is full for the moment: try again
+    }
+  }
+}
 
 if (process.getuid?.() === 0) die('relay: refusing to run as root; use /usr/local/bin/relay, which drops to the relay-cli user');
 
@@ -50,8 +66,9 @@ const has = (name) => {
   return true;
 };
 
-// Called by every command once it has taken the options and arguments it
-// knows. Anything left over stops the command: a mistyped option that was
+// Called by every command except `send` (whose arguments are the message)
+// once it has taken the options and arguments it knows. Anything left over
+// stops the command: a mistyped option that was
 // quietly ignored would mark messages read that the caller meant only to
 // look at (inbox --peak), or issue a token with the default lifetime instead
 // of the short one asked for (token create --tll 1h).
@@ -82,37 +99,38 @@ function main() {
     nothingElse(1, 'relay inbox [--peek]');
     const db = openDb();
     const { total, text, left, upTo } = inboxBatch(db, ME, LIMITS);
-    if (!total) console.log('No new messages.');
+    if (!total) say('No new messages.');
     else {
-      console.log(`${total} new message${total > 1 ? 's' : ''}:\n`);
-      text.forEach((t) => console.log(t));
-      if (left) console.log(`${left} more unread not shown yet. Run relay inbox again.`);
+      say(`${total} new message${total > 1 ? 's' : ''}:\n`);
+      text.forEach((t) => say(t));
+      if (left) say(`${left} more unread not shown yet. Run relay inbox again.`);
       // Marked only now, after the text has been written out.
       if (!peek) markRead(db, ME, upTo);
     }
   } else if (cmd === 'send') {
     // The rest of the line is the message, so only its first word is checked:
-    // `relay send --peek` is far more likely a slip than a message.
+    // `relay send --peek` is far more likely a slip than a message. Anything
+    // after the first word is sent as written, option-shaped or not.
     if ((args[1] ?? '').startsWith('--')) die('relay: send takes no options. For text that begins with "--", pipe it: relay send -');
     const text = args.slice(1).join(' ');
     const body = !text || text === '-' ? readFileSync(0, 'utf8') : text;
     const r = addMessage(openDb(), ME, body);
-    console.log(`Sent #${Number(r.id)} as ${ME}.`);
+    say(`Sent #${Number(r.id)} as ${ME}.`);
   } else if (cmd === 'show') {
     nothingElse(2, 'relay show <id>');
     const m = /^\d+$/.test(sub || '') ? getMessage(openDb(), Number(sub)) : null;
     if (!m) die('relay show <id>: no such message');
-    console.log(formatMessage(m));
+    say(formatMessage(m));
   } else if (cmd === 'log') {
     nothingElse(2, 'relay log [n]');
     if (sub !== undefined && !/^[1-9]\d{0,8}$/.test(sub)) die('relay log [n]: n is a whole number, 1 or more');
     const n = Number(sub ?? 20);
     const msgs = getMessages(openDb(), { limit: Math.min(n, 1000) });
-    if (!msgs.length) console.log('No messages yet.');
+    if (!msgs.length) say('No messages yet.');
     // Newest first into the budget, printed oldest first.
     const { text } = formatWithin(msgs.toReversed(), LIMITS);
-    if (text.length < msgs.length) console.log(`(${msgs.length - text.length} older not shown; relay show <id> prints one in full)\n`);
-    text.reverse().forEach((t) => console.log(t));
+    if (text.length < msgs.length) say(`(${msgs.length - text.length} older not shown; relay show <id> prints one in full)\n`);
+    text.reverse().forEach((t) => say(t));
   } else if (cmd === 'token' && sub === 'create') {
     const usage = 'relay token create <agent> [--ttl 7d] [--note "..."]';
     const ttl = flag('--ttl') ?? '7d';
@@ -121,18 +139,17 @@ function main() {
     const agent = args[2];
     if (!agent) die(usage);
     const t = createToken(openDb(), agent, ttlMs(ttl), note);
-    console.log(`Token ${t.id} for ${t.agent}, expires ${t.expires_at}.`);
-    console.log('This is the only time it is shown:\n');
-    console.log(t.token);
+    say(`Token ${t.id} for ${t.agent}, expires ${t.expires_at}.`);
+    say('This is the only time it is shown:\n');
+    say(t.token);
   } else if (cmd === 'token' && sub === 'list') {
     nothingElse(2, 'relay token list');
     const rows = listTokens(openDb());
-    if (!rows.length) console.log('No tokens.');
+    if (!rows.length) say('No tokens.');
     for (const t of rows) {
-      // Same test as checkToken: live only if the expiry parses and is in the future.
-      const state = t.revoked_at ? `REVOKED ${t.revoked_at}` : Date.parse(t.expires_at) > Date.now() ? `live until ${t.expires_at}` : `EXPIRED ${t.expires_at}`;
+      const state = t.revoked_at ? `REVOKED ${t.revoked_at}` : notExpired(t) ? `live until ${t.expires_at}` : `EXPIRED ${t.expires_at}`;
       const used = t.last_used_at ? `last used ${t.last_used_at} from ${t.last_ip}` : 'never used';
-      console.log(cleanLine(`${t.id}  ${String(t.agent).padEnd(10)} ${state}; ${used}${t.note ? `; ${t.note}` : ''}`));
+      say(cleanLine(`${t.id}  ${String(t.agent).padEnd(10)} ${state}; ${used}${t.note ? `; ${t.note}` : ''}`));
     }
   } else if (cmd === 'token' && sub === 'revoke') {
     const usage = 'relay token revoke <id | agent | --all>';
@@ -142,9 +159,14 @@ function main() {
     if (!which) die(usage);
     const n = revokeTokens(openDb(), which);
     if (!n) die('Nothing live matched; no token was revoked.');
-    console.log(`Revoked ${n} token${n > 1 ? 's' : ''}. Effective immediately.`);
+    say(`Revoked ${n} token${n > 1 ? 's' : ''}. Effective immediately.`);
+  } else if (cmd === 'init') {
+    nothingElse(1, 'relay init');
+    const before = existsSync(DEFAULT_DB);
+    openDb(DEFAULT_DB, { create: true });
+    say(before ? `${DEFAULT_DB} is already there; nothing was changed.` : `Created ${DEFAULT_DB}.`);
   } else {
-    console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(4, 12).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+    say(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(4, 13).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
     if (cmd !== 'help') process.exit(1);
   }
 }
@@ -154,5 +176,9 @@ try {
 } catch (e) {
   // Not the stack, and not raw: the message can carry text from the database.
   console.error(cleanLine(`relay: ${e?.message ?? e}`));
+  if (!existsSync(DEFAULT_DB)) {
+    console.error('The database is missing. On a new install, create it: relay init');
+    console.error('Otherwise it has been deleted or moved: nothing was created in its place. Stop relay-api and restore it (apps/relay/CLAUDE.md, Backups).');
+  }
   process.exit(1);
 }

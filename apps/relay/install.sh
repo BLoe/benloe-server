@@ -71,12 +71,19 @@ install -d -o relay -g relay -m 2770 "$DATA"
 # a chmod can only ever reach a file `relay` owns. Files `relay` does not own
 # (made by relay-cli) are left alone here; cli.mjs and server.mjs create them
 # 0660 themselves.
-/usr/bin/setpriv --reuid=relay --regid=relay --clear-groups /bin/sh -c '
+#
+# That shell is a process of the server's uid, which the server can inspect
+# (its environment) and signal. So it gets none of root's environment, no
+# terminal on its input, and / as its directory. If the server stops it
+# (SIGSTOP), this script waits there until interrupted, having copied no
+# code yet.
+cd /
+/usr/bin/env -i PATH=/usr/bin:/bin /usr/bin/setpriv --reuid=relay --regid=relay --clear-groups /bin/sh -c '
   cd "$1" || exit 1
   for f in relay.db relay.db-wal relay.db-shm; do
     if [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ]; then chmod 0660 "$f" || exit 1; fi
   done
-' sh "$DATA"
+' sh "$DATA" < /dev/null
 # Then root looks, without opening or changing anything (find does not follow
 # symlinks): each of the three that exists must now be a regular file, group
 # relay, mode 0660. If one is not, the two uids cannot share the database and
@@ -127,5 +134,11 @@ exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 \
   /usr/local/bin/node --disable-warning=ExperimentalWarning /usr/local/lib/benloe/relay/cli.mjs "$@"
 WRAP
 chmod 755 /usr/local/bin/relay
+
+# A new install has no database, and neither the server nor any other command
+# will make one (an empty database appearing where the real one went missing
+# would look like a quiet channel). `relay init` creates it if it is not
+# there, as relay-cli, and changes nothing if it is.
+/usr/local/bin/relay init
 echo "relay installed: $LIB, /etc/benloe/ecosystem/relay.config.js, /usr/local/lib/benloe/node-as-relay, /usr/local/bin/relay"
 echo "Restart the server so it runs the new code: pm2 restart relay-api"

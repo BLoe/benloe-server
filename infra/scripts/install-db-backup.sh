@@ -1,15 +1,16 @@
 #!/bin/bash
 # Installs the nightly database backup: the script root runs, and the systemd
-# service and timer that run it. All three are copied from the checkout this
-# script is running in.
+# units that run it. All four files are copied from the checkout this script
+# is running in.
 #
-#   infra/scripts/backup-databases.sh      -> /usr/local/sbin/benloe-db-backup.sh
-#   infra/systemd/benloe-db-backup.service -> /etc/systemd/system/
-#   infra/systemd/benloe-db-backup.timer   -> /etc/systemd/system/
+#   infra/scripts/backup-databases.sh             -> /usr/local/sbin/benloe-db-backup.sh
+#   infra/systemd/benloe-db-backup.service        -> /etc/systemd/system/
+#   infra/systemd/benloe-db-backup-failed.service -> /etc/systemd/system/
+#   infra/systemd/benloe-db-backup.timer          -> /etc/systemd/system/
 #
 # Then: systemctl daemon-reload, and the timer is enabled and started.
 #
-# Run it through benloe-promote, after any change to those three files and on
+# Run it through benloe-promote, after any change to those four files and on
 # a new box, so that what root will run every night comes from a commit on
 # GitHub and not from the claude-worker-owned working tree:
 #   benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" infra/scripts/install-db-backup.sh
@@ -31,7 +32,7 @@ esac
 UNITS=${SRC%/scripts}/systemd
 
 install -o root -g root -m 0755 "$SRC/backup-databases.sh" /usr/local/sbin/benloe-db-backup.sh
-install -o root -g root -m 0644 "$UNITS/benloe-db-backup.service" "$UNITS/benloe-db-backup.timer" /etc/systemd/system/
+install -o root -g root -m 0644 "$UNITS/benloe-db-backup.service" "$UNITS/benloe-db-backup-failed.service" "$UNITS/benloe-db-backup.timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now benloe-db-backup.timer
-echo "installed /usr/local/sbin/benloe-db-backup.sh and benloe-db-backup.{service,timer} from $SRC; timer enabled"
+echo "installed /usr/local/sbin/benloe-db-backup.sh, benloe-db-backup.service, benloe-db-backup-failed.service and benloe-db-backup.timer from $SRC; timer enabled"

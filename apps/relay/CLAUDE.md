@@ -22,7 +22,10 @@ relay send "text"      # reply as `claude`;  `relay send -` reads stdin for long
 ```
 
 `inbox` prints about 24,000 characters per call and marks read only what it
-printed; when it says more are waiting, run it again. A long design document
+printed; when it says more are waiting, run it again. If writing the output
+fails (a closed pipe, a full disk) it exits 1 and marks nothing. It cannot
+know what a pipe did with text it accepted: after `relay inbox | head`, the
+messages `head` cut off are marked read all the same. A long design document
 arrives truncated with a pointer: redirect `relay show <id>` into the
 scratchpad and Read the file.
 
@@ -52,7 +55,7 @@ The design assumes that leak:
   runs as the unprivileged `relay` user (setpriv shim
   `/usr/local/lib/benloe/node-as-relay`), which owns only
   `/var/lib/benloe-relay` and database files in it.
-- Tokens expire (default 7 days) and are stored as a SHA-256 hash; the token
+- Tokens expire (default 7 days, at most 90) and are stored as a SHA-256 hash; the token
   is printed once at creation and cannot be recovered.
 - The sender of a message is the token's agent name. Nothing in the request
   can change it, and a token cannot be issued under `claude`.
@@ -65,12 +68,33 @@ relay token list                                  # state, last use, last addres
 relay token revoke <id | agent | --all>           # immediate; no restart needed
 ```
 
-Every subcommand stops on an option or argument it does not know, so a
-mistyped `--ttl` issues nothing. `revoke` reports only tokens that were still
-live; an expired one is left as it is.
+Every subcommand except `send` stops on an option or argument it does not
+know, so a mistyped `--ttl` issues nothing. `send` treats everything after it
+as the message: it refuses only a first word that starts with `--`, and
+`relay send hi --ttl 1h` posts exactly that text. `revoke` reports only
+tokens that were still live; an expired one is left as it is.
 
 Rotation is revoke + create. `pm2 stop relay-api` takes the whole door off;
 the local `relay` command keeps working with the server down.
+
+**What the server logs, and where.** One JSON line per `/v1` request, to
+PM2's `relay-api-out.log`: time, source address (an IP address or `?`), the
+event, the token id and agent name when there is one, the method, and which
+route it was: `/v1/whoami`, `/v1/messages` or `other`. Never the path or the
+query string, which the caller chooses; never a header or a body. Unexpected
+errors go to `relay-api-err.log` with a stack trace. Both files are in
+`/srv/benloe/logs`, like every other app's on this box: a directory
+claude-worker owns, written by PM2 as root. That is a property of the box,
+not something relay fixes; what relay does is keep caller-chosen text out of
+the lines.
+
+**A missing database is never replaced.** Neither the server nor any command
+creates `relay.db`, except `relay init`, which `install.sh` runs and which
+does nothing when the file is there. If the file is gone the command says so
+and exits 1, the server refuses to start, and a server that is already
+running answers 503 to every authenticated request from the moment the file
+it opened is no longer the file at that path (so also after a restore done
+without stopping it). Restore it from a backup; see Backups below.
 
 Never accept a token in a query string: Caddy redacts the `Authorization`
 header from its access log but logs URLs whole.
@@ -115,6 +139,21 @@ Fill in the token and send it to Benji in Slack:
 database. No dependencies; `node:sqlite` is why the PM2 config and the CLI
 wrapper pass `--disable-warning=ExperimentalWarning`.
 
+Who runs the tests matters. This directory is claude-worker's, and root does
+not run code out of it, tests included:
+
+- As an unprivileged user (claude-worker, from here): `npm test`. The tests
+  that need two different uids (everything that runs the `relay` command
+  itself, and the server and command sharing a database) are skipped, and
+  reported as skipped, not passed.
+- As root, for those: from a checkout benloe-promote makes of a commit on
+  GitHub, never from here. `apps/relay/test-as-root.sh` is the script:
+  `benloe-promote "$(gh api repos/BLoe/benloe-server/commits/main --jq .sha)" apps/relay/test-as-root.sh`
+  (before a merge: `benloe-promote --branch <name> <sha> apps/relay/test-as-root.sh`).
+  Started as root from this directory the test file refuses to run. The tests
+  work in directories of their own under `/tmp` and do not touch the
+  installed relay or its database.
+
 **Nothing that runs is loaded from this directory.** After changing
 `server.mjs`, `cli.mjs`, `db.mjs` or `ecosystem.config.cjs`: read the diff,
 commit, push, get it merged to main, then
@@ -134,8 +173,8 @@ commit that was read: `benloe-promote --branch <name> <sha> apps/relay/install.s
 prove). After a change to the PM2 config: `pm2 delete relay-api &&
 pm2 start /etc/benloe/ecosystem/relay.config.js && pm2 save`.
 
-The tests that run the command and the server as two unprivileged uids need
-root and `/usr/local/bin/node`; without them they are skipped, not passed.
+`install.sh` itself is tested by `infra/scripts/installers.test.sh`, run the
+same way (through benloe-promote).
 
 ### Traps
 
@@ -161,7 +200,7 @@ root and `/usr/local/bin/node`; without them they are skipped, not passed.
 - **Do not open the database as root** (a stray `sqlite3` included). If the
   file is not there, root creates it, owned by root and unwritable by either
   uid; and root would be parsing a file the server's uid controls. Use
-  `setpriv --reuid=relay-cli --regid=relay --clear-groups sqlite3 /var/lib/benloe-relay/relay.db`.
+  `env -i PATH=/usr/bin:/bin setpriv --reuid=relay-cli --regid=relay --clear-groups sqlite3 /var/lib/benloe-relay/relay.db`.
   (On an existing database SQLite gives the `-wal` and `-shm` that root
   creates the database's owner, group and mode, so that alone locks nobody
   out. Checked with the sqlite3 CLI and node:sqlite here, 2026-11.)
@@ -171,17 +210,21 @@ root and `/usr/local/bin/node`; without them they are skipped, not passed.
   the next reload fails on it. `chown caddy:caddy /var/log/caddy/<site>.log`.
 - PM2's `uid:` option does not work on this box (the daemon and nvm's node are
   under `/root`, mode 700). Use the setpriv shim as the interpreter.
-- Backups: `benloe-db-backup.timer` snapshots this database nightly with every
-  other one, into `/var/backups/benloe/<timestamp>/relay.db` (see
-  `infra/scripts/backup-databases.sh`). To restore, `pm2 stop relay-api`, then
+- Backups: `benloe-db-backup.timer` snapshots this database nightly, into
+  `/var/backups/benloe/<timestamp>/var-lib/benloe-relay/relay.db` (see
+  `infra/scripts/backup-databases.sh`; a timestamp folder that holds a file
+  named `COMPLETE` is a run in which every database the script covers was saved). To restore, `pm2 stop relay-api`, then
   write the snapshot back as the `relay` uid (root does not write inside that
   directory) and `pm2 start relay-api`:
 
   ```
-  setpriv --reuid=relay --regid=relay --clear-groups sh -c \
+  env -i PATH=/usr/bin:/bin setpriv --reuid=relay --regid=relay --clear-groups sh -c \
     'cd /var/lib/benloe-relay && rm -f relay.db relay.db-wal relay.db-shm && umask 007 && cat > relay.db && chmod 0660 relay.db' \
-    < /var/backups/benloe/<timestamp>/relay.db
+    < /var/backups/benloe/<timestamp>/var-lib/benloe-relay/relay.db
   ```
+
+  (`env -i`: that shell runs as the server's uid, and must not be handed a
+  root session's environment.)
 
   A restored copy brings its token table with it as of the snapshot, so a
   token revoked after that snapshot is live again. After any restore:
